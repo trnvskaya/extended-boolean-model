@@ -1,0 +1,79 @@
+How do I find the width & height of a terminal window?
+terminal
+As a simple example, I want to write a CLI script which can print '=' across the entire width of the terminal window.
+#!/usr/bin/env php
+<?php
+echo str_repeat('=', ???);
+
+or
+#!/usr/bin/env python
+print '=' * ???
+
+or
+#!/usr/bin/env bash
+x=0
+while [ $x -lt ??? ]; do echo -n '='; let x=$x+1 done; echo
+
+
+
+
+tput cols tells you the number of columns.
+tput lines tells you the number of rows.
+
+
+yes = | head -n$(($(tput lines) * $COLUMNS)) | tr -d '\n'
+
+
+In bash, the $LINES and $COLUMNS environmental variables should be able to do the trick. The will be set automatically upon any change in the terminal size. (i.e. the SIGWINCH signal)
+
+To do this in Windows CLI environment, the best way I can find is to use the mode command and parse the output.
+function getTerminalSizeOnWindows() {
+  $output = array();
+  $size = array('width'=>0,'height'=>0);
+  exec('mode',$output);
+  foreach($output as $line) {
+    $matches = array();
+    $w = preg_match('/^\s*columns\:?\s*(\d+)\s*$/i',$line,$matches);
+    if($w) {
+      $size['width'] = intval($matches[1]);
+    } else {
+      $h = preg_match('/^\s*lines\:?\s*(\d+)\s*$/i',$line,$matches);
+      if($h) {
+        $size['height'] = intval($matches[1]);
+      }
+    }
+    if($size['width'] AND $size['height']) {
+      break;
+    }
+  }
+  return $size;
+}
+
+I hope it's useful!
+NOTE: The height returned is the number of lines in the buffer, it is not the number of lines that are visible within the window. Any better options out there?
+
+On POSIX, ultimately you want to be invoking the TIOCGWINSZ (Get WINdow SiZe) ioctl() call. Most languages ought to have some sort of wrapper for that. E.g in Perl you can use Term::Size:
+use Term::Size qw( chars );
+
+my ( $columns, $rows ) = chars \*STDOUT;
+
+
+As I mentioned in lyceus answer, his code will fail on non-English locale Windows because then the output of mode may not contain the substrings "columns" or "lines":
+                                         
+You can find the correct substring without looking for text:
+ preg_match('/---+(\n[^|]+?){2}(?<cols>\d+)/', `mode`, $matches);
+ $cols = $matches['cols'];
+
+Note that I'm not even bothering with lines because it's unreliable (and I actually don't care about them).
+Edit: According to comments about Windows 8 (oh you...), I think this may be more reliable:
+ preg_match('/CON.*:(\n[^|]+?){3}(?<cols>\d+)/', `mode`, $matches);
+ $cols = $matches['cols'];
+
+Do test it out though, because I didn't test it.
+
+And there's stty, from coreutils
+$ stty size
+60 120 # <= sample output
+
+It will print the number of rows and columns, or height and width, respectively.
+Then you can use either cut or awk to extract the part you want.

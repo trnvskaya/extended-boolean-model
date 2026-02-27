@@ -1,0 +1,407 @@
+How do I reset a sequence in Oracle?
+sql database oracle sequence reset
+In PostgreSQL, I can do something like this:
+ALTER SEQUENCE serial RESTART WITH 0;
+
+Is there an Oracle equivalent?
+
+
+A true restart is not possible AFAIK. (Please correct me if I'm wrong!).
+However, if you want to set it to 0, you can just delete and recreate it.
+If you want to set it to a specific value, you can set the INCREMENT to a negative value and get the next value.
+That is, if your sequence is at 500, you can set it to 100 via
+ALTER SEQUENCE serial INCREMENT BY -400;
+SELECT serial.NEXTVAL FROM foo;
+ALTER SEQUENCE serial INCREMENT BY 1;
+
+
+Altering the sequence's INCREMENT value, incrementing it, and then altering it back is pretty painless, plus you have the added benefit of not having to re-establish all of the grants as you would had you dropped/recreated the sequence.
+
+Here is a good procedure for resetting any sequence to 0 from Oracle guru Tom Kyte.  Great discussion on the pros and cons in the links below too.
+tkyte@TKYTE901.US.ORACLE.COM> 
+create or replace
+procedure reset_seq( p_seq_name in varchar2 )
+is
+    l_val number;
+begin
+    execute immediate
+    'select ' || p_seq_name || '.nextval from dual' INTO l_val;
+
+    execute immediate
+    'alter sequence ' || p_seq_name || ' increment by -' || l_val || 
+                                                          ' minvalue 0';
+
+    execute immediate
+    'select ' || p_seq_name || '.nextval from dual' INTO l_val;
+
+    execute immediate
+    'alter sequence ' || p_seq_name || ' increment by 1 minvalue 0';
+end;
+/
+
+From this page: Dynamic SQL to reset sequence value
+Another good discussion is also here: How to reset sequences?
+
+This stored procedure restarts my sequence:
+Create or Replace Procedure Reset_Sequence  
+  is
+  SeqNbr Number;
+begin
+   /*  Reset Sequence 'seqXRef_RowID' to 0    */
+   Execute Immediate 'Select seqXRef.nextval from dual ' Into SeqNbr;
+   Execute Immediate 'Alter sequence  seqXRef increment by - ' || TO_CHAR(SeqNbr) ;
+   Execute Immediate 'Select seqXRef.nextval from dual ' Into SeqNbr;
+   Execute Immediate 'Alter sequence  seqXRef increment by 1';
+END;
+
+/
+
+1) Suppose you create a SEQUENCE like shown below:
+CREATE SEQUENCE TESTSEQ
+INCREMENT BY 1
+MINVALUE 1
+MAXVALUE 500
+NOCACHE
+NOCYCLE
+NOORDER
+
+2) Now you fetch values from SEQUENCE. Lets say I have fetched four times as shown below.
+SELECT TESTSEQ.NEXTVAL FROM dual
+SELECT TESTSEQ.NEXTVAL FROM dual
+SELECT TESTSEQ.NEXTVAL FROM dual
+SELECT TESTSEQ.NEXTVAL FROM dual
+
+3) After executing above four commands the value of the SEQUENCE will be 4. Now suppose I have reset the value of the SEQUENCE to 1 again. The follow the following steps. Follow all the steps in the same order as shown below:
+
+ALTER SEQUENCE TESTSEQ INCREMENT BY -3;
+SELECT TESTSEQ.NEXTVAL FROM dual
+ALTER SEQUENCE TESTSEQ INCREMENT BY 1;
+SELECT TESTSEQ.NEXTVAL FROM dual
+
+
+This is my approach:
+
+drop the sequence
+recreate it
+
+Example:
+--Drop sequence
+
+DROP SEQUENCE MY_SEQ;
+
+-- Create sequence 
+
+create sequence MY_SEQ
+minvalue 1
+maxvalue 999999999999999999999
+start with 1
+increment by 1
+cache 20;
+
+
+The following script set the sequence to a desired value:
+Given a freshly created sequence named PCS_PROJ_KEY_SEQ and table PCS_PROJ:
+BEGIN
+   DECLARE
+      PROJ_KEY_MAX       NUMBER := 0;
+      PROJ_KEY_CURRVAL   NUMBER := 0;
+   BEGIN
+
+    SELECT MAX (PROJ_KEY) INTO PROJ_KEY_MAX FROM PCS_PROJ;
+    EXECUTE IMMEDIATE 'ALTER SEQUENCE PCS_PROJ_KEY_SEQ INCREMENT BY ' || PROJ_KEY_MAX;
+    SELECT PCS_PROJ_KEY_SEQ.NEXTVAL INTO PROJ_KEY_CURRVAL FROM DUAL;
+    EXECUTE IMMEDIATE 'ALTER SEQUENCE PCS_PROJ_KEY_SEQ INCREMENT BY 1';
+
+END;
+END;
+/
+
+
+My approach is a teensy extension to Dougman's example.
+Extensions are...
+Pass in the seed value as a parameter.  Why?  I like to call the thing resetting the sequence back to the max ID used in some table.  I end up calling this proc from another script which executes multiple calls for a whole bunch of sequences, resetting nextval back down to some level which is high enough to not cause primary key violations where I'm using the sequence's value for a unique identifier.
+It also honors the previous minvalue.  It may in fact push the next value ever higher if the desired p_val or existing minvalue are higher than the current or calculated next value.
+Best of all, it can be called to reset to a specified value, and just wait until you see the wrapper "fix all my sequences" procedure at the end.
+create or replace
+procedure Reset_Sequence( p_seq_name in varchar2, p_val in number default 0)
+is
+  l_current number := 0;
+  l_difference number := 0;
+  l_minvalue user_sequences.min_value%type := 0;
+
+begin
+
+  select min_value
+  into l_minvalue
+  from user_sequences
+  where sequence_name = p_seq_name;
+
+  execute immediate
+  'select ' || p_seq_name || '.nextval from dual' INTO l_current;
+
+  if p_Val < l_minvalue then
+    l_difference := l_minvalue - l_current;
+  else
+    l_difference := p_Val - l_current;
+  end if;
+
+  if l_difference = 0 then
+    return;
+  end if;
+
+  execute immediate
+    'alter sequence ' || p_seq_name || ' increment by ' || l_difference || 
+       ' minvalue ' || l_minvalue;
+
+  execute immediate
+    'select ' || p_seq_name || '.nextval from dual' INTO l_difference;
+
+  execute immediate
+    'alter sequence ' || p_seq_name || ' increment by 1 minvalue ' || l_minvalue;
+end Reset_Sequence;
+
+That procedure is useful all by itself, but now let's add another one which calls it and specifies everything programmatically with a sequence naming convention and looking for the maximum value used in an existing table/field...
+create or replace
+procedure Reset_Sequence_to_Data(
+  p_TableName varchar2,
+  p_FieldName varchar2
+)
+is
+  l_MaxUsed NUMBER;
+BEGIN
+
+  execute immediate
+    'select coalesce(max(' || p_FieldName || '),0) from '|| p_TableName into l_MaxUsed;
+
+  Reset_Sequence( p_TableName || '_' || p_Fieldname || '_SEQ', l_MaxUsed );
+
+END Reset_Sequence_to_Data;
+
+Now we're cooking with gas!  
+The procedure above will check for a field's max value in a table, builds a sequence name from the table/field pair and invokes *"Reset_Sequence"* with that sensed max value.
+The final piece in this puzzle and the icing on the cake comes next...
+create or replace
+procedure Reset_All_Sequences
+is
+BEGIN
+
+  Reset_Sequence_to_Data( 'ACTIVITYLOG', 'LOGID' );
+  Reset_Sequence_to_Data( 'JOBSTATE', 'JOBID' );
+  Reset_Sequence_to_Data( 'BATCH', 'BATCHID' );
+
+END Reset_All_Sequences;
+
+In my actual database there are around one hundred other sequences being reset through this mechanism, so there are 97 more calls to *Reset_Sequence_to_Data* in that procedure above.
+Love it?  Hate it?  Indifferent?
+
+There is another way to reset a sequence in Oracle: set the maxvalue and cycle properties. When the nextval of the sequence hits the maxvalue, if the cycle property is set then it will begin again from the minvalue of the sequence.
+The advantage of this method compared to setting a negative increment by is the sequence can continue to be used while the reset process runs, reducing the chance you need to take some form of outage to do the reset.
+The value for maxvalue has to be greater than the current nextval, so the procedure below includes an optional parameter allowing a buffer in case the sequence is accessed again between selecting the nextval in the procedure and setting the cycle property.
+create sequence s start with 1 increment by 1;
+
+select s.nextval from dual
+connect by level <= 20;
+
+   NEXTVAL
+----------
+         1 
+...
+        20
+
+create or replace procedure reset_sequence ( i_buffer in pls_integer default 0)
+as
+  maxval pls_integer;
+begin
+
+  maxval := s.nextval + greatest(i_buffer, 0); --ensure we don't go backwards!
+  execute immediate 'alter sequence s cycle minvalue 0 maxvalue ' || maxval;
+  maxval := s.nextval;
+  execute immediate 'alter sequence s nocycle maxvalue 99999999999999';
+
+end;
+/
+show errors
+
+exec reset_sequence;
+
+select s.nextval from dual;
+
+   NEXTVAL
+----------
+         1 
+
+The procedure as stands still allows the possibility that another session will fetch the value 0, which may or may not be an issue for you. If it is, you could always:
+
+Set minvalue 1 in the first alter
+Exclude the second nextval fetch 
+Move the statement to set the nocycle property into another procedure, to be run at a later date (assuming you want to do this).
+
+
+alter sequence serial restart start with 0;
+
+This feature is new in Oracle 12c.  It is not included in the official documentation.
+I found it in scripts generated by the Oracle package DBMS_METADATA_DIFF.
+
+You can use the CYCLE option, shown below:
+CREATE SEQUENCE test_seq
+MINVALUE 0
+MAXVALUE 100
+START WITH 0
+INCREMENT BY 1
+CYCLE;
+
+In this case, when the sequence reaches MAXVALUE (100), it will recycle to the MINVALUE (0).
+In the case of a decremented sequence, the sequence would recycle to the MAXVALUE.
+
+I create a block to reset all my sequences:
+DECLARE
+    I_val number;
+BEGIN
+    FOR US IN
+        (SELECT US.SEQUENCE_NAME FROM USER_SEQUENCES US)
+    LOOP
+        execute immediate 'select ' || US.SEQUENCE_NAME || '.nextval from dual' INTO l_val;
+        execute immediate 'alter sequence ' || US.SEQUENCE_NAME || ' increment by -' || l_val || ' minvalue 0';
+        execute immediate 'select ' || US.SEQUENCE_NAME || '.nextval from dual' INTO l_val;
+        execute immediate 'alter sequence ' || US.SEQUENCE_NAME || ' increment by 1 minvalue 0';
+    END LOOP;
+END;
+
+
+Here's a more robust procedure for altering the next value returned by a sequence, plus a whole lot more.
+
+First off it protects against SQL injection attacks since none of the strings passed in are used to directly create any of the dynamic SQL statements,
+Second it prevents the next sequence value from being set outside the bounds of the min or max sequence values.  The next_value will be != min_value and between min_value and max_value.
+Third it takes the current (or proposed) increment_by setting as well as all the other sequence settings into account when cleaning up.
+Fourth all parameters except the first are optional and unless specified take on the current sequence setting as defaults.  If no optional parameters are specified no action is taken.
+Finally if you try altering a sequence that doesn't exist (or is not owned by the current user) it will raise an ORA-01403: no data found error.
+
+Here's the code:
+CREATE OR REPLACE PROCEDURE alter_sequence(
+    seq_name      user_sequences.sequence_name%TYPE
+  , next_value    user_sequences.last_number%TYPE := null
+  , increment_by  user_sequences.increment_by%TYPE := null
+  , min_value     user_sequences.min_value%TYPE := null
+  , max_value     user_sequences.max_value%TYPE := null
+  , cycle_flag    user_sequences.cycle_flag%TYPE := null
+  , cache_size    user_sequences.cache_size%TYPE := null
+  , order_flag    user_sequences.order_flag%TYPE := null)
+  AUTHID CURRENT_USER
+AS
+  l_seq user_sequences%rowtype;
+  l_old_cache user_sequences.cache_size%TYPE;
+  l_next user_sequences.min_value%TYPE;
+BEGIN
+  -- Get current sequence settings as defaults
+  SELECT * INTO l_seq FROM user_sequences WHERE sequence_name = seq_name;
+
+  -- Update target settings
+  l_old_cache := l_seq.cache_size;
+  l_seq.increment_by := nvl(increment_by, l_seq.increment_by);
+  l_seq.min_value    := nvl(min_value, l_seq.min_value);
+  l_seq.max_value    := nvl(max_value, l_seq.max_value);
+  l_seq.cycle_flag   := nvl(cycle_flag, l_seq.cycle_flag);
+  l_seq.cache_size   := nvl(cache_size, l_seq.cache_size);
+  l_seq.order_flag   := nvl(order_flag, l_seq.order_flag);
+
+  IF next_value is NOT NULL THEN
+    -- Determine next value without exceeding limits
+    l_next := LEAST(GREATEST(next_value, l_seq.min_value+1),l_seq.max_value);
+
+    -- Grab the actual latest seq number
+    EXECUTE IMMEDIATE
+        'ALTER SEQUENCE '||l_seq.sequence_name
+            || ' INCREMENT BY 1'
+            || ' MINVALUE '||least(l_seq.min_value,l_seq.last_number-l_old_cache)
+            || ' MAXVALUE '||greatest(l_seq.max_value,l_seq.last_number)
+            || ' NOCACHE'
+            || ' ORDER';
+    EXECUTE IMMEDIATE 
+      'SELECT '||l_seq.sequence_name||'.NEXTVAL FROM DUAL'
+    INTO l_seq.last_number;
+
+    l_next := l_next-l_seq.last_number-1;
+
+    -- Reset the sequence number
+    IF l_next <> 0 THEN
+      EXECUTE IMMEDIATE 
+        'ALTER SEQUENCE '||l_seq.sequence_name
+            || ' INCREMENT BY '||l_next
+            || ' MINVALUE '||least(l_seq.min_value,l_seq.last_number)
+            || ' MAXVALUE '||greatest(l_seq.max_value,l_seq.last_number)
+            || ' NOCACHE'
+            || ' ORDER';
+      EXECUTE IMMEDIATE 
+        'SELECT '||l_seq.sequence_name||'.NEXTVAL FROM DUAL'
+      INTO l_next;
+    END IF;
+  END IF;
+
+  -- Prepare Sequence for next use.
+  IF COALESCE( cycle_flag
+             , next_value
+             , increment_by
+             , min_value
+             , max_value
+             , cache_size
+             , order_flag) IS NOT NULL
+  THEN
+    EXECUTE IMMEDIATE 
+      'ALTER SEQUENCE '||l_seq.sequence_name
+          || ' INCREMENT BY '||l_seq.increment_by
+          || ' MINVALUE '||l_seq.min_value
+          || ' MAXVALUE '||l_seq.max_value
+          || CASE l_seq.cycle_flag
+             WHEN 'Y' THEN ' CYCLE' ELSE ' NOCYCLE' END
+          || CASE l_seq.cache_size
+             WHEN 0 THEN ' NOCACHE'
+             ELSE ' CACHE '||l_seq.cache_size END
+          || CASE l_seq.order_flag
+             WHEN 'Y' THEN ' ORDER' ELSE ' NOORDER' END;
+  END IF;
+END;
+
+
+In my project, once it happened that someone manually entered the records without using sequence, hence I have to reset sequence value manually, for which I wrote below sql code snippet:
+declare
+max_db_value number(10,0);
+cur_seq_value number(10,0);
+counter number(10,0);
+difference number(10,0);
+dummy_number number(10);
+
+begin
+
+-- enter table name here
+select max(id) into max_db_value from persons;
+-- enter sequence name here
+select last_number into cur_seq_value from user_sequences where  sequence_name = 'SEQ_PERSONS';
+
+difference  := max_db_value - cur_seq_value;
+
+ for counter in 1..difference
+ loop
+    -- change sequence name here as well
+    select SEQ_PERSONS.nextval into dummy_number from dual;
+ end loop;
+end;
+
+Please note, the above code will work if the sequence is lagging. 
+
+I make an alternative that the user donât need to know the values, the system get and use variables to update.
+DECLARE
+ actual_sequence_number  
+INTEGER;
+ max_number_from_table 
+INTEGER;
+ difference
+INTEGER;
+BEGIN
+  SELECT SQ_CD_TP_TAXA_SERV.CURRVAL INTO actual_sequence_number FROM DUAL;
+  SELECT MAX(CD_TP_tAXA_SERV) INTO max_number_from_table FROM SIGA_TIPO_TAXA_SERVICO;
+  SELECT (max_number_from_table-actual_sequence_number)+1 INTO difference FROM DUAL;
+  --DBMS_OUTPUT.put_line (actual_sequence_number);
+  --DBMS_OUTPUT.put_line (CONCAT('alter sequence sq_cd_tp_taxa_serv increment by ', difference)); 
+  EXECUTE IMMEDIATE CONCAT('alter sequence sq_cd_tp_taxa_serv increment by ', difference);
+END;
+

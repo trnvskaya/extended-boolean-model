@@ -1,0 +1,48 @@
+How to avoid storing credentials to connect to Oracle with JDBC?
+oracle jdbc credentials
+Is it possible to setup a JDBC connection to Oracle without providing username/password information in a configuration file (or in any other standard readable location)?
+Typically applications have a configuration file that contains setup parameters to connect to a database. Some DBAs have problems with the fact that usernames and passwords are in clear text in config files.
+I don't think this is possible with Oracle and JDBC, but I need some confirmation...
+A possible compromise is to encrypt the password in the config file and decrypt it before setting up the connection. Of course, the decryption key should not be in the same config file. This will only solve accidental opening of the config file by unauthorized users.
+
+
+You can store the credentials anywhere, including as hardwired strings in the program or as entries in the Windows registry. It's up to you to retrieve them if you use something nonstandard, though; I'm not aware of any pre-rolled solutions that aren't plaintext.
+
+Since I'm not entirely clear on your environment other than Java & JDBC talking to Oracle I'll speak towards that.
+If you are talking about a Java EE app, you should be able to setup connection pools and data sources on the app server, then your application talks to the connection pool who handles connectivity at that level. 
+The connection pool and data source holds and secures the credentials.
+
+To my knowledge jdbc connection usernames/passwords need to be stored as plain text. One way to limit the possible risks of this is to restrict the rights of the user so that only the given applications database can be used and only from a predefined host. IMO, this would limit the attacker very much: he could only use the un/pw from the same host where the original application resides and only to attack the original application's database.
+
+Have wondered this in the past.
+The solution is certainly one that includes having proper network security at the server and network level to really reduce the number of people who can get access to the system, and having the database credentials only give access to a database account with the bare minimum of permissions required for the application to run.
+Encryption of properties files might be enough of a deterrent in terms of "can't be bothered to find the key or passphrase" to get an attacker to go onto their next compromised server. I wouldn't rely on "my neighbour is less secure so steal from him please" security however!
+
+You could try Oracle's proxy authentication where the JDBC client authenticates using a certificate against a known middle-tier component/service (the proxy) which is trusted by the database server. I've never tried that though, so I don't know whether it's easy to do.
+
+You definitely don't want to be able to connect to the database without credentials because that makes the database vulnerable.  
+This is a general problem, how do I store credentials needed to access external systems? WebLogic has a credential mapper to solve this problem, in which credentials (encrypted) are stored in embedded LDAP. Many Oracle products use a credential store facility that stores credentials in Oracle wallet.  
+In the question, you provided the answer. Store the password encrypted and decrypt when you need it. Obviously you have to use symmetric encryption algorithm such as 3DES so you can decrypt it. Make sure the symmetric key is not something that can be guessed.
+The trick is where you keep the symmetric key needed for en/de-cryption. You can put it in a file that is secured through the OS or you can keep it in the code, but then you need to keep the code secure. You can also generate the key if you use a technique that will produce the same key and the algorithm is reasonably secure.  
+If you can keep the code secure you can obviously keep the password in the code as well. However, you want the flexibility of being able to change the credentials without changing the code.  
+You can add more layers to this solution as well. You can encrypt the configuration file (with a different key) as well as the password inside it making the hacker discover 2 keys. There are other even more secure methods using PKI, but they get hard to set up.
+
+There are two key approaches and both have a significant impact on the design of the system, such that it is not easy to move from one to the other without a significant rewrite.  You need to understand what your companies security governance policy is before choosing.
+1) Every user has credentials, that are carried through the application, for the service that is being used by the Application; in your case the Oracle database uses those user credentials to connect to the database.  The downside is that every user needs a credentials for each secure service.  This is a reasonable secure approach but also requires the signficant extra work to provide and maintain the user credentials.  Your database administrators will need to actively manage user credentials, which may run counter to your companyâs security governance policies.  
+2) The Application database credentials are stored on a secure directory service, e.g. Secure LDAP.  The Application accesses the directory service with the usersâ credentials.  The directory service returns the approriate credentials for the service being accessed.
+In both cases the database credentials should be limited to perform the appropriate operations only. The credentials should reflect the requirements of the business processes, for example; they allow select from defined views/tables, insert into others, but not create, update or drop tables.  In the second approach use seperate credentials for each major business process, e.g. Order Processing, Accounting, HR, etc.
+However remember that security is like layers of an onion, if somebody has stripped away the layers to access the application, such that they can access the DB contection pool config file.  They can probably Trojan the application to capture usersâ credentials.  This is where a good security governance policy comes in.  
+Security Governance is a complex issue that needs senior management commitment, because if you need this level of security for your live platform, it costs.  You need to separate responsibilities of development from deployment, operations & user authority management.  You may also need to have security auditors, who have full access to view changes but no ability to change the configuration.  It if far from simple and is highly paid specialism.
+
+I'd suggest you look into proxy authentication. This is documented in the OracleÂ® Database Security Guide, as well as the OracleÂ® Database JDBC Developer's Guide and Reference. Essentially what this allows you to do is have a user in the database that ONLY has connect privileges. The users real database accounts are configured to be able connect as the proxy user. Your application connecting through JDBC then stores the proxy username and password, and when connecting provides these credentials, PLUS the username of the real database user in the connect string. Oracle connects as the proxy user, and then mimics the real database user, inheriting the database privileges of the real user.
+
+You may want to try Kerberos which can use the OS user's credentials and adding the OS user to the database as identified externally. Make sure that you use Kerberos and not the old way of doing this, which had serious security issues.
+For Kerberos support you would need the advanced security option and a recent JDBC driver, probably 11g version. Before trying to get it to work in Java, try it out in Sql*Plus using '/' as username and empty password. "select user from dual" should give you user@domain. You may also find that there is a fundamental difference between using thin or OCI driver when it comes to Kerberos configuration.
+
+All J2EE containers (JBOSS, Tomcat, BEA) have connection pools. They will open a number of connections, keep them alive and will give them to you in 1/100th the time it takes to create one from scratch.
+Additionally, they also have cool features, in JBOSS for example, all the connection info is stored in an external file. If you change the connection info i.e., you switch from a test to a production DB,  your application will dynamically be fed connections from the new pool
+The good news is that you don't need to run a full J2EE container just to use connection pooling. The external resource allows the password to be stored in either plaintext, or pseudo-encrypted. 
+For a guide on using Tomcat's builtin connection pooling see the apache commons-dbcp:
+
+http://vigilbose.blogspot.com/2009/03/apache-commons-dbcp-and-tomcat-jdbc.html
+

@@ -1,0 +1,105 @@
+Questions for python->scheme conversion
+python arrays scheme
+I currently am trying to write a Python program using scheme semantics so I can later translate it into Scheme without relying on a lot of Pythonic stuff.
+I'm trying solve the sliding puzzle problem (where you have 9 slots and 8 tiles arranged in a square) using a*, depth first, and breadth first search algorithm.  I did this ~11 years ago in some AI class in Lisp, but basically at the time I had no idea about lisp, I hated it with all my heart, and only in retrospect do I realize I was programming "C" in Lisp.  The prof didn't help in this matter.
+I have a python function which can swap two tiles easily:  
+def swap(p, (r1, c1), (r2, c2)):  
+    # Swaps *any* two locations and returns new configuration  
+    # Does not concern itself with zero location, etc  
+    # Not sure how to do this functionally  
+    p_p = p[:]  
+    temp = p_p[r1][c1]  
+    p_p[r1][c1] = p_p[r2][c2]  
+    p_p[r2][c2] = temp  
+    return p_p  
+
+I'd like to turn this into something you might find in SICP, avoiding side effects, etc.  
+But this brings up a question.  Everything I read in SICP is loops via recursion.  I didn't see anything in accessing arrays/vectors/lists in constant time.  I can imagine a loopish/recursive way to read an element, but I find it harder to imagine a way to create a new list with a certain element changed, without invoking side-effect producing things like set!, and without resorting to crazy if/then/else clauses concerning which element should be changed.  This of course gets more confusing when considering a 2d array.  In this case the solution with python is obvious because of its native support for multidimensional arrays.
+In C/C++/Python/Matlab/Lua/anything else, accessing lists/arrays via the [i] syntax is easy, and directly translates to a hardware-oriented pointer lookup somewhere underneath.  I don't understand how scheme does this, given the atomic operations defined in the SICP version of scheme, which all seem very loop-and-search oriented.  How do the vector and list array access functions work to get constant time access?  (I'm a total newbie here, so I'm not ever sure what functions I'd be talking about).  Is there a C or Assembly library someplace which is secretly being accessed?  Are there any inherent constant-time semantics in scheme which could be used for list/array/vector access, and which would allow me a guilt-free way of using that idiom in Python for the moment?  
+How would can I rewrite the above function in python using Schemish semantics?  How would I rewrite the above function in Scheme?
+
+
+I wrote an 8-puzzle solver in Lisp about a year ago. I just used a list of 3 lists, each sublist with 3 elements being the numbers. It's not constant time, but it is portable.
+Anyways, if you are really interested in doing this functionally (Scheme doesn't require you to) what is easiest to do is to create some helper functions that will get a specific value given row/col and 'set' a value given row/col. Instead of modifying the original data structure, the set operation will construct the new state based on the old state.
+Then you can write a swap operation based on these get and set operations. Here's what I wrote about a year ago in Common Lisp, but it's easily convertible to Scheme:
+; getval
+;
+; This function takes a position (r . c) where and returns the corresponding
+; number in the 8-puzzle state. For example, if you wanted (1 . 2) from
+; ((1 2 3) (4 5 6) (7 8 9)), the value would be 6. The r and c values begin
+; at 0.
+;
+; parameters:  pos    The position to get
+;              state  The 8-puzzle state
+; returns:     The value at pos in state
+(defun getval (pos state)
+  (if (null state) 'no-value
+      (if (= 0 (car pos))
+      (if (= 0 (cdr pos))
+          (caar state)
+          (getval (cons (car pos) (- (cdr pos) 1)) (list (cdar state))))
+      (getval (cons (- (car pos) 1) (cdr pos)) (cdr state)))))
+
+; setval
+;
+; This function returns a state where the value at pos is replaced by val.
+; Like getval, this function is zero-based. Accessing beyond the size of
+; the state is undefined (and probably broken)
+;
+; parameters:  pos    Position to set
+;              val    Value to set
+;              state  State to modify
+; returns:     New state where pos is val
+(defun setval (pos val state)
+  (if (null state) '()
+      (if (= 0 (car pos))
+      (if (= 0 (cdr pos))
+          (cons (cons val (cdar state)) (cdr state))
+          (let ((temp (setval (cons (car pos) (- (cdr pos) 1)) val
+    			  (cons (cdar state) (cdr state)))))
+    	(cons (cons (caar state) (car temp)) (cdr temp))))
+      (cons (car state) (setval (cons (- (car pos) 1) (cdr pos)) val (cdr state))))))
+
+; state-swap
+;
+; This function takes a state and two positions and returns a new state with
+; the values in those two positions swapped.
+;
+; parameters:  state  State to swap within
+;              a      Position to swap with b
+;              b      Position to swap with a
+; return:      State with a swapped with b
+(defun state-swap (state a b)
+  (let ((olda (getval a state)) (oldb (getval b state)))
+    (setval a oldb (setval b olda state))))
+
+
+You identified that your initial problem was trying to write C semantics in Lisp. Is it not repeating the mistake to try to write scheme semantics in python? I always try to learn language X as a paradigm as much as a language and write in the most x-ish way.
+It might be justifiable if this was a business app you knew was going to be migrated, but otherwise I'd just write it in scheme to begin with.
+
+Cool, thanks for the lisp code.  I'll need to study it to make sure I get it.
+As for the first answer, the first time I was "writing c" in lisp because that's the only way I knew how to program and didn't have a clue why anyone would use lisp.  This time around, I've been playing around with scheme, but wanted to use python so if I got stuck on something I could "cheat" and use something pythonish, then while waiting for usenet answers go on to the next part of the problem.
+
+Here's one way to achieve it.  Recreate the list using a function which will apply the appropriate mapping.
+def swap(p, (r1,c1), (r2,c2)):
+    def getitem(r,c):
+        if (r,c) == (r1,c1): return p[r2][c2]
+        elif (r,c) == (r2,c2): return p[r1][c1]
+        return p[r][c]
+    return [ [getitem(r,c) for c in range(len(p[0]))] for r in range(len(p)) ]
+
+You could even take this a step further and make the function be the actual interface, where each swap merely returns a function that does the appropriate conversions before passing through to the function below.  Not particularly performant, but a fairly simple functional approach that dispenses with nasty mutable datastructures:
+def swap(f, (r1,c1), (r2,c2)):
+    def getitem(r,c):
+        if (r,c) == (r1,c1): return f(r2,c2)
+        elif (r,c) == (r2,c2): return f(r1,c1)
+        return f(r,c)
+   return getitem
+
+l=[ [1,2,3], [4,5,6], [7,8,0]]
+f=lambda r,c: l[r][c]    # Initial accessor function
+f=swap(f, (2,1), (2,2))  # 8 right
+f=swap(f, (1,1), (2,1))  # 5 down
+print [[f(x,y) for y in range(3)] for x in range(3)]
+# Gives: [[1, 2, 3], [4, 0, 6], [7, 5, 8]]
+

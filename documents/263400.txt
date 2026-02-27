@@ -1,0 +1,849 @@
+What is the best algorithm for an overridden System.Object.GetHashCode?
+.net hashcode gethashcode
+In .NET System.Object.GetHashCode method is used in a lot of places,  throughout the .NET base class libraries. Especially when finding items in a collection fast or to determine equality. Is there a standard algorithm/ best practice on how to implement the GetHashCode override for my custom classes so I don't degrade performance?
+
+
+I usually go with something like the implementation given in Josh Bloch's fabulous Effective Java. It's fast and creates a pretty good hash which is unlikely to cause collisions. Pick two different prime numbers, e.g. 17 and 23, and do:
+public override int GetHashCode()
+{
+    unchecked // Overflow is fine, just wrap
+    {
+        int hash = 17;
+        // Suitable nullity checks etc, of course :)
+        hash = hash * 23 + field1.GetHashCode();
+        hash = hash * 23 + field2.GetHashCode();
+        hash = hash * 23 + field3.GetHashCode();
+        return hash;
+    }
+}
+
+EDIT: As noted in comments, you may find it's better to pick a large prime to multiply by instead. Apparently 486187739 is good... and although most examples I've seen with small numbers tend to use primes, there are at least similar algorithms where non-prime numbers are often used. In the not-quite-FNV example later, for example, I've used numbers which apparently work well - but the initial value isn't a prime. (The multiplication constant is prime though. I don't know quite how important that is.)
+This is better than the common practice of XORing hashcodes for two main reasons. Suppose we have a type with two int fields:
+XorHash(x, x) == XorHash(y, y) == 0 for all x, y
+XorHash(x, y) == XorHash(y, x) for all x, y
+
+By the way, the earlier algorithm is the one currently used by the C# compiler for anonymous types.
+EDIT: This page gives quite a few options. I think for most cases the above is "good enough" and it's incredibly easy to remember and get right. The FNV alternative is similarly simple, but uses different constants and XOR instead of ADD as a combining operation. It looks something like the code below, but the normal FNV algorithm operates on individual bytes, so this would require modifying to perform one iteration per byte, instead of per 32-bit hash value. FNV is also designed for variable lengths of data, whereas the way we're using it here is always for the same number of field values. Comments on this answer suggest that the code here doesn't actually work as well (in the sample case tested) as the addition approach above.
+// Note: Not quite FNV!
+public override int GetHashCode()
+{
+    unchecked // Overflow is fine, just wrap
+    {
+        int hash = (int) 2166136261;
+        // Suitable nullity checks etc, of course :)
+        hash = (hash * 16777619) ^ field1.GetHashCode();
+        hash = (hash * 16777619) ^ field2.GetHashCode();
+        hash = (hash * 16777619) ^ field3.GetHashCode();
+        return hash;
+    }
+}
+
+EDIT: Note that one thing to be aware of is that ideally you should prevent your equality-sensitive (and thus hashcode-sensitive) state from changing after adding it to a collection that depends on the hash code.
+As per the documentation:
+
+You can override GetHashCode for immutable reference types. In general, for mutable reference types, you should override GetHashCode only if:
+
+You can compute the hash code from fields that are not mutable; or
+You can ensure that the hash code of a mutable object does not change while the object is contained in a collection that relies on its hash code.
+
+
+
+Most of my work is done with database connectivity which means that my classes all have a unique identifier from the database.  I always use the ID from the database to generate the hashcode.
+// Unique ID from database
+private int _id;
+
+...    
+{
+  return _id.GetHashCode();
+}
+
+
+I have a Hashing class in Helper library that I use it for this purpose.
+/// <summary> 
+/// This is a simple hashing function from Robert Sedgwicks Hashing in C book.
+/// Also, some simple optimizations to the algorithm in order to speed up
+/// its hashing process have been added. from: www.partow.net
+/// </summary>
+/// <param name="input">array of objects, parameters combination that you need
+/// to get a unique hash code for them</param>
+/// <returns>Hash code</returns>
+public static int RSHash(params object[] input)
+{
+    const int b = 378551;
+    int a = 63689;
+    int hash = 0;
+
+    // If it overflows then just wrap around
+    unchecked
+    {
+        for (int i = 0; i < input.Length; i++)
+        {
+            if (input[i] != null)
+            {
+                hash = hash * a + input[i].GetHashCode();
+                a = a * b;
+            }
+        }
+    }
+
+    return hash;
+}
+
+Then, simply you can use it as:
+public override int GetHashCode()
+{
+    return Hashing.RSHash(_field1, _field2, _field3);
+}
+
+I didn't assess its performance, so any feedback is welcomed.
+
+In most cases where Equals() compares multiple fields it doesn't really matter if your GetHash() hashes on one field or on many. You just have to make sure that calculating the hash is really cheap (No allocations, please) and fast (No heavy computations and certainly no database connections) and provides a good distribution.
+The heavy lifting should be part of the Equals() method; the hash should be a very cheap operation to enable calling Equals() on as few items as possible.
+And one final tip: Don't rely on GetHashCode() being stable over multiple aplication runs. Many .Net types don't guarantee their hash codes to stay the same after a restart, so you should only use the value of GetHashCode() for in memory data structures.
+
+Here is my hashcode helper.
+It's advantage is that it uses generic type arguments and therefore will not cause boxing:
+public static class HashHelper
+{
+    public static int GetHashCode<T1, T2>(T1 arg1, T2 arg2)
+    {
+         unchecked
+         {
+             return 31 * arg1.GetHashCode() + arg2.GetHashCode();
+         }
+    }
+
+    public static int GetHashCode<T1, T2, T3>(T1 arg1, T2 arg2, T3 arg3)
+    {
+        unchecked
+        {
+            int hash = arg1.GetHashCode();
+            hash = 31 * hash + arg2.GetHashCode();
+            return 31 * hash + arg3.GetHashCode();
+        }
+    }
+
+    public static int GetHashCode<T1, T2, T3, T4>(T1 arg1, T2 arg2, T3 arg3, 
+        T4 arg4)
+    {
+        unchecked
+        {
+            int hash = arg1.GetHashCode();
+            hash = 31 * hash + arg2.GetHashCode();
+            hash = 31 * hash + arg3.GetHashCode();
+            return 31 * hash + arg4.GetHashCode();
+        }
+    }
+
+    public static int GetHashCode<T>(T[] list)
+    {
+        unchecked
+        {
+            int hash = 0;
+            foreach (var item in list)
+            {
+                hash = 31 * hash + item.GetHashCode();
+            }
+            return hash;
+        }
+    }
+
+    public static int GetHashCode<T>(IEnumerable<T> list)
+    {
+        unchecked
+        {
+            int hash = 0;
+            foreach (var item in list)
+            {
+                hash = 31 * hash + item.GetHashCode();
+            }
+            return hash;
+        }
+    }
+
+    /// <summary>
+    /// Gets a hashcode for a collection for that the order of items 
+    /// does not matter.
+    /// So {1, 2, 3} and {3, 2, 1} will get same hash code.
+    /// </summary>
+    public static int GetHashCodeForOrderNoMatterCollection<T>(
+        IEnumerable<T> list)
+    {
+        unchecked
+        {
+            int hash = 0;
+            int count = 0;
+            foreach (var item in list)
+            {
+                hash += item.GetHashCode();
+                count++;
+            }
+            return 31 * hash + count.GetHashCode();
+        }
+    }
+
+    /// <summary>
+    /// Alternative way to get a hashcode is to use a fluent 
+    /// interface like this:<br />
+    /// return 0.CombineHashCode(field1).CombineHashCode(field2).
+    ///     CombineHashCode(field3);
+    /// </summary>
+    public static int CombineHashCode<T>(this int hashCode, T arg)
+    {
+        unchecked
+        {
+            return 31 * hashCode + arg.GetHashCode();   
+        }
+    }
+
+Also it has extension method to provide a fluent interface, so you can use it like this:
+public override int GetHashCode()
+{
+    return HashHelper.GetHashCode(Manufacturer, PartN, Quantity);
+}
+
+or like this:  
+public override int GetHashCode()
+{
+    return 0.CombineHashCode(Manufacturer)
+        .CombineHashCode(PartN)
+        .CombineHashCode(Quantity);
+}
+
+
+This is a good one:
+/// <summary>
+/// Helper class for generating hash codes suitable 
+/// for use in hashing algorithms and data structures like a hash table. 
+/// </summary>
+public static class HashCodeHelper
+{
+    private static int GetHashCodeInternal(int key1, int key2)
+    {
+        unchecked
+        {
+           var num = 0x7e53a269;
+           num = (-1521134295 * num) + key1;
+           num += (num << 10);
+           num ^= (num >> 6);
+
+           num = ((-1521134295 * num) + key2);
+           num += (num << 10);
+           num ^= (num >> 6);
+
+           return num;
+        }
+    }
+
+    /// <summary>
+    /// Returns a hash code for the specified objects
+    /// </summary>
+    /// <param name="arr">An array of objects used for generating the 
+    /// hash code.</param>
+    /// <returns>
+    /// A hash code, suitable for use in hashing algorithms and data 
+    /// structures like a hash table. 
+    /// </returns>
+    public static int GetHashCode(params object[] arr)
+    {
+        int hash = 0;
+        foreach (var item in arr)
+            hash = GetHashCodeInternal(hash, item.GetHashCode());
+        return hash;
+    }
+
+    /// <summary>
+    /// Returns a hash code for the specified objects
+    /// </summary>
+    /// <param name="obj1">The first object.</param>
+    /// <param name="obj2">The second object.</param>
+    /// <param name="obj3">The third object.</param>
+    /// <param name="obj4">The fourth object.</param>
+    /// <returns>
+    /// A hash code, suitable for use in hashing algorithms and
+    /// data structures like a hash table.
+    /// </returns>
+    public static int GetHashCode<T1, T2, T3, T4>(T1 obj1, T2 obj2, T3 obj3,
+        T4 obj4)
+    {
+        return GetHashCode(obj1, GetHashCode(obj2, obj3, obj4));
+    }
+
+    /// <summary>
+    /// Returns a hash code for the specified objects
+    /// </summary>
+    /// <param name="obj1">The first object.</param>
+    /// <param name="obj2">The second object.</param>
+    /// <param name="obj3">The third object.</param>
+    /// <returns>
+    /// A hash code, suitable for use in hashing algorithms and data 
+    /// structures like a hash table. 
+    /// </returns>
+    public static int GetHashCode<T1, T2, T3>(T1 obj1, T2 obj2, T3 obj3)
+    {
+        return GetHashCode(obj1, GetHashCode(obj2, obj3));
+    }
+
+    /// <summary>
+    /// Returns a hash code for the specified objects
+    /// </summary>
+    /// <param name="obj1">The first object.</param>
+    /// <param name="obj2">The second object.</param>
+    /// <returns>
+    /// A hash code, suitable for use in hashing algorithms and data 
+    /// structures like a hash table. 
+    /// </returns>
+    public static int GetHashCode<T1, T2>(T1 obj1, T2 obj2)
+    {
+        return GetHashCodeInternal(obj1.GetHashCode(), obj2.GetHashCode());
+    }
+}
+
+And here is how to use it:
+private struct Key
+{
+    private Type _type;
+    private string _field;
+
+    public Type Type { get { return _type; } }
+    public string Field { get { return _field; } }
+
+    public Key(Type type, string field)
+    {
+        _type = type;
+        _field = field;
+    }
+
+    public override int GetHashCode()
+    {
+        return HashCodeHelper.GetHashCode(_field, _type);
+    }
+
+    public override bool Equals(object obj)
+    {
+        if (!(obj is Key))
+            return false;
+        var tf = (Key)obj;
+        return tf._field.Equals(_field) && tf._type.Equals(_type);
+    }
+}
+
+
+Microsoft already provides a good generic HashCode generator: Just copy your property/field values to an anonymous type and hash it:
+new { PropA, PropB, PropC, PropD }.GetHashCode();
+
+This will work for any number of properties. It does not use boxing or extra resources. It just uses the algorithm already implemented in the framework for anonymous types.
+
+Here is my simplistic approach. I am using the classic builder pattern for this. It is typesafe (no boxing/unboxing) and also compatbile with .NET 2.0 (no extension methods etc.).
+It is used like this:
+public override int GetHashCode()
+{
+    HashBuilder b = new HashBuilder();
+    b.AddItems(this.member1, this.member2, this.member3);
+    return b.Result;
+} 
+
+And here is the acutal builder class:
+internal class HashBuilder
+{
+    private const int Prime1 = 17;
+    private const int Prime2 = 23;
+    private int result = Prime1;
+
+    public HashBuilder()
+    {
+    }
+
+    public HashBuilder(int startHash)
+    {
+        this.result = startHash;
+    }
+
+    public int Result
+    {
+        get
+        {
+            return this.result;
+        }
+    }
+
+    public void AddItem<T>(T item)
+    {
+        unchecked
+        {
+            this.result = this.result * Prime2 + item.GetHashCode();
+        }
+    }
+
+    public void AddItems<T1, T2>(T1 item1, T2 item2)
+    {
+        this.AddItem(item1);
+        this.AddItem(item2);
+    }
+
+    public void AddItems<T1, T2, T3>(T1 item1, T2 item2, T3 item3)
+    {
+        this.AddItem(item1);
+        this.AddItem(item2);
+        this.AddItem(item3);
+    }
+
+    public void AddItems<T1, T2, T3, T4>(T1 item1, T2 item2, T3 item3, 
+        T4 item4)
+    {
+        this.AddItem(item1);
+        this.AddItem(item2);
+        this.AddItem(item3);
+        this.AddItem(item4);
+    }
+
+    public void AddItems<T1, T2, T3, T4, T5>(T1 item1, T2 item2, T3 item3, 
+        T4 item4, T5 item5)
+    {
+        this.AddItem(item1);
+        this.AddItem(item2);
+        this.AddItem(item3);
+        this.AddItem(item4);
+        this.AddItem(item5);
+    }        
+
+    public void AddItems<T>(params T[] items)
+    {
+        foreach (T item in items)
+        {
+            this.AddItem(item);
+        }
+    }
+}
+
+
+Microsoft lead for several way of hashing....
+return this.value;// for classes that contain a single int value
+
+return x ^ y;//for classes that contain multiple int value
+
+return ((int)value ^ (int)(value >> 32));//Forclasses that contain single number bigger than int
+
+return obj1.GetHashCode();//for classes that contain class instance field which inherit from object
+
+return obj1.GetHashCode() ^ obj2.GetHashCode() ^ obj3.GetHashCode();//for classes that contain multiple class instance field which inherit from object
+
+i can guess that for multiple big int u can use this:
+int a=((int)value1 ^ (int)(value1 >> 32));
+int b=((int)value2 ^ (int)(value2 >> 32));
+int c=((int)value3 ^ (int)(value3 >> 32));
+return a ^ b ^ c;
+
+and same for multi-type... all converted first to int using GetHashCode()
+then the int values will be xor'ed and the result is ur hash...
+for those who use hash as ID (i mean a unique value), hash is naturally limit number of digits, i think it was 5 bytes for hashing algorithm, at last MD5...
+you may turn multiple value to a hashed value and some of them be same, so don't use it as an identifier... (maybe some day i gonna use your component)
+
+Here's my helper class that uses the implementation Jon Skeet posted.
+public static class HashCode
+{
+    public const int Start = 17;
+
+    public static int Hash<T>(this int hash, T obj)
+    {
+        var c = EqualityComparer<T>.Default;
+        var h = c.Equals(obj, default(T)) ? 0 : obj.GetHashCode();
+        return unchecked((hash * 31) + h);
+    }
+}
+
+Usage:
+public override int GetHashCode()
+{
+    return HashCode.Start
+        .Hash(field1)
+        .Hash(field2)
+        .Hash(field3);
+}
+
+Edit (April 1st 2014)
+I decided that I didn't like the idea of writing an extension method to the type Int32 so I wrote a struct to wrap the calculated hash value.
+public struct HashCode
+{
+    private readonly int hashCode;
+
+    public HashCode(int hashCode)
+    {
+        this.hashCode = hashCode;
+    }
+
+    public static HashCode Start
+    {
+        get { return new HashCode(17); }
+    }
+
+    public static implicit operator int(HashCode hashCode)
+    {
+        return hashCode.GetHashCode();
+    }
+
+    public HashCode Hash<T>(T obj)
+    {
+        var c = EqualityComparer<T>.Default;
+        var h = c.Equals(obj, default(T)) ? 0 : obj.GetHashCode();
+        unchecked { h += this.hashCode * 31; }
+        return new HashCode(h);
+    }
+
+    public override int GetHashCode()
+    {
+        return this.hashCode;
+    }
+}
+
+It's still generic, it still avoids any heap allocation and it's used exactly the same way:
+public override int GetHashCode()
+{
+    // This time `HashCode.Start` is not an `Int32`, it's a `HashCode` instance.
+    // And the result is implicitly converted to `Int32`.
+    return HashCode.Start
+        .Hash(field1)
+        .Hash(field2)     
+        .Hash(field3);
+}
+
+Updated after Martin's comment. obj != null caused boxing of obj (if it's a struct) and using obj.Equals(null) could cause NullReferenceExceptions to be thrown so I used the default comparer. For more information about the default comparer's performance, see this answer.
+
+Up until recently my answer would have been very close to Jon Skeet's here. However, I recently started a project which used power-of-two hash tables, that is hash tables where the size of the internal table is 8, 16, 32, etc. There's a good reason for favouring prime-number sizes, but there are some advantages to power-of-two sizes too.
+And it pretty much sucked. So after a bit of experimentation and research I started re-hashing my hashes with the following:
+public static int ReHash(int source)
+{
+  unchecked
+  {
+    ulong c = 0xDEADBEEFDEADBEEF + (ulong)source;
+    ulong d = 0xE2ADBEEFDEADBEEF ^ c;
+    ulong a = d += c = c << 15 | c >> -15;
+    ulong b = a += d = d << 52 | d >> -52;
+    c ^= b += a = a << 26 | a >> -26;
+    d ^= c += b = b << 51 | b >> -51;
+    a ^= d += c = c << 28 | c >> -28;
+    b ^= a += d = d << 9 | d >> -9;
+    c ^= b += a = a << 47 | a >> -47;
+    d ^= c += b << 54 | b >> -54;
+    a ^= d += c << 32 | c >> 32;
+    a += d << 25 | d >> -25;
+    return (int)(a >> 1);
+  }
+}
+
+And then my power-of-two hash table didn't suck any more.
+This disturbed me though, because the above shouldn't work. Or more precisely, it shouldn't work unless the original GetHashCode() was poor in a very particular way.
+Re-mixing a hashcode can't improve a great hashcode, because the only possible effect is that we introduce a few more collisions.
+Re-mixing a hash code can't improve a terrible hash code, because the only possible effect is we change e.g. a large number of collisions on value 53 to a large number of value 183487291.
+Re-mixing a hash code can only improve a hash code that did at least fairly well in avoiding absolute collisions throughout its range (232 possible values) but badly at avoiding collisions when modulo'd down for actual use in a hash table. While the simpler modulo of a power-of-two table made this more apparent, it was also having a negative effect with the more common prime-number tables, that just wasn't as obvious (the extra work in rehashing would outweigh the benefit, but the benefit would still be there).
+Edit: I was also using open-addressing, which would also have increased the sensitivity to collision, perhaps more so than the fact it was power-of-two.
+And well, it was disturbing how much string.GetHashCode() could be improved this way (on the order of tests running about 20-30times faster due to fewer collisions) and more disturbing how much my own hash codes could be improved (much more than that).
+All the GetHashCode() implementations I'd coded in the past, and indeed used as the basis of answers on this site, were much worse than I'd throught. Much of the time it was "good enough" for much of the uses, but I wanted something better.
+So I put that project to one side (it was a pet project anyway) and started looking at how to produce a good, well-distributed hash code in .NET quickly.
+In the end I settled on porting SpookyHash to .NET. Indeed the code above is a fast-path version of using SpookyHash to produce a 32-bit output from a 32-bit input.
+Now, SpookyHash is not a nice quick to remember piece of code. My port of it is even less so because I hand-inlined a lot of it for better speed*. But that's what code reuse is for.
+Then I put that project to one side, because just as the original project had produced the question of how to produce a better hash code, so that project produced the question of how to produce a better .NET memcpy.
+Then I came back, and produced a lot of overloads to easily feed just about all of the native types (except decimalâ ) into a hash code.
+It's fast, for which Bob Jenkins deserves most of the credit because his original code I ported from is faster still, especially on 64-bit machines which the algorithm is optimised forâ¡.
+The full code can be seen at https://bitbucket.org/JonHanna/spookilysharp/src but consider that the code above is a simplified version of it.
+However, since it's now already written, one can make use of it more easily:
+public override int GetHashCode()
+{
+  var hash = new SpookyHash();
+  hash.Update(field1);
+  hash.Update(field2);
+  hash.Update(field3);
+  return hash.Final().GetHashCode();
+}
+
+It also takes seed values, so if you need to deal with untrusted input and want to protect against Hash DoS attacks you can set a seed based on uptime or similar, and make the results unpredictable by attackers:
+private static long hashSeed0 = Environment.TickCount;
+private static long hashSeed1 = DateTime.Now.Ticks;
+public override int GetHashCode()
+{
+  //produce different hashes ever time this application is restarted
+  //but remain consistent in each run, so attackers have a harder time
+  //DoSing the hash tables.
+  var hash = new SpookyHash(hashSeed0, hashSeed1);
+  hash.Update(field1);
+  hash.Update(field2);
+  hash.Update(field3);
+  return hash.Final().GetHashCode();
+}
+
+*A big surprise in this is that hand-inlining a rotation method that returned (x << n) | (x >> -n) improved things. I would have been sure that the jitter would have inlined that for me, but profiling showed otherwise.
+â decimal isn't native from the .NET perspective though it is from the C#. The problem with it is that its own GetHashCode() treats precision as significant while its own Equals() does not. Both are valid choices, but not mixed like that. In implementing your own version, you need to choose to do one, or the other, but I can't know which you'd want.
+â¡By way of comparison. If used on a string, the SpookyHash on 64 bits is considerably faster than string.GetHashCode() on 32 bits which is slightly faster than string.GetHashCode() on 64 bits, which is considerably faster than SpookyHash on 32 bits, though still fast enough to be a reasonable choice.
+
+Here is another fluent implementation of the algorithm posted above by Jon Skeet, but which includes no allocations or boxing operations:
+public static class Hash
+{
+    public const int Base = 17;
+
+    public static int HashObject(this int hash, object obj)
+    {
+        unchecked { return hash * 23 + (obj == null ? 0 : obj.GetHashCode()); }
+    }
+
+    public static int HashValue<T>(this int hash, T value)
+        where T : struct
+    {
+        unchecked { return hash * 23 + value.GetHashCode(); }
+    }
+}
+
+Usage:
+public class MyType<T>
+{
+    public string Name { get; set; }
+
+    public string Description { get; set; }
+
+    public int Value { get; set; }
+
+    public IEnumerable<T> Children { get; set; }
+
+    public override int GetHashCode()
+    {
+        return Hash.Base
+            .HashObject(this.Name)
+            .HashObject(this.Description)
+            .HashValue(this.Value)
+            .HashObject(this.Children);
+    }
+}
+
+The compiler will ensure HashValue is not called with a class due to the generic type constraint. But there is no compiler support for HashObject since adding a generic argument also adds a boxing operation.
+
+I ran into an issue with floats and decimals using the implementation selected as the answer above.  
+This test fails (floats; hash is the same even though I switched 2 values to be negative):
+        var obj1 = new { A = 100m, B = 100m, C = 100m, D = 100m};
+        var obj2 = new { A = 100m, B = 100m, C = -100m, D = -100m};
+        var hash1 = ComputeHash(obj1.A, obj1.B, obj1.C, obj1.D);
+        var hash2 = ComputeHash(obj2.A, obj2.B, obj2.C, obj2.D);
+        Assert.IsFalse(hash1 == hash2, string.Format("Hashcode values should be different   hash1:{0}  hash2:{1}",hash1,hash2));
+
+But this test passes (with ints):
+        var obj1 = new { A = 100m, B = 100m, C = 100, D = 100};
+        var obj2 = new { A = 100m, B = 100m, C = -100, D = -100};
+        var hash1 = ComputeHash(obj1.A, obj1.B, obj1.C, obj1.D);
+        var hash2 = ComputeHash(obj2.A, obj2.B, obj2.C, obj2.D);
+        Assert.IsFalse(hash1 == hash2, string.Format("Hashcode values should be different   hash1:{0}  hash2:{1}",hash1,hash2));
+
+I changed my implementation to not use GetHashCode for the primitive types and it seems to work better
+    private static int InternalComputeHash(params object[] obj)
+    {
+        unchecked
+        {
+            var result = (int)SEED_VALUE_PRIME;
+            for (uint i = 0; i < obj.Length; i++)
+            {
+                var currval = result;
+                var nextval = DetermineNextValue(obj[i]);
+                result = (result * MULTIPLIER_VALUE_PRIME) + nextval;
+
+            }
+            return result;
+        }
+    }
+
+
+
+    private static int DetermineNextValue(object value)
+    {
+        unchecked
+        {
+
+                int hashCode;
+                if (value is short
+                    || value is int
+                    || value is byte
+                    || value is sbyte
+                    || value is uint
+                    || value is ushort
+                    || value is ulong
+                    || value is long
+                    || value is float
+                    || value is double
+                    || value is decimal)
+                {
+                    return Convert.ToInt32(value);
+                }
+                else
+                {
+                    return value != null ? value.GetHashCode() : 0;
+                }
+        }
+    }
+
+
+Pretty much similar to nightcoder's solution except it's easier to raise primes if you want to. 
+PS: This is one of those times where you puke a little in your mouth, knowing that this could be refactored into one method with 9 default's but it would be slower, so you just close your eyes and try to forget about it.
+/// <summary>
+/// Try not to look at the source code. It works. Just rely on it.
+/// </summary>
+public static class HashHelper
+{
+    private const int PrimeOne = 17;
+    private const int PrimeTwo = 23;
+
+    public static int GetHashCode<T1, T2, T3, T4, T5, T6, T7, T8, T9, T10>(T1 arg1, T2 arg2, T3 arg3, T4 arg4, T5 arg5, T6 arg6, T7 arg7, T8 arg8, T9 arg9, T10 arg10)
+    {
+        unchecked
+        {
+            int hash = PrimeOne;
+            hash = hash * PrimeTwo + arg1.GetHashCode();
+            hash = hash * PrimeTwo + arg2.GetHashCode();
+            hash = hash * PrimeTwo + arg3.GetHashCode();
+            hash = hash * PrimeTwo + arg4.GetHashCode();
+            hash = hash * PrimeTwo + arg5.GetHashCode();
+            hash = hash * PrimeTwo + arg6.GetHashCode();
+            hash = hash * PrimeTwo + arg7.GetHashCode();
+            hash = hash * PrimeTwo + arg8.GetHashCode();
+            hash = hash * PrimeTwo + arg9.GetHashCode();
+            hash = hash * PrimeTwo + arg10.GetHashCode();
+
+            return hash;
+        }
+    }
+
+    public static int GetHashCode<T1, T2, T3, T4, T5, T6, T7, T8, T9>(T1 arg1, T2 arg2, T3 arg3, T4 arg4, T5 arg5, T6 arg6, T7 arg7, T8 arg8, T9 arg9)
+    {
+        unchecked
+        {
+            int hash = PrimeOne;
+            hash = hash * PrimeTwo + arg1.GetHashCode();
+            hash = hash * PrimeTwo + arg2.GetHashCode();
+            hash = hash * PrimeTwo + arg3.GetHashCode();
+            hash = hash * PrimeTwo + arg4.GetHashCode();
+            hash = hash * PrimeTwo + arg5.GetHashCode();
+            hash = hash * PrimeTwo + arg6.GetHashCode();
+            hash = hash * PrimeTwo + arg7.GetHashCode();
+            hash = hash * PrimeTwo + arg8.GetHashCode();
+            hash = hash * PrimeTwo + arg9.GetHashCode();
+
+            return hash;
+        }
+    }
+
+    public static int GetHashCode<T1, T2, T3, T4, T5, T6, T7, T8>(T1 arg1, T2 arg2, T3 arg3, T4 arg4, T5 arg5, T6 arg6, T7 arg7, T8 arg8)
+    {
+        unchecked
+        {
+            int hash = PrimeOne;
+            hash = hash * PrimeTwo + arg1.GetHashCode();
+            hash = hash * PrimeTwo + arg2.GetHashCode();
+            hash = hash * PrimeTwo + arg3.GetHashCode();
+            hash = hash * PrimeTwo + arg4.GetHashCode();
+            hash = hash * PrimeTwo + arg5.GetHashCode();
+            hash = hash * PrimeTwo + arg6.GetHashCode();
+            hash = hash * PrimeTwo + arg7.GetHashCode();
+            hash = hash * PrimeTwo + arg8.GetHashCode();
+
+            return hash;
+        }
+    }
+
+    public static int GetHashCode<T1, T2, T3, T4, T5, T6, T7>(T1 arg1, T2 arg2, T3 arg3, T4 arg4, T5 arg5, T6 arg6, T7 arg7)
+    {
+        unchecked
+        {
+            int hash = PrimeOne;
+            hash = hash * PrimeTwo + arg1.GetHashCode();
+            hash = hash * PrimeTwo + arg2.GetHashCode();
+            hash = hash * PrimeTwo + arg3.GetHashCode();
+            hash = hash * PrimeTwo + arg4.GetHashCode();
+            hash = hash * PrimeTwo + arg5.GetHashCode();
+            hash = hash * PrimeTwo + arg6.GetHashCode();
+            hash = hash * PrimeTwo + arg7.GetHashCode();
+
+            return hash;
+        }
+    }
+
+    public static int GetHashCode<T1, T2, T3, T4, T5, T6>(T1 arg1, T2 arg2, T3 arg3, T4 arg4, T5 arg5, T6 arg6)
+    {
+        unchecked
+        {
+            int hash = PrimeOne;
+            hash = hash * PrimeTwo + arg1.GetHashCode();
+            hash = hash * PrimeTwo + arg2.GetHashCode();
+            hash = hash * PrimeTwo + arg3.GetHashCode();
+            hash = hash * PrimeTwo + arg4.GetHashCode();
+            hash = hash * PrimeTwo + arg5.GetHashCode();
+            hash = hash * PrimeTwo + arg6.GetHashCode();
+
+            return hash;
+        }
+    }
+
+    public static int GetHashCode<T1, T2, T3, T4, T5>(T1 arg1, T2 arg2, T3 arg3, T4 arg4, T5 arg5)
+    {
+        unchecked
+        {
+            int hash = PrimeOne;
+            hash = hash * PrimeTwo + arg1.GetHashCode();
+            hash = hash * PrimeTwo + arg2.GetHashCode();
+            hash = hash * PrimeTwo + arg3.GetHashCode();
+            hash = hash * PrimeTwo + arg4.GetHashCode();
+            hash = hash * PrimeTwo + arg5.GetHashCode();
+
+            return hash;
+        }
+    }
+
+    public static int GetHashCode<T1, T2, T3, T4>(T1 arg1, T2 arg2, T3 arg3, T4 arg4)
+    {
+        unchecked
+        {
+            int hash = PrimeOne;
+            hash = hash * PrimeTwo + arg1.GetHashCode();
+            hash = hash * PrimeTwo + arg2.GetHashCode();
+            hash = hash * PrimeTwo + arg3.GetHashCode();
+            hash = hash * PrimeTwo + arg4.GetHashCode();
+
+            return hash;
+        }
+    }
+
+    public static int GetHashCode<T1, T2, T3>(T1 arg1, T2 arg2, T3 arg3)
+    {
+        unchecked
+        {
+            int hash = PrimeOne;
+            hash = hash * PrimeTwo + arg1.GetHashCode();
+            hash = hash * PrimeTwo + arg2.GetHashCode();
+            hash = hash * PrimeTwo + arg3.GetHashCode();
+
+            return hash;
+        }
+    }
+
+    public static int GetHashCode<T1, T2>(T1 arg1, T2 arg2)
+    {
+        unchecked
+        {
+            int hash = PrimeOne;
+            hash = hash * PrimeTwo + arg1.GetHashCode();
+            hash = hash * PrimeTwo + arg2.GetHashCode();
+
+            return hash;
+        }
+    }
+}
+
+
+ReSharper users can generate GetHashCode, Equals, and others with ReSharper -> Edit -> Generate Code -> Equality Members.
+// ReSharper's GetHashCode looks like this
+public override int GetHashCode() {
+    unchecked {
+        int hashCode = Id;
+        hashCode = (hashCode * 397) ^ IntMember;
+        hashCode = (hashCode * 397) ^ OtherIntMember;
+        hashCode = (hashCode * 397) ^ (RefMember != null ? RefMember.GetHashCode() : 0);
+        // ...
+        return hashCode;
+    }
+}
+
+397 seems to be an ersatz ReSharper "signature", as all methods as of version 2016.2 use it.

@@ -1,0 +1,225 @@
+How to use Castle Windsor with ASP.Net web forms?
+asp.net inversion-of-control castle-windsor
+I am trying to wire up dependency injection with Windsor to standard asp.net web forms. I think I have achieved this using a HttpModule and a CustomAttribute (code shown below), although the solution seems a little clunky and was wondering if there is a better supported solution out of the box with Windsor?
+There are several files all shown together here
+    // index.aspx.cs
+    public partial class IndexPage : System.Web.UI.Page
+    {
+        protected void Page_Load(object sender, EventArgs e)
+        {
+            Logger.Write("page loading");
+        }
+
+        [Inject]
+        public ILogger Logger { get; set; }
+    }
+
+    // WindsorHttpModule.cs
+    public class WindsorHttpModule : IHttpModule
+    {
+        private HttpApplication _application;
+        private IoCProvider _iocProvider;
+
+        public void Init(HttpApplication context)
+        {
+            _application = context;
+            _iocProvider = context as IoCProvider;
+
+            if(_iocProvider == null)
+            {
+                throw new InvalidOperationException("Application must implement IoCProvider");
+            }
+
+            _application.PreRequestHandlerExecute += InitiateWindsor;
+        }
+
+        private void InitiateWindsor(object sender, System.EventArgs e)
+        {
+            Page currentPage = _application.Context.CurrentHandler as Page;
+            if(currentPage != null)
+            {
+                InjectPropertiesOn(currentPage);
+                currentPage.InitComplete += delegate { InjectUserControls(currentPage); };
+            }
+        }
+
+        private void InjectUserControls(Control parent)
+        {
+            if(parent.Controls != null)
+            {
+                foreach (Control control in parent.Controls)
+                {
+                    if(control is UserControl)
+                    {
+                        InjectPropertiesOn(control);
+                    }
+                    InjectUserControls(control);
+                }
+            }
+        }
+
+        private void InjectPropertiesOn(object currentPage)
+        {
+            PropertyInfo[] properties = currentPage.GetType().GetProperties();
+            foreach(PropertyInfo property in properties)
+            {
+                object[] attributes = property.GetCustomAttributes(typeof (InjectAttribute), false);
+                if(attributes != null && attributes.Length > 0)
+                {
+                    object valueToInject = _iocProvider.Container.Resolve(property.PropertyType);
+                    property.SetValue(currentPage, valueToInject, null);
+                }
+            }
+        }
+    }
+
+    // Global.asax.cs
+    public class Global : System.Web.HttpApplication, IoCProvider
+    {
+        private IWindsorContainer _container;
+
+        public override void Init()
+        {
+            base.Init();
+
+            InitializeIoC();
+        }
+
+        private void InitializeIoC()
+        {
+            _container = new WindsorContainer();
+            _container.AddComponent<ILogger, Logger>();
+        }
+
+        public IWindsorContainer Container
+        {
+            get { return _container; }
+        }
+    }
+
+    public interface IoCProvider
+    {
+        IWindsorContainer Container { get; }
+    }
+
+
+
+I think you're basically on the right track - If you have not already I would suggest taking a look at Rhino Igloo, an WebForms MVC framework, Here's a good blog post on this and the source is here - Ayende (the Author of Rhino Igloo) tackles the issue of using Windsor with webforms quite well in this project/library.
+I would cache the reflection info if you're going to inject the entire nested set of controls, that could end up being a bit of a performance hog I suspect.
+Last of all spring.net approaches this in a more configuration-oriented way, but it might be worth taking a look at their implementation - here's a good reference blog post on this.
+
+Rather than doing it like this, you could also use a type resolver directly with something like:
+ILogger Logger = ResolveType.Of<ILogger>();
+
+
+I've recently started at a company where there are a lot of legacy webform apps, so this looks to be a real interesting approach, and could offer a way forward if we wanted to add DI to existing web pages, thanks.
+One point I noticed is that the Injection method uses the container.Resolve to explicitly resolve components, therefore I think we may need to do a container.Release on the components when the Page Unloads.
+If we have transient components and don't do this then we may face memory leakages. Not sure how components with Per Web Request lifestyles would behave (i.e. would Windsor pick them up at the end of the web request, even though we explicitly resolved them) but here too may want to play safe.
+Therefore the module may need to be extended to keep track of the components that it resolves and release them so that Windsor knows when to clean up.
+
+Here's a modified version of the OP's code that (i) caches injected properties to avoid repeated reflection calls, (ii) releases all resolved components, (iii) encapsulates container access so as not to expose implementation.  
+// global.asax.cs
+public class Global : HttpApplication
+{
+    private static IWindsorContainer _container;
+
+    protected void Application_Start(object sender, EventArgs e)
+    {
+        _container = new WindsorContainer();
+        _container.Install(FromAssembly.This());
+    }
+
+    internal static object Resolve(Type type)
+    {
+        return _container.Resolve(type);
+    }
+
+    internal static void Release(object component)
+    {
+        _container.Release(component);
+    }
+
+    //...
+}
+
+// WindsorHttpModule.cs
+public class WindsorHttpModule : IHttpModule
+{
+    // cache the properties to inject for each page
+    private static readonly ConcurrentDictionary<Type, PropertyInfo[]> InjectedProperties = new ConcurrentDictionary<Type, PropertyInfo[]>();
+    private HttpApplication _context;
+
+    public void Init(HttpApplication context)
+    {
+        _context = context;
+        _context.PreRequestHandlerExecute += InjectProperties;
+        _context.EndRequest += ReleaseComponents;
+    }
+
+    private void InjectProperties(object sender, EventArgs e)
+    {
+        var currentPage = _context.Context.CurrentHandler as Page;
+        if (currentPage != null)
+        {
+            InjectProperties(currentPage);
+            currentPage.InitComplete += delegate { InjectUserControls(currentPage); };
+        }
+    }
+
+    private void InjectUserControls(Control parent)
+    {
+        foreach (Control control in parent.Controls)
+        {
+            if (control is UserControl)
+            {
+                InjectProperties(control);
+            }
+            InjectUserControls(control);
+        }
+    }
+
+    private void InjectProperties(Control control)
+    {
+        ResolvedComponents = new List<object>();
+        var pageType = control.GetType();
+
+        PropertyInfo[] properties;
+        if (!InjectedProperties.TryGetValue(pageType, out properties))
+        {
+            properties = control.GetType().GetProperties()
+                .Where(p => p.GetCustomAttributes(typeof(InjectAttribute), false).Length > 0)
+                .ToArray();
+            InjectedProperties.TryAdd(pageType, properties);
+        }
+
+        foreach (var property in properties)
+        {
+            var component = Global.Resolve(property.PropertyType);
+            property.SetValue(control, component, null);
+            ResolvedComponents.Add(component);
+        }
+    }
+
+    private void ReleaseComponents(object sender, EventArgs e)
+    {
+        var resolvedComponents = ResolvedComponents;
+        if (resolvedComponents != null)
+        {
+            foreach (var component in ResolvedComponents)
+            {
+                Global.Release(component);
+            }
+        }
+    }
+
+    private List<object> ResolvedComponents
+    {
+        get { return (List<object>)HttpContext.Current.Items["ResolvedComponents"]; }
+        set { HttpContext.Current.Items["ResolvedComponents"] = value; }
+    }
+
+    public void Dispose()
+    { }
+
+}
+

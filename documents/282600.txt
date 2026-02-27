@@ -1,0 +1,120 @@
+Computing a mean confidence interval without storing all the data points
+math language-agnostic statistics montecarlo
+For large n (see below for how to determine what's large enough), it's safe to treat, by the central limit theorem, the distribution of the sample mean as normal (gaussian) but I'd like a procedure that gives a confidence interval for any n.  The way to do that is to use a Student T distribution with n-1 degrees of freedom.
+So the question is, given a stream of data points that you collect or encounter one at a time, how do you compute a c (eg, c=.95) confidence interval on the mean of the data points (without storing all of the previously encountered data)?
+Another way to ask this is: How do you keep track of the first and second moments for a stream of data without storing the whole stream?
+BONUS QUESTION:  Can you keep track of higher moments without storing the whole stream?
+
+
+I think you can. I'd have to Google/Wikipidia for it so I'll leave that as an exercise for the reader.
+
+Here's an article on how to compute the mean and standard deviation in a single pass, not storing any data. Once you have the these two statistics, you can estimate a confidence interval.  A 95% confidence interval would be [mean - 1.96*stdev, mean + 1.96*stdev], assuming a normal distribution for your data and a large number of data points.
+For a smaller number of data points, your confidence interval would be [mean - c(n)stdev, mean + c(n)stdev] where c(n) depends on your sample size and your confidence level.  For a 95% confidence level, here are your values of c(n) for n = 2, 3, 4, ..., 30
+12.70620, 4.302653, 3.182446, 2.776445, 2.570582, 2.446912, 2.364624, 2.306004, 2.262157, 2.228139, 2.200985, 2.178813, 2.160369, 2.144787, 2.131450, 2.119905, 2.109816, 2.100922, 2.093024, 2.085963, 2.079614, 2.073873, 2.068658, 2.063899, 2.059539, 2.055529, 2.051831, 2.048407, 2.045230
+These numbers are g(0.025, n-1) where g is the inverse CDF of the t distribution with n degrees of freedom.  If you wanted a 99% confidence interval, replace 0.025 with 0.005.  In general, for a confidence level of 1-alpha, use alpha/2.
+Here's the R command that generated the constants above.
+n = seq(2, 30); qt(0.025, n-1)
+
+Here's a blog post explaining why the numbers above are not as close to 1.96 as you might expect.
+
+   sigma = sqrt( (q - (s*s/n)) / (n-1) )
+   delta = t(1-c/2,n-1) * sigma / sqrt(n)
+
+Where t(x, n-1) is the t- distribution with n-1 degrees of freedom.
+if you are using gsl
+t = gsl_cdf_tdist_Qinv (c/2.0, n-1)
+
+There's no need to store any data beyond the sum of squares.  Now, you might have a numerical issue because the sum-of-squares can be quite large.  You could use the alternate definition of s
+sigma = sqrt(sum(( x_i - s/n )^2 / (n-1)))
+
+and make two passes.  I would encourage you to consider using gnu scientific library or a package like R to help you avoid numerical issues.  Also, be careful about your use of the central limit theorem.  Abuse of it is partially to blame for the whole financial crisis going on right now.
+
+You don't want to accumulate the sum-of-squares.  The resulting statistics are numerically inaccurate -- you'll end up subtracting two large, similar numbers.  You want to maintain the variance, or (n-1)*variance, or something like that.
+The straightforward way is to accumulate the datapoints incrementally.  The formula is not complicated or hard to derive (see John D. Cook's link).
+An even more accurate way to do it is to combine the datapoints pairwise-recursively.  You can do this with memory logarithmic in n:  register k holds statistics for 2^k older datapoints, which are combined with statistics for 2^k newer points to get statistics for 2^(k+1) points...
+
+[Huge thanks to John D Cook for much of what I learned in putting together this answer!]
+First, here's the reason not to use sum-of-squares:  http://www.johndcook.com/blog/2008/09/26/
+What you should do instead:
+Keep track of the count (n), the mean (u), and a quantity (s) from which sample variance and standard error can be determined.  (Adapted from http://www.johndcook.com/standard_deviation.html.)
+Initialize n = u = s = 0. 
+For each new datapoint, x:
+u0 = u;
+n ++;
+u += (x - u) / n;
+s += (x - u0) * (x - u);
+
+The sample variance is then s/(n-1), the variance of the sample mean is s/(n-1)/n, and the standard error of the sample mean is SE = sqrt(s/(n-1)/n).
+It remains to compute the Student-t c-confidence interval (c in (0,1)):
+u [plus or minus] SE*g((1-c)/2, n-1)
+
+where g is the inverse cdf (aka quantile) of the Student-t distribution with mean 0 and variance 1, taking a probability and the degrees of freedom (one less than the number of data points):
+g(p,df) = sign(2*p-1)*sqrt(df)*sqrt(1/irib(1, -abs(2*p-1), df/2, 1/2) - 1)
+
+where irib is the inverse regularized incomplete beta function:
+irib(s0,s1,a,b) = z such that rib(s0,z,a,b) = s1
+
+where rib is the regularized incomplete beta function:
+rib(x0,x1,a,b) = B(x0,x1,a,b) / B(a,b)
+
+where B(a,b) is the Euler beta function and B(x0,x1,a,b) is the incomplete beta function:
+B(a,b) = Gamma(a)*Gamma(b)/Gamma(a+b) = integral_0^1 t^(a-1)*(1-t)^(b-1) dt
+B(x0,x1,a,b) = integral_x0^x1 t^(a-1)*(1-t)^(b-1) dt
+
+Typical numerical/statistics libraries will have implementations of the beta function (or the inverse cdf of the Student-t distribution directly).  For C, the de facto standard is the Gnu Scientific Library (GSL).  Often a 3-argument version of the beta function is given; the generalization to 4 arguments is as follows:
+B(x0,x1,a,b) = B(x1,a,b) - B(x0,a,b)
+rib(x0,x1,a,b) = rib(x1,a,b) - rib(x0,a,b)
+
+Finally, here is an implementation in Mathematica:
+(* Take current {n,u,s} and new data point; return new {n,u,s}. *)
+update[{n_,u_,s_}, x_] := {n+1, u+(x-u)/(n+1), s+(x-u)(x-(u+(x-u)/(n+1)))}
+
+Needs["HypothesisTesting`"];
+g[p_, df_] := InverseCDF[StudentTDistribution[df], p]
+
+(* Mean CI given n,u,s and confidence level c. *)
+mci[n_,u_,s_, c_:.95] := With[{d = Sqrt[s/(n-1)/n]*g[(1-c)/2, n-1]}, 
+  {u+d, u-d}]
+
+Compare to
+StudentTCI[u, SE, n-1, ConfidenceLevel->c]
+
+or, when the entire list of data points is available,
+MeanCI[list, ConfidenceLevel->c]
+
+Finally, if you don't want to load math libraries for things like the beta function, you can hardcode a lookup table for -g((1-c)/2, n-1).  Here it is for c=.95 and n=2..100:
+12.706204736174698, 4.302652729749464, 3.182446305283708, 2.7764451051977934, 
+2.570581835636314, 2.4469118511449666, 2.3646242515927853, 2.306004135204168,
+2.262157162798205, 2.2281388519862735, 2.2009851600916384, 2.178812829667226,
+2.1603686564627917, 2.1447866879178012, 2.131449545559774, 2.1199052992212533,
+2.1098155778333156, 2.100922040241039, 2.093024054408307, 2.0859634472658626,
+2.0796138447276835, 2.073873067904019, 2.0686576104190477, 2.0638985616280254,
+2.0595385527532963, 2.05552943864287, 2.051830516480281, 2.048407141795243,
+2.0452296421327034, 2.042272456301236, 2.039513446396408, 2.0369333434600976,
+2.0345152974493392, 2.032244509317719, 2.030107928250338, 2.0280940009804462,
+2.0261924630291066, 2.024394163911966, 2.022690920036762, 2.0210753903062715,
+2.0195409704413745, 2.018081702818439, 2.016692199227822, 2.0153675744437627,
+2.0141033888808457, 2.0128955989194246, 2.011740513729764, 2.0106347576242314,
+2.0095752371292335, 2.0085591121007527, 2.007583770315835, 2.0066468050616857,
+2.005745995317864, 2.0048792881880577, 2.004044783289136, 2.0032407188478696,
+2.002465459291016, 2.001717484145232, 2.000995378088259, 2.0002978220142578,
+1.9996235849949402, 1.998971517033376, 1.9983405425207483, 1.997729654317692,
+1.9971379083920013, 1.9965644189523084, 1.996008354025304, 1.9954689314298386,
+1.994945415107228, 1.9944371117711894, 1.9939433678456229, 1.993463566661884,
+1.9929971258898527, 1.9925434951809258, 1.992102154002232, 1.9916726096446793,
+1.9912543953883763, 1.9908470688116922, 1.9904502102301198, 1.990063421254452,
+1.989686323456895,  1.9893185571365664, 1.9889597801751728, 1.9886096669757192,
+1.9882679074772156, 1.9879342062390228, 1.9876082815890748, 1.9872898648311672,
+1.9869786995062702, 1.986674540703777, 1.986377154418625, 1.9860863169510985,
+1.9858018143458114, 1.9855234418666061, 1.9852510035054973, 1.9849843115224508,
+1.9847231860139618, 1.98446745450849, 1.9842169515863888
+which is asymptotically approaching the inverse CDF of a normal(0,1) distribution for c=.95, which is:
+-sqrt(2)*InverseErf(-c) = 1.959963984540054235524594430520551527955550...
+
+See http://mathworld.wolfram.com/InverseErf.html for the inverse erf() function.
+Notice that g((1-.95)/2,n-1) doesn't round to 1.96 until there are at least 474 data points.  It rounds to 2.0 when there are 29 data points.
+As a rule of thumb, you should use Student-t instead of the normal approximation for n up to at least 300, not 30 per conventional wisdom. Cf. http://www.johndcook.com/blog/2008/11/12/.
+See also "Improving Compressed Counting" by Ping Li of Cornell.
+
+I think that you don't have to worry so much about the size of n because it will soon exceed the number of 30, where the distribution can be considered as normal. Using Bayesian recursion to make posterior inference on the population mean and variance parameters, assuming a normal model, is I think the best way, if you don't want to store any data points from previous samples. 
+You can take a look at this document for joint inference for the mean and variance, and specifically equations 38a, 38b and 38c. 

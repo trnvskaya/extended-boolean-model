@@ -1,0 +1,154 @@
+How do I improve performance of DataSet.ReadXml if I'm using a schema?
+c# performance ado.net dataset readxml
+I'm have a ADO DataSet that I'm loading from its XML file via ReadXml.  The data and the schema are in separate files.
+Right now, it takes close to 13 seconds to load this DataSet.  I can cut this to 700 milliseconds if I don't read the DataSet's schema and just let ReadXml infer the schema, but then the resulting DataSet doesn't contain any constraints.
+I've tried doing this:
+Console.WriteLine("Reading dataset with external schema.");
+ds.ReadXmlSchema(xsdPath);
+Console.WriteLine("Reading the schema took {0} milliseconds.", sw.ElapsedMilliseconds);
+foreach (DataTable dt in ds.Tables)
+{
+   dt.BeginLoadData();
+}
+ds.ReadXml(xmlPath);
+Console.WriteLine("ReadXml completed after {0} milliseconds.", sw.ElapsedMilliseconds);
+foreach (DataTable dt in ds.Tables)
+{
+   dt.EndLoadData();
+}
+Console.WriteLine("Process complete at {0} milliseconds.", sw.ElapsedMilliseconds);
+
+When I do this, reading the schema takes 27ms, and reading the DataSet takes 12000+ milliseconds.  And that's the time reported before I call EndLoadData on all the DataTables.
+This is not an enormous amount of data - it's about 1.5mb, there are no nested relations, and all of the tables contain two or three columns of 6-30 characters.  The only thing I can figure that's different if I read the schema up front is that the schema includes all of the unique constraints.  But BeginLoadData is supposed to turn constraints off (as well as change notification, etc.).  So that shouldn't apply here.  (And yes, I've tried just setting EnforceConstraints to false.)
+I've read many reports of people improving the load time of DataSets by reading the schema first instead of having the object infer the schema.  In my case, inferring the schema makes for a process that's about 20 times faster than having the schema provided explicitly.
+This is making me a little crazy.  This DataSet's schema is generated off of metainformation, and I'm tempted to write a method that creates it programatically and just deseralizes it with an XmlReader.  But I'd much prefer not to.
+What am I missing?  What else can I do to improve the speed here?
+
+
+It's not an answer, exactly (though it's better than nothing, which is what I've gotten so far), but after a long time struggling with this problem I discovered that it's completely absent when my program's not running inside Visual Studio.  
+Something I didn't mention before, which makes this even more mystifying, is that when I loaded a different (but comparably large) XML document into the DataSet, the program performed just fine.  I'm now wondering if one of my DataSets has some kind of metainformation attached to it that Visual Studio is checking at runtime while the other one doesn't.  I dunno.
+
+Another dimesion to try is to read the dataset without the schema and then Merge it into a typed dataset that has the constraints enabled.  That way it has all of the data on hand as it builds the indexes used to enforce constraints -- maybe it would be more efficient?
+From MSDN:
+
+The Merge method is typically called
+  at the end of a series of procedures
+  that involve validating changes,
+  reconciling errors, updating the data
+  source with the changes, and finally
+  refreshing the existing DataSet
+
+. 
+
+I will try to give you a performance comparison between storing data in text plain files and xml files.
+The first function creates two files: one file with 1000000 records in plain text and one file with 1000000 (same data) records in xml. First you have to notice the difference in file size: ~64MB(plain text) vs ~102MB (xml file).
+void create_files()
+    {
+        //create text file with data
+        StreamWriter sr = new StreamWriter("plain_text.txt");
+
+        for(int i=0;i<1000000;i++)
+        {
+            sr.WriteLine(i.ToString() + "<SEP>" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbb" + i.ToString());
+        }
+
+        sr.Flush();
+        sr.Close();
+
+        //create xml file with data
+        DataSet ds = new DataSet("DS1");
+
+        DataTable dt = new DataTable("T1");
+
+        DataColumn c1 = new DataColumn("c1", typeof(int));
+        DataColumn c2 = new DataColumn("c2", typeof(string));
+
+        dt.Columns.Add(c1);
+        dt.Columns.Add(c2);
+
+        ds.Tables.Add(dt);
+
+        DataRow dr;
+
+        for(int j=0; j< 1000000; j++)
+        {
+            dr = dt.NewRow();
+            dr[0]=j;
+            dr[1] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbb" + j.ToString();
+            dt.Rows.Add(dr);
+        }
+
+        ds.WriteXml("xml_text.xml");
+
+    }
+
+The second function reads these two files: first it reads the plain text into a dictionary (just to simulate the real world of using it) and after that it reads the XML file. Both steps are measured in milliseconds (and results are written to console):
+Start read Text file into memory
+Text file loaded into memory in 7628 milliseconds
+Start read XML file into memory
+XML file loaded into memory in 21018 milliseconds
+void read_files()
+    {
+
+        //timers
+        Stopwatch stw = new Stopwatch();
+        long milliseconds;
+
+        //read text file in a dictionary
+
+        Debug.WriteLine("Start read Text file into memory");
+
+        stw.Start();
+        milliseconds = 0;
+
+        StreamReader sr = new StreamReader("plain_text.txt");
+        Dictionary<int, string> dict = new Dictionary<int, string>(1000000);
+        string line;
+        string[] sep = new string[]{"<SEP>"};
+        string [] arValues;
+        while (sr.EndOfStream!=true) 
+        {
+            line = sr.ReadLine();
+            arValues = line.Split(sep,StringSplitOptions.None);
+            dict.Add(Convert.ToInt32(arValues[0]),arValues[1]);
+        }
+
+        stw.Stop();
+        milliseconds = stw.ElapsedMilliseconds;
+
+        Debug.WriteLine("Text file loaded into memory in " + milliseconds.ToString() + " milliseconds" );
+
+
+
+        //create xml structure
+        DataSet ds = new DataSet("DS1");
+
+        DataTable dt = new DataTable("T1");
+
+        DataColumn c1 = new DataColumn("c1", typeof(int));
+        DataColumn c2 = new DataColumn("c2", typeof(string));
+
+        dt.Columns.Add(c1);
+        dt.Columns.Add(c2);
+
+        ds.Tables.Add(dt);
+
+        //read xml file
+
+        Debug.WriteLine("Start read XML file into memory");
+
+        stw.Restart();
+        milliseconds = 0;
+
+        ds.ReadXml("xml_text.xml");
+
+        stw.Stop();
+        milliseconds = stw.ElapsedMilliseconds;
+
+        Debug.WriteLine("XML file loaded into memory in " + milliseconds.ToString() + " milliseconds");
+
+    }
+
+Conclusion: the XML file size is almost double than the text file size and is loaded three times slower than the text file.
+XML handling is more convenient (because of the abstraction level) than plain text but it is more CPU/disk consuming.
+So, if you have small files and is acceptable from the performance point of view, XML data Sets are more than ok. But, if you need performance, I don't know if XML Data set ( with any kind of method available) is faster that plain text files. And basically, it start from the very first reason: XML file is bigger because it has more tags.

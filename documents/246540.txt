@@ -1,0 +1,160 @@
+Apache/Tomcat error - wrong pages being delivered
+apache tomcat ajp
+This error has been driving me nuts. We have a server running Apache and Tomcat, serving multiple different sites. Normally the server runs fine, but sometimes an error happens where people  are served the wrong page - the page that somebody else requested!
+Clues:
+
+The pages being delivered are those that another user requested recently, and are otherwise delivered correctly. It's been known for two simultaneous requests to be swapped. As far as I can tell, none of the pages being incorrectly delivered are older than a few minutes.
+It only affects the files that are being served by Tomcat. Static files like images are unaffected.
+It doesn't happen all the time. When it does happen, it happens for everybody.
+It seems to happen at times of peak demand. However, the demand is not yet very high - it's certainly well within the bounds of what Apache can cope with.
+Restarting Tomcat fixed it, but only for a few minutes. Restarting Apache fixed it, but only for a few minutes.
+The server is running Apache 2 and Tomcat 6, using a Java 6 VM on Gentoo. The connection is with AJP13, and JkMount directives within <VirtualHost> blocks are correct.
+There's nothing of use in any of the log files.
+
+
+Further information:
+Apache does not have any form of caching turned on. All the caching-related entries in httpd.conf and related imports say, for example:
+<IfDefine CACHE>
+  LoadModule cache_module modules/mod_cache.so
+</IfDefine>
+
+While the options for Apache don't include that flag:
+APACHE2_OPTS="-D DEFAULT_VHOST -D INFO -D LANGUAGE -D SSL -D SSL_DEFAULT_VHOST -D PHP5 -D JK"
+
+Tomcat likewise has no caching options switched on, that I can find.
+toolkit's suggestion was good, but not appropriate in this case. What leads me to believe that the error can't be within my own code is that it isn't simply a few values that are being transferred - it's the entire request, including the URL, parameters, session cookies, the whole thing. People are getting pages back saying "You are logged in as John", when they clearly aren't.
+
+Update:
+Based on suggestions from several people, I'm going to add the following HTTP headers to Tomcat-served pages to disable all forms of caching:
+Cache-Control: no-store
+Vary: *
+
+Hopefully these headers will be respected not just by Apache, but also by any other caches or proxies that may be in the way. Unfortunately I have no way of deliberately reproducing this error, so I'm just going to have to wait and see if it turns up again.
+I notice that the following headers are being included - could they be related in any way?
+Connection: Keep-Alive
+Keep-Alive: timeout=5, max=66
+
+
+Update:
+Apparently this happened again while I was asleep, but has stopped happening now I'm awake to see it. Again, there's nothing useful in the logs that I can see, so I have no clues to what was actually happening or how to prevent it.
+Is there any extra information I can put in Apache or Tomcat's logs to make this easier to diagnose?
+
+Update:
+Since this has happened again a couple of times, we've changed how Apache connects to Tomcat to see if it affects things. We were using mod_jk with a directive like this:
+JkMount /portal ajp13
+
+We've switched now to using mod_proxy_ajp, like so:
+ProxyPass /portal ajp://localhost:8009/portal
+
+We'll see if it makes any difference. This error was always annoyingly unpredictable, so we can never definitively say if it's worked or not.
+
+Update:
+We just got the error briefly on a site that was left using mod_jk, while a sister site on the same server using mod_proxy_ajp didn't show the error. This doesn't prove anything, but it does provide evidence that swithing to mod_proxy_ajp may have helped.
+
+Update:
+We just got the error again last night on a site using mod_proxy_ajp, so clearly that hasn't solved it - mod_jk wasn't the source of the problem. I'm going to try the anonymous suggestion of turning off persistent connections:
+KeepAlive Off
+
+If that fails as well, I'm going to be desperate enough to start investigating GlassFish.
+
+Update:
+Dammit! The problem just came back. I hadn't seen it in a while, so I was starting to think we'd finally sorted it. I hate heisenbugs.
+
+
+Could it be the thread-safety of your servlets?
+Do your servlets store any information in instance members.
+For example, something as simple as the following may cause thread-related issues:
+public class MyServlet ... {
+    private String action;
+
+    public void doGet(...) {
+         action = request.getParameter("action");
+         processAction(response);
+    }
+
+    public void processAction(...) {
+         if (action.equals("foo")) {
+             // send foo page
+         } else if (action.equals("bar")) {
+             // send bar page
+         }
+     }
+}
+
+Because the serlvet is accessed by multiple threads, there is no guarantee that the action instance member will not be clobbered by someone elses request, and end up sending the wrong page back.
+The simple solution to this issue is to use local variables insead of instance members:
+public class MyServlet ... {
+    public void doGet(...) {
+         String action = request.getParameter("action");
+         processAction(action, response);
+    }
+
+    public void processAction(...) {
+         if (action.equals("foo")) {
+             // send foo page
+         } else if (action.equals("bar")) {
+             // send bar page
+         }
+     }
+}
+
+Note: this extends to JavaServer Pages too, if you were dispatching to them for your views?
+
+I'm no expert, but could it be some weird Network Address Translation issue?
+
+Check if your headers allow caching without the correct Vary HTTP header (if you use session cookies, for instance, and allow caching, you need an entry in the Vary HTTP header for the cookie header, or a cache/proxy might serve the cached version of a page intended for one user to another user).
+The problem might be not with caching on your web server, but on another layer of caching (either on a reverse proxy in front of your web server, or on a proxy near the users). If the clients are behing a NAT, they might also be behind a transparent proxy (and, to make things even harder to debug, the transparent proxy might be configured to not be visible in the headers).
+
+I had this problem and it really drove me nuts. I dont know why, but I solved it turning off the Keep Alive on the http.conf
+from
+KeepAlive             On
+to 
+KeepAlive             Off
+My application doesn't use the keepalive feature, so it worked very well for me.
+
+Try this:
+response.setHeader("Cache-Control", "no-cache"); //HTTP 1.1
+response.setHeader("Pragma", "no-cache"); //HTTP 1.0
+response.setDateHeader("Expires", 0); //prevents caching at the proxy server
+
+
+8 updates of the question later one more issue to use to test/reproduce, albeit it might be difficult (or expensive) for public sites.
+You could enable https on the sites. This would at least wipe out any other proxies caches along the way. It'd be bad to see that there are some forgotten loadbalancers or company caches on the way that interfere with your traffic.
+For public sites this would imply trusted certificates on the keys, so some money will be involved. For testing self-signed keys might suffice. Also, check that there's no transparent proxy involved that decrypts and reencrypts the traffic. (they are easily detectable, as they can't use the same certificate/key as the original server)
+
+Have a look at this site, it describes an issue with mod_jk.  I came accross your posting while looking at a very similar issue.  Basically the fix is to upgrade to a newer version of mod_jk.  I haven't had a chance to implement the change in our server yet, but I'm going to try this tomorrow and see if it helps.  
+http://securitytracker.com/alerts/2009/Apr/1022001.html
+
+We switched Apache from proxying with AJP to proxying with HTTP. So far it appears to have solved the issue, or at least vastly reduced it - the problem hasn't been reported in months, and the app's use has increased since then.
+The change is in Apache's httpd.conf. Having started with mod_jk:
+JkMount /portal ajp13
+
+We switched to mod_proxy_ajp:
+ProxyPass /portal ajp://localhost:8009/portal
+
+Then finally to straight mod_proxy:
+ProxyPass /portal http://localhost:8080/portal
+
+You'll need to make sure Tomcat is set up to serve HTTP on port 8080. And remember that if you're serving /, you need to include / on both sides of the proxy or it starts crying:
+ProxyPass / http://localhost:8080/
+
+
+It may be not a caching issue at all. Try to increase MaxClients parameter in apache2.conf. If it is too low (150 by default?), Apache starts to queue requests. When it decides to serve queued request via mod_proxy it pulls out a wrong page (or may be it is just stressed doing all the queuing).
+
+Although you did mention mod_cache was not enabled in your setup, for others who may have encountered the same issue with mod_cache enabled (even on static contents), the solution is to make sure the following directive is enabled on the Set-Cookie HTTP header:
+CacheIgnoreHeaders Set-Cookie
+
+The reason being mod_cache will cache the Set-Cookie header that may get served to other users. This would then leak session ID from the user who last filled the cache to another. 
+
+Are you sure that is the page that somebody else requested or a page without parameters?,
+you could get weird errors if your connectionTimeout is too short at server.xml on the tomcat server behind apache, increase it to a bigger number:
+default configuration:
+  <Connector port="8080" protocol="HTTP/1.1"
+               connectionTimeout="20000"
+               redirectPort="8443" />
+
+changed:
+  <Connector port="8080" protocol="HTTP/1.1"
+               connectionTimeout="2000000"
+               redirectPort="8443" />
+

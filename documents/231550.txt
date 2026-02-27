@@ -1,0 +1,108 @@
+Has anyone used or written an Ant task to compile (Rhino) JavaScript to Java bytecode?
+java javascript ant rhino
+I'd like to use the Rhino JavaScript compiler to compile some JavaScript to .class bytecode files for use in a project. It seems like this should already exist, since there are groovyc, netrexxc, and jythonc tasks for Groovy, NetREXX(!) and Jython, respectively. Has anyone used or written such an Ant task, or can anyone provide some tips on how to write one?
+Ideally it would have some way to resolve dependencies among JavaScript or Java classes.
+
+
+Why not simply use java task?
+<java fork="yes" 
+  classpathref="build.path" 
+  classname="org.mozilla.javascript.tools.jsc.Main" 
+  failonerror="true">
+    <arg value="-debug"/>
+        ...
+    <arg value="file.js"/>			
+</java>
+
+Any objections?
+
+Here is a sample build.xml I use for my rhino applications. If you have lots of javascript files you just need to keep adding more  tags
+~:ant compile jar run
+<project>
+<target name="compile">
+    <mkdir dir="build/classes"/>
+    <java fork="yes" 
+      classpath="js.jar" 
+      classname="org.mozilla.javascript.tools.jsc.Main" 
+      failonerror="true">
+        <arg value="-nosource"/>
+        <arg value="-opt"/>
+        <arg value="9"/>
+        <arg value="-version"/>
+        <arg value="170"/>
+        <arg value="src/SwingApplication.js"/>
+    </java>
+    <move todir="build/classes">
+        <fileset dir="src">
+            <include name="**/*.class"/>
+        </fileset>
+    </move>
+</target>
+<target name="jar">
+    <mkdir dir="build/jar"/>
+    <jar destfile="build/jar/SwingApplication.jar" basedir="build/classes">
+        <zipfileset src="js.jar" includes="**/*.class"/>
+        <manifest>
+            <attribute name="Main-Class" value="SwingApplication"/>
+        </manifest>
+    </jar>
+</target>
+<target name="run">
+    <exec executable="java">
+        <arg valUe="-jar"/>
+        <arg value="build/jar/SwingApplication.jar"/>
+    </exec>
+</target>
+</project>
+
+~           
+
+I'm using RequireJS in my project, which includes a script that traces out dependencies between modules, and combines them into a single JavaScript file. Optionally, it can also minify the combined js file with the Google Closure compiler. Once it's in this form, where all dependencies are included in a single js file, the file can be easily compiled using jsc. 
+Here's a segment of my ant script which I use to create the single combined js file, compile it to a class file, and then create an executable JAR:
+<target name="compile-single-js">
+    <mkdir dir="${build-js}"/>
+
+    <java classname="org.mozilla.javascript.tools.shell.Main">
+        <classpath>
+            <path refid="rhino-classpath"/>
+            <path refid="closure-classpath"/>
+        </classpath>
+        <arg value="${js-build-script}"/>
+        <arg value="${js-build-dir}"/>
+        <arg value="name=${build-js-main-rhino-frontend-module}"/> 
+        <arg value="out=${build-js-main}"/>
+        <arg value="baseUrl=."/>
+        <arg value="includeRequire=true"/>
+        <arg value="inlineText=true"/> 
+        <arg value="optimize=none"/>
+    </java>
+</target>
+
+<target name="compile-single-class" depends="compile-single-js">
+    <mkdir dir="${build-class}"/>
+
+    <!-- TODO: set -opt -->
+    <java classname="org.mozilla.javascript.tools.jsc.Main">
+        <classpath>
+            <path refid="rhino-classpath"/>
+        </classpath>
+        <arg value="-o"/>
+        <arg value="${build-class-main-name}.class"/>
+        <arg value="${build-js-main}"/>
+    </java>
+    <move file="${build-js}/${build-class-main-name}.class" todir="${build-class}"/>
+</target>
+
+<target name="jar-single-class" depends="compile-single-class">
+    <mkdir dir="${build-jar}"/>
+
+    <jar destfile="${build-jar-main}"
+        basedir="${build-class}"
+        includes="${build-class-main-name}.class">
+        <manifest>
+            <attribute name="Main-Class" value="${build-class-main-name}" />
+        </manifest>
+    </jar>
+</target>
+
+The complete build script can be found here.

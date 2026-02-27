@@ -1,0 +1,71 @@
+Calculating a LookAt matrix
+math graphics 3d projection
+I'm in the midst of writing a 3d engine and I've come across the LookAt algorithm described in the DirectX documentation:
+zaxis = normal(At - Eye)
+xaxis = normal(cross(Up, zaxis))
+yaxis = cross(zaxis, xaxis)
+
+ xaxis.x           yaxis.x           zaxis.x          0
+ xaxis.y           yaxis.y           zaxis.y          0
+ xaxis.z           yaxis.z           zaxis.z          0
+-dot(xaxis, eye)  -dot(yaxis, eye)  -dot(zaxis, eye)  l
+
+Now I get how it works on the rotation side, but what I don't quite get is why it puts the translation component of the matrix to be those dot products. Examining it a bit it seems that it's adjusting the camera position by a small amount based on a projection of the new basis vectors onto the position of the eye/camera.
+The question is why does it need to do this? What does it accomplish?
+
+
+Dot product simply projects a point to an axis to get the x-, y-, or z-component of the eye. You are moving the camera backwards so looking at (0, 0, 0) from (10, 0, 0) and from (100000, 0, 0) would have different effect.
+
+That translation component helps you by creating an orthonormal basis with your "eye" at the origin and everything else expressed in terms of that origin (your "eye") and the three axes.
+The concept isn't so much that the matrix is adjusting the camera position.  Rather, it is trying to simplify the math: when you want to render a picture of everything that you can see from your "eye" position, it's easiest to pretend that your eye is the center of the universe.  
+So, the short answer is that this makes the math much easier.  
+Answering the question in the comment: the reason you don't just subtract the "eye" position from everything has to do with the order of the operations.  Think of it this way: once you are in the new frame of reference (i.e., the head position represented by xaxis, yaxis and zaxis) you now want to express distances in terms of this new (rotated) frame of reference.  That is why you use the dot product of the new axes with the eye position: that represents the same distance that things need to move but it uses the new coordinate system.
+
+I build a look-at matrix by creating a 3x3 rotation matrix as you have done here and then expanding it to a 4x4 with zeros and the single 1 in the bottom right corner. Then I build a 4x4 translation matrix using the negative eye point coordinates (no dot products), and multiply the two matrices together. My guess is that this multiplication yields the equivalent of the dot products in the bottom row of your example, but I would need to work it out on paper to make sure.
+The 3D rotation transforms your axes. Therefore, you cannot use the eye point directly without also transforming it into this new coordinate system. That's what the matrix multiplications -- or in this case, the 3 dot-product values -- accomplish.
+
+Just some general information:
+The lookat matrix is a matrix that positions / rotates something to point to (look at) a point in space, from another point in space.
+The method takes a desired "center" of the cameras view, an "up" vector, which represents the direction "up" for the camera (up is almost always (0,1,0), but it doesn't have to be), and an "eye" vector which is the location of the camera.
+This is used mainly for the camera but can also be used for other techniques like shadows, spotlights, etc.
+Frankly I'm not entirely sure why the translation component is being set as it is in this method.   In gluLookAt (from OpenGL), the translation component is set to 0,0,0 since the camera is viewed as being at 0,0,0 always.
+
+The lookat matrix does these two steps:
+
+Translate your model to the origin,
+Rotate it according to the orientation set up by the up-vector and the looking
+direction.
+
+The dot product means simply that you make a translation first and then rotate. Instead of multiplying two matrices the dot product just multiplies a row with a column.
+
+A transformation 4x4 matrix contains two-three components:
+1. rotation matrix 
+2. translation to add.
+3. scale (many engine do not use this directly in the matrix).
+The combination of the them would transform a point from space A to Space B, hence this is a transformation matrix M_ab
+Now, the location of the camera is in space A and so it is not the valid transformation for space B, so you need to multiply this location with the rotation transform.
+The only open question remains is why the dots?
+Well, if you write the 3 dots on a paper, you'd discover that 3 dots with X, Y and Z is exactly like multiplication with a rotation matrix.
+An example for that forth row/column would be taking the zero point - (0,0,0) in world space.   It is not the zero point in camera space, and so you need to know what is the representation in camera space, since rotation and scale leave it at zero!
+cheers
+
+Note the example given is a left-handed, row major matrix.
+So the operation is: Translate to the origin first (move by -eye), then rotate so that the vector from eye to At lines up with +z:
+Basically you get the same result if you pre-multiply the rotation matrix by a translation -eye:
+
+[      1       0       0   0 ]   [ xaxis.x  yaxis.x  zaxis.x 0 ]
+[      0       1       0   0 ] * [ xaxis.y  yaxis.y  zaxis.y 0 ]
+[      0       0       1   0 ]   [ xaxis.z  yaxis.z  zaxis.z 0 ]
+[ -eye.x  -eye.y  -eye.z   1 ]   [       0        0        0 1 ]
+
+  [         xaxis.x          yaxis.x          zaxis.x  0 ]
+= [         xaxis.y          yaxis.y          zaxis.y  0 ]
+  [         xaxis.z          yaxis.z          zaxis.z  0 ]
+  [ dot(xaxis,-eye)  dot(yaxis,-eye)  dot(zaxis,-eye)  1 ]
+
+Additional notes:
+Note that a viewing transformation is (intentionally) inverted: you multiply every vertex by this matrix to "move the world" so that the portion you want to see ends up in the canonical view volume.
+Also note that the rotation matrix (call it R) component of the LookAt matrix is an inverted change of basis matrix where the rows of R are the new basis vectors in terms of the old basis vectors (hence the variable names xaxis.x, .. xaxis is the new x axis after the change of basis occurs).  Because of the inversion, however, the rows and columns are transposed.
+
+It is necessary to put the eye point in your axis space, not in the world space.  When you dot a vector with a coordinate unit basis vector, one of the x,y,z, it gives you the coordinates of the eye in that space.  You transform location by applying the three translations in the last place, in this case the last row.  Then moving the eye backwards, with a negative, is equivalent to moving all the rest of the space forwards.  Just like moving up in an elevator makes you feel lke the rest of the world is dropping out from underneath you.
+Using a left-handed matrix, with translation as the last row instead of the last column, is a religious difference which has absolutely nothing to do with the answer.  However, it is a dogma that should be strictly avoided.  It is best to chain global-to-local (forward kinematic) transforms left-to-right, in a natural reading order, when drawing tree sketches.  Using left-handed matrices forces you to write these right-to-left.  

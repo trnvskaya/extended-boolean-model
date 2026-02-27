@@ -1,0 +1,26 @@
+Persistent storage of encrypted data using .Net
+c# encryption dns roaming
+I need to store encrypted data (few small strings) between application runs. I do not want the user to provide a passphrase every time (s)he launches the application. I.e. after all it goes down to storing securely the encryption key(s).
+I was looking into RSACryptoServiceProvider and using PersistentKeyInCsp, but I'm not sure how it works. Is the key container persistent between application runs or machine restarts? If yes, is it user specific, or machine specific. I.e. if I store my encrypted data in user's roaming profile, can I decrypt the data if the user logs on a different machine?
+If the above does not work, what are my options (I need to deal with roaming profiles).
+
+
+The Data Protection API (DPAPI) does exactly what you want.  It provides symmetric encryption of arbitrary data, using the credentials of the machine or (better) the user, as the encryption key.  You don't have to worry about managing the keys; Windows takes care of that for you.  If the user changes his password, Windows will re-encrypt the data using the user's new password.
+DPAPI is exposed in .NET with the System.Security.Cryptography.ProtectedData class:
+byte[] plaintextBytes = GetDataToProtect();
+byte[] encodedBytes = ProtectedData.Protect(plaintextBytes, null, DataProtectionScope.CurrentUser);
+
+The second parameter of the Protect method is an optional entropy byte array, which can be used as an additional application-specific "secret".
+To decrypt, use the ProtectedData.Unprotect call:
+byte[] encodedBytes = GetDataToUnprotect();
+byte[] plaintextBytes = ProtectedData.Unprotect(encodedBytes, null, DataProtectionScope.CurrentUser);
+
+DPAPI works correctly with roaming profiles (as described here), though you'll need to store the encrypted data in a place (network share, IsolatedStorage with IsolatedStorageScope.Roaming, etc.) that your various machines can access.
+See the ProtectedData class in MSDN for more information.  There's a DPAPI white paper here, with more information than you'd ever want.
+
+I'd like to add to the DPAPI approach.
+Although I haven't implemented the user-store approach myself, there is Microsoft documentation for a user-store approach which encrypts and decrypts data for a specific user.
+I used the DPAPI using machine store.  I'll describe it in case it fits with what you're looking to do.  I used a Windows service to load a Windows user profile and that user's password is used to encrypt data.
+As a side note, DPAPI uses Triple-DES which may be slightly weaker (than AES), but then I'm not sure what type of protection you're looking for.
+Windows Data Protection
+http://msdn.microsoft.com/en-us/library/ms995355.aspx

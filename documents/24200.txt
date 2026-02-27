@@ -1,0 +1,96 @@
+What's the fastest way to bulk insert a lot of data in SQL Server (C# client)
+c# sql sql-server sql-server-2005
+I am hitting some performance bottlenecks with my C# client inserting bulk data into a SQL Server 2005 database and I'm looking for ways in which to speed up the process.
+I am already using the SqlClient.SqlBulkCopy (which is based on TDS) to speed up the data transfer across the wire which helped a lot, but I'm still looking for more.
+I have a simple table that looks like this: 
+ CREATE TABLE [BulkData](
+ [ContainerId] [int] NOT NULL,
+ [BinId] [smallint] NOT NULL,
+ [Sequence] [smallint] NOT NULL,
+ [ItemId] [int] NOT NULL,
+ [Left] [smallint] NOT NULL,
+ [Top] [smallint] NOT NULL,
+ [Right] [smallint] NOT NULL,
+ [Bottom] [smallint] NOT NULL,
+ CONSTRAINT [PKBulkData] PRIMARY KEY CLUSTERED 
+ (
+  [ContainerIdId] ASC,
+  [BinId] ASC,
+  [Sequence] ASC
+))
+
+I'm inserting data in chunks that average about 300 rows where ContainerId and BinId are constant in each chunk and the Sequence value is 0-n and the values are pre-sorted based on the primary key.  
+The %Disk time performance counter spends a lot of time at 100% so it is clear that disk IO is the main issue but the speeds I'm getting are several orders of magnitude below a raw file copy.
+Does it help any if I:
+
+Drop the Primary key while I am doing the inserting and recreate it later
+Do inserts into a temporary table with the same schema and periodically transfer them into the main table to keep the size of the table where insertions are happening small
+Anything else?
+
+--
+Based on the responses I have gotten, let me clarify a little bit:
+Portman: I'm using a clustered index because when the data is all imported I will need to access data sequentially in that order.  I don't particularly need the index to be there while importing the data.  Is there any advantage to having a nonclustered PK index while doing the inserts as opposed to dropping the constraint entirely for import?
+Chopeen:  The data is being generated remotely on many other machines (my SQL server can only handle about 10 currently, but I would love to be able to add more).  It's not practical to run the entire process on the local machine because it would then have to process 50 times as much input data to generate the output.
+Jason: I am not doing any concurrent queries against the table during the import process, I will try dropping the primary key and see if that helps.
+
+
+Yes your ideas will help.
+Lean on option 1 if there are no reads happening while your loading.
+Lean on option 2 if you destination table is being queried during your processing.
+@Andrew
+Question.  Your inserting in chunks of 300.  What is the total amount your inserting?  SQL server should be able to handle 300 plain old inserts very fast.
+
+How about increasing the memory allocated to the server or the buffer size used by the server, if possible?
+
+Have you tried using transactions?
+From what you describe, having the server committing 100% of the time to disk, it seems you are sending each row of data in an atomic SQL sentence thus forcing the server to commit (write to disk) every single row.
+If you used transactions instead, the server would only commit once at the end of the transaction.
+For further help: What method are you using for inserting data to the server? Updating a DataTable using a DataAdapter, or executing each sentence using a string?
+
+You're already using SqlBulkCopy, which is a good start.
+However, just using the SqlBulkCopy class does not necessarily mean that SQL will perform a bulk copy. In particular, there are a few requirements that must be met for SQL Server to perform an efficient bulk insert.
+Further reading:
+
+Prerequisites for Minimal Logging in Bulk Import
+Optimizing Bulk Import Performance
+
+Out of curiosity, why is your index set up like that? It seems like ContainerId/BinId/Sequence is much better suited to be a nonclustered index. Is there a particular reason you wanted this index to be clustered?
+
+I think that it sounds like this could be done using SSIS packages. They're similar to SQL 2000's DTS packages. I've used them to successfully transform everything from plain text CSV files, from existing SQL tables, and even from XLS files with 6-digit rows spanned across multiple worksheets. You could use C# to transform the data into an importable format (CSV, XLS, etc), then have your SQL server run a scheduled SSIS job to import the data.
+It's pretty easy to create an SSIS package, there's a wizard built-into SQL Server's Enterprise Manager tool (labeled "Import Data" I think), and at the end of the wizard it gives you the option of saving it as an SSIS package. There's a bunch more info on Technet as well.
+
+BCP - it's a pain to set up, but it's been around since the dawn of DBs and it's very very quick.
+Unless you're inserting data in that order the 3-part index will really slow things.  Applying it later will really slow things too, but will be in a second step.
+Compound keys in Sql are always quite slow, the bigger the key the slower.
+
+My guess is that you'll see a dramatic improvement if you change that index to be nonclustered. This leaves you with two options:
+
+Change the index to nonclustered, and leave it as a heap table, without a clustered index
+Change the index to nonclustered, but then add a surrogate key (like "id") and make it an identity, primary key, and clustered index
+
+Either one will speed up your inserts without noticeably slowing down your reads. 
+Think about it this way -- right now, you're telling SQL to do a bulk insert, but then you're asking SQL to reorder the entire table every table you add anything. With a nonclustered index, you'll add the records in whatever order they come in, and then build a separate index indicating their desired order. 
+
+I'm not really a bright guy and I don't have a lot of experience with the SqlClient.SqlBulkCopy method but here's my 2 cents for what it's worth.  I hope it helps you and others (or at least causes people to call out my ignorance ;).
+You will never match a raw file copy speed unless your database data file (mdf) is on a separate physical disk from your transaction log file (ldf).  Additionally, any clustered indexes would also need to be on a separate physical disk for a fairer comparison.
+Your raw copy is not logging or maintaining a sort order of select fields (columns) for indexing purposes.
+I agree with Portman on creating a nonclustered identity seed and changing your existing nonclustered index to a clustered index.
+As far as what construct you're using on the clients...(data adapter, dataset, datatable, etc).  If your disk io on the server is at 100%, I don't think your time is best spent analyzing client constructs as they appear to be faster than the server can currently handle.
+If you follow Portman's links about minimal logging, I wouldn't think surrounding your bulk copies in transactions would help a lot if any but I've been wrong many times in my life ;)
+This won't necessarily help you right now but if you figure out your current issue, this next comment might help with the next bottleneck (network throughput) - especially if it's over the Internet...
+Chopeen asked an interesting question too.  How did you determine to use 300 record count chunks to insert?  SQL Server has a default packet size (I believe it is 4096 bytes) and it would make sense to me to derive the size of your records and ensure that you are making efficient use of the packets transmitting between client and server.  (Note, you can change your packet size on your client code as opposed to the server option which would obviously change it for all server communications - probably not a good idea.)  For instance, if your record size results in 300 record batches requiring 4500 bytes, you will send 2 packets with the second packet being mostly wasted.  If batch record count was arbitrarily assigned, it might make sense to do some quick easy math.
+From what I can tell (and remember about data type sizes) you have exactly 20 bytes for each record (if int=4 bytes and smallint=2 bytes).  If you are using 300 record count batches, then you are trying to send 300 x 20 = 6,000 bytes (plus I'm guessing a little overhead for the connection, etc).  You might be more efficient to send these up in 200 record count batches (200 x 20 = 4,000 + room for overhead) = 1 packet.  Then again, your bottleneck still appears to be the server's disk io.
+I realize you're comparing a raw data transfer to the SqlBulkCopy with the same hardware/configuration but here's where I would go also if the challenge was mine:
+This post probably won't help you anymore as it's rather old but I would next ask what your disk's RAID configuration is and what speed of disk are you using?  Try putting the log file on a drive that uses RAID 10 with a RAID 5 (ideally 1) on your data file.  This can help reduce a lot of spindle movement to different sectors on the disk and result in more time reading/writing instead of the unproductive "moving" state.  If you already separate your data and log files, do you have your index on a different physical disk drive from your data file (you can only do this with clustered indexes).  That would allow for not only concurrently updating logging information with data inserting but would allow index inserting (and any costly index page operations) to occur concurrently.
+
+Here's how you can disable/enable indexes in SQL Server:
+--Disable Index ALTER INDEX [IX_Users_UserID] SalesDB.Users DISABLE
+GO
+--Enable Index ALTER INDEX [IX_Users_UserID] SalesDB.Users REBUILD
+Here are some resources to help you find a solution:
+Some bulk loading speed comparisons
+Use SqlBulkCopy to Quickly Load Data from your Client to SQL Server
+Optimizing Bulk Copy Performance
+Definitely look into NOCHECK and TABLOCK options:
+Table Hints (Transact-SQL)
+INSERT (Transact-SQL)

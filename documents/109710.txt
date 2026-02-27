@@ -1,0 +1,170 @@
+likely()/unlikely() macros in the Linux kernel - how do they work? What's their benefit?
+gcc optimization compiler-construction macros likely-unlikely
+I've been digging through some parts of the Linux kernel, and found calls like this:
+if (unlikely(fd < 0))
+{
+    /* Do something */
+}
+
+or
+if (likely(!err))
+{
+    /* Do something */
+}
+
+I've found the definition of them:
+#define likely(x)       __builtin_expect((x),1)
+#define unlikely(x)     __builtin_expect((x),0)
+
+I know that they are for optimization, but how do they work? And how much performance/size decrease can be expected from using them? And is it worth the hassle (and losing the portability probably) at least in bottleneck code (in userspace, of course).
+
+
+They're hints to the compiler to generate the hint prefixes on branches.  On x86/x64, they take up one byte, so you'll get at most a one-byte increase for each branch.  As for performance, it entirely depends on the application -- in most cases, the branch predictor on the processor will ignore them, these days.
+Edit: Forgot about one place they can actually really help with.  It can allow the compiler to reorder the control-flow graph to reduce the number of branches taken for the 'likely' path.  This can have a marked improvement in loops where you're checking multiple exit cases.
+
+These are GCC functions for the programmer to give a hint to the compiler about what the most likely branch condition will be in a given expression. This allows the compiler to build the branch instructions so that the most common case takes the fewest number of instructions to execute.
+How the branch instructions are built are dependent upon the processor architecture.
+
+They are an instruction to the compiler to emit instructions that will cause branch prediction to favour the "likely" side of a jump instruction. This can be a big win, if the prediction is correct it means that the jump instruction is basically free and will take zero cycles. On the other hand if the prediction is wrong, then it means the processor pipeline needs to be flushed and it can cost several cycles. So long as the prediction is correct most of the time, this will tend to be good for performance.
+Like all such performance optimisations you should only do it after extensive profiling to ensure the code really is in a bottleneck, and probably given the micro nature, that it is being run in a tight loop. Generally the Linux developers are pretty experienced so I would imagine they would have done that. They don't really care too much about portability as they only target gcc, and they have a very close idea of the assembly they want it to generate.
+
+They cause the compiler to emit the appropriate branch hints where the hardware supports them. This usually just means twiddling a few bits in the instruction opcode, so code size will not change. The CPU will start fetching instructions from the predicted location, and flush the pipeline and start over if that turns out to be wrong when the branch is reached; in the case where the hint is correct, this will make the branch much faster - precisely how much faster will depend on the hardware; and how much this affects the performance of the code will depend on what proportion of the time hint is correct.
+For instance, on a PowerPC CPU an unhinted branch might take 16 cycles, a correctly hinted one 8 and an incorrectly hinted one 24. In innermost loops good hinting can make an enormous difference.
+Portability isn't really an issue - presumably the definition is in a per-platform header; you can simply define "likely" and "unlikely" to nothing for platforms that do not support static branch hints.
+
+These are macros that give hints to the compiler about which way a branch may go.  The macros expand to GCC specific extensions, if they're available.  
+GCC uses these to to optimize for branch prediction.  For example, if you have something like the following
+if (unlikely(x)) {
+  dosomething();
+}
+
+return x;
+
+Then it can restructure this code to be something more like:
+if (!x) {
+  return x;
+}
+
+dosomething();
+return x;
+
+The benefit of this is that when the processor takes a branch the first time, there is significant overhead, because it may have been speculatively loading and executing code further ahead.  When it determines it will take the branch, then it has to invalidate that, and start at the branch target.
+Most modern processors now have some sort of branch prediction, but that only assists when you've been through the branch before, and the branch is still in the branch prediction cache.
+There are a number of other strategies that the compiler and processor can use in these scenarios.  You can find more details on how branch predictors at Wikipedia: http://en.wikipedia.org/wiki/Branch_predictor
+
+(general comment - other answers cover the details)
+There's no reason that you should lose portability by using them.
+You always have the option of creating a simple nil-effect "inline" or macro that will allow you to compile on other platforms with other compilers.
+You just won't get the benefit of the optimization if you're on other platforms.
+
+In many linux release, you can find complier.h in /usr/linux/ , you can include it for use simply. And another opinion, unlikely() is more useful rather than likely(), because 
+
+if ( likely( ... ) ) {
+      doSomething();
+  }
+
+it can be optimized as well in many compiler :D
+And by the way, if you want to observe the detail behavior of the code, you can do simply as follow:
+
+gcc -c test.c
+  objdump -d test.o > obj.s
+
+Then, open obj.s, you can find the answer :D. Wish it helpful for you.
+
+According to the kernelnewbies FAQ (and the latest 3.11 kernel source), the macros definitions are slightly different now:
+#define likely(x)       __builtin_expect(!!(x), 1)
+#define unlikely(x)     __builtin_expect(!!(x), 0)
+
+I guess this adds a little more to the confusion!? :) I don't get the need for double NOT (!!).
+
+As per the comment by Cody, this has nothing to do with Linux, but is a hint to the compiler.  What happens will depend on the architecture and compiler version.  
+This particular feature in Linux is somewhat mis-used in drivers.  As osgx points out in semantics of hot attribute, any hot or cold function called with in a block can automatically hint that the condition is likely or not.  For instance, dump_stack() is marked cold so this is redundant,
+ if(unlikely(err)) {
+     printk("Driver error found. %d\n", err);
+     dump_stack();
+ }
+
+Future versions of gcc may selectively inline a function based on these hints.  There have also been suggestions that it is not boolean, but a score as in most likely, etc.  Generally, it should be preferred to use some alternate mechanism like cold.  There is no reason to use it in any place but hot paths.  What a compiler will do on one architecture can be completely different on another.
+
+Let's decompile to see what GCC 4.8 does with it
+Without expect
+#include "stdio.h"
+#include "time.h"
+
+int main() {
+    /* Use time to prevent it from being optimized away. */
+    int i = !time(NULL);
+    if (i)
+        printf("%d\n", i);
+    puts("a");
+    return 0;
+}
+
+Compile and decompile with GCC 4.8.2 x86_64 Linux:
+gcc -c -O3 -std=gnu11 main.c
+objdump -dr main.o
+
+Output:
+0000000000000000 <main>:
+   0:       48 83 ec 08             sub    $0x8,%rsp
+   4:       31 ff                   xor    %edi,%edi
+   6:       e8 00 00 00 00          callq  b <main+0xb>
+                    7: R_X86_64_PC32        time-0x4
+   b:       48 85 c0                test   %rax,%rax
+   e:       75 14                   jne    24 <main+0x24>
+  10:       ba 01 00 00 00          mov    $0x1,%edx
+  15:       be 00 00 00 00          mov    $0x0,%esi
+                    16: R_X86_64_32 .rodata.str1.1
+  1a:       bf 01 00 00 00          mov    $0x1,%edi
+  1f:       e8 00 00 00 00          callq  24 <main+0x24>
+                    20: R_X86_64_PC32       __printf_chk-0x4
+  24:       bf 00 00 00 00          mov    $0x0,%edi
+                    25: R_X86_64_32 .rodata.str1.1+0x4
+  29:       e8 00 00 00 00          callq  2e <main+0x2e>
+                    2a: R_X86_64_PC32       puts-0x4
+  2e:       31 c0                   xor    %eax,%eax
+  30:       48 83 c4 08             add    $0x8,%rsp
+  34:       c3                      retq
+
+The instruction order in memory was unchanged: first the printf and then puts and the retq return.
+With expect
+Now replace if (i) with:
+if (__builtin_expect(i, 0))
+
+and we get:
+0000000000000000 <main>:
+   0:       48 83 ec 08             sub    $0x8,%rsp
+   4:       31 ff                   xor    %edi,%edi
+   6:       e8 00 00 00 00          callq  b <main+0xb>
+                    7: R_X86_64_PC32        time-0x4
+   b:       48 85 c0                test   %rax,%rax
+   e:       74 11                   je     21 <main+0x21>
+  10:       bf 00 00 00 00          mov    $0x0,%edi
+                    11: R_X86_64_32 .rodata.str1.1+0x4
+  15:       e8 00 00 00 00          callq  1a <main+0x1a>
+                    16: R_X86_64_PC32       puts-0x4
+  1a:       31 c0                   xor    %eax,%eax
+  1c:       48 83 c4 08             add    $0x8,%rsp
+  20:       c3                      retq
+  21:       ba 01 00 00 00          mov    $0x1,%edx
+  26:       be 00 00 00 00          mov    $0x0,%esi
+                    27: R_X86_64_32 .rodata.str1.1
+  2b:       bf 01 00 00 00          mov    $0x1,%edi
+  30:       e8 00 00 00 00          callq  35 <main+0x35>
+                    31: R_X86_64_PC32       __printf_chk-0x4
+  35:       eb d9                   jmp    10 <main+0x10>
+
+The printf (compiled to __printf_chk) was moved to the very end of the function, after puts and the return to improve branch prediction as mentioned by other answers.
+So it is basically the same as:
+int i = !time(NULL);
+if (i)
+    goto printf;
+puts:
+puts("a");
+return 0;
+printf:
+printf("%d\n", i);
+goto puts;
+
+This optimization was not done with -O0.
+But good luck on writing an example that runs faster with __builtin_expect than without, CPUs are really smart those days. My naive attempts are here.

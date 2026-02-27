@@ -1,0 +1,93 @@
+Another LINQ Pivot Problem - Convert SQL Script to LINQ
+c# asp.net sql linq pivot
+There are a few questions on SO already regarding LINQ pivots and while a couple of them outline my exact problem, I can't successfully translate them to a working solution.  I feel that this is mostly due to a join in my tables.
+So for the benefit of all the LINQ junkies out there who love a problem, here's another puzzle for you to work out.  Please help me out (and earn some reputation points and much respect from me) by converting the following SQL stored proc script to LINQ:
+ALTER PROCEDURE [dbo].[GetTimesheetForWeekById]
+    @timesheetid int,
+    @begindate VarChar(20),
+    @enddate VarChar(20)
+AS
+BEGIN
+
+    SELECT T.TaskName,
+    	SUM(
+    		case DATEPART(weekday, TE.StartTime)
+    			WHEN 1 THEN DATEDIFF(minute, TE.StartTime, TE.EndTime) ELSE 0 END
+    		) AS Sunday,
+    	SUM(
+    		case DATEPART(weekday, TE.StartTime)
+    			when 2 THEN DATEDIFF(minute, TE.StartTime, TE.EndTime) ELSE 0 END
+    		) AS Monday,
+    	SUM(
+    		case DATEPART(weekday, TE.StartTime)
+    			when 3 THEN DATEDIFF(minute, TE.StartTime, TE.EndTime) ELSE 0 END
+    		) AS Tuesday,
+    	SUM(
+    		case DATEPART(weekday, TE.StartTime)
+    			when 4 THEN DATEDIFF(minute, TE.StartTime, TE.EndTime) ELSE 0 END
+    		) AS Wednesday,
+    	SUM(
+    		case DATEPART(weekday, TE.StartTime)
+    			when 5 THEN DATEDIFF(minute, TE.StartTime, TE.EndTime) ELSE 0 END
+    		) AS Thursday,
+    	SUM(
+    		case DATEPART(weekday, TE.StartTime)
+    			when 6 THEN DATEDIFF(minute, TE.StartTime, TE.EndTime) ELSE 0 END
+    		) AS Friday,
+    	SUM(
+    		case DATEPART(weekday, TE.StartTime)
+    			when 6 THEN DATEDIFF(minute, TE.StartTime, TE.EndTime) ELSE 0 END
+    		) AS Saturday
+
+    FROM Tasks T
+    INNER JOIN TimeEntries TE on T.TaskID = TE.TaskID
+    WHERE TE.StartTime BETWEEN 
+    	(CONVERT(datetime, @begindate, 103)) AND (CONVERT(datetime, @enddate, 103))
+    AND TE.TimesheetID = @timesheetid
+    GROUP BY T.TaskName
+END
+
+
+
+Well, assuming that the foreign key has an object representation, something like:
+        int timesheetId = ...
+        DateTime start = ..., end = ...
+        var qry = from timeEntry in ctx.TimeEntries
+              let date = timeEntry.StartTime.Date
+              where timeEntry.TimesheetId == timesheetId
+                && date >= start
+                && date <= end
+              group timeEntry by timeEntry.Task.TaskName into grp
+              select new {
+                  TaskName = grp.Key,
+                  Monday = grp.Where(x => x.StartTime.DayOfWeek == DayOfWeek.Monday).Count(),
+                  Tuesday = grp.Where(x => x.StartTime.DayOfWeek == DayOfWeek.Tuesday).Count(),
+                  Wednesday = grp.Where(x => x.StartTime.DayOfWeek == DayOfWeek.Wednesday).Count(),
+                  Thursday = grp.Where(x => x.StartTime.DayOfWeek == DayOfWeek.Thursday).Count(),
+                  Friday = grp.Where(x => x.StartTime.DayOfWeek == DayOfWeek.Friday).Count()
+              };
+
+Unfortunately, some of the specifics depend on the SQL provider - i.e. which functions (like DayOfWeek etc) it can map successfully as TSQL. Let me know if you get problems...
+
+How's this (modifying Marc's):
+var qry = from timeEntry in timeEntries
+      let date = timeEntry.StartTime.Date
+      where timeEntry.TimesheetId == timesheetId
+      && date >= start
+      && date <= end
+      group timeEntry by timeEntry.Task.TaskName into grp
+      select new
+      {
+          TaskName = grp.Key,
+          Monday = grp.Where(x => x.StartTime.DayOfWeek == DayOfWeek.Monday)
+                   .Sum(x=>x.EndTime.Subtract(x.StartTime).TotalMinutes),
+          Tuesday = grp.Where(x => x.StartTime.DayOfWeek == DayOfWeek.Tuesday)
+                    .Sum(x => x.EndTime.Subtract(x.StartTime).TotalMinutes),
+          Wednesday = grp.Where(x => x.StartTime.DayOfWeek == DayOfWeek.Wednesday)
+                      .Sum(x => x.EndTime.Subtract(x.StartTime).TotalMinutes),
+          Thursday = grp.Where(x => x.StartTime.DayOfWeek == DayOfWeek.Thursday)
+                     .Sum(x => x.EndTime.Subtract(x.StartTime).TotalMinutes),
+          Friday = grp.Where(x => x.StartTime.DayOfWeek == DayOfWeek.Friday)
+                   .Sum(x => x.EndTime.Subtract(x.StartTime).TotalMinutes),
+      };
+

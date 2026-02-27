@@ -1,0 +1,73 @@
+SQL Server best way to calculate datediff between current row and next row?
+sql-server datediff
+I've got the following rough structure:
+Object -> Object Revisions -> Data
+
+The Data can be shared between several Objects.
+What I'm trying to do is clean out old Object Revisions. I want to keep the first, active, and a spread of revisions so that the last change for a time period is kept. The Data might be changed a lot over the course of 2 days then left alone for months, so I want to keep the last revision before the changes started and the end change of the new set.
+I'm currently using a cursor and temp table to hold the IDs and date between changes so I can select out the low hanging fruit to get rid of. This means using @LastID, @LastDate, updates and inserts to the temp table, etc... 
+Is there an easier/better way to calculate the date difference between the current row and the next row in my initial result set without using a cursor and temp table? 
+I'm on sql server 2000, but would be interested in any new features of 2005, 2008 that could help with this as well.
+
+
+Here is example SQL.  If you have an Identity column, you can use this instead of "ActivityDate".
+SELECT DATEDIFF(HOUR, prev.ActivityDate, curr.ActivityDate)
+  FROM MyTable curr
+  JOIN MyTable prev
+    ON prev.ObjectID = curr.ObjectID
+  WHERE prev.ActivityDate =
+     (SELECT MAX(maxtbl.ActivityDate)
+        FROM MyTable maxtbl
+        WHERE maxtbl.ObjectID = curr.ObjectID
+          AND maxtbl.ActivityDate < curr.ActivityDate)
+
+I could remove "prev", but have it there assuming you need IDs from it for deleting.
+
+Hrmm, interesting challenge. I think you can do it without a self-join if you use the new-to-2005 pivot functionality.
+
+Here's what I've got so far, I wanted to give this a little more time before accepting an answer.
+DECLARE @IDs TABLE 
+(
+  ID int , 
+  DateBetween int
+)
+
+DECLARE @OID int
+SET @OID = 6150
+
+-- Grab the revisions, calc the datediff, and insert into temp table var.
+
+INSERT @IDs
+SELECT ID, 
+       DATEDIFF(dd, 
+                (SELECT MAX(ActiveDate) 
+                 FROM ObjectRevisionHistory 
+                 WHERE ObjectID=@OID AND 
+                       ActiveDate < ORH.ActiveDate), ActiveDate) 
+FROM ObjectRevisionHistory ORH 
+WHERE ObjectID=@OID
+
+
+-- Hard set DateBetween for special case revisions to always keep
+
+ UPDATE @IDs SET DateBetween = 1000 WHERE ID=(SELECT MIN(ID) FROM @IDs)
+
+ UPDATE @IDs SET DateBetween = 1000 WHERE ID=(SELECT MAX(ID) FROM @IDs)
+
+ UPDATE @IDs SET DateBetween = 1000 
+ WHERE ID=(SELECT ID 
+           FROM ObjectRevisionHistory 
+           WHERE ObjectID=@OID AND Active=1)
+
+
+-- Select out IDs for however I need them
+
+ SELECT * FROM @IDs
+ SELECT * FROM @IDs WHERE DateBetween < 2
+ SELECT * FROM @IDs WHERE DateBetween > 2
+
+I'm looking to extend this so that I can keep at maximum so many revisions, and prune off the older ones while still keeping the first, last, and active. Should be easy enough through select top and order by clauses, um... and tossing in ActiveDate into the temp table.
+I got Peter's example to work, but took that and modified it into a subselect. I messed around with both and the sql trace shows the subselect doing less reads. But it does work and I'll vote him up when I get my rep high enough.
+
+If the identity column is sequential you can use this approach:
+SELECT curr.*, DATEDIFF(MINUTE, prev.EventDateTime,curr.EventDateTime) Duration FROM DWLog curr join DWLog prev on prev.EventID = curr.EventID - 1

@@ -1,0 +1,90 @@
+Can you list the keyword arguments a Python function receives?
+python arguments introspection
+I have a dict, which I need to pass key/values as keyword arguments.. For example..
+d_args = {'kw1': 'value1', 'kw2': 'value2'}
+example(**d_args)
+
+This works fine, but if there are values in the d_args dict that are not accepted by the example function, it obviously dies.. Say, if the example function is defined as def example(kw2):
+This is a problem since I don't control either the generation of the d_args, or the example function.. They both come from external modules, and example only accepts some of the keyword-arguments from the dict..
+Ideally I would just do
+parsed_kwargs = feedparser.parse(the_url)
+valid_kwargs = get_valid_kwargs(parsed_kwargs, valid_for = PyRSS2Gen.RSS2)
+PyRSS2Gen.RSS2(**valid_kwargs)
+
+I will probably just filter the dict, from a list of valid keyword-arguments, but I was wondering: Is there a way to programatically list the keyword arguments the a specific function takes?
+
+
+This will print names of all passable arguments, keyword and non-keyword ones:
+def func(one, two="value"):
+    y = one, two
+    return y
+print func.func_code.co_varnames[:func.func_code.co_argcount]
+
+This is because first co_varnames are always parameters (next are local variables, like y in the example above).
+So now you could have a function:
+def getValidArgs(func, argsDict):
+    '''Return dictionary without invalid function arguments.'''
+    validArgs = func.func_code.co_varnames[:func.func_code.co_argcount]
+    return dict((key, value) for key, value in argsDict.iteritems() 
+                if key in validArgs)
+
+Which you then could use like this:
+>>> func(**getValidArgs(func, args))
+
+
+EDIT: A small addition: if you really need only keyword arguments of a function, you can use the func_defaults attribute to extract them:
+def getValidKwargs(func, argsDict):
+    validArgs = func.func_code.co_varnames[:func.func_code.co_argcount]
+    kwargsLen = len(func.func_defaults) # number of keyword arguments
+    validKwargs = validArgs[-kwargsLen:] # because kwargs are last
+    return dict((key, value) for key, value in argsDict.iteritems() 
+                if key in validKwargs)
+
+You could now call your function with known args, but extracted kwargs, e.g.:
+func(param1, param2, **getValidKwargs(func, kwargsDict))
+
+This assumes that func uses no *args or **kwargs magic in its signature.
+
+Extending DzinX's answer:
+argnames = example.func_code.co_varnames[:func.func_code.co_argcount]
+args = dict((key, val) for key,val in d_args.iteritems() if key in argnames)
+example(**args)
+
+
+A little nicer than inspecting the code object directly and working out the variables is to use the inspect module.
+>>> import inspect
+>>> def func(a,b,c=42, *args, **kwargs): pass
+>>> inspect.getargspec(func)
+(['a', 'b', 'c'], 'args', 'kwargs', (42,))
+
+If you want to know if its callable with a particular set of args, you need the args without a default already specified.  These can be got by:
+def getRequiredArgs(func):
+    args, varargs, varkw, defaults = inspect.getargspec(func)
+    if defaults:
+        args = args[:-len(defaults)]
+    return args   # *args and **kwargs are not required, so ignore them.
+
+Then a function to tell what you are missing from your particular dict is:
+def missingArgs(func, argdict):
+    return set(getRequiredArgs(func)).difference(argdict)
+
+Similarly, to check for invalid args, use:
+def invalidArgs(func, argdict):
+    args, varargs, varkw, defaults = inspect.getargspec(func)
+    if varkw: return set()  # All accepted
+    return set(argdict) - set(args)
+
+And so a full test if it is callable is :
+def isCallableWithArgs(func, argdict):
+    return not missingArgs(func, argdict) and not invalidArgs(func, argdict)
+
+(This is good only as far as python's arg parsing.  Any runtime checks for invalid values in kwargs obviously can't be detected.)
+
+In Python 3.0:
+>>> import inspect
+>>> import fileinput
+>>> print(inspect.getfullargspec(fileinput.input))
+FullArgSpec(args=['files', 'inplace', 'backup', 'bufsize', 'mode', 'openhook'],
+varargs=None, varkw=None, defaults=(None, 0, '', 0, 'r', None), kwonlyargs=[], 
+kwdefaults=None, annotations={})
+

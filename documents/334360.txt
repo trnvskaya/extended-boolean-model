@@ -1,0 +1,110 @@
+contextswitchdeadlock 
+c# multithreading debugging contextswitchdeadlock
+Whilst debugging my program in VS 2008 I have come across the following error:
+The CLR has been unable to transition from COM context 0x34fc1a0 to COM context 0x34fc258 for 60 seconds. The thread that owns the destination context/apartment is most likely either doing a non pumping wait or processing a very long running operation without pumping Windows messages. This situation generally has a negative performance impact and may even lead to the application becoming non responsive or memory usage accumulating continually over time. To avoid this 
+It appears to be deadlocking even though the code only contains a simple C# timer: See Snippet Below:
+    private void RequestWork()
+    {
+        // The timer will be re-intialised if there are still no wating jobs in the database
+        StopTimer();
+
+        // assign all the threads some work
+        InitialiseTimer();
+
+    }
+
+
+
+    /// <summary>
+    /// Initialise a timer with a timer interval configured from app.config. Enable the timer and 
+    /// register an appropriate event handler
+    /// </summary>
+    private void InitialiseTimer()
+    {
+
+
+        if (m_Timer == null)
+        {
+            // look up the default backoff time from the config
+            string backOffInt = ConfigurationSettings.AppSettings["BackOffInterval"];
+
+            int backoffInterval = 1000;
+
+
+            m_Timer = new System.Timers.Timer();
+
+
+            // set the timer interval to 5 seconds
+            m_Timer.Interval = backoffInterval;
+
+            m_Timer.Elapsed += new ElapsedEventHandler(m_Timer_Elapsed);
+        }
+
+        m_Timer.Enabled = true;
+    }
+
+
+    private void StopTimer()
+    {
+
+        if (m_Timer != null)
+        {
+            m_Timer.Enabled = false;
+        }
+    }
+
+    void m_Timer_Elapsed(object p_Sender, ElapsedEventArgs p_E)
+    {
+
+        RequestWork();
+    }
+
+As far as I know the timer should run, elapse and then initialise again, I can see no local reason for a deadlock.
+I am aware of how to turn this error msg off but feel that this is not a solution, instead it is masking the problem.
+
+
+It seems that you are adding a new event handler each time you call InitialiseTimer. That way m_Timer_Elapsed will be called as many times as it has been added. 
+You should add the event handler just one time.
+
+You can turn this off if you think you've definitely not got a deadlock situation:
+Debug->Exceptions->Managed Debug Assistants menu in Visual Studio and uncheck the ContextSwitchDeadlock
+
+Couple thoughts/questions:
+1)  The code snippet looks like your interval is every 1 second (not 5 as mentioned in the comments).
+2)  The big question is what is RequestWork() doing?
+Without knowing what RequestWork() is doing, we can't really comment on why you are seeing a ContextSwitchDeadlock.
+Somethings to think about with respect to this method
+a) how long does it take?
+b) is it accessing GUI elements?
+Some MSDN comments on Elapsed:
+
+If you use the Timer with a user
+  interface element, such as a form or
+  control, assign the form or control
+  that contains the Timer to the
+  SynchronizingObject property, so that
+  the event is marshaled to the user
+  interface thread.
+
+-and- 
+
+The Elapsed event is raised on a
+  ThreadPool thread. If processing of
+  the Elapsed event lasts longer than
+  Interval, the event might be raised
+  again on another ThreadPool thread.
+  Thus, the event handler should be
+  reentrant.
+
+I'm thinking since you have a 1 second timer, you might want to look into what happens in RequestWork and see how long its taking.
+
+This is an infinite loop. You need to let your application pump some messages at least once every 60 seconds to prevent this exception to happen.
+Try calling System.Threading.Thread.CurrentThread.Join(10) once in a while. There are other calls you can do that let the messages pump.
+
+If your application hangs or not reponse even after you uncheck the box against contextswitchdeadlock. Put the following line before call of method or for loop.
+In C#
+System.Windows.Forms.Application.DoEvents();
+
+and VB.NET / VB / ASP.NET
+DoEvents()
+

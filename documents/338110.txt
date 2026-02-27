@@ -1,0 +1,123 @@
+Avoiding a javascript race condition
+javascript javascript-events race-condition
+Here's the scenario:
+My users are presented a grid, basically, a stripped down version of a spreadsheet.  There are textboxes in each row in the grid.  When they change a value in a textbox, I'm performing validation on their input, updating the collection that's driving the grid, and redrawing the subtotals on the page.  This is all handled by the OnChange event of each textbox.
+When they click the "Save" button, I'm using the button's OnClick event to perform some final validation on the amounts, and then send their entire input to a web service, saving it.
+At least, that's what happens if they tab through the form to the Submit button.
+The problem is, if they enter a value, then immediately click the save button, SaveForm() starts executing before UserInputChanged() completes -- a race condition.  My code does not use setTimeout, but I'm using it to simulate the sluggish UserInputChanged validation code:
+ <!-- snip -->
+ <script>
+    var amount = null;
+    var currentControl = null;
+
+    function UserInputChanged(control) {
+        currentControl = control;
+        // use setTimeout to simulate slow validation code (production code does not use setTimeout)
+        setTimeout("ValidateAmount()", 100); 
+    }
+
+    function SaveForm() {
+        // call web service to save value
+        document.getElementById("SavedAmount").innerHTML = amount;
+    }
+
+    function ValidateAmount() {
+        // various validationey functions here
+        amount = currentControl.value; // save value to collection
+        document.getElementById("Subtotal").innerHTML = amount; // update subtotals
+
+    }
+</script>
+<!-- snip -->
+Amount: <input type="text" id="UserInputValue" onchange="UserInputChanged(this);" /> <br />
+Subtotal: <span id="Subtotal"></span> <br />
+<input type="button" onclick="SaveForm();" value="Save" /> <br /><br />
+Saved amount: <span id="SavedAmount"></span>
+<!-- snip -->
+
+I don't think I can speed up the validation code -- it's pretty lightweight, but apparently, slow enough that code tries to call the web service before the validation is complete.
+On my machine, ~95ms is the magic number between whether the validation code executes before the save code begins.  This may be higher or lower depending on the users' computer speed.  
+Does anyone have any ideas how to handle this condition?  A coworker suggested using a semaphore while the validation code is running and a busy loop in the save code to wait until the semaphore unlocks -- but I'd like to avoid using any sort of busy loop in my code.
+
+
+Use the semaphore (let's call it StillNeedsValidating). if the SaveForm function sees the StillNeedsValidating semaphore is up, have it activate a second semaphore of its own (which I'll call FormNeedsSaving here) and return. When the validation function finishes, if the FormNeedsSaving semaphore is up, it calls the SaveForm function on its own.
+In jankcode;
+function UserInputChanged(control) {
+    StillNeedsValidating = true;
+    // do validation
+    StillNeedsValidating = false;
+    if (FormNeedsSaving) saveForm(); 
+}
+
+function SaveForm() {
+    if (StillNeedsValidating) { FormNeedsSaving=true; return; }
+    // call web service to save value
+    FormNeedsSaving = false;
+}
+
+
+I think the timeout is causing your problem... if that's going to be plain code (no asynchronous AJAX calls, timeouts etc) then I don't think that SaveForm will be executed before UserInputChanged completes.
+
+Disable the save button during validation.
+Set it to disabled as the first thing validation does, and re-enable it as it finishes.
+e.g.
+function UserInputChanged(control) {
+    // --> disable button here --< 
+    currentControl = control;
+    // use setTimeout to simulate slow validation code (production code does not use setTimeout)
+    setTimeout("ValidateAmount()", 100); 
+}
+
+and
+function ValidateAmount() {
+    // various validationey functions here
+    amount = currentControl.value; // save value to collection
+    document.getElementById("Subtotal").innerHTML = amount; // update subtotals
+    // --> enable button here if validation passes --<
+}
+
+You'll have to adjust when you remove the setTimeout and make the validation one function, but unless your users have superhuman reflexes, you should be good to go.
+
+You could set up a recurring function that monitors the state of the entire grid and raises an event that indicates whether the entire grid is valid or not.
+Your 'submit form' button would then enable or disable itself based on that status.
+Oh I see a similar response now - that works too, of course.
+
+A semaphore or mutex is probably the best way to go, but instead of a busy loop, just use a setTimeout() to simulate a thread sleep. Like this:
+busy = false;
+
+function UserInputChanged(control) {
+    busy = true;
+    currentControl = control;
+    // use setTimeout to simulate slow validation code (production code does not use setTimeout)
+    setTimeout("ValidateAmount()", 100); 
+}
+
+function SaveForm() {
+    if(busy) 
+    {
+       setTimeout("SaveForm()", 10);
+       return;
+    }
+
+    // call web service to save value
+    document.getElementById("SavedAmount").innerHTML = amount;
+}
+
+function ValidateAmount() {
+    // various validationey functions here
+    amount = currentControl.value; // save value to collection
+    document.getElementById("Subtotal").innerHTML = amount; // update subtotals
+    busy = false;
+}
+
+
+You don't have a race condition, race conditions can not happen in javascript since javascript is single threaded, so 2 threads can not be interfering with each other.
+The example that you give is not a very good example. The setTimeout call will put the called function in a queue in the javascript engine, and run it later. If at that point you click the save button, the setTimeout function will not be called until AFTER the save is completely finished.
+What is probably happening in your javascript is that the onClick event is called by the javascript engine before the onChange event is called.
+As a hint, keep in mind that javascript is single threaded, unless you use a javascript debugger (firebug, microsoft screipt debugger). Those programs intercept the thread and pause it. From that point on other threads (either via events, setTimeout calls or XMLHttp handlers) can then run, making it seem that javascript can run multiple threads at the same time.
+
+When working with async data sources you can certainly have race conditions because the JavaScript process thread continues to execute directives that may depend on the data which has not yet returned from the remote data source.  That's why we have callback functions.
+In your example, the call to the validation code needs to have a callback function that can do something when validation returns.
+However, when making something with complicated logic or trying to troubleshoot or enhance an existing series of callbacks, you can go nuts.
+That's the reason I created the proto-q library: http://code.google.com/p/proto-q/
+Check it out if you do a lot of this type of work.

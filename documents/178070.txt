@@ -1,0 +1,46 @@
+DDD and Asynchronous Repositories
+flex asynchronous domain-driven-design ddd-repositories
+We're working on a rich client (written in Flex) that is connected to a Java backend, using both RMI and JMS. I was thinking about implementing the client in a DDD fashion so that it has Repositories for the CRUD operations on the domain objects.
+The problem is however that all backend communication happens asynchronous and there is no way for me to force the client for waiting to continue untill it received a response. That means that, at a low level, I can call a method on a Remote Object and I get a AsyncToken as a return value. I can then listen to events on the asynctoken to see whether the call has passed or failed. This however breaks the main idea behind a repository, to hide the technical details from the client.
+There might be 2 options I guess:
+
+have the methods on the repository return the asynctoken, which seems like a messy solution to me
+have the methods return an empty collection (for a findAll for instance) that will get filled when the response is received.
+
+Both have pros and cons and I would like to get some input from you guys.
+(taking this further, what would be good caching strategies? Dependind on the situation, I don't want the repository to call the server each time I request all entities from it. How would that affect the signature of the methods on the repository.)
+
+
+One straegy would be to create a facade in front of the repository. Your client will make asychronous calls to the facade which in turn makes a synchronous call to your repository. This will allow your repository to continue working in a synchronous manner while the facade manages the asynchronous aspects of your call.
+
+I would recommend returning an AsyncToken as returning an empty collection just feels wrong.
+In the case where you are returning data from a cache, return a CompletedAsyncToken (: AsyncToken) that automatically fires the COMPLETE event with the data whenever the COMPLETE event is subscribed to (and then removed the handler).
+public class CompleteAsyncToken : AsyncToken
+{
+    public function CompleteAsyncToken(data : Object)
+    {
+        super(data);
+    }
+
+    public override addEventListener(type:String, listener:Function, useCapture:Boolean = false, priority:int = 0, useWeakReference:Boolean = false) : void
+    {
+        super.addEventListener(type, listener, useCapture, priority, useWeakReference);
+
+        if (type == Event.COMPLETE)
+        {
+            // Don't just execute listener as EventDispatcher is not that simple
+            super.dispatchCompleteEvent();
+            super.removeEventListener(type, listener);
+        }
+    }
+
+
+Flex and Flash Remoting is inherently asynchronous so fighting against that paradigm is going to give you a ton of trouble.  Our service delegates return AsyncToken from every method and we've never had a problem with it.
+If you want to ensure that the application doesn't render a new view or perform some other logic until the result/fault comes back, you could do the following:
+
+Attach an event listener for a custom event that will invoke your "post result/fault code"
+Make the async call
+Handle the result/fault
+Dispatch the custom event to trigger your listener from #1
+
+Bear in mind this going to lead to a lot of annoying boilterplate code every time you make an async call.  I would consider very carefully whether you really need a synchronous execution path.

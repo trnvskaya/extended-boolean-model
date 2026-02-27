@@ -1,0 +1,120 @@
+How to find whether a Windows user belongs to specified group?
+windows
+Currently we have a DLL that checks whether a username/password is a valid Windows user using the Windows API LogonUser method. We need to enhance it so it checks whether the user belongs to a specified group as well. Is there a Windows method that does that?
+Given a Windows username and password, find out whether the user belongs to a specified group.
+
+
+The closest single API is CheckTokenMembership, which just leaves the problem of obtaining the user's SID and handle for the group.
+If you can use ATL check out the methods on the CAccessToken class ... and even if you can't use it check out the implementation in atlsecurity.h for examples.
+
+you can use "NetUserGetLocalGroups" function in netapi32.dll to get all groups a given user belongs to and then check if specified group name exists in groups name returned by function. you can find function usage here
+
+Thanks Abhijit, that function seems to do the job, I also found this link which had sample code:
+http://delphi.newswhat.com/geoxml/forumhistorythread?groupname=borland.public.delphi.nativeapi.win32&messageid=40914cf6@newsgroups.borland.com
+unit GetGroupsForUserUnit;
+
+interface
+
+uses
+  Windows, SysUtils, Classes, ShellAPI;
+
+type
+  {$EXTERNALSYM NET_API_STATUS}
+  NET_API_STATUS = DWORD;
+  LPLOCALGROUP_USERS_INFO_0 = ^LOCALGROUP_USERS_INFO_0;
+  {$EXTERNALSYM LPLOCALGROUP_USERS_INFO_0}
+  PLOCALGROUP_USERS_INFO_0 = ^LOCALGROUP_USERS_INFO_0;
+  {$EXTERNALSYM PLOCALGROUP_USERS_INFO_0}
+  _LOCALGROUP_USERS_INFO_0 = record
+    lgrui0_name: LPWSTR;
+  end;
+  {$EXTERNALSYM _LOCALGROUP_USERS_INFO_0}
+  LOCALGROUP_USERS_INFO_0 = _LOCALGROUP_USERS_INFO_0;
+  {$EXTERNALSYM LOCALGROUP_USERS_INFO_0}
+  TLocalGroupUsersInfo0 = LOCALGROUP_USERS_INFO_0;
+  PLocalGroupUsersInfo0 = PLOCALGROUP_USERS_INFO_0;
+
+const
+  {$EXTERNALSYM MAX_PREFERRED_LENGTH}
+    MAX_PREFERRED_LENGTH = DWORD(-1);
+  {$EXTERNALSYM NERR_Success}
+    NERR_Success = 0;
+  {$EXTERNALSYM NERR_BASE}
+    NERR_BASE = 2100;
+  {$EXTERNALSYM NERR_UserNotFound}
+    NERR_UserNotFound = (NERR_BASE+121);
+  {$EXTERNALSYM NERR_InvalidComputer}
+    NERR_InvalidComputer = (NERR_BASE+251);
+  {$EXTERNALSYM LG_INCLUDE_INDIRECT}
+    LG_INCLUDE_INDIRECT = $0001;
+
+
+{$EXTERNALSYM NetUserGetLocalGroups}
+function NetUserGetLocalGroups(servername: PWideChar; username: PWideChar;
+  level: DWORD; flags: DWORD; var bufptr: Pointer; prefmaxlen: DWORD;
+  var entriesread: DWORD; var totalentries: DWORD): NET_API_STATUS; stdcall;
+{$EXTERNALSYM NetApiBufferFree}
+function NetApiBufferFree(Buffer: Pointer): NET_API_STATUS; stdcall;
+
+function GetGroupsForNetUser(uname: widestring): string;
+
+implementation
+
+function NetUserGetLocalGroups; external 'netapi32.dll' name
+'NetUserGetLocalGroups';
+function NetApiBufferFree; external 'netapi32.dll' name 'NetApiBufferFree';
+
+function GetGroupsForNetUser(uname: widestring): string;
+// NetUserGetLocalGroups - returns semi-colon delim string of groups.
+// Pass in user value returned by GetUserName to get current user.
+var
+  bufptr: Pointer;
+  Status: NET_API_STATUS;
+  PrefMaxLen, EntriesRead, TotalEntries: DWord;
+  i: integer;
+  pTmpBuf: LPLOCALGROUP_USERS_INFO_0;
+begin
+  PrefMaxLen := MAX_PREFERRED_LENGTH;
+  Status := NetUserGetLocalGroups(nil, PWideChar(uname), 0 ,
+        LG_INCLUDE_INDIRECT, bufptr, PrefMaxLen,
+        EntriesRead, TotalEntries);
+  case Status of
+    NERR_Success: begin
+      result := 'success, but no groups';
+      pTmpBuf := bufptr;
+      if pTmpBuf <> nil then
+        begin
+        result := '';
+        for i := 0 to EntriesRead - 1 do
+        begin
+          if pTmpBuf <> nil then
+          begin
+            if result = '' then
+            begin
+              result := pTmpBuf.lgrui0_name
+            else
+              result := result + ';' + pTmpBuf.lgrui0_name;
+          end;
+          Inc(pTmpBuf);
+        end;
+      end;
+    end;
+    ERROR_ACCESS_DENIED: begin
+      result := 'The user does not have access.';
+    end;
+    NERR_InvalidComputer: begin
+      result := 'The computer name is invalid.';
+    end;
+    NERR_UserNotFound: begin
+      result := 'The user name could not be found. (' + uname + ')';
+    end;
+    else begin
+      result := 'Unknown error.';
+    end;
+  end;
+   if bufptr <> nil then
+          NetApiBufferFree(bufptr);
+end;
+
+end.
+

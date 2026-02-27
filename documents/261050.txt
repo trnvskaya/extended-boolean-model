@@ -1,0 +1,67 @@
+Required Field Validator Not Firing
+asp.net
+I'm having an issue with a standard ASP.NET page that has a TextBox and a RequiredFieldValidator.  The steps to reproduce are quite simple:
+
+Place a TextBox on a page
+Place a RequiredFieldValidator on the page
+Point the RequiredFieldValidator at the TextBox
+Run the app
+Tab away from the TextBox the RequiredFieldValidator does not show
+Enter text, then delete the text and THEN tab away, the RequiredFieldValidator does show
+
+The RequiredFieldValidator works fine in both cases after a postback, however it seems the client-side code isn't firing until something is entered into the textbox (and then deleted).
+Does anyone have a solution to this without hacking away at JavaScript myself?
+
+
+did you set the EnableClientScript attribute/property to true?
+do you have a default value for the text box? if so you need to set the InitialValue property to that default value
+
+Is it possible this behavior is by design to suppress the appearance of validation controls until user input?
+Generally speaking, Validate() gets called whenever a control is clicked that has CausesValidation set to true, like a submit button.  
+In any case, a poor mans work around, you could call the page Validate() function from the Load event handler. This will make things clearer to tab happy users that they need to enter something in. E.g.
+protected void Page_Load(object sender, EventArgs e)
+{
+    Validate();
+}
+
+
+A form can contain several validation groups. AFAIK validation is only triggered through a post-back, activating the validators of the corresponding validator group. Only after the post-back does the validator add its client-side Javascript validation code.
+
+Thats just how the validators work, they don't fire unless there was input to validate or there was a postback. You'll have to do the validation firing yourself if you want it to happen.
+I don't know the exact code you'll need but it'll have to do with handling onblur and overriding evaluation function:
+function blurred(sender) {
+	var validator = sender.Validators[0]
+	validator.evaluationfunction(validator);
+}
+
+and on the textbox:
+<asp:TextBox runat="server" ID="txt" onBlur="blurred(this)"></asp:TextBox>
+
+
+You may be creating a usability issue here. If you validate mandatory fields on blur, the user will get a lot of "Required Field" errors just because he's tabbing through the fields.
+
+A follow-up to my previous answer:
+Validation occurs in the onchange event, rather than the onblur. onchange fires when the focus is lost AND the control value has changed.
+To trigger validation in the onblur event, I added the following code in the Page_Load():
+ScriptManager.RegisterStartupScript(this, GetType(), "js" + myTextBox.ClientID,
+  "ValidatorHookupEvent(document.getElementById(\"" + myTextBox.ClientID + 
+  "\"), \"onblur\", \"ValidatorOnChange(event);\");", true);
+
+Works in ASP.Net 2.
+
+I had the same issue. Discovered that you need need to add some framework script references to your script manager. Make sure you have at least these script references withing "script" tags in your script manager.
+    <asp:ScriptManager ID="ScriptManager1" runat="server" ValidateRequestMode="Enabled" >
+        <Scripts>
+        <%--Framework Scripts--%>
+        <%--<asp:ScriptReference Name="MsAjaxBundle"  />--%>
+        <asp:ScriptReference Name="jquery" />
+        <asp:ScriptReference Name="jquery.ui.combined" />
+        <asp:ScriptReference Name="WebForms.js"  Path="~/Scripts/WebForms/WebForms.js" />
+        <asp:ScriptReference Name="WebUIValidation.js"  Path="~/Scripts/WebForms/WebUIValidation.js" />
+        <asp:ScriptReference Name="WebFormsBundle" />
+        <%--Site Scripts--%>
+
+    </Scripts>
+    </asp:ScriptManager>
+
+You can find those as well in the default master page created by .Net when you create a webforms application.

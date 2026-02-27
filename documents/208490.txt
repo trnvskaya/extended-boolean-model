@@ -1,0 +1,53 @@
+When should the Win32 InterlockedExchange function be used?
+multithreading winapi
+I came across the function InterlockedExchange and was wondering when I should use this function. In my opinion, setting a 32 Bit value on an x86 processor should always be atomic? 
+In the case where I want to use the function, the new value does not depend on the old value (it is not an increment operation).
+Could you provide an example where this method is mandatory (I'm not looking for InterlockedCompareExchange)
+
+
+InterlockedExchange is both a write and a read -- it returns the previous value.
+This is necessary to ensure another thread didn't write a different value just after you did.  For example, say you're trying to increment a variable.  You can read the value, add 1, then set the new value with InterlockedExchange.  The value returned by InterlockedExchange must match the value you originally read, otherwise another thread probably incremented it at the same time, and you need to loop around and try again.
+
+As well as writing the new value, InterlockedExchange also reads and returns the previous value; this whole operation is atomic. This is useful for lock-free algorithms.
+(Incidentally, 32-bit writes are not guaranteed to be atomic. Consider the case where the write is unaligned and straddles a cache boundary, for instance.)
+
+Setting a 32-bit value is atomic, but only if you're setting a literal.
+b = a is 2 operations:
+mov         eax,dword ptr [a] 
+mov         dword ptr [b],eax
+
+Theoretically there could be some interruption between the first and second operation.
+
+In a multi-processor or multi-core machine each core has it's own cache - so each core has each own potentially different "view" of what the content of the system memory is.
+Thread synchronization mechanisms take care of synchronizing between cores, for more information look at http://blogs.msdn.com/oldnewthing/archive/2008/10/03/8969397.aspx or google for acquire and release semantics
+
+Writing a value is never atomic by default. When you write a value to a variable, several machine instructions are generated. With modern, preemptive OSes, the OS might switch to another thread between the individual operations of the write.
+This is even more a problem on multi-processor machines, where several threads could be executing at the same time, and trying to write to a single memory location simultaneously.
+Interlocked operations avoid this by using specialized instructions to make the write (x86 has dedicated instructions for this kind of situation), which do the read-modify-write in one instruction. These instructions also lock the memory bus of all processors, to ensure that no other executing thread could be writing to the value at the same time.
+
+InterlockedExchange makes sure that the change of a variable and the return of its original value are not interrupted by other threads.
+So, if 'i' is an int, these calls (taken individually) do not need InterlockedExchange around 'i':
+a = i;
+i = 9;
+i = a;
+i = a + 9;
+a = i + 9;
+if(0 == i)
+
+None of these statements rely upon BOTH the initial AND final values of 'i'. But these following calls DO need InterlockedExchange around 'i':
+a = i++;  //a = InterlockedExchange(&i, i + 1);
+
+Without it, two threads running through this same code might get the same value of 'i' assigned to 'a' or 'a' may unexpectedly skip two or more numbers.
+if(0 == i++) //if(0 == InterlockedExchange(&i, i + 1))
+
+Two threads may both execute the code that is only supposed to happen once.
+etc.
+
+wow, so many conflicting answers. Hard to sift through who's right, who's wrong, and what information is misleading.
+I'm unsure of the answer too, given the above half-answers, but I think it works like this, I may be wrong, and it will be interesting to find out if I am:
+
+32-bit read & writes ARE atomic, but depending on your code, that may not mean much.
+don't worry about non-aligned read/writes. ALL 32-bit writes to a 32-bit variable have to be aligned or the machine page-faults.
+don't worry about a write wrapping around the end of a cached page, that can't happen.
+If you need to write-then-read on one thread, and you're writing on another thread, then you need to use InterlockedExchange. If you're simply reading the value on one thread, and writing it on another, then you don't need to use it, but those values may be wiggly because of multithreading.
+

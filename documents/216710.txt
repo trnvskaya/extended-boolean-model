@@ -1,0 +1,41 @@
+call OpenFileDialog from powershell
+winforms powershell
+When I run the following, PowerShell hangs waiting for the dialog to close, even though the dialog is never displayed:
+[void] [Reflection.Assembly]::LoadWithPartialName( 'System.Windows.Forms' )
+$d = New-Object Windows.Forms.OpenFileDialog
+$d.ShowDialog( )
+
+Calling ShowDialog on a Windows.Forms.Form works fine. I also tried creating a Form and passing it as the parent to $d.ShowDialog, but the result was no different.
+
+
+I was able to duplicate your problem and found a workaround.  I don't know why this happens, but it has happened to others.
+If you set the ShowHelp property to $true, you will get the dialog to come up properly.
+Example:
+[void] [Reflection.Assembly]::LoadWithPartialName( 'System.Windows.Forms' )
+$d = New-Object Windows.Forms.OpenFileDialog
+$d.ShowHelp = $true
+$d.ShowDialog( )
+
+Good Luck!
+
+It appears to me that the dialog is actually opening just fine, but it's behind the powershell console window. Unfortunately it doesn't show in the taskbar, so there's no indication that it's there unless you move the powershell window or Alt+Tab. It also appears that the ShowHelp workaround didn't have any effect for me.
+EDIT Here's a way to do do it using your secondary-form idea. The basic idea is to create a new form which opens the OpenFileDialog from inside its Shown event. The key is calling Activate on the form before opening the dialog, so that the form comes to the front and the dialog appears. I moved the form offscreen by setting the Location to an offscreen value, but you could alternatively set Form.Visible = $false from inside the Shown event.
+[void] [Reflection.Assembly]::LoadWithPartialName( 'System.Windows.Forms' )
+
+$ofn = New-Object System.Windows.Forms.OpenFileDialog
+
+$outer = New-Object System.Windows.Forms.Form
+$outer.StartPosition = [Windows.Forms.FormStartPosition] "Manual"
+$outer.Location = New-Object System.Drawing.Point -100, -100
+$outer.Size = New-Object System.Drawing.Size 10, 10
+$outer.add_Shown( { 
+   $outer.Activate();
+   $ofn.ShowDialog( $outer );
+   $outer.Close();
+ } )
+$outer.ShowDialog()
+
+
+Apparently this has something to do with Multi-Threaded Apartment (MTA) mode.
+It appears to work fine in Single-Threaded Apartment (-STA) mode.
+See also: Could you explain STA and MTA?

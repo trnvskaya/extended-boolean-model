@@ -1,0 +1,110 @@
+How to load a .NET assembly for reflection operations and subsequently unload it?
+.net assemblies appdomain assembly-attributes
+I'm writing a tool to report information about .NET applications deployed across environments and regions within my client's systems.
+I'd like to read the values of assembly attributes in these assemblies.
+This can be achieved using Assembly.ReflectionOnlyLoad, however even this approach keeps the assembly loaded.  The issue here is that I cannot load two assemblies that have the same name from different paths, so naturally I can't compare the same application deployed in different systems.
+At this point I'm assuming the solution will involve using temporary AppDomains.
+Can someone detail how to load an assembly into another AppDomain, read the attributes from it and then unload the AppDomain?
+This needs to work for assemblies on the file system as well as those at URL addresses.
+
+
+From the MSDN documentation of System.Reflection.Assembly.ReflectionOnlyLoad (String) :
+
+The reflection-only context is no
+  different from other contexts.
+  Assemblies that are loaded into the
+  context can be unloaded only by
+  unloading the application domain.
+
+So, I am afraid the only way to unload an assembly is unloading the application domain.
+To create a new AppDomain and load assemblies into it:
+public void TempLoadAssembly()
+{
+    AppDomain tempDomain = AppDomain.CreateDomain("TemporaryAppDomain");
+    tempDomain.DoCallBack(LoaderCallback);
+    AppDomain.Unload(tempDomain);
+}
+
+private void LoaderCallback()
+{
+    Assembly.ReflectionOnlyLoad("YourAssembly");
+    // Do your stuff here
+}
+
+
+You can try to use Unmanaged Metadata API, which is COM and can easily be used from .NET application with some kind of wrapper. 
+
+You have to use application domains, there's no other way to unload an assembly. Basically you have to use code like this:
+
+
+AppDomain tempDomain = AppDomain.CreateDomain("Temp Domain");
+tempDomain.Load(assembly);
+AppDomain.Unload(tempDomain);
+
+
+
+Whilst not really about unloading assemblies, if you're just trying to get the version number of a file you can use System.Diagnostics.FileVersionInfo.
+var info = FileVersionInfo.GetVersionInfo(path);
+
+FileVersionInfo has the following properties:
+public string Comments { get; }
+public string CompanyName { get; }
+public int FileBuildPart { get; }
+public string FileDescription { get; }
+public int FileMajorPart { get; }
+public int FileMinorPart { get; }
+public string FileName { get; }
+public int FilePrivatePart { get; }
+public string FileVersion { get; }
+public string InternalName { get; }
+public bool IsDebug { get; }
+public bool IsPatched { get; }
+public bool IsPreRelease { get; }
+public bool IsPrivateBuild { get; }
+public bool IsSpecialBuild { get; }
+public string Language { get; }
+public string LegalCopyright { get; }
+public string LegalTrademarks { get; }
+public string OriginalFilename { get; }
+public string PrivateBuild { get; }
+public int ProductBuildPart { get; }
+public int ProductMajorPart { get; }
+public int ProductMinorPart { get; }
+public string ProductName { get; }
+public int ProductPrivatePart { get; }
+public string ProductVersion { get; }
+public string SpecialBuild { get; }
+
+
+You can create an instance in the new AppDomain and execute your code in that instance. 
+var settings = new AppDomainSetup
+{
+    ApplicationBase = AppDomain.CurrentDomain.BaseDirectory,
+};
+var childDomain = AppDomain.CreateDomain(Guid.NewGuid().ToString(), null, settings);
+
+ var handle = Activator.CreateInstance(childDomain,
+            typeof(ReferenceLoader).Assembly.FullName,
+            typeof(ReferenceLoader).FullName,
+            false, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance, null, null, CultureInfo.CurrentCulture, new object[0]);
+
+
+var loader = (ReferenceLoader)handle.Unwrap();
+
+//This operation is executed in the new AppDomain
+var paths = loader.LoadReferences(assemblyPath);
+
+
+AppDomain.Unload(childDomain);
+
+Here is the ReferenceLoader
+public class ReferenceLoader : MarshalByRefObject
+{
+    public string[] LoadReferences(string assemblyPath)
+    {
+        var assembly = Assembly.ReflectionOnlyLoadFrom(assemblyPath);
+        var paths = assembly.GetReferencedAssemblies().Select(x => x.FullName).ToArray();
+        return paths;
+    }
+}
+

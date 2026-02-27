@@ -1,0 +1,123 @@
+Finding a DOI in a document or page
+regex doi
+The DOI system places basically no useful limitations on what constitutes a reasonable identifier. However, being able to pull DOIs out of PDFs, web pages, etc. is quite useful for citation information, etc.
+Is there a reliable way to identify a DOI in a block of text without assuming the 'doi:' prefix? (any language acceptable, regexes preferred, and avoiding false positives a must)
+
+
+The following regex should do the job (Perl regex syntax):
+/(10\.\d+\/\d+)/
+
+You could do some additional sanity checking by opening the urls
+http://hdl.handle.net/<doi>
+
+and
+http://dx.doi.org/<doi>
+
+where  is the candidate doi,
+and testing that you a) get a 200 OK http status, and b) the returned page is not the "DOI not found" page for the service.
+
+@Silas The sanity checking is a good idea. However, the regex doesn't cover all DOIs. The first element must (currently) be 10, and the second element must (currently) be numeric, but the third element is barely restricted at all:
+
+"Legal characters are the legal graphic characters of Unicode. This specifically excludes the control character ranges 0x00-0x1F and 0x80-0x9F..."  
+
+and that's where the real problem lies. In practice, I've never seen whitespace used, but the spec specifically allows for it. Basically, there doesn't seem to be a sensible way of detecting the end of a DOI.
+
+I'm sure it's not super-helpful for the OP at this point, but I figured I'd post what I am trying in case anyone else like me stumbles upon this:
+(10.(\d)+/(\S)+)
+
+This matches: "10 dot number slash anything-not-whitespace" 
+But for my use (scraping HTML), this was finding false-positives, so I had to match the above, plus get rid of quotes and greater-than/less-than:
+(10.(\d)+/([^(\s\>\"\<)])+)
+
+I'm still testing these out, but I'm feeling hopeful thus far.
+
+Here is my go at it:
+(10[.][0-9]{4,}[^\s"/<>]*/[^\s"<>]+)
+
+And a couple of valid edge cases where this doesn't fail, but others seem to do:
+
+10.1007/978-3-642-28108-2_19
+10.1007.10/978-3-642-28108-2_19 (fictitious example, see @Ju9OR comment)
+10.1016/S0735-1097(98)00347-7
+10.1579/0044-7447(2006)35\[89:RDUICP\]2.0.CO;2
+
+Also, correctly discards some falsy (X|HT)ML stuff like:
+
+<geo coords="10.4515260,51.1656910"></geo>
+
+
+Ok, I'm currently extracting thousands of DOIs from free form text (XML) and I realized that my previous approach had a few problems, namely regarding encoded entities and trailing punctuation, so I went on reading the specification and this is the best I could come with.
+
+
+The DOI prefix shall be composed of a directory indicator followed by
+  a registrant code. These two components shall be separated by a full
+  stop (period).
+The directory indicator shall be "10". The directory indicator
+  distinguishes the entire set of character strings (prefix and suffix)
+  as digital object identifiers within the resolution system.
+
+Easy enough, the initial \b prevents us from "matching" a "DOI" that doesn't start with 10.:
+$pattern = '\b(10[.]';
+
+
+
+The second element of the DOI prefix shall be the registrant code. The
+  registrant code is a unique string assigned to a registrant.
+
+Also, all assigned registrant code are numeric, and at least 4 digits long, so:
+$pattern = '\b(10[.][0-9]{4,}';
+
+
+
+The registrant code may be further divided into sub-elements for
+  administrative convenience if desired. Each sub-element of the
+  registrant code shall be preceded by a full stop.
+
+$pattern = '\b(10[.][0-9]{4,}(?:[.][0-9]+)*';
+
+
+
+The DOI syntax shall be made up of a DOI prefix and a DOI suffix
+  separated by a forward slash.
+
+However, this isn't absolutely necessary, section 2.2.3 states that uncommon suffix systems may use other conventions (such as 10.1000.123456 instead of 10.1000/123456), but lets cut some slack.
+$pattern = '\b(10[.][0-9]{4,}(?:[.][0-9]+)*/';
+
+
+
+The DOI name is case-insensitive and can incorporate any printable
+  characters from the legal graphic characters of Unicode. The DOI
+  suffix shall consist of a character string of any length chosen by the
+  registrant. Each suffix shall be unique to the prefix element that
+  precedes it. The unique suffix can be a sequential number, or it might
+  incorporate an identifier generated from or based on another system.
+
+Now this is where it gets trickier, from all the DOIs I have processed, I saw the following characters (besides [0-9a-zA-Z] of course) in their suffixes: .-()/:- -- so, while it doesn't exist, the DOI 10.1016.12.31/nature.S0735-1097(98)2000/12/31/34:7-7 is completely plausible.
+The logical choice would be to use \S or the [[:graph:]] PCRE POSIX class, so lets do that:
+$pattern = '\b(10[.][0-9]{4,}(?:[.][0-9]+)*/\S+'; // or
+$pattern = '\b(10[.][0-9]{4,}(?:[.][0-9]+)*/[[:graph:]]+';
+
+
+Now we have a difficult problem, the [[:graph:]] class is a super-set of the [[:punct:]] class, which includes characters easily found in free text or any markup language: "'&<> among others.
+Lets just filter the markup ones for now using a negative lookahead:
+$pattern = '\b(10[.][0-9]{4,}(?:[.][0-9]+)*/(?:(?!["&\'<>])\S)+'; // or
+$pattern = '\b(10[.][0-9]{4,}(?:[.][0-9]+)*/(?:(?!["&\'<>])[[:graph:]])+';
+
+
+The above should cover encoded entities (&), attribute quotes (["']) and open / close tags ([<>]).
+Unlike markup languages, free text usually doesn't employ punctuation characters unless they are bounded by at least one space or placed at the end of a sentence, for instance:
+
+This is a long DOI:
+  10.1016.12.31/nature.S0735-1097(98)2000/12/31/34:7-7!!!
+
+The solution here is to close our capture group and assert another word boundary:
+$pattern = '\b(10[.][0-9]{4,}(?:[.][0-9]+)*/(?:(?!["&\'<>])\S)+)\b'; // or
+$pattern = '\b(10[.][0-9]{4,}(?:[.][0-9]+)*/(?:(?!["&\'<>])[[:graph:]])+)\b';
+
+And voilÃ¡, here is a demo.
+
+This is a really old and answered question, but here's another potential substitute.
+\b10\.(\d+\.*)+[\/](([^\s\.])+\.*)+\b
+
+This assumes that white space is not part of the DOI.
+Haven't tested this for false positives, but it seems to be able to find all the edge cases mentioned in this page.

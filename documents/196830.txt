@@ -1,0 +1,145 @@
+What is the easiest/best/most correct way to iterate through the characters of a string in Java?
+java string iteration character tokenize
+StringTokenizer? Convert the String to a char[] and iterate over that? Something else?
+
+
+I use a for loop to iterate the string and use charAt() to get each character to examine it.  Since the String is implemented with an array, the charAt() method is a constant time operation.
+String s = "...stuff...";
+
+for (int i = 0; i < s.length(); i++){
+    char c = s.charAt(i);        
+    //Process char
+}
+
+That's what I would do.  It seems the easiest to me.
+As far as correctness goes, I don't believe that exists here.  It is all based on your personal style.
+
+I wouldn't use StringTokenizer as it is one of classes in the JDK that's legacy.
+The javadoc says:
+
+StringTokenizer is a legacy class that
+  is retained for compatibility reasons
+  although its use is discouraged in new
+  code. It is recommended that anyone
+  seeking this functionality use the
+  split  method of String or the
+  java.util.regex package instead.
+
+
+See The Java Tutorials: Strings.
+public class StringDemo {
+	public static void main(String[] args) {
+		String palindrome = "Dot saw I was Tod";
+		int len = palindrome.length();
+		char[] tempCharArray = new char[len];
+		char[] charArray = new char[len];
+
+		// put original string in an array of chars
+		for (int i = 0; i < len; i++) {
+			tempCharArray[i] = palindrome.charAt(i);
+		} 
+
+		// reverse array of chars
+		for (int j = 0; j < len; j++) {
+			charArray[j] = tempCharArray[len - 1 - j];
+		}
+
+		String reversePalindrome =  new String(charArray);
+		System.out.println(reversePalindrome);
+	}
+}
+
+Put the length into int len and use for loop.
+
+There are some dedicated classes for this:
+import java.text.*;
+
+final CharacterIterator it = new StringCharacterIterator(s);
+for(char c = it.first(); c != CharacterIterator.DONE; c = it.next()) {
+   // process c
+   ...
+}
+
+
+Two options
+for(int i = 0, n = s.length() ; i < n ; i++) { 
+    char c = s.charAt(i); 
+}
+
+or
+for(char c : s.toCharArray()) {
+    // process c
+}
+
+The first is probably faster, then 2nd is probably more readable. 
+
+StringTokenizer is totally unsuited to the task of breaking a string into its individual characters.  With String#split() you can do that easily by using a regex that matches nothing, e.g.:
+String[] theChars = str.split("|");
+
+But StringTokenizer doesn't use regexes, and there's no delimiter string you can specify that will match the nothing between characters.  There is one cute little hack you can use to accomplish the same thing: use the string itself as the delimiter string (making every character in it a delimiter) and have it return the delimiters:
+StringTokenizer st = new StringTokenizer(str, str, true);
+
+However, I only mention these options for the purpose of dismissing them.  Both techniques break the original string into one-character strings instead of char primitives, and both involve a great deal of overhead in the form of object creation and string manipulation.  Compare that to calling charAt() in a for loop, which incurs virtually no overhead. 
+
+I agree that StringTokenizer is overkill here. Actually I tried out the suggestions above and took the time. 
+My test was fairly simple: create a StringBuilder with about a million characters, convert it to a String, and traverse each of them with charAt() / after converting to a char array / with a CharacterIterator a thousand times (of course making sure to do something on the string so the compiler can't optimize away the whole loop :-) ).
+The result on my 2.6 GHz Powerbook (that's a mac :-) ) and JDK 1.5:
+
+Test 1: charAt + String --> 3138msec
+Test 2: String converted to array --> 9568msec 
+Test 3: StringBuilder charAt --> 3536msec 
+Test 4: CharacterIterator and String --> 12151msec
+
+As the results are significantly different, the most straightforward way also seems to be the fastest one. Interestingly, charAt() of a StringBuilder seems to be slightly slower than the one of String.
+BTW I suggest not to use CharacterIterator as I consider its abuse of the '\uFFFF' character as "end of iteration" a really awful hack. In big projects there's always two guys that use the same kind of hack for two different purposes and the code crashes really mysteriously. 
+Here's one of the tests:
+	int count = 1000;
+	...
+
+	System.out.println("Test 1: charAt + String");
+	long t = System.currentTimeMillis();
+	int sum=0;
+	for (int i=0; i<count; i++) {
+		int len = str.length();
+		for (int j=0; j<len; j++) {
+			if (str.charAt(j) == 'b')
+				sum = sum + 1;
+		}
+	}
+	t = System.currentTimeMillis()-t;
+	System.out.println("result: "+ sum + " after " + t + "msec");
+
+
+Note most of the other techniques described here break down if you're dealing with characters outside of the BMP (Unicode Basic Multilingual Plane), i.e. code points that are outside of the u0000-uFFFF range. This will only happen rarely, since the code points outside this are mostly assigned to dead languages. But there are some useful characters outside this, for example some code points used for mathematical notation, and some used to encode proper names in Chinese.
+In that case your code will be:
+String str = "....";
+int offset = 0, strLen = str.length();
+while (offset < strLen) {
+  int curChar = str.codePointAt(offset);
+  offset += Character.charCount(curChar);
+  // do something with curChar
+}
+
+The Character.charCount(int) method requires Java 5+.
+Source: http://mindprod.com/jgloss/codepoint.html
+
+If you have Guava on your classpath, the following is a pretty readable alternative. Guava even has a fairly sensible custom List implementation for this case, so this shouldn't be inefficient.
+for(char c : Lists.charactersOf(yourString)) {
+    // Do whatever you want     
+}
+
+UPDATE: As @Alex noted, with Java 8 there's also CharSequence#chars to use. Even the type is IntStream, so it can be mapped to chars like:
+yourString.chars()
+        .mapToObj(c -> Character.valueOf((char) c))
+        .forEach(c -> System.out.println(c)); // Or whatever you want
+
+
+If you need to iterate through the code points of a String (see this answer) a shorter / more readable way is to use the CharSequence#codePoints method added in Java 8:
+for(int c : string.codePoints().toArray()){
+    ...
+}
+
+or using the stream directly instead of a for loop:
+string.codePoints().forEach(c -> ...);
+
+There is also CharSequence#chars if you want a stream of the characters (although it is an IntStream, since there is no CharStream).

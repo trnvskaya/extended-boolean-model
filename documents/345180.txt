@@ -1,0 +1,73 @@
+Access a custom .NET DLL in VBScript
+.net dll vbscript dllregistration
+I wrote a DLL in .NET and I want to access it in VBScript. I don't want to add it to the assembly directory. 
+Is there a way to point too the DLL and create an instance of it?
+
+
+Not directly. You'll need a COM Callable Wrapper to any .NET library you'll calling from COM (and hence, VBScript). Therefore, you should either directly create a CCW to the DLL or you can create a CCW for a proxy DLL which provides generic methods to load a .NET DLL and provide methods for you that call the actual methods on the component and return the result. It's really not clean at all. So, in general, the answer is no.
+
+You can register that .NET dll with regasm utility by specifying /codebase parameter. This parameter is not encouraged to use with unsigned assemblies but it works when you can not put your assembly into GAC.
+regasm your.dll /codebase
+
+Please note that you should not change your .dll's path after this operation since it inserts this path into the Windows registry.
+
+huseyint's answer was on the money, however, I wanted to add a little to it.  Here is some sample code I used for this very issue, perhaps it can speed you along...
+// bind a variabe to WScript.Shell
+Set WshShell = CreateObject("WScript.Shell")
+
+// define the path to the regasm.exe file
+RegAsmPath = "c:\Windows\Microsoft.NET\Framework\v2.0.50727\RegAsm.exe"
+
+// register the dll
+WshShell.run "cmd /c " & RegAsmPath & " c:\temp\cbsecurity.dll /codebase /nologo /s", 0, True
+
+// bind a variable to the dll
+Set cbUtil = CreateObject("CBSecurity.Utilities")
+
+I had included an IsAlive method in the dll...
+Public Function IsAlive() As Boolean
+    Return True
+End Function
+
+...and could check that it registered correctly using the syntax:
+//check if dll is available to your code
+msgbox "cbUtil is alive: " & cbUtil.IsAlive
+
+Hope this helps someone...
+
+Just had to do this myself, my findings were:
+Making types visible to COM:
+
+Ensure your class is public, non static and has a public default constructor i.e. not arguments.
+Ensur your method is public, non static.
+Ensure you have the following set on your assembly - typically in AssemblyInfo.cs
+[assembly: ComVisible(true)]
+
+After building your DLL, from SDK commandline run:
+regasm yourdll.dll
+
+This should respond: 
+
+Types registered successfully
+
+If you get 
+
+RegAsm : warning RA0000 : No types were registered
+
+then you need to set ComVisible or have no public, non static types.
+
+From powershell
+$a = New-Object -comobject Your.Utils.Logging
+$a.WriteError2("Application", "hello",1,1)
+
+From vbs
+Set logger = CreateObject("Your.Utils.Logging")
+logger.WriteError2 "Application", "hello from vbs",1,1 
+
+
+In case someone needs to debug/step-into the .Net dll that's called from VBScript only:
+
+On the .Net dll project debug setup screen, set the "start external program" by browsing to the wscript.exe program (located in C:\WINDOWS\system32\wscript.exe).
+On the "Command Line Arguments", set the file name and path location of the VBScript file (C:\Test\myTest.vbs). Make sure the vbs file and dll file are in the same location.
+Finally, in the .Net project DLL source code just set the break point and hit the "start debug"
+

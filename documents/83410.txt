@@ -1,0 +1,123 @@
+How do I call a SQL Server stored procedure from PowerShell?
+sql-server powershell
+I have a large CSV file and I want to execute a stored procedure for each line.
+What is the best way to execute a stored procedure from PowerShell?
+
+
+Consider calling osql.exe (the command line tool for SQL Server) passing as parameter a text file written for each line with the call to the stored procedure.
+SQL Server provides some assemblies that could be of use with the name SMO that have seamless integration with PowerShell. Here is an article on that.
+http://www.databasejournal.com/features/mssql/article.php/3696731
+There are API methods to execute stored procedures that I think are worth being investigated. Here a startup example:
+http://www.eggheadcafe.com/software/aspnet/29974894/smo-running-a-stored-pro.aspx
+
+Use sqlcmd instead of osql if it's a 2005 database
+
+This answer was pulled from http://www.databasejournal.com/features/mssql/article.php/3683181
+This same example can be used for any adhoc queries. Let us execute the stored procedure âsp_helpdbâ as shown below.
+$SqlConnection = New-Object System.Data.SqlClient.SqlConnection
+$SqlConnection.ConnectionString = "Server=HOME\SQLEXPRESS;Database=master;Integrated Security=True"
+$SqlCmd = New-Object System.Data.SqlClient.SqlCommand
+$SqlCmd.CommandText = "sp_helpdb"
+$SqlCmd.Connection = $SqlConnection
+$SqlAdapter = New-Object System.Data.SqlClient.SqlDataAdapter
+$SqlAdapter.SelectCommand = $SqlCmd
+$DataSet = New-Object System.Data.DataSet
+$SqlAdapter.Fill($DataSet)
+$SqlConnection.Close()
+$DataSet.Tables[0]
+
+
+Here is a function I use to execute sql commands. You just have to change $sqlCommand.CommandText to the name of your sproc and $SqlCommand.CommandType to CommandType.StoredProcedure.
+function execute-Sql{
+    param($server, $db, $sql )
+    $sqlConnection = new-object System.Data.SqlClient.SqlConnection
+    $sqlConnection.ConnectionString = 'server=' + $server + ';integrated security=TRUE;database=' + $db 
+    $sqlConnection.Open()
+    $sqlCommand = new-object System.Data.SqlClient.SqlCommand
+    $sqlCommand.CommandTimeout = 120
+    $sqlCommand.Connection = $sqlConnection
+    $sqlCommand.CommandText= $sql
+    $text = $sql.Substring(0, 50)
+    Write-Progress -Activity "Executing SQL" -Status "Executing SQL => $text..."
+    Write-Host "Executing SQL => $text..."
+    $result = $sqlCommand.ExecuteNonQuery()
+    $sqlConnection.Close()
+}
+
+
+Here is a function that I use (slightly redacted).  It allows input and output parameters.  I only have uniqueidentifier and varchar types implemented, but any other types are easy to add.  If you use parameterized stored procedures (or just parameterized sql...this code is easily adapted to that), this will make your life a lot easier.
+To call the function, you need a connection to the SQL server (say $conn), 
+
+$res=exec-storedprocedure -storedProcName 'stp_myProc' -parameters @{Param1="Hello";Param2=50} -outparams @{ID="uniqueidentifier"} $conn
+retrieve proc output from returned object
+$res.data #dataset containing the datatables returned by selects
+$res.outputparams.ID   #output parameter ID (uniqueidentifier)
+
+The function:
+function exec-storedprocedure($storedProcName,  
+        [hashtable] $parameters=@{},
+        [hashtable] $outparams=@{},
+        $conn,[switch]$help){ 
+
+        function put-outputparameters($cmd, $outparams){
+            foreach($outp in $outparams.Keys){
+                $cmd.Parameters.Add("@$outp", (get-paramtype $outparams[$outp])).Direction=[System.Data.ParameterDirection]::Output
+            }
+        }
+        function get-outputparameters($cmd,$outparams){
+            foreach($p in $cmd.Parameters){
+                if ($p.Direction -eq [System.Data.ParameterDirection]::Output){
+                $outparams[$p.ParameterName.Replace("@","")]=$p.Value
+                }
+            }
+        }
+
+        function get-paramtype($typename,[switch]$help){
+            switch ($typename){
+                'uniqueidentifier' {[System.Data.SqlDbType]::UniqueIdentifier}
+                'int' {[System.Data.SqlDbType]::Int}
+                'xml' {[System.Data.SqlDbType]::Xml}
+                'nvarchar' {[System.Data.SqlDbType]::NVarchar}
+                default {[System.Data.SqlDbType]::Varchar}
+            }
+        }
+        if ($help){
+            $msg = @"
+    Execute a sql statement.  Parameters are allowed.  
+    Input parameters should be a dictionary of parameter names and values.
+    Output parameters should be a dictionary of parameter names and types.
+    Return value will usually be a list of datarows. 
+
+    Usage: exec-query sql [inputparameters] [outputparameters] [conn] [-help]
+    "@
+            Write-Host $msg
+            return
+        }
+        $close=($conn.State -eq [System.Data.ConnectionState]'Closed')
+        if ($close) {
+           $conn.Open()
+        }
+
+        $cmd=new-object system.Data.SqlClient.SqlCommand($sql,$conn)
+        $cmd.CommandType=[System.Data.CommandType]'StoredProcedure'
+        $cmd.CommandText=$storedProcName
+        foreach($p in $parameters.Keys){
+            $cmd.Parameters.AddWithValue("@$p",[string]$parameters[$p]).Direction=
+                  [System.Data.ParameterDirection]::Input
+        }
+
+        put-outputparameters $cmd $outparams
+        $ds=New-Object system.Data.DataSet
+        $da=New-Object system.Data.SqlClient.SqlDataAdapter($cmd)
+        [Void]$da.fill($ds)
+        if ($close) {
+           $conn.Close()
+        }
+        get-outputparameters $cmd $outparams
+
+        return @{data=$ds;outputparams=$outparams}
+    }
+
+
+I include invoke-sqlcmd2.ps1 and write-datatable.ps1 from http://blogs.technet.com/b/heyscriptingguy/archive/2010/11/01/use-powershell-to-collect-server-data-and-write-to-sql.aspx.  Calls to run SQL commands take the form: Invoke-sqlcmd2 -ServerInstance "<sql-server>" -Database <DB> -Query "truncate table <table>" An example of writing the contents of DataTable variables to a SQL table looks like: $logs = (get-item SQLSERVER:\sql\<server_path>).ReadErrorLog()
+Write-DataTable -ServerInstance "<sql-server>" -Database "<DB>" -TableName "<table>" -Data $logs I find these useful when doing SQL Server database-related PowerShell scripts as the resulting scripts are clean and readable.

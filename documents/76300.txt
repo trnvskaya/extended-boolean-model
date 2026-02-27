@@ -1,0 +1,58 @@
+What's the best way to return variables from a syncExec?
+java multithreading swt
+In my SWT Java app I often want to return information from inside a Display.syncExec() call.  The best way I've found so far to do this is:
+final ArrayList<Integer> result = new ArrayList<Integer>();
+GUI.display().syncExec(new Runnable(){ public void run() {
+   MessageBox mb = /* ... */;
+    /* set up messagebox */
+   result.add(mb.open());
+}});
+if (SWT.OK == result.get(0)) { /* ... */ }
+
+I think this is allowed because ArrayList is thread-safe, but is there a better container I should be using, or an easier way altogether?
+
+
+ArrayList is not thread-safe. From the relevant Javadoc:
+
+Note that this implementation is not
+  synchronized. If multiple threads
+  access an ArrayList instance
+  concurrently, and at least one of the
+  threads modifies the list
+  structurally, it must be synchronized
+  externally.
+
+If you need a thread-safe implementation of List, there are (at least) two provided in the JDK: CopyOnWriteArrayList and Vector.
+
+ArrayList is not thread-safe. You can obtain a thread-safe List with Collections.synchronizedList. However, it is much simpler to use an AtomicInteger in your case or AtomicReference in a more general case.
+final AtomicInteger resultAtomicInteger = new AtomicInteger();
+Display.getCurrent().syncExec(new Runnable() { 
+    public void run() {
+        MessageBox mb = /* ... */;
+            /* set up messagebox */
+        resultAtomicInteger.set(mb.open());
+}});
+if (SWT.OK == resultAtomicInteger.get()) { /* ... */ }
+
+
+You could use an Integer[1] array to make it more concise but I don't think it can directly update a non-final variable from inside an anonymous inner class.
+final Integer[] result = new Integer[1];
+
+I thought that you had to declare results as final (but that change wouldn't affect your code).  Since the current Thread blocks until the inner Thread is finished I don't think you need to worry about synchronization (but you might need to make the variable violate so that you see the result).
+
+If this happens often, you better use subscribe/notify model between your process and view. Your view subscribes to the event which should trigger that message box and gets notified when conditions met.
+
+I just tackled this problem and my first try was similar - array or list of desired type items. But after a while I made up something like this:
+abstract class MyRunnable<T> implements Runnable{
+    T result;
+}
+MyRunnable<Integer> runBlock = new MyRunnable<Integer>(){
+   MessageBox mb = /* ... */;
+    /* set up messagebox */
+   result = mb.open();
+}
+GUI.display().syncExec(runBlock);
+runBlock.result; //holds a result Integer
+
+It's much tidier and removes redundant variables.
+BTW. My really first try was to use UIThreadRunnable, but I didn't want SWTBot dependency, so I dropped this solution. After I made my own solution I found out, they use similar work around in there.

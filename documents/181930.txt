@@ -1,0 +1,81 @@
+SQL Server 2005 Performance: Distinct or full table in WHERE IN statement
+sql-server database performance
+We have two Tables:
+
+Document: id, title, document_type_id, showon_id
+DocumentType: id, name
+Relationship: DocumentType hasMany Documents. (Document.document_type_id = DocumentType.id)
+
+We wish to retrieve a list of all document types for one given ShowOn_Id. 
+We see two possiblities:
+SELECT DocumentType.*
+FROM DocumentType
+WHERE DocumentType.id IN (
+    SELECT DISTINCT Document.document_type_id FROM Document WHERE showon_id = 42
+);
+
+SELECT DocumentType.*
+FROM DocumentType
+WHERE DocumentType.id IN (
+    SELECT Document.document_type_id FROM Document WHERE showon_id = 42
+);
+
+Our question is: when and if is it better to use the DISTINCT to get the smaller record set versus retrieving the whole table and the IN statement walking the table to the first match. (We guess that's what it does ;-))
+Is this different for different databases, is there a common answer?
+Or is there a better way of doing it? (We are in .NET land)
+
+
+You can use a join:
+SELECT DISTINCT DocumentType.*
+FROM DocumentType
+INNER JOIN Document
+ON DocumentType.id=Document.document_type_id
+WHERE Document.showon_id = 42
+
+I think it's the best way to do it.
+
+From my point of view it should not make any difference inside SQL Server (but who knows how this is implemented). 
+Think of it this way: to return the resultset the server needs to go into the Document table and retrieve all document_type_id WHERE showon_id = 42. In the process of retrieving the document_type_ids (e.g. by index seeking) it puts them into a hash table. When this process has finished the hash table will contain distinct values anyway. After that the query execution goes inside the Document_Type table, scans the primary key and probes into the hash table. Note that this depends, e.g. maybe it's more efficient to not use a hash table, when the expected row count from the Document table it low compared to Document_Type, but in general you get the same query plan as for the query wmasm just suggested.
+
+Use an EXISTS. It sometimes is faster, but in my opinion, more readable than a DISTINCT and JOIN. Just for kicks, pls reply with the query plan for this query and the JOIN above, and see if anything is different (they may be optimized down to the same plan). If they are the same, I'd recommend the EXISTS as it is closer to a "plain language" description than a JOIN (because you don't want any of the data from Document, etc.)
+SELECT whatever
+  FROM DocumentType dt
+ WHERE EXISTS( SELECT *
+                 FROM Document 
+                WHERE dt.id     = document_type_id
+                  AND showon_id = 42)
+
+To get the query plan (ref: http://msdn.microsoft.com/en-us/library/ms180765(SQL.90).aspx), do:
+SET SHOWPLAN_TEXT ON
+GO
+
+SELECT ...
+GO
+
+
+Follow up on Matt's answer:
+I've enabled the query plan and tested the following four different queries that have come up so far:
+
+SELECT DocumentType.* FROM DocumentType WHERE DocumentType.id IN (SELECT DISTINCT Document.document_type_id FROM Document WHERE showon_id = 42);
+SELECT DocumentType.* FROM DocumentType WHERE DocumentType.id IN (SELECT Document.document_type_id FROM Document WHERE showon_id = 42);
+SELECT DISTINCT DocumentType.* FROM DocumentType INNER JOIN Document ON DocumentType.id=Document.document_type_id WHERE Document.showon_id = 42;
+SELECT DocumentType.* FROM DocumentType WHERE EXISTS ( SELECT * FROM Document WHERE DocumentType.id=Document.document_type_id AND showon_id = 42);
+
+The query plan for all four queries turned out to be the same:
+ |--Hash Match(Right Semi Join, HASH:([Document].[document_type_id])=([DocumentType].[Id]))
+       |--Hash Match(Inner Join, HASH:([Document].[Title], [Uniq1005])=([Document].[Title], [Uniq1005]), RESIDUAL:([Document].[Title] as [Document].[Title] = [Document].[Title] as [Document].[Title] AND [Uniq1005] = [Uniq1005]))
+       |    |--Index Seek(OBJECT:([Document].[IX_Document_3] AS [Document]), SEEK:([Document].[showon_id]=(1)) ORDERED FORWARD)
+       |    |--Index Scan(OBJECT:([Document].[IX_Document_1] AS [Document]))
+       |--Table Scan(OBJECT:([DocumentType] AS [DocumentType]))
+
+I am not sure what every line and element means, but it seems that from the performance perspective it does not matter how you construct the query for this kind of problem... 
+
+For the best performance you should use:
+SELECT DISTINCT dt.* 
+FROM 
+    DocumentType dt
+    INNER JOIN Document d ON dt.id=d.document_type_id and d.showon_id = 42
+
+Joins are very efficient at bridging multiple tables where as the nested query in the Where clause will need to perform a separate result selection that will filter down the From clause results.  The join statement is also much more readable.
+I would also put an index on showon_id, in addition to the primary keys and foreign key relationship.
+My answer differs from wmasm's answer only by moving the showon_id filter up to the inner join.  For MS SQL 2k5, I think the interpreter is smart enough to do this automatically, but you always want to work with the smallest result set possible. Bringing your filters up to inner join statements can limit the number of rows the query has to work with when joining many tables together. If you do this though, you should understand that this happens for every row comparison so complex filters (such as like x = '%a' or function calls) are better left for the Where clause so that the inner joins may filter out unnecessary comparisons.

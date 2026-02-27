@@ -1,0 +1,126 @@
+Rails model without database
+ruby-on-rails ruby activerecord
+I want to create a Rails (2.1 and 2.2) model with ActiveRecord validations, but without a database table.  What is the most widely used approach?  I've found some plugins that claim to offer this functionality, but many of them don't appear to be widely used or maintained.  What does the community recommend I do?  Right now I am leaning toward coming up with my own solution based on this blog post.
+
+
+just create a new file ending in ".rb" following the conventions you're used to (singular for file name and class name, underscored for file name, camel case for class name) on your "models/" directory. The key here is to not inherit your model from ActiveRecord (because it is AR that gives you the database functionality).
+e.g.: for a new model for cars, create a file called "car.rb" in your models/ directory and inside your model:
+class Car
+    # here goes all your model's stuff
+end
+
+edit: btw, if you want attributes on your class, you can use here everything you use on ruby, just add a couple lines using "attr_accessor":
+class Car
+    attr_accessor :wheels # this will create for you the reader and writer for this attribute
+    attr_accessor :doors # ya, this will do the same
+
+    # here goes all your model's stuff
+end
+
+edit #2: after reading Mike's comment, I'd tell you to go his way if you want all of the ActiveRecord's functionality but no table on the database. If you just want an ordinary Ruby class, maybe you'll find this solution better ;)
+
+What about marking the class as abstract?
+class Car < ActiveRecord::Base
+  self.abstract = true
+end
+
+this will tell rails that the Car class has no corresponding table.
+[edit]
+this won't really help you if you'll need to do something like:
+my_car = Car.new
+
+
+I think the blog post you are linking is the best way to go. I would only suggest moving the stubbed out methods into a module not to pollute your code.
+
+There's a screencast about non-Active Record model, made up by Ryan Bates. A good place to start from.
+Just in case you did not already watch it.
+
+Do like Tiago Pinto said and just don't have your model inherit from ActiveRecord::Base.  It'll just be a regular Ruby class that you stick in a file in your app/models/ directory.  If none of your models have tables and you're not using a database or ActiveRecord at all in your app, be sure to modify your environment.rb file to have the following line:
+config.frameworks -= [:active_record]
+
+This should be within the Rails::Initializer.run do |config| block.
+
+This is an approach I have used in the past:
+In app/models/tableless.rb
+class Tableless < ActiveRecord::Base
+  def self.columns
+    @columns ||= [];
+  end
+
+  def self.column(name, sql_type = nil, default = nil, null = true)
+    columns << ActiveRecord::ConnectionAdapters::Column.new(name.to_s, default,
+      sql_type.to_s, null)
+  end
+
+  # Override the save method to prevent exceptions.
+  def save(validate = true)
+    validate ? valid? : true
+  end
+end
+
+In app/models/foo.rb
+class Foo < Tableless
+  column :bar, :string  
+  validates_presence_of :bar
+end
+
+In script/console
+Loading development environment (Rails 2.2.2)
+>> foo = Foo.new
+=> #<Foo bar: nil>
+>> foo.valid?
+=> false
+>> foo.errors
+=> #<ActiveRecord::Errors:0x235b270 @errors={"bar"=>["can't be blank"]}, @base=#<Foo bar: nil>>
+
+
+Anybody has ever tried to include ActiveRecord::Validations and ActiveRecord::Validations::ClassMethods in a non-Active Record class and see what happens  when trying to setup validators ?
+I'm sure there are plenty of dependencies between the validation framework and ActiveRecord itself. But you may succeed in getting rid of those dependencies by forking your own validation framework from the AR validation framework.
+Just an idea.
+Update: oopps, this is more or less what's suggested in the post linked with your question. Sorry for the disturbance.
+
+Use the Validatable gem.  As you say, there are AR-based solutions, but they tend to be brittle.
+http://validatable.rubyforge.org/
+
+You ought to checkout the PassiveRecord plugin. It gives you an ActiveRecord-like interface for non-database models. It's simple, and less hassle than fighting ActiveRecord.
+We're using PassiveRecord in combination with the Validatable gem to get the OP's desired behaviour.
+
+I have built a quick Mixin to handle this, as per John Topley's suggestion.
+http://github.com/willrjmarshall/Tableless
+
+There is a better way to do this in Rails 3: http://railscasts.com/episodes/219-active-model
+
+There is easier way now:
+class Model
+  include ActiveModel::Model
+
+  attr_accessor :var
+
+  validates :var, presence: true
+end
+
+ActiveModel::Model code:
+module ActiveModel
+  module Model
+    def self.included(base)
+      base.class_eval do
+        extend  ActiveModel::Naming
+        extend  ActiveModel::Translation
+        include ActiveModel::Validations
+        include ActiveModel::Conversion
+      end
+    end
+
+    def initialize(params={})
+      params.each do |attr, value|
+        self.public_send("#{attr}=", value)
+      end if params
+    end
+
+    def persisted?
+      false
+    end
+  end
+end
+
+http://api.rubyonrails.org/classes/ActiveModel/Model.html

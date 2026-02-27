@@ -1,0 +1,41 @@
+Language features to implement relational algebra
+orm scala dsl type-systems database-relations
+I've been trying to encode a relational algebra in Scala (which to my knowlege has one of the most advanced type systems) and just don't seem to find a way to get where I want.
+As I'm not that experienced with the academic field of programming language design I don't really know what feature to look for.
+So what language features would be needed, and what language has those features, to implement a statically verified relational algebra?
+Some of the requirements:
+A Tuple is a function mapping names from a statically defined set of valid names for the tuple in question to values of the type specified by the name. Lets call this name-type set the domain.
+A Relation is a Set of Tuples with the same domain such that the range of any tuple is uniqe in the Set
+So far the model can eaisly be modeled in Scala simply by
+trait Tuple
+trait Relation[T<Tuple] extends Set[T]
+
+The vals, vars and defs in Tuple is the name-type set defined above. But there should'n be two defs in Tuple with the same name. Also vars and impure defs should probably be restricted too.
+Now for the tricky part:
+A join of two relations is a relation where the domain of the tuples is the union of the domains from the operands tuples. Such that only tuples having the same ranges for the intersection of their domains is kept.
+def join(r1:Relation[T1],r2:Relation[T2]):Relation[T1 with T2]
+
+should do the trick.
+A projection of a Relation is a Relation where the domain of the tuples is a subset of the operands tuples domain.
+def project[T2](r:Relation[T],?1):Relation[T2>:T]
+
+This is where I'm not sure if it's even possible to find a sollution. What do you think? What language features are needed to define project?
+Implied above offcourse is that the API has to be usable. Layers and layers of boilerplate is not acceptable.
+
+
+What your asking for is to be able to structurally define a type as the difference of two other types (the original relation and the projection definition).  I honestly can't think of any language which would allow you to do that.  Types can be structurally cumulative (A with B) since A with B is a structural sub-type of both A and B.  However, if you think about it, a type operation A less B would actually be a supertype of A, rather than a sub-type.  You're asking for an arbitrary, contravariant typing relation on naturally covariant types.  It hasn't even been proven that sort of thing is sound with nominal existential types, much less structural declaration-point types.
+I've worked on this sort of modeling before, and the route I took was to constraint projections to one of three domains: P == T, P == {F} where F in T, P == {$_1} where $_1 anonymous.  The first is where the projection is equivalent to the input type, meaning it is a no-op (SELECT *).  The second is saying that the projection is a single field contained within the input type.  The third is the tricky one.  It is saying that you are allowing the declaration of some anonymous type $_1 which has no static relationship to the input type.  Presumably it will consist of fields which delegate to the input type, but we can't enforce that.  This is roughly the strategy that LINQ takes.
+Sorry I couldn't be more helpful.  I wish it were possible to do what you're asking, it would open up a lot of very neat possibilities.
+
+Tutorial D is about as simple and as closely aligned to the relational theory a language can be.
+
+I think I have settled on just using the normal facilities for mapping collection for the project part. The client just specify a function [T<:Tuple](t:T) => P
+With some java trickery to get to the class of P I should be able to use reflection to implement the query logic.
+For the join I'll probably use DynamicProxy to implement the mapping function.
+As a bonus I might be able to get the API to be usable with Scalas special for-syntax.
+
+HaskellDB has some ideas how to create type-safe relational algebra DSL, you may find it useful.
+
+Maybe you find smth useful from here:
+http://research.microsoft.com/en-us/um/people/simonpj/papers/list-comp/list-comp.pdf
+it shows how to add "group by" and "order by" to list comprehensions.

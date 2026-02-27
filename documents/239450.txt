@@ -1,0 +1,109 @@
+Can I compare two ms-access files?
+ms-access ms-office
+I want to compare two ms-access .mdb files to check that the data they contain is same in both.
+How can I do this?
+
+
+If you want to know if the files are identical then
+fc file1.mdb file2.mdb
+
+on a DOS command line.
+If the files aren't identical but you suspect they contain the same tables and records then the easiest way would be quickly write a small utility that opens both databases and cycles through the tables of both performing a heterogeneous query to extract the Diff between the two files. 
+There are some tools out there which will do this for you, but they all appear to be shareware. 
+
+Take text dumps of database tables and simply compare the dumped text files using BeyondCompare (or any other text comparison tool). Crude but can work!
+
+I have very good experience with Cross-Database Comparator. It is able to compare structure and/or data.
+
+I've done this kind of thing in code many, many times, mostly in cases where a local MDB needed to have updates applied to it drawn from data entered on a website. In one case the website was driven by an MDB, in others, it was a MySQL database. For the MDB, we just downloaded it, for MySQL, we ran scripts on the website to export and FTP text files.
+Now, the main point is that we wanted to compare data in the local MDB to the data downloaded from the website and update the local MDB to reflect changes made on the website (no, it wasn't possible to use a single data source -- it was the first thing I suggested, but it wasn't feasible).
+Let's call MDB A your local database, and MDB B the one you're downloading for comparison. What you have to check for is:
+
+records that exist in MDB A but not in MDB B. These may or may not be candidates for deletion (this will depend on your particular data).
+records that exist in MDB B but not in MDB A. These you will append from MDB B to MDB A.
+records that exist in both, which will need to be compared field by field.
+
+Steps #1 and #2 are fairly easily accomplished with queries that use an outer join to find the missing records. Step 3 requires some code.
+The principle behind the code is that the structure of all the tables in both MDBs are identical. So, you use DAO to walk the TableDefs collection, open a recordset, and walk the fields collection to run a SQL statement on each column of each table that either updates the data or outputs a list of the differences. 
+The basic structure behind the code is:
+  Set rs = db.OpenRecordset("[SQL statement with the fields you want compared]")
+  For Each fld In rs.Fields
+    ' Write a SQL string to update all the records in this column
+    '   where the data doesn't match
+    strSQL = "[constructed SQL here]"
+    db.Execute strSQL, dbFailOnError
+  Next fld
+
+Now, the major complexity here is that your WHERE clause for each field has to be different -- text fields need to be treated differently from numeric and data fields. So you'll probably want a SELECT CASE that writes your WHERE clause based on the field type:
+  Select Case fld.Type
+    Case dbText, dbMemo
+    Case Else
+  End Select
+
+You'll want to use Nz() to compare the text fields, but you'd use Nz(TextField,'') for that, while using Nz(NumericField,0) for numeric fields or date fields. 
+My example code doesn't actually use the structure above to define the WHERE clause because it's limited to fields that work very well comparing concatenated with a ZLS (text fields). What's below is pretty complicated to read through, but it's basically an expansion on the above structure.
+It was written for efficiency of updates, since it executes a SQL UPDATE for each field of the table, which is much more efficient than executing a SQL UPDATE for each row. If, on the other hand, you don't want to do an update, but want a list of the differences, you might treat the whole thing differently. But that gets pretty complicated depending on the output, 
+If all you want to know is if two MDBs are identical, you would first check the number of records in each table first, and if you have one non-match, you quit and tell the user that the MDBs aren't the same. If the recordcounts are the same, then you have to check field by field, which I believe is best accomplished with column-by-column SQL written dynamically -- as soon as one of the resulting SQL SELECTS returns 1 or more records, you abort and tell your user that the MDBs are not identical.
+The complicated part is if you want to record the differences and inform the user, but going into that would make this already-interminable post even longer!
+What follows is just a portion of code from a larger subroutine which updates the saved query qdfOldMembers (from MDB A) with data from qdfNewMembers (from MDB B). The first argument, strSQL, is a SELECT statement that is limited to the fields you want to compare, while strTmpDB is the path/filename of the other MDB (MDB B in our example). The code assumes that strTmpDB has qdfNewMembers and qdfOldMembers already created (the original code writes the saved QueryDef on the fly). It could just as easily be direct table names (the only reason I use a saved query is because the fieldnames don't match exactly between the two MDBs it was written for).
+Public Sub ImportMembers(strSQL As String, strTmpDB As String)
+  Const STR_QUOTE = """"
+  Dim db As Database
+  Dim rsSource As Recordset '
+  Dim fld As Field
+  Dim strUpdateField As String
+  Dim strZLS As String
+  Dim strSet As String
+  Dim strWhere As String
+
+  ' EXTENSIVE CODE LEFT OUT HERE
+
+  Set db = Application.DBEngine(0).OpenDatabase(strTmpDB)
+
+  ' UPDATE EXISTING RECORDS
+  Set rsSource = db.OpenRecordset(strSQL)
+  strSQL = "UPDATE qdfNewMembers INNER JOIN qdfOldMembers ON "
+  strSQL = strSQL & "qdfNewMembers.EntityID = qdfOldMembers.EntityID IN '" _
+                       & strTmpDB & "'"
+  If rsSource.RecordCount <> 0 Then
+     For Each fld In rsSource.Fields
+       strUpdateField = fld.Name
+       'Debug.Print strUpdateField
+       If InStr(strUpdateField, "ID") = 0 Then
+          If fld.Type = dbText Then
+             strZLS = " & ''"
+          Else
+             strZLS = vbNullString
+          End If
+          strSet = " SET qdfOldMembers." & strUpdateField _
+                     & " = varZLStoNull(qdfNewMembers." & strUpdateField & ")"
+          strWhere = " WHERE " & "qdfOldMembers." & strUpdateField & strZLS _
+                       & "<>" & "qdfNewMembers." & strUpdateField & strZLS _
+                       & " OR (IsNull(qdfOldMembers." & strUpdateField _
+                       & ")<>IsNull(varZLStoNull(qdfNewMembers." _
+                       & strUpdateField & ")));"
+          db.Execute strSQL & strSet & strWhere, dbFailOnError
+          'Debug.Print strSQL & strSet & strWhere
+       End If
+     Next fld
+  End If
+End Sub
+
+Code for function varZLSToNull():
+Public Function varZLStoNull(varInput As Variant) As Variant
+  If Len(varInput) = 0 Then
+     varZLStoNull = Null
+  Else
+     varZLStoNull = varInput
+  End If
+End Function
+
+I don't know if that's too complex to make sense, but maybe it will help somebody.
+
+See the Compare Access databases section at the Microsoft Access third party utilities, products, tools, modules, etc. page at my website.
+
+You can try AccessDiff (paid product).  It has the ability to compare the schema, the data, and also access objects.  It has a GUI and also a command line interface.  
+Disclosure: I am the creator of this tool.
+
+I've added "table diff" feature to my accdbmerge utility not so long time ago.
+I beleive that this answer will not help to solve original question, but it may be helpful for someone faced with the same problem in the future.

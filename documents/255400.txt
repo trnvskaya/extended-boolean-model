@@ -1,0 +1,200 @@
+Serializing Name/Value Pairs in a Custom Object via Web Service
+c# php web-services serialization class-design
+This is a very complicated question concerning how to serialize data via a web service call, when the data is not-strongly typed.  I'll try to lay it out as best possible.
+Sample Storage Object:
+[Serializable]
+public class StorageObject {
+  public string Name { get; set; }
+  public string Birthday { get; set; }
+  public List<NameValuePairs> OtherInfo { get; set; }  
+}
+[Serializable]   
+public class NameValuePairs {
+  public string Name { get; set; }
+  public string Value { get; set; }
+}
+
+Sample Use:
+[WebMethod]
+    public List<StorageObject> GetStorageObjects() {
+      List<StorageObject> o = new List<StorageObject>() {
+        new StorageObject() { 
+          Name = "Matthew",
+          Birthday = "Jan 1st, 2008", 
+          OtherInfo = new List<NameValuePairs>() {
+            new NameValuePairs() { Name = "Hobbies", Value = "Programming" },
+            new NameValuePairs() { Name = "Website", Value = "Stackoverflow.com" }
+          }
+        },
+        new StorageObject() { 
+          Name = "Joe",
+          Birthday = "Jan 10th, 2008",
+          OtherInfo = new List<NameValuePairs>() { 
+            new NameValuePairs() { Name = "Hobbies", Value = "Programming" },
+            new NameValuePairs() { Name = "Website", Value = "Stackoverflow.com" }
+          }
+        }
+      };
+
+      return o;
+    }
+
+Return Value from Web Service:
+<StorageObject>
+    <Name>Matthew</Name>
+    <Birthday>Jan 1st, 2008</Birthday>
+    <OtherInfo>
+    	<NameValuePairs>
+    		<Name>Hobbies</Name>
+    		<Value>Programming</Value>
+    	</NameValuePairs>
+    	<NameValuePairs>
+    		<Name>Website</Name>
+    		<Value>Stackoverflow.com</Value>
+    	</NameValuePairs>
+    </OtherInfo>
+</StorageObject>
+
+What I want:
+<OtherInfo>
+    <Hobbies>Programming</Hobbies>
+    <Website>Stackoverflow.com</Website>
+</OtherInfo>
+
+The Reason & Other Stuff:
+First, I'm sorry for the length of the post, but I wanted to give reproducible code as well.  
+I want it in this format, because I'm consuming the web services from PHP.  I want to easily go:
+//  THIS IS IMPORANT
+In PHP => "$Result["StorageObject"]["OtherInfo"]["Hobbies"]".
+
+If it's in the other format, then there would be no way for me to accomplish that, at all.  Additionally, in C# if I am consuming the service, I would also like to be able to do the following:
+//  THIS IS IMPORANT
+In C# => var m = ServiceResult[0].OtherInfo["Hobbies"];
+
+Unfortunately, I'm not sure how to accomplish this.  I was able to get it this way, by building a custom Dictionary that implemented IXmlSerializer (see StackOverflow:  IXmlSerializer Dictionary), however, it blew the WSDL schema out of the water.  It's also much too complicated, and produced horrible results in my WinFormsTester application!
+Is there any way to accomplish this ?  What type of objects do I need to create ?  Is there any way to do this /other than by making a strongly typed collection/ ?  Obviously, if I make it strongly typed like this:
+public class OtherInfo {
+  public string Hobbies { get; set; }
+  public string FavoriteWebsite { get; set; }
+}
+
+Then it would work perfectly, I would have no WSDL issues, I would be able to easily access it from PHP, and C# (.OtherInfo.Hobbies). 
+However, I would completely lose the point of NVP's, in that I would have to know in advance what the list is, and it would be un
+
+I'm not sure this would solve your problem (it would in C#, but maybe not in PHP), but try using Dictionary<string,List<string>> OtherInfo instead of List<NameValuePairs>.  Then "Hobbies" and "Websites" would be your keys and the values would be the list of hobbies or web sites.  I'm not sure how it would serialize, though.
+You would be able to reference the lists of hobbies as:
+List<string> hobbies = storageObject.OtherInfo["Hobbies"];
+
+[EDIT] See here for a generic XML serializable dictionary.  This derived class is the one you would need to use instead of generic Dictionary.
+
+Have a look into the System.Xml.Serialization.XmlSerializerAssemblyAttribute attribute. This lets you specify a custom class-level serializer. You'll be able to spit out whatever XML you like. 
+A quick way to get up to speed on these is to use sgen.exe to generate one and have a peek at it with Reflector.
+-Oisin
+
+This is like dynamic properties for a object. 
+C# is not quite a dynamic language unlike javascript or maybe PHP can parse the object properties on the fly. The following two methods are what I can think of. The second one might fit into your requirements.
+The KISS Way 
+The Keep It Simple Stupid way 
+public class StorageObject {
+  public string Name { get; set; }
+  public string Birthday { get; set; }
+  public List<string> OtherInfo { get; set; }  
+}
+
+You can have name value pairs which is separated by '|'
+OtherInfo = {"Hobbies|Programming", "Website|Stackoverflow.com"}
+
+Serialized forms
+<StorageObject>
+    <Name>Matthew</Name>
+    <Birthday>Jan 1st, 2008</Birthday>
+    <OtherInfo>
+        <string>Hobbies|Programming</string>
+        <string>Website|Stackoverflow.com</string>
+    </OtherInfo>
+</StorageObject>
+
+The Dynamic Way in C#
+Make the name value pair part become an XML element so that you can build it dynamically.
+public class StorageObject {
+  public string Name { get; set; }
+  public string Birthday { get; set; }
+  public XElement OtherInfo { get; set; } // XmlElement for dot net 2
+}
+
+You can easily build up OtherInfo object as element centric
+e.g. 
+XElement OtherInfo = new XElement("OtherInfo");
+OtherInfo.Add( ..Hobbies xelement & text value..);
+OtherInfo.Add( ..WebSite xelement & text value..);
+
+The serialized form will be
+<OtherInfo>
+    <Hobbies>Programming</Hobbies>
+    <Website>Stackoverflow.com</Website>
+</OtherInfo>
+
+or build it as attribute centric
+XElement OtherInfo = new XElement("OtherInfo");
+OtherInfo.Add( ..nvp xattribute Hobbies & value..);
+OtherInfo.Add( ..nvp xattribute WebSite & value..);
+
+<OtherInfo>
+    <nvp n="Hobbies" v="Programming" />
+    <nvp n="Website" v="Stackoverflow.com" />
+</OtherInfo>
+
+For any dynamic language, it can access to the properties directly. 
+For the rest, they can access the value by read the XML. Reading XML is well supported by most of framework.
+
+As a completely different take on this, why not think about doing it completely differently.  Have one web service method to return the serialized storage object, minus the OtherInfo and another method to return the list of properties (keys) for OtherInfo, and a third to return the list of values for any key.  Granted, it will take more round trips to the web service if you want all of the data, but the solution will be much simpler and more flexible.
+[Serializable]
+public class StorageObject {
+  public string Name { get; set; }
+  public string Birthday { get; set; }
+
+  [Nonserializable]
+  public Dictionary<string,List<string>> OtherInfo { get; set; }  
+}
+
+[WebMethod]
+public List<StorageObject> GetStorageObjects() {
+    // returns list of storage objects from persistent storage or cache
+}
+
+[WebMethod]
+public List<string> GetStorageObjectAttributes( string name )
+{
+    // find storage object, sObj
+    return sObj.Keys.ToList();
+}
+
+[WebMethod]
+public List<string> GetStorageObjectAtributeValues( sting name, string attribute )
+{
+    // find storage object, sObj
+    return sObj[attribute];
+}
+
+
+This is what I've settled on.
+Class Structure:
+public class StorageObject {
+  public string Name { get; set; }
+  public string Birthday { get; set; }
+  [XmlAnyElement("Info")]  // this prevents double-nodes in the XML
+  public XElement OtherInfo { get; set; }
+}
+
+Usage:
+StorageObject o = new StorageObject();
+o.OtherInfo.Add(new XElement("Hobbies","Programming");
+o.OtherInfo.Add(new XElement("Website","Stackoverflow.com");
+
+Output:
+<Info>
+  <Hobbies>Programming</Hobbies>
+  <Website>Stackoverflow.com</Website>
+</Info>
+
+I would like to thank everyone for their assistance, I really appreciate the help and ideas.

@@ -1,0 +1,42 @@
+How do I find and decouple entities from a certificate when upgrading MS-SQLServer editions?
+sql-server
+While in the final throws of upgrading MS-SQL Server 2005 Express Edition to MS-SQL Server 2005 Enterprise Edition, I came across this error:
+
+The certificate cannot be dropped because one or more entities are either signed or encrypted using it. To continue, correct the problem...
+
+So, how do I find and decouple the entities signed/encrypted using this certificate so I can delete the certificate and proceed with the upgrade?
+I'm also kind of expecting/assuming that the upgrade setup will provide a new certificate and re-couple those former entities with it or I'll have to forcibly do so after the setup.
+
+
+The Microsoft forum has the following code snipit to delete the certificates:
+use msdb   
+BEGIN TRANSACTION
+declare @sp sysname
+declare @exec_str nvarchar(1024)    
+declare ms_crs_sps cursor global for select object_name(crypts.major_id) from sys.crypt_properties crypts, sys.certificates certs where crypts.thumbprint = certs.thumbprint and crypts.class = 1 and certs.name = '##MS_AgentSigningCertificate##'    
+open ms_crs_sps    
+fetch next from ms_crs_sps into @sp    
+while @@fetch_status = 0  
+begin    
+if exists(select * from sys.objects where name = @sp) begin print 'Dropping signature from: ' + @sp set @exec_str = N'drop signature from ' + quotename(@sp) + N' by certificate [##MS_AgentSigningCertificate##]'   
+Execute(@exec_str)
+if (@@error <> 0)
+begin
+declare @err_str nvarchar(1024)
+set @err_str = 'Cannot drop signature from ' + quotename(@sp) + '. Terminating.'
+close ms_crs_sps
+deallocate ms_crs_sps
+ROLLBACK TRANSACTION
+RAISERROR(@err_str, 20, 127) WITH LOG
+return
+end
+end
+fetch next from ms_crs_sps into @sp
+end
+close ms_crs_sps
+deallocate ms_crs_sps
+COMMIT TRANSACTION
+go
+
+http://forums.microsoft.com/TechNet/ShowPost.aspx?PostID=3876484&SiteID=17
+I have not tried the script, so please backup your data and system before attempting and update here with results.

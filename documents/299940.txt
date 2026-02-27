@@ -1,0 +1,77 @@
+How should I set the default proxy to use default credentials?
+.net proxy
+The following code works for me:
+var webProxy = WebProxy.GetDefaultProxy();
+webProxy.UseDefaultCredentials = true;
+WebRequest.DefaultWebProxy = webProxy;
+
+Unfortunately, WebProxy.GetDefaultProxy() is deprecated.  What else should I be doing?
+(using app.config to set the defaultProxy settings is not allowed in my deployment)
+
+
+From .NET 2.0 you shouldn't need to do this. If you do not explicitly set the Proxy property on a web request it uses the value of the static WebRequest.DefaultWebProxy. If you wanted to change the proxy being used by all subsequent WebRequests, you can set this static DefaultWebProxy property.
+The default behaviour of WebRequest.DefaultWebProxy is to use the same underlying settings as used by Internet Explorer.
+If you wanted to use different proxy settings to the current user then you would need to code 
+WebRequest webRequest = WebRequest.Create("http://stackoverflow.com/");
+webRequest.Proxy = new WebProxy("http://proxyserver:80/",true);
+
+or
+WebRequest.DefaultWebProxy = new WebProxy("http://proxyserver:80/",true);
+
+You should also remember the object model for proxies includes the concept that the proxy can be different depending on the destination hostname. This can make things a bit confusing when debugging and checking the property of webRequest.Proxy. Call 
+webRequest.Proxy.GetProxy(new Uri("http://google.com.au")) to see the actual details of the proxy server that would be used.
+There seems to be some debate about whether you can set webRequest.Proxy or WebRequest.DefaultWebProxy = null to prevent the use of any proxy. This seems to work OK for me but you could set it to new DefaultProxy() with no parameters to get the required behaviour. Another thing to check is that if a proxy element exists in your applications config file, the .NET Framework will NOT use the proxy settings in Internet Explorer.
+The MSDN Magazine article Take the Burden Off Users with Automatic Configuration in .NET gives further details of what is happening under the hood.
+
+This is the new suggested method.
+WebRequest.GetSystemWebProxy();
+
+
+For those who, unlike Brian Genisio, are able to set the contents of their application's config file:- don't do anything in code.  Instead add this to your app.config / web.config.
+<system.net>
+  <defaultProxy useDefaultCredentials="true" />
+</system.net>
+
+Really and truly the default for using the default credentials should be "true"; I've seen this issue confuse so many people - developers, users, IT guys.
+For more info see here:-
+http://sticklebackplastic.com/post/2007/01/26/Poxy-proxies.aspx
+UPDATE: I've created this issue/idea for Microsoft to change the default of useDefaultCredentials from false to true so that this whole problem goes away and .NET apps "just work"; please vote it up if you agree:
+http://visualstudio.uservoice.com/forums/121579-visual-studio/suggestions/2397357-fix-it-so-that-net-apps-can-access-http-thru-auth
+
+You may use Reflection to set the UseDefaultCredentials-Property from Code to "true"
+System.Reflection.PropertyInfo pInfo = System.Net.WebRequest.DefaultWebProxy.GetType().GetProperty("WebProxy", 
+System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+((System.Net.WebProxy)pInfo.GetValue(System.Net.WebRequest.DefaultWebProxy, null)).UseDefaultCredentials = true;
+
+
+In my deployment I can't use app.config neither to embed what Andrew Webb suggested.
+So I'm doing this:
+    IWebProxy proxy = WebRequest.GetSystemWebProxy();
+    proxy.Credentials = CredentialCache.DefaultCredentials;
+
+    WebClient wc = new WebClient();
+    wc.UseDefaultCredentials = true;
+    wc.Proxy = proxy;
+
+Just in case you want to check my IE settings:
+
+
+WebRequest.DefaultWebProxy.Credentials = CredentialCache.DefaultNetworkCredentials;
+
+This will force the DefaultWebProxy to use default credentials, similar effect as done through UseDefaultCredentials = true.
+Hence all newly created WebRequest instances will use default proxy which has been configured to use proxy's default credentials.
+
+This thread is old, but I just recently stumbled over the defaultProxy issue and maybe it helps others.
+I used the config setting as Andrew suggested. When deploying it, my customer got an error saying, there weren't sufficient rights to set the configuration 'defaultProxy'. 
+Not knowing why I do not have the right to set this configuration and what to do about it, I just removed it and it still worked. So it seems that in VS2013 this issue is fixed.
+And while we're at it:
+    WebRequest.DefaultWebProxy.Credentials = new NetworkCredential("ProxyUsername", "ProxyPassword");
+
+uses the default proxy with your credentials. If you want to force not using a proxy just set the DefaultWebProxy to null (though I don't know if one wants that).
+
+Is need in some systems set null the Proxy proprerty:
+Net.WebRequest.DefaultWebProxy.Credentials = System.Net.CredentialCache.DefaultCredentials
+Dim request As WebRequest = WebRequest.Create(sRemoteFileURL)
+request.Proxy = Nothing
+It's a bug.

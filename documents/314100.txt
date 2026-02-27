@@ -1,0 +1,69 @@
+Something better than .ToArray() to force enumeration of LINQ output
+c# linq .net-3.5
+I'm working with LINQ to objects and have a function where in some cases I need to modify the underlying collection before calling Aggregate(...) and then return it to its original state before the funciton returns the results of Aggregate(...). My current code looks something like this:
+bool collectionModified = false;
+if(collectionNeedsModification)
+{
+    modifyCollection();
+    collectionModified = true;
+}
+
+var aggregationResult = from a in
+                            (from b in collection
+                             where b.SatisfysCondition)
+                             .Aggregate(aggregationFunction)
+                        select a.NeededValue;
+
+if(collectionModified)
+    modifyCollection();
+
+return aggregationResult;
+
+However, as written, if I modify the collection, I will get the wrong result because I'm putting the collection back in its original state before aggregationResult is enumerated and LINQ results are lazy-evaluated. My current solution is to use .ToArray() on my LINQ query like this:
+var aggregationResult = (from a in
+                            (from b in collection
+                             where b.SatisfysCondition)
+                             .Aggregate(aggregationFunction)
+                         select a.NeededValue).ToArray();
+
+The size of the resulting array will always be small (< 100 items) so memory / processing time is not a concern.  Is this the best way to handle my problem, or is there a better way to force the evaluation of a LINQ query?
+
+
+I don't think there is a problem with your approach if you'll always use the result (since your result set is not large, it'll not consume much memory. By the way, if you do this and never use the result, it'll impose a performance loss). 
+So, yes, this is the correct way to do it.
+
+It is better to avoid side effect functions like the modifyCollection above.
+A better approach is to make a function that returns the modified collection (or query), letting the initial one intact.
+var modifiedCollection = ModifyCollection(collection, collectionNeedsModification);
+
+var aggregationResult = from a in
+                        (from b in modifiedCollection
+                         where b.SatisfysCondition)
+                         .Aggregate(aggregationFunction)
+                    select a.NeededValue;
+
+Where ModifyCollection is a method that returns the modified collection (or query) in the parameter depending on collectionNeedsModification boolean parameter.
+
+Just to check I understand you - you basically want to iterate through all of the results, just to force any side effects to take place?
+Side effects are generally a bad idea precisely because things are harder to understand with this kind of logic. Having said that, the easiest way to do it and force full evaluation is probably to just iterate through it:
+foreach (var result in aggregationResult)
+{
+    // Deliberately empty; simply forcing evaluation of the sequence.
+}
+
+Alternatively you could use LastOrDefault() to avoid all the copying involved in ToArray(). Count() will be okay so long as the result doesn't implement IList<T> (which involves a short-cut).
+
+(Note: typing without a compiler at hand, so the code is untested)
+If you have Reactive Extensions for .NET as a dependency already you can use Run():
+aggregationResult.Run();
+
+But it might not be worth adding a dependency for this. 
+You can also implement the Run method yourself as an extension method:
+public static MyLinqExtensions 
+{
+     public static void Run<T>(this IEnumerable<T> e)
+     {
+         foreach (var _ in e);
+     }
+}
+

@@ -1,0 +1,59 @@
+Passing web context to a 'service' in ASP MVC app
+c# .net asp.net-mvc tdd mocking
+I'm trying to work out a way of passing the web current http context to a service class (or initialising the class with a reference to it). I am doing this to abstract the rest of the app away from needing to know anything about the http context. 
+I also want the service to be testable using TDD, probably using one of the Mockable frameworks. Hence it would be preferable to use an interface rather than an actual class.
+An example of what I'd like to achieve:
+class WebInstanceService 
+{
+    private IHttpContext _Context;        
+
+    public WebInstanceService( ... , IHttpContext HttpContext )
+    {
+        ....
+        _Context = HttpContext;
+    }
+
+    // Methods...
+    public string GetInstanceVariable(string VariableName)
+    {
+         return _Context.Current.Session[VariableName];
+    }
+}
+
+One of the main issues I have is that there is no IHttpContext, the .net http context is a subclass of an abstract class which can't be mocked (easily?).
+Another issue is that I can't initialise global instances of the class as then the context won't be relevant for most requests. 
+I could make the class static, and require the Context to be passed to each function as it is called i.e.
+public static string GetInstanceVariable(string VariableName, HttpContext Context) 
+{ ... }
+
+but this doesn't make the class any easier to test, I still need to create an HttpContext and additionally any non-web-aware services which want to use this class suddenly need to be able to retrieve the Context requiring them to be closely coupled to the web server - the whole reason for wanting to create this class in the first place.
+I'm open to ALL suggestions - particularly those which people know facilitate easy tdd testing. How would people suggest I tackle this problem?
+Cheers
+
+
+This is why HttpContextBase and HttpContextWrapper were introduced.  You probably want to use HttpContextBase and when passing the real context in, use new HttpContextWrapper( httpContext ), although, I think that what is available to you in the controller is already of type HttpContextBase.  I would create one of these in my controller each time rather than trying to reference the current context from the static, global HttpContext.Current instance.   If you need it in your view, pass a reference to your strongly typed context in ViewData.
+I mock up HttpContextBase frequently in my tests.
+class WebInstanceService 
+{
+    private HttpContextBase _Context;        
+
+    public WebInstanceService( ... , HttpContextBase HttpContext )
+    {
+        ....
+        _Context = HttpContext;
+    }
+
+    // Methods...
+    public string GetInstanceVariable(string VariableName)
+    {
+         return _Context.Session[VariableName];
+    }
+}
+
+
+What we do is spin one of these up http://haacked.com/archive/2007/06/19/unit-tests-web-code-without-a-web-server-using-httpsimulator.aspx
+Easy as pie, just instanciate an HttpSimulator and fill in the values, and HttpContext.Current gets filled up with whatever you specify.
+IHttpContext is something that is in MVC, and aparently one day will be in webforms. Hopefully that day will be .net 4
+
+ASP.NET comes with System.Web.Abstractions that include HttpContextBase that you can use for dealing with the HttpContext in a testing situation.
+I would personally abstract away the direct dependency on the HttpContext.

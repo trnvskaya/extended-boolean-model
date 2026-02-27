@@ -1,0 +1,110 @@
+Java generics - returning subtype of declared type from method
+java generics
+My class is implementing a super-class method which which returns List<JComponent>.  The list being returned is read-only:
+public abstract class SuperClass {
+    public abstract List<JComponent> getComponents();
+}
+
+In my class, I want to return a field which is declared as List - i.e. a sub-list:
+public class SubClass extends SuperClass {
+    private List<JButton> buttons;
+    public List<JComponent> getComponents() {
+        return buttons;
+    }
+}
+
+This generates a compiler error, as List<JButton> is not a subtype of List<JComponent>.
+I can understand why it doesn't compile, as it shouldn't be allowed to add a JTextField to a List of JButtons.
+However, as the list is read-only, then "conceptually" this should be allowed.  But, of course, the compiler doesn't know that it is read-only.
+Is there any way to achieve what I want to achieve, without changing the method declaration in the super-class, and the field declaration in the sub-class?
+Thanks,
+Calum
+
+
+Declare getComponents() as:
+public List<? extends JComponent> getComponents()
+
+
+To do this you need to widen the generics thingy. :)
+public abstract class SuperClass {
+    public abstract List<? extends JComponent> getComponents();
+}
+
+
+public class SubClass extends SuperClass {
+    private List<JButton> buttons;
+    public List<? extends JComponent> getComponents() {
+        return buttons;
+    }
+}
+
+
+Hmm, not sure
+The usual way to set that up would be to have the super look like 
+public abstract class SuperClass {
+    public abstract List<? extends JComponent> getComponents();
+}
+
+Not sure how to do it without changing that around.
+
+You could do the cast with @SuppressWarnings.   I believe that would be appropriate in this case, just make sure you document why in a comment.
+Alternately, do the following:
+public List<JComponent> getComponents()
+{
+  return new ArrayList<JComponent>( buttons );
+}
+
+Yes I know this makes a copy and the list is already read-only.  But until the profiler tells you otherwise, I would assume the penalty is small.
+@Calum: I agree that using ?-expressions in return types is bad form because calling code is unable to do this for example:
+List<JComponent> list = obj.getComponents();
+
+
+I don't think you can do what you want without changing either the super-class method signature or the sub-class list declaration. The super-class is rigidly defining the return type to be JComponent. There's no way to make your return type anything but JComponent.
+If it's read-only, I'd do something like:
+public class SubClass extends SuperClass {
+    private List<JComponent> buttons = new ArrayList<JComponent>();
+    public void addButton(JButton button) {
+    	buttons.add(button);
+    }
+    public List<JComponent> getComponents() {
+    	return Collections.unmodifiableList(buttons);
+    }
+}
+
+If you can modify the super-class, you could try something like:
+public abstract class SuperClass<E extends JComponent> {
+    public abstract List<E> getComponents();
+}
+
+public class SubClass extends SuperClass<JButton> {
+    private List<JButton> buttons = new ArrayList<JButton>();
+    public List<JButton> getComponents() {
+    	return Collections.unmodifiableList(buttons);
+    }
+}
+
+
+I think I've found the answer which I'm looking for...
+return Collections.<JComponent>unmodifiableList(buttons);
+
+I had previously tried:
+return Collections.unmodifiableList(buttons);
+
+but this was being type-inferenced to List<JButton>.
+Putting in the explicit type parameter allows the List<JButton> to be treated as a List<JComponent>, which is allowed by unmodifiableList().
+I'm happy now ;-) and I've learned something thanks to the discussion.
+Calum
+
+The whole point of generics is to provide compile-time type-safety fo things such as the "type" of a collection. Unfortunately for you, a List<JButton> is not a sub-type of a List<JComponent>. the reason for this is simple and is as follows:
+List<JComponent> jc;
+List<JButton> jb = new ArrayList<JButton>();
+//if List<JButton> was a sublcass of List<JComponent> then this is a valid assignment
+jc = jb;
+jc.add(new JCheckBox()); //valid, as jc accepts any JComponent
+
+JButton b = jb.get(0); //this will throw a ClassCastException, rendering Generic type-safety pointless
+
+Generics are contra-variant in this manner, your original desire might as well have been to override a method which returned a String with one which returned a Float
+I think it's a good general rule to be very careful when designing a generic class. Do you really need generics? How will it get used? Some generic designs end up with awful structures and mean users have to revert to the raw version. JTable's filtering mechanism is an excellent case in point: when you want to implement a filter-chain (which you certainly will!), the whole thing falls apart. The fact is; in this case, generics were added at a cost and with practically no benefit.
+
+Returning a generic type with wildcard is not a good idea as it forces the client to think about what's being returned ... It'll also make the client code more cumbersome and difficult to read.

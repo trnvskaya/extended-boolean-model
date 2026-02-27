@@ -1,0 +1,74 @@
+Avoiding first chance exception messages when the exception is safely handled
+c# .net exception
+The following bit of code catches the EOS Exception
+using (var reader = new BinaryReader(httpRequestBodyStream)) {
+
+    try {
+        while (true) {
+            bodyByteList.Add(reader.ReadByte());
+        }
+    } catch (EndOfStreamException) { }
+}
+
+So why do I still receive first-chance exceptions in my console? 
+
+A first chance exception of type 'System.IO.EndOfStreamException' occurred in mscorlib.dll
+
+Is there a way to hide these first chance exception messages?
+
+
+I think the stream is throwing this exception, so your try is scoped to narrow to catch it.
+Add a few more try catch combos around the different scopes until you catch it where its actually being thrown, but it appears to be happening either at our outside of your using, since the stream object is not created in the using's scope.
+
+The point of "first-chance" exceptions is that you're seeing them pre-handler so that you can stop on them during debugging at the point of throwing. A "second-chance" exception is one that has no appropriate handler. Sometimes you want to catch "first-chance" exceptions because it's important to see what's happening when it's being thrown, even if someone is catching it.
+There's nothing to be concerned with. This is normal behavior.
+
+1) In Visual Studio you can change the settings for the way the Debugger handles (breaks on) exceptions.
+Go to Debug > Exceptions. (Note this may not be in your menu depending on your Visual Studio Environment setting. If not just add it to your menu using the Customize menu.)
+There you are presented with a dialog of exceptions and when to break on them.
+In the line "Common Language Runtime Exceptions" you can deselect thrown (which should then stop bothering you about first-chance exceptions) and you can also deselect User-unhandeled (which I would not recommend) if want to.
+2) The message you are getting should not be in the console, but should be appearing in the 'Output' window of Visual Studio. If the latter is the case, then I have not found a possibility to remove that, but it doesn't appear if you run the app without Visual Studio.
+Hope that helps.
+
+Unlike Java, .NET exceptions are fairly expensive in terms of processing power, and handled exceptions should be avoided in the normal and successful execution path.
+Not only will you avoid clutter in the console window, but your performance will improve, and it will make performance counters like .NET CLR Exceptions more meaningful.
+In this example you would use
+while (reader.PeekChar() != -1)
+{
+    bodyByteList.Add(reader.ReadByte());
+}
+
+
+To avoid seeing the messages, right-click on the output window and uncheck "Exception Messages".
+However, seeing them happen might be nice, if you're interested in knowing when exceptions are thrown without setting breakpoints and reconfiguring the debugger.
+
+in VB.NET:
+<DebuggerHidden()> _
+Public Function Write(ByVal Text As String) As Boolean
+   ...
+
+
+Actually if are having many exceptions per second, you would achieve must better performance by checking reader.EndOfStream-value.. Printing out those exception messages is unbelievably slow, and hiding them in visual studio won't speed up anything.
+
+I had this problem and couldn't figure out where the exception was thrown. So my solution was to enable Visual Studio to stop executing on this kind of exception. 
+
+Navigate to "Debug/Exceptions"
+Expand the "Common Language Runtime Exceptions" tree.
+Expand the "System" branch.
+Scroll down to where "NullReferenceException" is, and check the
+"throw" checkbox, and uncheck the "user-handled".
+Debug your project.
+
+
+If you want more control over these messages, you can add a handler:
+Friend Sub AddTheHandler()
+AddHandler AppDomain.CurrentDomain.FirstChanceException, AddressOf FirstChanceExceptionHandler
+End Sub
+
+<Conditional("DEBUG")>
+Friend Sub FirstChanceExceptionHandler( source As Object,  e As Runtime.ExceptionServices.FirstChanceExceptionEventArgs)
+' Process first chance exception
+
+End Sub
+
+This allows you to silence them as mentioned in other comments, but still makes sure you are able to be aware of them.  I find it is good to see how many I am really throwing if I log a message and timestamp to a text file.

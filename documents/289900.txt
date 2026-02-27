@@ -1,0 +1,107 @@
+Why this union's size is 2 with bitfields?
+c structure bit-manipulation unions
+I am working on turbo C on windows where char takes one byte.Now my problem is with the below union.
+union a
+{
+ unsigned char c:2;
+}b;
+void main()
+{
+printf("%d",sizeof(b));  \\or even sizeof(union a)
+}
+
+This program is printing output as 2 where as union should be taking only 1 byte. Why is it so?
+for struct it is fine giving 1 byte but this union is working inappropriately.
+And one more thing how to access these bit fields.
+scanf("%d",&b.c);  //even scanf("%x",b.c);
+
+is not working because we cannot have address for bits.So we have to use another variable like below
+int x;
+scanf("%d",&x);
+b.c=x;
+
+cant we avoid it?? is there any other way???
+
+
+I'm not sure where you find the requirement that the union must be precisely the minimum size. An object must be at least as big as its members, but that is a lower bound only.
+You can't take the address of a bitfield; what would be its type? It can't be int*. scanf(%d) will write sizeof(int) * CHAR_BIT bits to the int* you pass in. That's writing more than 2 bits, yet you don't have that space.
+
+Compilers are allowed to add padding to structs and unions and while, I admit, that it's a little surprising that yours does round up the union to a two byte size when you are able to get a one byte struct it is perfectly allowed.
+In answer to your second question: no it's not avoidable. Bit fields are a struct packing optimization and the performance and convenience penalty to pay is that bit field members are not individually addressable.
+
+There is a paragraph in the standard that states there shall be no padding before the first member of a struct. But it does not say explicitly so about unions. The difference in size could come because it wants to align the union at 2 byte boundaries, but as it cannot pad before the first member of a struct, the struct will have one byte aligning. Also note that an union could have more members with different types, which could widen the required alignment of your union. There could be reasons for the compiler to give them at least 2 bytes alignment, for example to ease code that has to handle according the required aligment of an union.
+Anyway, there is no requirement that your union should be one byte exactly. It just has to have place for all its members.
+Here is what the C standard has to say about your second question:
+   The operand of the unary & operator shall be either a function
+designator or an lvalue that designates an object that is not a
+bit-field and is not declared with the register storage-class
+specifier.
+So your best bet is to use your way using the int. you may put braces around the code, so the temporary variable is kept local:
+void func(void) { struct bits f; { int x; scanf("%d", &x); f.bitfield = x; } /* ... */ }
+
+
+Turbo C is based on 8086 microprocessor which has two byte word boundary. The atomic reading and writing is typically bound to CPU's architecture, so the compiler is adding some slack bytes to align your data structure.
+
+Calling #pragma pack(1) may be able to disable it, but not sure if it works on Turbo C.
+
+In addition to the fact that there "there may also be unnamed padding at the end of a structure or union", the compiler is permitted to place a bitfield in "any addressable storage unit large enough to hold a bit-field".  (both quotes are from the C90 standard - there is similar, but different, wording tin the C99 standard).
+Also note that the standard says that a "bit-field shall have a type that is a qualified or unqualified version of int, unsigned int, or signed int", so having a bit-field in a char type is non-standard.
+Because the behavior of bitfields are so dependent on unspecified compiler implementation details (there are several other non-portable issues with bit-fields that I have not mentioned) using them is almost always a bad idea.  In particular, they are a bad idea when you are trying to model bit-fields in a file format, network protocol, or hardware register.
+
+More information from another SO answer:
+
+In general you should avoid bitfields
+  and use other manifest constants
+  (enums or whatever) with explicit bit
+  masking and shifting to access the
+  'sub-fields' in a field.
+Here's one reason why bitfields should
+  be avoided - they aren't very portable
+  between compilers even for the same
+  platform.  from the C99 standard
+  (there's similar wording in the C90
+  standard):
+
+An implementation may allocate any
+    addressable storage unit large enough
+    to hold a bitfield. If enough space
+    remains, a bit-field that immediately
+    follows another bit-field in a
+    structure shall be packed into
+    adjacent bits of the same unit. If
+    insufficient space remains, whether a
+    bit-field that does not fit is put
+    into the next unit or overlaps
+    adjacent units is
+    implementation-defined. The order of
+    allocation of bit-fields within a unit
+    (high-order to low-order or low-order
+    to high-order) is
+    implementation-defined. The alignment
+    of the addressable storage unit is
+    unspecified.
+
+You cannot guarantee whether a bit
+  field will 'span' an int boundary or
+  not and you can't specify whether a
+  bitfield starts at the low-end of the
+  int or the high end of the int (this
+  is independant of whether the
+  processor is big-endian or
+  little-endian).
+
+
+There is a lot of misinformation in the answers so I will clarify.  It could be for one of 2 reasons (I am not familiar with the compiler).
+
+The bitfield storage unit is 2.
+Alignment is forced to word (2 byte) boundary.
+
+I doubt it is the first case as it is a common extension to take the bitfield storage unit as the size of the declared "base" type.  In this case the type is char which always has a size of 1.
+[In standard you can only declare bitfields of type int or unsigned int and the "storage unit" in which bitfields are grouped is fixed (usually the same size as an int).  Even a single bit bitfield will use one storage unit.]
+In the 2nd case it is common for C compilers to implement #pragma pack to allow control of alignment.  I suspect the default packing is 2 in which case a pad byte will be added at the end of the union.  The way to avoid this is to use:
+#pragma pack(1)
+
+You should also use #pragma pack() afterward to set back to the default (or even better use the push and pop arguments if supported by your compiler).
+To all the repliers who said that you must put up with what the compiler does, this is contrary to the spirit of C.  You should be able to use bitfields to map to any size or bit order in situations where you have no control over it such as a file format or hardware mapping.
+Of course this is highly non-portable since different implementations have different byte orders, orders that bits are added to a bitfield storage unit (from top or bottom), storage units size, default alignment etc.
+As to your 2nd question, I can't see the problem, though I never use scanf as it is problematic.

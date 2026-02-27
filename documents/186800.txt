@@ -1,0 +1,71 @@
+Is it possible to specify proxy credentials in your web.config?
+c# web-services proxy
+I need to configure a website to access a webservice on another machine, via a proxy.  I can configure the website to use a proxy, but I can't find a way of specifying the credentials that the proxy requires, is that possible?  Here is my current configuration:
+<defaultProxy useDefaultCredentials="false">
+    <proxy usesystemdefault="true" proxyaddress="<proxy address>" bypassonlocal="true" />
+</defaultProxy>
+
+I know you can do this via code, but the software the website is running is a closed-source CMS so I can't do this.
+Is there any way to do this?  MSDN isn't helping me much..
+
+
+Directory Services/LDAP lookups can be used to serve this purpose. It involves some changes at infrastructure level, but most production environments have such provision
+
+Yes, it is possible to specify your own credentials without modifying the current code. It requires a small piece of code from your part though.
+Create an assembly called SomeAssembly.dll with this class :
+namespace SomeNameSpace
+{
+    public class MyProxy : IWebProxy
+    {
+        public ICredentials Credentials
+        {
+            get { return new NetworkCredential("user", "password"); }
+            //or get { return new NetworkCredential("user", "password","domain"); }
+            set { }
+        }
+
+        public Uri GetProxy(Uri destination)
+        {
+            return new Uri("http://my.proxy:8080");
+        }
+
+        public bool IsBypassed(Uri host)
+        {
+            return false;
+        }
+    }
+}
+
+Add this to your config file :
+<defaultProxy enabled="true" useDefaultCredentials="false">
+  <module type = "SomeNameSpace.MyProxy, SomeAssembly" />
+</defaultProxy>
+
+This "injects" a new proxy in the list, and because there are no default credentials, the WebRequest class will call your code first and request your own credentials. You will need to place the assemble SomeAssembly in the bin directory of your CMS application.
+This is a somehow static code, and to get all strings like the user, password and URL, you might either need to implement your own ConfigurationSection, or add some information in the AppSettings, which is far more easier.
+
+While I haven't found a good way to specify proxy network credentials in the web.config, you might find that you can still use a non-coding solution, by including this in your web.config:
+  <system.net>
+    <defaultProxy useDefaultCredentials="true">
+      <proxy proxyaddress="proxyAddress" usesystemdefault="True"/>
+    </defaultProxy>
+  </system.net>
+
+The key ingredient in getting this going, is to change the IIS settings, ensuring the account that runs the process has access to the proxy server.
+If your process is running under LocalService, or NetworkService, then this probably won't work. Chances are, you'll want a domain account.
+
+You can specify credentials by adding a new Generic Credential of your proxy server in Windows Credentials Manager:
+1 In Web.config
+<system.net>    
+<defaultProxy enabled="true" useDefaultCredentials="true">      
+<proxy usesystemdefault="True" />      
+</defaultProxy>    
+</system.net>
+
+
+In Credential Manager >> Add a Generic Credential
+
+Internet or network address: your proxy address
+User name: your user name
+Password: you pass
+This configuration worked for me, without change the code.

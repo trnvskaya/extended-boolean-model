@@ -1,0 +1,245 @@
+Generic, annotation-driven event notification frameworks
+java events annotations notifications
+While simple, interface-driven event notification frameworks in Java have been around since pre-Cambrian times (e.g. java.beans.PropertyChangeSupport), it is becoming increasingly popular for frameworks to use annotation-driven event notification instead.  
+For an example, see JBossCache 2.2. The listener class has its listener methods annotated, rather than conforming to a rigid interface. This is rather easier to program to, and easier to read, since you don't have to write empty implementations of listener callbacks that you're not interested in (and yes, I know about listener adapter superclasses).
+Here's a sample from the JBossCache docs:
+@CacheListener
+public class MyListener {
+   @CacheStarted
+   @CacheStopped
+   public void cacheStartStopEvent(Event e) {
+         switch (e.getType()) {
+            case Event.Type.CACHE_STARTED:
+               System.out.println("Cache has started");
+               break;    
+            case Event.Type.CACHE_STOPPED:    
+               System.out.println("Cache has stopped");
+               break;    
+         }
+   }    
+
+   @NodeCreated    
+   @NodeRemoved
+   @NodeVisited
+   @NodeModified
+   @NodeMoved
+   public void logNodeEvent(NodeEvent ne) {
+         log("An event on node " + ne.getFqn() + " has occured");
+   }
+
+}
+The problem with this, is that it's very much more of an involved process writing the framework to support this sort of thing, due to the annotation-reflection nature of it.
+So, before I charge off down the road of writing a generic framework, I was hoping someone had done it already. Has anyone come across such a thing?
+
+
+Don't mistake complicated for clever. It seems to me that this would be:
+
+A nightmare to debug
+Difficult to follow (from a maintenance perspective, or someone attempting to change something 6 months down the line)
+Full of if (event instanceof NodeCreatedEvent) like code. Why this is better than subclassing an adapter I have no idea!
+
+
+The main problem I see here are the method parameters, which restrict which methods can actually be used for which events, and there's no compile-time help for that.
+This is what makes interfaces attractive to me for observer pattern implementations like the Java event model. Tools like eclipse can autogen method stubs so you can't get the signatures wrong. In your example, it's very easy to use the wrong parameter type and never know it until an event occurs (which might be an error case several months down the line) 
+One thing you might try are my annotations & processor for implementing observers and null object implementations. Suppose you have
+package a.b.c;
+
+public interface SomeListener {
+    void fee();
+    void fie();
+    void fo();
+    void fum();
+}
+
+and wanted to create a listener instance. You could write
+package x.y.z;
+
+import a.b.c.SomeListener;
+import com.javadude.annotation.Bean;
+import com.javadude.annotation.NullObject;
+
+@Bean(nullObjectImplementations = {@NullObject(type = SomeListener.class) })
+public class Foo extends FooGen implements SomeListener {
+    @Override
+    public void fie() {
+        // whatever code you need here
+    }
+}
+
+To create a source for these events, you can write
+package a.b.c;
+
+import com.javadude.annotation.Bean;
+import com.javadude.annotation.Observer;
+
+@Bean(observers = {@Observer(type = SomeListener.class)})
+public class Source extends SourceGen {
+    // SourceGen will have add/remove listener and fire methods
+    //   for each method in SomeListener
+}
+
+See http://code.google.com/p/javadude/wiki/Annotations if you're interested. Might give you some other ideas as well.
+
+I've been thinking about a generic annotation-driven event framework as well.  I like the benefits provided by static typing, but the current interface-driven event model is painful to use (ugly code).  Would it be possible to use a custom annotation processor to do some compile-time checking?  That might help add some of the missing "safety" that we've all grown used to.
+A lot of the error checking can also be done at the time that the listeners are "registered" with the event producers.  Thus, the application would fail early (when the listeners are registered), possibly even at at startup-time.
+Here's an example of what the generic framework I've been toying with might look like:
+public class ExampleProducer {
+
+    private EventSupport<ActionEvent> eventSupport;
+
+    public ExampleProducer() {
+    	eventSupport = new EventSupport<ActionEvent>(this);
+    }
+
+    @AddListenersFor(ActionEvent.class)
+    public void addActionListener(Object listener)
+    {
+    	eventSupport.addListener(listener);
+    }
+
+    @RemoveListenersFor(ActionEvent.class)
+    public void removeActionListener(Object listener)
+    {
+    	eventSupport.removeListener(listener);
+    }
+
+    public void buttonClicked() {
+    	eventSupport.fire(new ActionEvent(this, 
+                              ActionEvent.ACTION_PERFORMED, "Click"));
+    }
+   }
+
+The producer uses EventSupport, which uses reflection to invoke the events.  As mentioned before, EventSupport could preform some initial checks when the events listeners are registered.
+public class ExampleListener
+{   
+  private ExampleProducer submitButton;
+
+  public ExampleListener()
+  {
+    submitButton = new ExampleProducer();
+    EventSupport.autoRegisterEvents(this);
+  }
+
+  @HandlesEventFor("submitButton")
+  public void handleSubmitButtonClick(ActionEvent event)
+  {
+    //...some code to handle the event here
+  }
+}
+
+Here, EventSupport has a static method that uses reflection to auto-register the listener with the event producer.  This eliminates the need to manually register with the event source.  A custom annotation processor could be used to validate that the @HandlesEventFor annotation refers to an actual field of the ExampleListener. The annotation processor could do other checks as well, such as ensuring that the event handler method signature matches up with one of the registration methods on the ExampleProducer (basically, the same check that could be performed at registration-time).
+What do you think?  Is this worth putting some time into fully developing?
+
+You can already do this today with EventBus.
+Following example is from EventBus Getting Started guide. Statusbar that updates based on published events, and no need to register statusbar control/widget as listener of publisher(s). Without EventBus, statusbar will need to be added as listener to many classes. Statusbar can also be created and destroyed at any time.
+public StatusBar extends JLabel {
+    public StatusBar() {
+        AnnotationProcessor.process(this);
+    }
+    @EventSubscriber(eventClass=StatusEvent.class)
+    public void updateStatus(StatusEvent statusEvent) {
+        this.setText(statusEvent.getStatusText();
+    }
+}
+
+A similar project is ELF (Event Listener Framework) but it seems to be less mature.
+I'm currently researching about event notification frameworks on Publish-Subscribe Event Driven Programming | Kev's Spring vs Java EE Dev and the followup articles.
+
+I've made http://neoevents.googlecode.com to handle this kind of annotation based event handler.
+        @actionPerformed
+        private void onClick() {
+                //do something
+        }
+
+        protected void initComponents() {
+                JButton button = new JButton("Click me!!!");
+                button.addActionListener(new ActionListener(this) );
+        }
+
+It looks as simple as I was expecting it to be. Annotations are available for every single listener in J2SE.
+
+Here's a similar project called SJES.
+public class SomeController {
+
+private Calculator c1 = new Calculator();
+private Calculator c2 = new Calculator();
+
+public SomeController() {
+    c1.registerReceiver(this);
+    c2.registerReceiver(this);
+    c1.add(10, 10);
+    c2.add(20, 20);
+}
+
+@EventReceiver(handleFor="c1")
+public void onResultC1(Calculator.Event e) {
+    System.out.println("Calculator 1 got: " + e.result);
+}
+
+@EventReceiver(handleFor="c2")
+public void onResultC2(Calculator.Event e) {
+    System.out.println("Calculator 2 got: " + e.result);
+}
+
+@EventReceiver
+public void onResultAll(Calculator.Event e) {
+    System.out.println("Calculator got: " + e.result);
+}
+}
+
+public class Calculator {
+
+private EventHelper eventHelper = new EventHelper(this);
+
+public class Event {
+
+    long result;
+
+    public Event(long result) {
+        this.result = result;
+    }
+}
+
+public class AddEvent extends Event {
+
+    public AddEvent(long result) {
+        super(result);
+    }
+}
+
+public class SubEvent extends Event {
+
+    public SubEvent(long result) {
+        super(result);
+    }
+}
+
+public void unregisterReceiver(Object o) {
+    eventHelper.unregisterReceiver(o);
+}
+
+public void registerReceiver(Object o) {
+    eventHelper.registerReceiver(o);
+}
+
+public void add(long a, long b) {
+    eventHelper.fireEvent(new AddEvent(a + b));
+}
+
+public void sub(long a, long b) {
+    eventHelper.fireEvent(new SubEvent(a - b));
+}
+
+public void pass(long a) {
+    eventHelper.fireEvent(new Event(a));
+}
+}
+
+I think this is very easy to use.
+
+Google Guava v11 has added an EventBus component that uses this style. They also explain why they decided to use annotations rather than interfaces.
+
+You can also check out MBassador It is annotation driven, very light-weight and uses weak references (thus easy to integrate in environments where objects lifecycle management is done by a framework like spring or guice or somethign). 
+It provides an object filtering mechanism (thus you could subscribe to NodeEvent and attach some filters to restrict message handling to a set of specific types only). 
+You can also define your own annotations to have customized declaration of your handlers.
+And it's very fast and resource efficient. Check out this benchmark showing a performance graph for different scenarios using Guava or mbassador.

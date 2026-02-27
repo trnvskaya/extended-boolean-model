@@ -1,0 +1,117 @@
+Performance penalty for working with interfaces in C++?
+c++ performance abstract-class virtual-functions
+Is there a runtime performance penalty when using interfaces (abstract base classes) in C++?
+
+
+There is a small penalty per virtual function call compared to a regular call. You are unlikely to observe a difference unless you are doing hundreds of thousands of calls per second, and the price is often worth paying for added code clarity anyway.
+
+Using abstract base classes in C++ generally mandates the use of a virtual function table, all your interface calls are going to be looked up through that table. The cost is tiny compared to a raw function call, so be sure that you need to be going faster than that before worrying about it.
+
+The only main difference I know of is that, since you're not using a concrete class, inlining is (much?) harder to do.
+
+Short Answer: No.
+Long Answer:
+It is not the base class or the number of ancestors a class has in its hierarchy that affects it speed. The only thing is the cost of a method call.
+A non virtual method call has a cost (but can be inlined)
+A virtual method call has a slightly higher cost as you need to look up the method to call before you call it (but this is a simple table look up not a search). Since all methods on an interface are virtual by definition there is this cost.
+Unless you are writing some hyper speed sensitive application this should not be a problem. The extra clarity that you will recieve from using an interface usually makes up for any perceived speed decrease.
+
+The only thing I can think of is that virtual methods are a little bit slower to call than non-virtual methods, because the call has to go through the virtual method table.
+However, this is a bad reason to screw up your design. If you need more performance, use a faster server.
+
+When you call a virtual function (say through an interface) the program has to do a look up  of the function in a table to see which function to call for that object. This gives a small penalty compared to a direct call to the function. 
+Also, when you use a virtual function the compiler cannot inline the function call. Therefore there could be a penalty to using a virtual function for some small functions. This is generally the biggest performance "hit" you are likely to see. This really only an issue if the function is small and called many times, say from within a loop. 
+
+As for any class that contains a virtual function, a vtable is used. Obviously, invoking a method through a dispatching mechanism like a vtable is slower than a direct call, but in most cases you can live with that.
+
+Yes, but nothing noteworthy to my knowledge. The performance hit is because of 'indirection' you have in each method call. 
+However, it really depends on the compiler you're using since some compilers are not able to inline the method calls within the classes inheriting from the abstract base class. 
+If you want to be sure you should run your own tests.
+
+One thing that should be noted is that virtual function call cost can vary from one platform to another. On consoles they may be more noticeable, as usually vtable call means a cache miss and can screw branch prediction.
+
+Functions called using virtual dispatch are not inlined
+There is one kind of penalty for virtual functions which is easy to forget about: virtual calls are not inlined in a (common) situation where the type of the object is not know compile time. If your function is small and suitable for inlining, this penalty may be very significant, as you are not only adding a call overhead, but the compiler is also limited in how it can optimize the calling function (it has to assume the virtual function may have changed some registers or memory locations, it cannot propagate constant values between the caller and the callee).
+Virtual call cost depends on platform
+As for the call overhead penalty compared to a normal function call, the answer depends on your target platform. If your are targeting a PC with x86/x64 CPU, the penalty for calling a virtual function is very small, as modern x86/x64 CPU can perform branch prediction on indirect calls. However, if you are targeting a PowerPC or some other RISC platform, the virtual call penalty may be quite significant, because indirect calls are never predicted on some platforms (Cf. PC/Xbox 360 Cross Platform Development Best Practices).
+
+I don't think that the cost comparison is between virtual function call and a straight function call.  If you are thinking about using a abstract base class (interface), then you have a situation where you want to perform one of several actions based of the dynamic type of an object.  You have to make that choice somehow.  One option is to use virtual functions.  Another is a switch on the type of the object, either through RTTI (potentially expensive), or adding a type() method to the base class (potentially increasing memory use of each object).  So the cost of the virtual function call should be compared to the cost of the alternative, not to the cost of doing nothing.
+
+Another alternative that is applicable in some cases is compile-time
+polymorphism with templates.  It is useful, for example, when you want
+to make an implementation choice at the beginning of the program, and
+then use it for the duration of the execution.  An example with
+runtime polymorphism
+class AbstractAlgo
+{
+    virtual int func();
+};
+
+class Algo1 : public AbstractAlgo
+{
+    virtual int func();
+};
+
+class Algo2 : public AbstractAlgo
+{
+    virtual int func();
+};
+
+void compute(AbstractAlgo* algo)
+{
+      // Use algo many times, paying virtual function cost each time
+
+}   
+
+int main()
+{
+    int which;
+     AbstractAlgo* algo;
+
+    // read which from config file
+    if (which == 1)
+       algo = new Algo1();
+    else
+       algo = new Algo2();
+    compute(algo);
+}
+
+The same using compile time polymorphism
+class Algo1
+{
+    int func();
+};
+
+class Algo2
+{
+    int func();
+};
+
+
+template<class ALGO>  void compute()
+{
+    ALGO algo;
+      // Use algo many times.  No virtual function cost, and func() may be inlined.
+}   
+
+int main()
+{
+    int which;
+    // read which from config file
+    if (which == 1)
+       compute<Algo1>();
+    else
+       compute<Algo2>();
+}
+
+
+Yes, there is a penalty.  Something which may improve performance on your platform is to use a non-abstract class with no virtual functions.  Then use a member function pointer to  your non-virtual function.
+
+Most people note the runtime penalty, and rightly so.
+However, in my experience working on large projects, the benefits from clear interfaces and proper encapsulation quickly offset the gain in speed. Modular code can be swapped for an improved implementation, so the net result is a large gain.
+Your mileage may vary, and it clearly depend on the application you're developing.
+
+Note that multiple inheritance bloats the object instance with multiple vtable pointers. With G++ on x86, if your class has a virtual method and no base class, you have one pointer to vtable. If you have one base class with virtual methods, you still have one pointer to vtable. If you have two base classes with virtual methods, you have two vtable pointers on each instance.
+Thus, with multiple inheritance (which is what implementing interfaces in C++ is), you pay base classes times pointer size in the object instance size. The increase in memory footprint may have indirect performance implications.
+
+I know it's an uncommon viewpoint, but even mentioning this issue makes me suspect you're putting way too much thought into the class structure. I've seen many systems that had way too many "levels of abstraction", and that alone made them prone to severe performance problems, not due the cost of method calls, but due to the tendency to make unnecessary calls. If this happens over multiple levels, it's a killer. take a look

@@ -1,0 +1,69 @@
+How do I add a namespace reference to a SOAP response with Apache Axis2 and WSDL2Java
+java soap namespaces axis2 wsdl2java
+I'm looking at the SOAP output from a web service I'm developing, and I noticed something curious:
+<soapenv:Envelope xmlns:soapenv="http://www.w3.org/2003/05/soap-envelope">
+   <soapenv:Body>
+      <ns1:CreateEntityTypesResponse xmlns:ns1="http://somedomain.com/wsinterface">
+         <newKeys>
+            <value>1234</value>
+         </newKeys>
+         <newKeys>
+            <value>2345</value>
+         </newKeys>
+         <newKeys>
+            <value>3456</value>
+         </newKeys>
+         <newKeys xsi:nil="1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"/>
+         <newKeys xsi:nil="1" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"/>
+         <errors>Error1</errors>
+         <errors>Error2</errors>
+      </ns1:CreateEntityTypesResponse>
+   </soapenv:Body>
+</soapenv:Envelope>
+
+I have two newKeys elements that are nil, and both elements insert a namespace reference for xsi.  I'd like to include that namespace in the soapenv:Envelope element so that the namespace reference is only sent once.
+I am using WSDL2Java to generate the service skeleton, so I don't directly have access to the Axis2 API.
+
+
+Using WSDL2Java
+If you have used the Axis2 WSDL2Java tool you're kind of stuck with what it generates for you.  However you can try to change the skeleton in this section:
+   // create SOAP envelope with that payload
+   org.apache.axiom.soap.SOAPEnvelope env = null;
+   env = toEnvelope(
+       getFactory(_operationClient.getOptions().getSoapVersionURI()),
+       methodName,
+       optimizeContent(new javax.xml.namespace.QName
+       ("http://tempuri.org/","methodName")));
+
+//adding SOAP soap_headers
+_serviceClient.addHeadersToEnvelope(env);
+
+To add the namespace to the envelope add these lines somewhere in there:
+OMNamespace xsi = getFactory(_operationClient.getOptions().getSoapVersionURI()).
+    createOMNamespace("http://www.w3.org/2001/XMLSchema-instance", "xsi");
+
+env.declareNamespace(xsi);
+
+Hand-coded
+If you are "hand-coding" the service you might do something like this:
+SOAPFactory fac = OMAbstractFactory.getSOAP11Factory();   
+SOAPEnvelope envelope = fac.getDefaultEnvelope();
+OMNamespace xsi = fac.createOMNamespace("http://www.w3.org/2001/XMLSchema-instance", "xsi");
+
+envelope.declareNamespace(xsi);
+OMNamespace methodNs = fac.createOMNamespace("http://somedomain.com/wsinterface", "ns1");
+
+OMElement method = fac.createOMElement("CreateEntityTypesResponse", methodNs);
+
+//add the newkeys and errors as OMElements here...
+
+Exposing service in aar
+If you are creating a service inside an aar you may be able to influence the SOAP message produced by using the target namespace or schema namespace properties (see this article).
+Hope that helps.
+
+Other option is that the variable MY_QNAME has the prefix empty.
+public static final QName MY_QNAME = new QName("http://www.hello.com/Service/",
+            "tagname",
+            "prefix");
+
+So, if you fill it, then it works.

@@ -1,0 +1,87 @@
+How do I write a python HTTP server to listen on multiple ports?
+python webserver
+I'm writing a small web server in Python, using BaseHTTPServer and a custom subclass of BaseHTTPServer.BaseHTTPRequestHandler. Is it possible to make this listen on more than one port?
+What I'm doing now:
+class MyRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+  def doGET
+  [...]
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer): 
+    pass
+
+server = ThreadingHTTPServer(('localhost', 80), MyRequestHandler)
+server.serve_forever()
+
+
+
+Sure; just start two different servers on two different ports in two different threads that each use the same handler.  Here's a complete, working example that I just wrote and tested.  If you run this code then you'll be able to get a Hello World webpage at both http://localhost:1111/ and http://localhost:2222/
+from threading import Thread
+from SocketServer import ThreadingMixIn
+from BaseHTTPServer import HTTPServer, BaseHTTPRequestHandler
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write("Hello World!")
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    pass
+
+def serve_on_port(port):
+    server = ThreadingHTTPServer(("localhost",port), Handler)
+    server.serve_forever()
+
+Thread(target=serve_on_port, args=[1111]).start()
+serve_on_port(2222)
+
+
+Not easily. You could have two ThreadingHTTPServer instances, write your own serve_forever() function (don't worry it's not a complicated function).
+The existing function:
+def serve_forever(self, poll_interval=0.5):
+    """Handle one request at a time until shutdown.
+
+    Polls for shutdown every poll_interval seconds. Ignores
+    self.timeout. If you need to do periodic tasks, do them in
+    another thread.
+    """
+    self.__serving = True
+    self.__is_shut_down.clear()
+    while self.__serving:
+        # XXX: Consider using another file descriptor or
+        # connecting to the socket to wake this up instead of
+        # polling. Polling reduces our responsiveness to a
+        # shutdown request and wastes cpu at all other times.
+        r, w, e = select.select([self], [], [], poll_interval)
+        if r:
+            self._handle_request_noblock()
+    self.__is_shut_down.set()
+
+So our replacement would be something like:
+def serve_forever(server1,server2):
+    while True:
+        r,w,e = select.select([server1,server2],[],[],0)
+        if server1 in r:
+            server1.handle_request()
+        if server2 in r:
+            server2.handle_request()
+
+
+I would say that threading for something this simple is overkill.  You're better off using some form of asynchronous programming.
+Here is an example using Twisted:
+from twisted.internet import reactor
+from twisted.web import resource, server
+
+class MyResource(resource.Resource):
+    isLeaf = True
+    def render_GET(self, request):
+        return 'gotten'
+
+site = server.Site(MyResource())
+
+reactor.listenTCP(8000, site)
+reactor.listenTCP(8001, site)
+reactor.run()
+
+I also thinks it looks a lot cleaner to have each port be handled in the same way, instead of having the main thread handle one port and an additional thread handle the other.  Arguably that can be fixed in the thread example, but then you're using three threads.

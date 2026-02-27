@@ -1,0 +1,97 @@
+Templated superclass linking problem
+c++ templates
+I'm trying to create a C++ class, with a templated superclass. The idea being, I can easily create lots of similar subclasses from a number of superclasses which have similar characteristics.
+I have distilled the problematic code as follows:
+template_test.h:
+template<class BaseClass>
+class Templated : public BaseClass
+    {
+public:
+    Templated(int a);
+    virtual int Foo();
+    };
+
+class Base
+    {
+protected:
+    Base(int a);
+public:
+    virtual int Foo() = 0;
+protected:
+    int b;
+    };
+
+template_test.cpp:
+#include "template_test.h"
+
+Base::Base(int a)
+    : b(a+1)
+    {
+    }
+
+template<class BaseClass>
+Templated<BaseClass>::Templated(int a)
+    : BaseClass(a)
+    {
+    }
+
+template<class BaseClass>
+int Templated<BaseClass>::Foo()
+    {
+    return this->b;
+    }
+
+main.cpp:
+#include "template_test.h"
+
+int main()
+    {
+    Templated<Base> test(1);
+    return test.Foo();
+    }
+
+When I build the code, I get linker errors, saying that the symbols Templated<Base>::Templated(int) and Templated<Base>::Foo() cannot be found.
+A quick Google suggests that adding the following to main.cpp will solve the problem:
+template<> Templated<Base>::Templated(int a);
+template<> int Templated<Base>::Foo();
+
+But this does not solve the problem. Adding the lines to main.cpp does not work either. (Though, interestingly, adding them to both gives 'multiply defined symbol' errors from the linker, so they must be doing something...)
+However, putting all the code in one source file does solve the problem. While this would be ok for the noddy example above, the real application I'm looking at would become unmanageable very fast if I was forced to put the whole lot in one cpp file.
+Does anyone know if what I'm doing is even possible? (How) can I solve my linker errors?
+I would assume that I could make all the methods in class Templated inline and this would work, but this doesn't seem ideal either.
+
+
+With templated classes, the definitions must be available for each translation unit that uses it. The definitions can go in a separate file, usually with .inl or .tcc extension; the header file #includes that file at the bottom. Thus, even though it's in a separate file, it's still #included for each translation unit; it cannot be standalone.
+So, for your example, rename template_test.cpp to template_test.inl (or template_test.tcc, or whatever), then have #include "template_test.inl" (or whatever) at the bottom of template_test.h, just before the #endif of the include guard.
+Hope this helps!
+
+The C++ FAQ-lite covers this, and a couple of ways round it.
+You don't have to make all the methods "inline", but you should define the method bodies in template_test.h, rather in template_test.cpp.
+Some compilers can handle this split, but you have to remember that at one level, templates are like macros. for the compiler to generate the a template for your particular , it needs to have the template source handy.
+
+When the compiler is compiling main.cpp, it sees the class definition has member function declarations, but no member function defintions. It just assumes that there must be a definition of "Templated" constructor and Foo implementation somewhere, so it defers to the linker to find it at link time. 
+The solution to your problem is to put the implementation of Templated into template.h.
+eg
+template<class BaseClass>
+class Templated : public BaseClass
+    {
+public:
+    Templated(int a) : BaseClass(a) {}
+    virtual int Foo() { return BaseClass::b; }
+    };
+
+Interestingly, I could get your code to link by putting this at the end of template_test.cpp.
+void Nobody_Ever_Calls_This()
+{
+    Templated<Base> dummy(1);
+}
+
+Now the compiler can find an instance of Templated to link with. I wouldn't recommend this as a technique. Some other file might want to create a 
+Templated<Widget>
+
+and then you'd have to add another explicit instantiation to template_test.cpp.
+
+The problem is that when your Templated file is compiled, the compiler doesn't know what types it will need to generate code for, so it doesn't.
+Then when you link, main.cpp says it needs those functions, but they were never compiled into object files, so the linker can't find them.
+The other answers show ways to solve this problem in a portable way, in essence putting the definitions of the templated member functions in a place that is visible from where you instantiate instances of that class -- either through explicit instantiation, or putting the implementations in a file that is #included from main.cpp.
+You may also want to read your compiler's documentation to see how they recommends setting things up.  I know the IBM XLC compiler has some different settings and options for how to set these up.

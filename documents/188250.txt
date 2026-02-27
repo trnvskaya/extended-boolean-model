@@ -1,0 +1,113 @@
+How do you execute a stored procedure using Castle ActiveRecord?
+c# .net stored-procedures castle-activerecord
+I believe there is a discussion on this very topic somewhere on the net but I lost the url and I am unable to find it via googling.
+What I might try right now would be:
+ISessionFactoryHolder factoryHolder = ActiveRecordMediator<EntityClass>.GetSessionFactoryHolder();
+ISession session = factoryHolder.CreateSession(typeof(EntityClass));
+try
+{
+    IDbCommand cmd = session.Connection.CreateCommand();
+    cmd.CommandText = "spName";
+    cmd.ExecuteNonQuery();
+}
+catch(Exception ex)
+{
+
+}
+finally
+{
+    factoryHolder.ReleaseSession(session);
+}
+
+However, I am not quite sure if this is the correct way to do this or if perhaps a better way exists.
+
+
+The blog I used when implementing stored procedures in my ActiveRecord code was this post by Rodj (http://blog.rodj.org/archive/2008/05/23/activerecord-nhibernate-and-sql-stored-procedures.aspx).  Using his post and the comments I was able to get this to work.  I haven't decided if this is the best way yet. 
+
+You can also get an IDbConnection with:
+ActiveRecordMediator.GetSessionFactoryHolder()
+    .GetSessionFactory(typeof(ActiveRecordBase))
+    .ConnectionProvider.GetConnection();
+
+
+This works for me (stored procedure with params and dynamic result table):
+// get Connection
+System.Data.IDbConnection con = ActiveRecordMediator.GetSessionFactoryHolder()
+                                                    .GetSessionFactory(typeof(Autocomplete))
+                                                    .ConnectionProvider.GetConnection();
+
+// set Command
+System.Data.IDbCommand cmd = con.CreateCommand();
+cmd.CommandText = "name_of_stored_procedure";
+cmd.CommandType = System.Data.CommandType.StoredProcedure;
+
+// set Parameter of Stored Procedure
+System.Data.SqlClient.SqlParameter param = new System.Data.SqlClient.SqlParameter("@parameter_name", System.Data.SqlDbType.NVarChar);
+param.Value = "value_of_parameter";
+((System.Data.SqlClient.SqlParameterCollection)cmd.Parameters).Add(param);
+
+// call Stored Procedure (without getting result)
+cmd.ExecuteNonQuery();
+
+// ... or read results
+System.Data.SqlClient.SqlDataReader r = (System.Data.SqlClientSqlDataReader)cmd.ExecuteReader();
+while(r.Read()) {
+    System.Console.WriteLine("result first col: " + r.GetString(0));
+}
+
+
+For ActiveRecord version 1, this works:
+IDbConnection connection = ActiveRecordMediator.GetSessionFactoryHolder()
+                          .GetSessionFactory(typeof(ActiveRecordBase))
+                          .OpenSession().Connection;
+
+
+public ArrayList DevolverCamposDeObjetoSTP(T Objeto, List<Consulta> Consultas, string StoredProcedureName)
+    {
+        ArrayList results;
+        try
+        {
+            var queryString = @"EXEC " + StoredProcedureName;
+            foreach (var consulta in Consultas)
+            {
+                switch (consulta.tipoCampo)
+                {
+                    case Consulta.TipoCampo.dato:
+                        queryString = queryString + " " + consulta.Campo + " = " + "'" + consulta.Valor + "'";
+                        break;
+                    case Consulta.TipoCampo.numero:
+                        queryString = queryString + " " + consulta.Campo + " = " + consulta.Valor;
+                        break;
+                }   
+                queryString = queryString + ",";
+            }
+            queryString = queryString.Remove(queryString.Count() - 1, 1);
+            var query = new HqlBasedQuery(typeof(T),QueryLanguage.Sql, queryString);
+            results = (ArrayList)ActiveRecordMediator.ExecuteQuery(query);
+        }
+        catch (Exception exception)
+        {
+            throw new Exception(exception.Message);
+        }
+        return results;
+    }
+public class Consulta
+{
+    public enum TipoCampo
+    {
+        dato,
+        numero
+    }
+    public string Campo { get; set; }
+    public TipoCampo tipoCampo { get; set; }
+    public string Valor { get; set; }
+    public string Indicador { get; set; }
+}
+public void _Pruebastp()
+    {
+        var p = new Recurso().DevolverCamposDeObjetoSTP(
+                                                         new Recurso(),
+                                                         new List<Consulta> { new Consulta { Campo = "@nombre", tipoCampo = Consulta.TipoCampo.dato, Valor = "chr" }, new Consulta { Campo = "@perfil", tipoCampo = Consulta.TipoCampo.numero, Valor = "1" } },
+                                                         "Ejemplo");
+    }
+

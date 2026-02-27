@@ -1,0 +1,217 @@
+How to create a resizable CDialog in MFC?
+winapi mfc
+I have to create a dialog based application, instead of old CFormView type of design. But CDialog produces fixed-size dialogs. How can I create dialog based applications with resizable dialogs?
+
+
+There is no easy way to do this. Basically, you will need to dynamically layout controls when the window size is changed.
+See http://www.codeproject.com/KB/dialog/resizabledialog.aspx for an example
+
+In the RC resource file if the dialog has this style similar to this it will be fixed size:
+IDD_DIALOG_DIALOG DIALOGEX 0, 0, 320, 201
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+
+If the dialog has this style it will be sizeable:
+IDD_DIALOG_DIALOG DIALOGEX 0, 0, 320, 201
+STYLE WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
+
+With these sizable frame options the dialog will be re-sizeable but you will still need to do a lot of work handling the WM_SIZE message to manage the sizing an positioning of the controls within the dialog.
+
+I've tried many MFC layout libraries and found this one the best: http://www.codeproject.com/KB/dialog/layoutmgr.aspx. Check out the comments there for some bug fixes and improvements (disclaimer: some of them by me ;) ). When you use this library, setting the correct resize flags on your window will be handled for you.
+
+If your using a dialog template then open the dialog template in the resource editor and set the Style property to Popup and the Border property to Resizing. I'm pretty sure this will do the same as what jussij said and set the WS_POPUP and WS_THICKFRAME styles. To set these dynamically then override the PreCreateWindow function and add the following:
+cs.style |= WS_POPUP | WS_THICKFRAME;
+
+
+In addition to setting the style to WS_THICKFRAME, you'll probably also want to have a system to move and resize the controls in a dialog as the dialog is resized. For my own personal use I've created a base class to replace CDialog that has this capability. Derive from this class and in your InitDialog function call the AutoMove function for each child control to define how much it should move and how much it should resize relative to the parent dialog. The size of the dialog in the resource file is used as a minimum size.
+BaseDialog.h:
+#if !defined(AFX_BASEDIALOG_H__DF4DE489_4474_4759_A14E_EB3FF0CDFBDA__INCLUDED_)
+#define AFX_BASEDIALOG_H__DF4DE489_4474_4759_A14E_EB3FF0CDFBDA__INCLUDED_
+
+#if _MSC_VER > 1000
+#pragma once
+#endif // _MSC_VER > 1000
+
+#include <vector>
+
+class CBaseDialog : public CDialog
+{
+// Construction
+public:
+    CBaseDialog(UINT nIDTemplate, CWnd* pParent = NULL);   // standard constructor
+
+    void AutoMove(int iID, double dXMovePct, double dYMovePct, double dXSizePct, double dYSizePct);
+
+// Overrides
+    // ClassWizard generated virtual function overrides
+    //{{AFX_VIRTUAL(CBaseDialog)
+protected:
+    //}}AFX_VIRTUAL
+
+protected:
+    //{{AFX_MSG(CBaseDialog)
+    virtual BOOL OnInitDialog();
+    afx_msg void OnGetMinMaxInfo(MINMAXINFO FAR* lpMMI);
+    afx_msg void OnSize(UINT nType, int cx, int cy);
+    //}}AFX_MSG
+    DECLARE_MESSAGE_MAP()
+
+public:
+    bool            m_bShowGripper;         // ignored if not WS_THICKFRAME
+
+private:
+    struct SMovingChild
+    {
+        HWND        m_hWnd;
+        double      m_dXMoveFrac;
+        double      m_dYMoveFrac;
+        double      m_dXSizeFrac;
+        double      m_dYSizeFrac;
+        CRect       m_rcInitial;
+    };
+    typedef std::vector<SMovingChild>   MovingChildren;
+
+    MovingChildren  m_MovingChildren;
+    CSize           m_szInitial;
+    CSize           m_szMinimum;
+    HWND            m_hGripper;
+};
+
+//{{AFX_INSERT_LOCATION}}
+// Microsoft Visual C++ will insert additional declarations immediately before the previous line.
+
+#endif // !defined(AFX_BASEDIALOG_H__DF4DE489_4474_4759_A14E_EB3FF0CDFBDA__INCLUDED_)
+
+BaseDialog.cpp:
+#include "stdafx.h"
+#include "BaseDialog.h"
+
+#ifdef _DEBUG
+#define new DEBUG_NEW
+#undef THIS_FILE
+static char THIS_FILE[] = __FILE__;
+#endif
+
+CBaseDialog::CBaseDialog(UINT nIDTemplate, CWnd* pParent /*=NULL*/)
+    : CDialog(nIDTemplate, pParent),
+      m_bShowGripper(true),
+      m_szMinimum(0, 0),
+      m_hGripper(NULL)
+{
+}
+
+
+BEGIN_MESSAGE_MAP(CBaseDialog, CDialog)
+    //{{AFX_MSG_MAP(CBaseDialog)
+    ON_WM_GETMINMAXINFO()
+    ON_WM_SIZE()
+    //}}AFX_MSG_MAP
+END_MESSAGE_MAP()
+
+void CBaseDialog::AutoMove(int iID, double dXMovePct, double dYMovePct, double dXSizePct, double dYSizePct)
+{
+    ASSERT((dXMovePct + dXSizePct) <= 100.0);   // can't use more than 100% of the resize for the child
+    ASSERT((dYMovePct + dYSizePct) <= 100.0);   // can't use more than 100% of the resize for the child
+    SMovingChild s;
+    GetDlgItem(iID, &s.m_hWnd);
+    ASSERT(s.m_hWnd != NULL);
+    s.m_dXMoveFrac = dXMovePct / 100.0;
+    s.m_dYMoveFrac = dYMovePct / 100.0;
+    s.m_dXSizeFrac = dXSizePct / 100.0;
+    s.m_dYSizeFrac = dYSizePct / 100.0;
+    ::GetWindowRect(s.m_hWnd, &s.m_rcInitial);
+    ScreenToClient(s.m_rcInitial);
+    m_MovingChildren.push_back(s);
+}
+
+BOOL CBaseDialog::OnInitDialog()
+{
+    CDialog::OnInitDialog();
+
+    // use the initial dialog size as the default minimum
+    if ((m_szMinimum.cx == 0) && (m_szMinimum.cy == 0))
+    {
+        CRect rcWindow;
+        GetWindowRect(rcWindow);
+        m_szMinimum = rcWindow.Size();
+    }
+
+    // keep the initial size of the client area as a baseline for moving/sizing controls
+    CRect rcClient;
+    GetClientRect(rcClient);
+    m_szInitial = rcClient.Size();
+
+    // create a gripper in the bottom-right corner
+    if (m_bShowGripper && ((GetStyle() & WS_THICKFRAME) != 0))
+    {
+        SMovingChild s;
+        s.m_rcInitial.SetRect(-GetSystemMetrics(SM_CXVSCROLL), -GetSystemMetrics(SM_CYHSCROLL), 0, 0);
+        s.m_rcInitial.OffsetRect(rcClient.BottomRight());
+        m_hGripper = CreateWindow(_T("Scrollbar"), _T("size"), WS_CHILD | WS_VISIBLE | SBS_SIZEGRIP,
+                                  s.m_rcInitial.left, s.m_rcInitial.top, s.m_rcInitial.Width(), s.m_rcInitial.Height(),
+                                  m_hWnd, NULL, AfxGetInstanceHandle(), NULL);
+        ASSERT(m_hGripper != NULL);
+        if (m_hGripper != NULL)
+        {
+            s.m_hWnd = m_hGripper;
+            s.m_dXMoveFrac = 1.0;
+            s.m_dYMoveFrac = 1.0;
+            s.m_dXSizeFrac = 0.0;
+            s.m_dYSizeFrac = 0.0;
+            m_MovingChildren.push_back(s);
+
+            // put the gripper first in the z-order so it paints first and doesn't obscure other controls
+            ::SetWindowPos(m_hGripper, HWND_TOP, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOOWNERZORDER | SWP_NOSIZE | SWP_SHOWWINDOW);
+        }
+    }
+
+    return TRUE;  // return TRUE  unless you set the focus to a control
+}
+
+void CBaseDialog::OnGetMinMaxInfo(MINMAXINFO FAR* lpMMI) 
+{
+    CDialog::OnGetMinMaxInfo(lpMMI);
+
+    if (lpMMI->ptMinTrackSize.x < m_szMinimum.cx)
+        lpMMI->ptMinTrackSize.x = m_szMinimum.cx;
+    if (lpMMI->ptMinTrackSize.y < m_szMinimum.cy)
+        lpMMI->ptMinTrackSize.y = m_szMinimum.cy;
+}
+
+void CBaseDialog::OnSize(UINT nType, int cx, int cy) 
+{
+    CDialog::OnSize(nType, cx, cy);
+
+    int iXDelta = cx - m_szInitial.cx;
+    int iYDelta = cy - m_szInitial.cy;
+    HDWP hDefer = NULL;
+    for (MovingChildren::iterator p = m_MovingChildren.begin();  p != m_MovingChildren.end();  ++p)
+    {
+        if (p->m_hWnd != NULL)
+        {
+            CRect rcNew(p->m_rcInitial);
+            rcNew.OffsetRect(int(iXDelta * p->m_dXMoveFrac), int(iYDelta * p->m_dYMoveFrac));
+            rcNew.right += int(iXDelta * p->m_dXSizeFrac);
+            rcNew.bottom += int(iYDelta * p->m_dYSizeFrac);
+            if (hDefer == NULL)
+                hDefer = BeginDeferWindowPos(m_MovingChildren.size());
+            UINT uFlags = SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER;
+            if ((p->m_dXSizeFrac != 0.0) || (p->m_dYSizeFrac != 0.0))
+                uFlags |= SWP_NOCOPYBITS;
+            DeferWindowPos(hDefer, p->m_hWnd, NULL, rcNew.left, rcNew.top, rcNew.Width(), rcNew.Height(), uFlags);
+        }
+    }
+    if (hDefer != NULL)
+        EndDeferWindowPos(hDefer);
+
+    if (m_hGripper != NULL)
+        ::ShowWindow(m_hGripper, (nType == SIZE_MAXIMIZED) ? SW_HIDE : SW_SHOW);
+}
+
+
+I have some blog instructions on how to create a very minimalist re-sizeable dialog in MFC.
+It is basically an implementation of Paulo Messina's posting at CodeProject
+but with as much extraneous stuff removed as possible, just to help clarify how to do it better.
+It is fairly straightforward to implement once you've had a bit of practice: the important bits are to:
+i. ensure you have his CodeProject libraries etc pulled into your project and it all compiles correctly.
+ii. do the extra initialization required inside the OnInitDialog method: make the gripper visible, set the maximum dilog size, add anchor points to the dialog control items that you wish to 'stretch' etc.
+iii. Replace usage of CDialog with CResizableDialog at the appropriate points: in the dialog class definition, constructor, DoDataExchange, BEGIN_MESSAGE_MAP, OnInitDialog etc. 

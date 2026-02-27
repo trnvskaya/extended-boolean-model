@@ -1,0 +1,112 @@
+Is there a REAL performance difference between INT and VARCHAR primary keys?
+mysql performance primary-key innodb myisam
+Is there a measurable performance difference between using INT vs. VARCHAR as a primary key in MySQL? I'd like to use VARCHAR as the primary key for reference lists (think US States, Country Codes) and a coworker won't budge on the INT AUTO_INCREMENT as a primary key for all tables. 
+My argument, as detailed here, is that the performance difference between INT and VARCHAR is negligible, since every INT foreign key reference will require a JOIN to make sense of the reference, a VARCHAR key will directly present the information.
+So, does anyone have experience with this particular use-case and the performance concerns associated with it?
+
+
+This article is about Oracle, but it probably applies.
+
+For short codes, there's probably no difference.  This is especially true as the table holding these codes are likely to be very small (a couple thousand rows at most) and not change often (when is the last time we added a new US State).
+For larger tables with a wider variation among the key, this can be dangerous.  Think about using e-mail address/user name from a User table, for example.  What happens when you have a few million users and some of those users have long names or e-mail addresses.   Now any time you need to join this table using that key it becomes much more expensive.
+
+It's not about performance. It's about what makes a good primary key. Unique and unchanging over time. You may think an entity such as a country code never changes over time and would be a good candidate for a primary key. But bitter experience is that is seldom so.
+INT AUTO_INCREMENT meets the "unique and unchanging over time" condition. Hence the preference.
+
+Absolutely not.
+I have done several... several... performance checks between INT, VARCHAR, and CHAR.
+10 million record table with a PRIMARY KEY (unique and clustered) had the exact same speed and performance (and subtree cost) no matter which of the three I used.
+That being said... use whatever is best for your application. Don't worry about the performance.
+
+As for Primary Key, whatever physically makes a row unique should be determined as the primary key.  
+For a reference as a foreign key, using an auto incrementing integer as a surrogate is a nice idea for two main reasons.
+ - First, there's less overhead incurred in the join usually.
+ - Second, if you need to update the table that contains the unique varchar then the update has to cascade down to all the child tables and update all of them as well as the indexes, whereas with the int surrogate, it only has to update the master table and it's indexes.
+The drawaback to using the surrogate is that you could possibly allow changing of the meaning of the surrogate:
+ex.
+id value
+1 A
+2 B
+3 C
+
+Update 3 to D
+id value
+1 A
+2 B
+3 D
+
+Update 2 to C
+id value
+1 A
+2 C
+3 D
+
+Update 3 to B
+id value
+1 A
+2 C
+3 B
+
+It all depends on what you really need to worry about in your structure and what means most.
+
+Not sure about the performance implications, but it seems a possible compromise, at least during development, would be to include both the auto-incremented, integer "surrogate" key, as well as your intended, unique, "natural" key.  This would give you the opportunity to evaluate performance, as well as other possible issues, including the changeability of natural keys.
+
+You make a good point that you can avoid some number of joined queries by using what's called a natural key instead of a surrogate key.  Only you can assess if the benefit of this is significant in your application.  
+That is, you can measure the queries in your application that are the most important to be speedy, because they work with large volumes of data or they are executed very frequently.  If these queries benefit from eliminating a join, and do not suffer by using a varchar primary key, then do it.
+Don't use either strategy for all tables in your database.  It's likely that in some cases, a natural key is better, but in other cases a surrogate key is better.  
+Other folks make a good point that it's rare in practice for a natural key to never change or have duplicates, so surrogate keys are usually worthwhile.
+
+Depends on the length.. If the varchar will be 20 characters, and the int is 4, then if you use an int, your index will have FIVE times as many nodes per page of index space on disk... That means that traversing the index will require one fifth as many physical and/or logical reads.. 
+So, if performance is an issue, given the opportunity, always use an integral non-meaningful key (called a surrogate) for your tables, and for Foreign Keys that reference the rows in these tables... 
+At the same time, to guarantee data consistency, every table where it matters should also have a meaningful non-numeric alternate key, (or unique Index) to ensure that duplicate rows cannot be inserted (duplicate based on meaningful table attributes) . 
+For the specific use you are talking about (like state lookups ) it really doesn't matter because the size of the table is so small.. In general there is no impact on performance from indices on tables with less than a few thousand rows... 
+
+At HauteLook, we changed many of our tables to use natural keys. We did experience a real-world increase in performance. As you mention, many of our queries now use less joins which makes the queries more performant. We will even use a composite primary key if it makes sense. That being said, some tables are just easier to work with if they have a surrogate key.
+Also, if you are letting people write interfaces to your database, a surrogate key can be helpful. The 3rd party can rely on the fact that the surrogate key will change only in very rare circumstances.
+
+I faced the same dilemma. I made a DW (Constellation schema) with 3 fact tables, Road Accidents, Vehicles in Accidents and Casualties in Accidents. Data includes all accidents recorded in UK from 1979 to 2012, and 60 dimension tables. All together, about 20 million records.
+Fact tables relationships:
++----------+          +---------+
+| Accident |>--------<| Vehicle |
++-----v----+ 1      * +----v----+
+     1|                    |1
+      |    +----------+    |
+      +---<| Casualty |>---+
+         * +----------+ *
+
+RDMS: MySQL 5.6
+Natively the Accident index is a varchar(numbers and letters), with 15 digits. I tried not to have surrogate keys, once the accident indexes would never change.
+In a i7(8 cores) computer, the DW became too slow to query after 12 million records of load depending of the dimensions.
+After a lot of re-work and adding bigint surrogate keys I got a average 20% speed performance boost.
+Yet to low performance gain, but valid try. Im working in MySQL tuning and clustering.
+
+Common cases where a surrogate AUTO_INCREMENT hurts:
+A common schema pattern is a many-to-many mapping:
+CREATE TABLE map (
+    id ... AUTO_INCREMENT,
+    foo_id ...,
+    bar_id ...,
+    PRIMARY KEY(id),
+    UNIQUE(foo_id, bar_id),
+    INDEX(bar_id) );
+
+Performance of this pattern is much better, especially when using InnoDB:
+CREATE TABLE map (
+    # No surrogate
+    foo_id ...,
+    bar_id ...,
+    PRIMARY KEY(foo_id, bar_id),
+    INDEX      (bar_id, foo_id) );
+
+Why?
+
+InnoDB secondary keys need an extra lookup; by moving the pair into the PK, that is avoided for one direction.
+The secondary index is "covering", so it does not need the extra lookup.
+This table is smaller because of getting rid of id and one index.
+
+Another case (country):
+country_id INT ...
+-- versus
+country_code CHAR(2) CHARACTER SET ascii
+
+All too often the novice normalizes country_code into a 4-byte INT instead of using a 'natural' 2-byte, nearly-unchanging 2-byte string.  Faster, smaller, fewer JOINs, more readable.

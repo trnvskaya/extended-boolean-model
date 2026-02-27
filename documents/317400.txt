@@ -1,0 +1,68 @@
+Do i need to dispose of this Image instance?
+.net dispose visualizer
+I'm making a simple Image Debugger Visualizer. Code is below. I'm not sure if i need to manually dispose of the Image instance? Because i'm making a windows Form window and the PictureBox inside that contains my dynamic image .. do i need to add some special code when the form is terminating, to dispose of this? 
+here's the code..
+using System.Diagnostics;
+using System.Drawing;
+using System.Windows.Forms;
+using Microsoft.VisualStudio.DebuggerVisualizers;
+using DebuggerVisualizers;
+
+[assembly: DebuggerVisualizer(
+    typeof (ImageDebuggerVisualizer),
+    typeof (VisualizerObjectSource),
+    Target = typeof (Image),
+    Description = "Image Visualizer")]
+
+namespace DebuggerVisualizers
+{
+    public class ImageDebuggerVisualizer : DialogDebuggerVisualizer
+    {
+        protected override void Show(IDialogVisualizerService windowService, IVisualizerObjectProvider objectProvider)
+        {
+            Image image = (Image) objectProvider.GetObject();
+            Form form = new Form
+                           {
+                               Text = ("Image Visualizer - " + image.HorizontalResolution + " " + image.VerticalResolution),
+                               Width = image.Width,
+                               Height = image.Height
+                           };
+
+            PictureBox pictureBox = new PictureBox {Image = image, SizeMode = PictureBoxSizeMode.AutoSize};
+            form.Controls.Add(pictureBox);
+            form.ShowDialog();
+        }
+    }
+}
+
+thanks for any help :)
+
+
+The picture box control does not dispose of the image, so this is up to you, yes.
+
+Um, I'm going to go out on a limb here and say you shouldn't dispose of it.
+I never created a visualizer, and I don't exactly know Visual Studio does this, but it seems to me that if you dispose of an object in a visualizer, you might break the code you're debugging.  
+It all comes down to this line:
+Image image = (Image) objectProvider.GetObject();
+
+If that object isn't a clone, then you will be disposing the object created by the code that's being debugged.  The code won't be expecting that object to be suddenly disposed, and S will hit the fan, causing you at least to have to restart your debugging.
+I'd play it safe and NOT dispose of it.  Think about it--you're debugging.  That's not a long lived process.  If you do leak a bitmap handle, its not the end of the world...
+
+I think you should dispose it. It should be quite easy, just add a using() at the first line of your method (around the Image image = ... line) and end it after the form.ShowDialog().
+I think it is safe to dispose the image, for if you want to change the visualized object you must call one of the TransferData/TranferObject/ReplaceDat/ReplaceObject methods to send it back.
+
+Change your Show method to this:
+protected override void Show(IDialogVisualizerService windowService,
+    IVisualizerObjectProvider objectProvider)        
+{            
+    Image image = (Image) objectProvider.GetObject();
+    using (Form form = new Form())
+    {            
+        PictureBox pictureBox = new PictureBox();    
+        pictureBox.Image = image;        
+        form.Controls.Add(pictureBox); 
+        form.ShowDialog();
+    } 
+}
+
+The using(){} block will call Dispose on the form after it closes, which will dispose of everything on the form also.

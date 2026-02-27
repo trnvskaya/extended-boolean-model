@@ -1,0 +1,356 @@
+Automatically remove Subversion unversioned files
+svn build-automation
+Does anybody know a way to recursively remove all files in a working copy that are not under version control? (I need this to get more reliable results in my automatic build VMware.)
+
+
+Can you not just do an export to a new location and build from there?
+
+I use this python script to do that:
+import os
+import re
+
+def removeall(path):
+    if not os.path.isdir(path):
+        os.remove(path)
+        return
+    files=os.listdir(path)
+    for x in files:
+        fullpath=os.path.join(path, x)
+        if os.path.isfile(fullpath):
+            os.remove(fullpath)
+        elif os.path.isdir(fullpath):
+            removeall(fullpath)
+    os.rmdir(path)
+
+unversionedRex = re.compile('^ ?[\?ID] *[1-9 ]*[a-zA-Z]* +(.*)')
+for l in  os.popen('svn status --no-ignore -v').readlines():
+    match = unversionedRex.match(l)
+    if match: removeall(match.group(1))
+
+It seems to do the job pretty well.
+
+this works for me in bash:
+ svn status | egrep '^\?' | cut -c8- | xargs rm
+
+Seth Reno's is better:
+svn status | grep ^\? | cut -c9- | xargs -d \\n rm -r 
+
+It handles unversioned folders and spaces in filenames
+As per comments below, this only works on files that subversion doesn't know about (status=?). Anything that subversion does know about (including Ignored files/folders) will not be deleted.
+If you are using subversion 1.9 or greater you can simply use the svn cleanup command with --remove-unversioned and --remove-ignored options
+
+My C# conversion of Thomas Watnedals Python script:
+Console.WriteLine("SVN cleaning directory {0}", directory);
+
+Directory.SetCurrentDirectory(directory);
+
+var psi = new ProcessStartInfo("svn.exe", "status --non-interactive");
+psi.UseShellExecute = false;
+psi.RedirectStandardOutput = true;
+psi.WorkingDirectory = directory;
+
+using (var process = Process.Start(psi))
+{
+	string line = process.StandardOutput.ReadLine();
+	while (line != null)
+	{
+		if (line.Length > 7)
+		{
+			if (line[0] == '?')
+			{
+				string relativePath = line.Substring(7);
+				Console.WriteLine(relativePath);
+
+				string path = Path.Combine(directory, relativePath);
+				if (Directory.Exists(path))
+				{
+					Directory.Delete(path, true);
+				}
+				else if (File.Exists(path))
+				{
+					File.Delete(path);
+				}
+			}
+		}
+		line = process.StandardOutput.ReadLine();
+	}
+}
+
+
+I couldn't get any of the above to work without additional dependencies I didn't want to have to add to my automated build system on win32.  So I put together the following Ant commands - note these require the Ant-contrib JAR to be installed in (I was using version 1.0b3, the latest, with Ant 1.7.0).
+Note this deletes all unversioned files without warning.
+  <taskdef resource="net/sf/antcontrib/antcontrib.properties"/>
+  <taskdef name="for" classname="net.sf.antcontrib.logic.ForTask" />
+
+  <macrodef name="svnExecToProperty">
+    <attribute name="params" />
+    <attribute name="outputProperty" />
+    <sequential>
+      <echo message="Executing Subversion command:" />
+      <echo message="  svn @{params}" />
+      <exec executable="cmd.exe" failonerror="true"
+            outputproperty="@{outputProperty}">
+        <arg line="/c svn @{params}" />
+      </exec>
+    </sequential>
+  </macrodef>
+
+  <!-- Deletes all unversioned files without warning from the 
+       basedir and all subfolders -->
+  <target name="!deleteAllUnversionedFiles">
+    <svnExecToProperty params="status &quot;${basedir}&quot;" 
+                       outputProperty="status" />
+    <echo message="Deleting any unversioned files:" />
+    <for list="${status}" param="p" delimiter="&#x0a;" trim="true">
+      <sequential>
+        <if>
+          <matches pattern="\?\s+.*" string="@{p}" />
+          <then>
+            <propertyregex property="f" override="true" input="@{p}" 
+                           regexp="\?\s+(.*)" select="\1" />
+            <delete file="${f}" failonerror="true" />
+          </then>
+        </if>
+      </sequential>
+    </for>
+    <echo message="Done." />
+  </target>
+
+For a different folder, change the ${basedir} reference.
+
+I ran across this page while looking to do the same thing, though not for an automated build.
+After a bit more looking I discovered the 'Extended Context Menu' in TortoiseSVN. Hold down the shift key and right click on the working copy. There are now additional options under the TortoiseSVN menu including 'Delete unversioned items...'.
+Though perhaps not applicable for this specific question (i.e. within the context of an automated build), I thought it might be helpful for others looking to do the same thing.
+
+For the people that like to do this with perl instead of python, Unix shell, java, etc. Hereby a small perl script that does the jib as well.
+Note: This also removes all unversioned directories
+#!perl
+
+use strict;
+
+sub main()
+
+{
+
+    my @unversioned_list = `svn status`;
+
+    foreach my $line (@unversioned_list)
+
+    {
+
+        chomp($line);
+
+        #print "STAT: $line\n";
+
+        if ($line =~/^\?\s*(.*)$/)
+
+        {
+
+            #print "Must remove $1\n";
+
+            unlink($1);
+
+            rmdir($1);
+
+        }
+
+    }
+
+}
+
+main();
+
+
+If you are on windows command line, 
+for /f "tokens=2*" %i in ('svn status ^| find "?"') do del %i
+
+Improved version:
+for /f "usebackq tokens=2*" %i in (`svn status ^| findstr /r "^\?"`) do svn delete --force "%i %j"
+
+If you use this in a batch file you need to double the %:
+for /f "usebackq tokens=2*" %%i in (`svn status ^| findstr /r "^\?"`) do svn delete --force "%%i %%j"
+
+
+See: svn-clean
+
+If you are using tortoise svn there is a hidden command to do this. Hold shift whilst right clicking on a folder to launch the context menu in windows explorer. You will get a "Delete Unversioned Items" command.
+see the bottom of this page for details http://tortoisesvn.net/docs/release/TortoiseSVN_en/tsvn-dug-rename.html
+
+If you don't want to write any code, svn2.exe from svn2svn does this, also there's an article on how it's implemented. Deleted folders and files are put in the recycle bin.
+Run "svn2.exe sync [path]". 
+
+svn status --no-ignore | awk '/^[I\?]/ {system("echo rm -r " $2)}'
+
+remove the echo if that's sure what you want to do.
+
+Using TortoiseSVN: * right-click on working copy folder, while holding the shift-key down * choose "delete unversioned items"
+How can I delete all unversioned/ignored files/folders in my working copy?
+
+Linux command line:
+svn status --no-ignore | egrep '^[?I]' | cut -c9- | xargs -d \\n rm -r
+
+Or, if some of your files are owned by root:
+svn status --no-ignore | egrep '^[?I]' | cut -c9- | sudo xargs -d \\n rm -r
+
+This is based on Ken's answer.  (Ken's answer skips ignored files; my answer deletes them).
+
+I added this to my windows powershell profile
+function svnclean{
+    svn status | foreach { if($_.StartsWith("?")) {Remove-Item $_.substring(8) -Verbose}
+}
+
+
+Might as well contribute another option
+svn status | awk '{if($2 !~ /(config|\.ini)/ && !system("test -e \"" $2 "\"")) {print $2; system("rm -Rf \"" $2 "\"");}}'
+
+The /(config|.ini)/ is for my own purposes.
+And might be a good idea to add --no-ignore to the svn command
+
+I stumbled on svn-clean on my RH5 machine. Its located at /usr/bin/svn-clean 
+http://svn.apache.org/repos/asf/subversion/trunk/contrib/client-side/svn-clean
+
+Pure windows cmd/bat solution:
+@echo off
+
+svn cleanup .
+svn revert -R .
+For /f "tokens=1,2" %%A in ('svn status --no-ignore') Do (
+     If [%%A]==[?] ( Call :UniDelete %%B
+     ) Else If [%%A]==[I] Call :UniDelete %%B
+   )
+svn update .
+goto :eof
+
+:UniDelete delete file/dir
+if "%1"=="%~nx0" goto :eof
+IF EXIST "%1\*" ( 
+    RD /S /Q "%1"
+) Else (
+    If EXIST "%1" DEL /S /F /Q "%1"
+)
+goto :eof
+
+
+Since everyone else is doing it...
+svn status | grep ^? | awk '{print $2}' | sed 's/^/.\//g' | xargs rm -R
+
+
+Just do it on unix-shell with:
+rm -rf `svn st . | grep "^?" | cut -f2-9 -d' '`
+
+
+A clean way to do this in PERL would be:
+#!/usr/bin/perl
+use IO::CaptureOutput 'capture_exec'
+
+my $command = sprintf ("svn status --no-ignore | grep '^?' | sed -n 's/^\?//p'");
+
+my ( $stdout, $stderr, $success, $exit_code ) = capture_exec ( $command );
+my @listOfFiles = split ( ' ', $stdout );
+
+foreach my $file ( @listOfFiles )
+{ # foreach ()
+    $command = sprintf ("rm -rf %s", $file);
+    ( $stdout, $stderr, $success, $exit_code ) = capture_exec ( $command );
+} # foreach ()
+
+
+I've tried Seth Reno's version from this answer but it didn't worked for me. I've had 8 characters before filename, not 9 used in cut -c9-.
+So this is my version with sed instead of cut:
+svn status | grep ^\? | sed -e 's/\?\s*//g' | xargs -d \\n rm -r
+
+
+I used ~3 hours to generate this. It would take 5 mins to do it in Unix.
+The mains issue were: spaces in names for Win folders, impossibility to edit %%i and problem with defining vars in Win cmd loop.
+setlocal enabledelayedexpansion
+
+for /f "skip=1 tokens=2* delims==" %%i in ('svn status --no-ignore --xml ^| findstr /r "path"') do (
+@set j=%%i
+@rd /s /q !j:~0,-1!
+)
+
+
+svn st --no-ignore  | grep '^[?I]' | sed 's/^[?I]  *//' | xargs -r -d '\n' rm -r
+
+This is a unix shell command to delete all files not under subversion control.
+Notes:
+
+the st in svn st is an build-in alias for status, i.e. the command is equivalent to svn status
+--no-ignore also includes non-repository files in the status output, otherwise ignores via mechanisms like .cvsignore etc. - since the goal is to have a clean starting point for builds this switch is a must
+the grep filters the output such that only files unknown to subversion are left - the lines beginning with ? list files unknown to subversion that would be ignored without the --no-ignore option
+the prefix up to the filename is remove via sed
+the xargs command is instructed via -r to not execute rm, when the argument list would be empty
+the -d '\n' option tells xargs to use a newline as delimiter such the command also works for filenames with spaces
+rm -r is used in case complete directories (that are not part of the repository) need to be removed
+
+
+C# code snipet above did not work for me - I have tortoise svn client, and lines are formatted slightly differently. Here is same code snipet as above, only rewritten to function and using regex.
+        /// <summary>
+    /// Cleans up svn folder by removing non committed files and folders.
+    /// </summary>
+    void CleanSvnFolder( string folder )
+    {
+        Directory.SetCurrentDirectory(folder);
+
+        var psi = new ProcessStartInfo("svn.exe", "status --non-interactive");
+        psi.UseShellExecute = false;
+        psi.RedirectStandardOutput = true;
+        psi.WorkingDirectory = folder;
+        psi.CreateNoWindow = true;
+
+        using (var process = Process.Start(psi))
+        {
+            string line = process.StandardOutput.ReadLine();
+            while (line != null)
+            {
+                var m = Regex.Match(line, "\\? +(.*)");
+
+                if( m.Groups.Count >= 2 )
+                {
+                    string relativePath = m.Groups[1].ToString();
+
+                    string path = Path.Combine(folder, relativePath);
+                    if (Directory.Exists(path))
+                    {
+                        Directory.Delete(path, true);
+                    }
+                    else if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+                line = process.StandardOutput.ReadLine();
+            }
+        }
+    } //CleanSvnFolder
+
+
+If you're cool with powershell: 
+svn status --no-ignore | ?{$_.SubString(0,1).Equals("?")} | foreach { remove-item -Path (join-Path .\ $_.Replace("?","").Trim()) -WhatIf }
+
+Take out the -WhatIf flag to make the command actually perform the deletes. Otherwise it will just output what it would do if run without the -WhatIf.
+
+For People on windows who wants to avoid using any tool except the standart MS-Dos commands here a solution :
+FOR /F "tokens=1* delims= " %G IN ('svn st ^| findstr "^?"') DO rd /s /q "%H"
+FOR /F "tokens=1* delims= " %G IN ('svn st ^| findstr "^?"') DO del /s /f /q "%H"
+
+svn st will display the status of each files and folder in the working copy
+findstr will look for each line starting with '?', which mean the file/folder is unversioned
+FOR will use  as delimiters and take the tokens after the 1st one (the 1st one is %G, the rest is %H)
+This way we are exctracting the file/folder from the svn st command output.
+rd will delete folders, del will delete files.
+
+
+If you have TortoiseSVN on your path and you are in the right directory:
+TortoiseProc.exe /command:cleanup /path:"%CD%" /delunversioned /delignored /nodlg /noui
+
+The options are described in the TortoiseSVN help for /command:cleanup:
+
+Use /noui to prevent the result dialog from popping up
+  either telling about the cleanup being finished or showing an error
+  message). /noprogressui also disables the progress dialog. /nodlg
+  disables showing the cleanup dialog where the user can choose what
+  exactly should be done in the cleanup. The available actions can be
+  specified with the options /cleanup for status cleanup, /revert,
+  /delunversioned, /delignored, /refreshshell and /externals.
+

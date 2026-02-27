@@ -1,0 +1,281 @@
+Php code formatter / beautifier and php beautification in general
+php editor beautifier
+Do you know any good tools for nicely formatting messy php code? Preferably a script for Aptana/Eclipse, but a standalone tool will do too.
+
+
+If you use Zend Development Environment, you can use the Indent Code feature (Ctrl+Shift+F).
+
+The Zend Development Environment is now an Eclipse plugin, you may be able to run it alongside Aptana and just use it's Indent Code feature. 
+Zend Studio
+I haven't upgraded to the Eclipse plugin yet myself, I love the previous ZDE so much. Though now that I've started actually using Eclipse for other languages, I'm almost ready to make the leap.
+
+Here's a php code beautifier (PHP of course) class:
+http://www.codeassembly.com/A-php-code-beautifier-that-works/
+and
+online demo:
+http://www.codeassembly.com/examples/beautifier.php
+
+PHP Code Beautifier is a useful free tool that should do what you're after, although their download page does require an account to be created.
+
+The tool has been declined into 3 versions:
+
+A GUI version which allow to process file visually.
+A command line version which allow to be batched or integrated with other tools (CVS, SubVersion, IDE ...).
+As an integrated tool of PHPEdit.
+
+
+Basically, it'll turn:
+if($code == BAD){$action = REWRITE;}else{$action = KEEP;}
+for($i=0; $i<10;$i++){while($j>0){$j++;doCall($i+$j);if($k){$k/=10;}}}
+
+into
+if ($code == BAD) {
+    $action = REWRITE;
+} else {
+    $action = KEEP;
+}
+for($i = 0; $i < 10;$i++) {
+    while ($j > 0) {
+        $j++;
+        doCall($i + $j);
+        if ($k) {
+            $k /= 10;
+        }
+    }
+}
+
+
+Well here is my very basic and rough script:
+#!/usr/bin/php
+<?php
+class Token {
+    public $type;
+    public $contents;
+
+    public function __construct($rawToken) {
+        if (is_array($rawToken)) {
+            $this->type = $rawToken[0];
+            $this->contents = $rawToken[1];
+        } else {
+            $this->type = -1;
+            $this->contents = $rawToken;
+        }
+    }
+}
+
+$file = $argv[1];
+$code = file_get_contents($file);
+
+$rawTokens = token_get_all($code);
+$tokens = array();
+foreach ($rawTokens as $rawToken) {
+    $tokens[] = new Token($rawToken);
+}
+
+function skipWhitespace(&$tokens, &$i) {
+    global $lineNo;
+    $i++;
+    $token = $tokens[$i];
+    while ($token->type == T_WHITESPACE) {
+        $lineNo += substr($token->contents, "\n");
+        $i++;
+        $token = $tokens[$i];
+    }
+}
+
+function nextToken(&$j) {
+    global $tokens, $i;
+    $j = $i;
+    do {
+        $j++;
+        $token = $tokens[$j];
+    } while ($token->type == T_WHITESPACE);
+    return $token;
+}
+
+$OPERATORS = array('=', '.', '+', '-', '*', '/', '%', '||', '&&', '+=', '-=', '*=', '/=', '.=', '%=', '==', '!=', '<=', '>=', '<', '>', '===', '!==');
+
+$IMPORT_STATEMENTS = array(T_REQUIRE, T_REQUIRE_ONCE, T_INCLUDE, T_INCLUDE_ONCE);
+
+$CONTROL_STRUCTURES = array(T_IF, T_ELSEIF, T_FOREACH, T_FOR, T_WHILE, T_SWITCH, T_ELSE);
+$WHITESPACE_BEFORE = array('?', '{', '=>');
+$WHITESPACE_AFTER = array(',', '?', '=>');
+
+foreach ($OPERATORS as $op) {
+    $WHITESPACE_BEFORE[] = $op;
+    $WHITESPACE_AFTER[] = $op;
+}
+
+$matchingTernary = false;
+
+// First pass - filter out unwanted tokens
+$filteredTokens = array();
+for ($i = 0, $n = count($tokens); $i < $n; $i++) {
+    $token = $tokens[$i];
+    if ($token->contents == '?') {
+        $matchingTernary = true;
+    }
+    if (in_array($token->type, $IMPORT_STATEMENTS) && nextToken($j)->contents == '(') {
+        $filteredTokens[] = $token;
+        if ($tokens[$i + 1]->type != T_WHITESPACE) {
+            $filteredTokens[] = new Token(array(T_WHITESPACE, ' '));
+        }
+        $i = $j;
+        do {
+            $i++;
+            $token = $tokens[$i];
+            if ($token->contents != ')') {
+                $filteredTokens[] = $token;
+            }
+        } while ($token->contents != ')');
+    } elseif ($token->type == T_ELSE && nextToken($j)->type == T_IF) {
+        $i = $j;
+        $filteredTokens[] = new Token(array(T_ELSEIF, 'elseif'));
+    } elseif ($token->contents == ':') {
+        if ($matchingTernary) {
+            $matchingTernary = false;
+        } elseif ($tokens[$i - 1]->type == T_WHITESPACE) {
+            array_pop($filteredTokens); // Remove whitespace before
+        }
+        $filteredTokens[] = $token;
+    } else {
+        $filteredTokens[] = $token;
+    }
+}
+$tokens = $filteredTokens;
+
+function isAssocArrayVariable($offset = 0) {
+    global $tokens, $i;
+    $j = $i + $offset;
+    return $tokens[$j]->type == T_VARIABLE &&
+        $tokens[$j + 1]->contents == '[' &&
+        $tokens[$j + 2]->type == T_STRING &&
+        preg_match('/[a-z_]+/', $tokens[$j + 2]->contents) &&
+        $tokens[$j + 3]->contents == ']';
+}
+
+// Second pass - add whitespace
+$matchingTernary = false;
+$doubleQuote = false;
+for ($i = 0, $n = count($tokens); $i < $n; $i++) {
+    $token = $tokens[$i];
+    if ($token->contents == '?') {
+        $matchingTernary = true;
+    }
+    if ($token->contents == '"' && isAssocArrayVariable(1) && $tokens[$i + 5]->contents == '"') {
+        /*
+         * Handle case where the only thing quoted is the assoc array variable.
+         * Eg. "$value[key]"
+         */
+        $quote = $tokens[$i++]->contents;
+        $var = $tokens[$i++]->contents;
+        $openSquareBracket = $tokens[$i++]->contents;
+        $str = $tokens[$i++]->contents;
+        $closeSquareBracket = $tokens[$i++]->contents;
+        $quote = $tokens[$i]->contents;        
+        echo $var . "['" . $str . "']";
+        $doubleQuote = false;
+        continue;
+    }
+    if ($token->contents == '"') {
+        $doubleQuote = !$doubleQuote;
+    }
+    if ($doubleQuote && $token->contents == '"' && isAssocArrayVariable(1)) {
+        // don't echo "
+    } elseif ($doubleQuote && isAssocArrayVariable()) {
+        if ($tokens[$i - 1]->contents != '"') {
+            echo '" . ';
+        }
+        $var = $token->contents;
+        $openSquareBracket = $tokens[++$i]->contents;
+        $str = $tokens[++$i]->contents;
+        $closeSquareBracket = $tokens[++$i]->contents;
+        echo $var . "['" . $str . "']";
+        if ($tokens[$i + 1]->contents != '"') {
+            echo ' . "';
+        } else {
+            $i++; // process "
+            $doubleQuote = false;
+        }
+    } elseif ($token->type == T_STRING && $tokens[$i - 1]->contents == '[' && $tokens[$i + 1]->contents == ']') {
+        if (preg_match('/[a-z_]+/', $token->contents)) {
+            echo "'" . $token->contents . "'";
+        } else {
+            echo $token->contents;
+        }
+    } elseif ($token->type == T_ENCAPSED_AND_WHITESPACE || $token->type == T_STRING) {
+        echo $token->contents;
+    } elseif ($token->contents == '-' && in_array($tokens[$i + 1]->type, array(T_LNUMBER, T_DNUMBER))) {
+        echo '-';
+    } elseif (in_array($token->type, $CONTROL_STRUCTURES)) {
+        echo $token->contents;
+        if ($tokens[$i + 1]->type != T_WHITESPACE) {
+            echo ' ';
+        }
+    } elseif ($token->contents == '}' && in_array($tokens[$i + 1]->type, $CONTROL_STRUCTURES)) {
+        echo '} ';
+    } elseif ($token->contents == '=' && $tokens[$i + 1]->contents == '&') {
+        if ($tokens[$i - 1]->type != T_WHITESPACE) {
+            echo ' ';
+        }
+        $i++; // match &
+        echo '=&';
+        if ($tokens[$i + 1]->type != T_WHITESPACE) {
+            echo ' ';          
+        }
+    } elseif ($token->contents == ':' && $matchingTernary) {
+        $matchingTernary = false;
+        if ($tokens[$i - 1]->type != T_WHITESPACE) {
+            echo ' ';
+        }
+        echo ':';
+        if ($tokens[$i + 1]->type != T_WHITESPACE) {
+            echo ' ';
+        }
+    } elseif (in_array($token->contents, $WHITESPACE_BEFORE) && $tokens[$i - 1]->type != T_WHITESPACE &&
+        in_array($token->contents, $WHITESPACE_AFTER) && $tokens[$i + 1]->type != T_WHITESPACE) {
+        echo ' ' . $token->contents . ' ';
+    } elseif (in_array($token->contents, $WHITESPACE_BEFORE) && $tokens[$i - 1]->type != T_WHITESPACE) {
+        echo ' ' . $token->contents;
+    } elseif (in_array($token->contents, $WHITESPACE_AFTER) && $tokens[$i + 1]->type != T_WHITESPACE) {
+        echo $token->contents . ' ';
+    } else {
+        echo $token->contents;
+    }
+}
+
+
+What about this one:
+http://universalindent.sourceforge.net/
+It combines a bunch of formatters out there, and will generate the scripts you need so you can pass them out and get your team members to use them before committing next time... Though... formatters might mess up your code and render it unusable... 
+
+Our  PHP Formatter will reliably format your code.  It uses a compiler-based front end to parse the code, so it doesn't misinterpret the code and damage it.  Consequently its formatted output always works.
+
+There's a pear module that formats your code. PHP Beautifier
+
+http://en.sourceforge.jp/projects/pdt-tools/
+^^^ will give you a proper CTRL+SHIFT+F Eclipse/Aptana PHP formatter like Java.
+See here for installation help.
+
+
+The simplest solution is to just use an IDE that has this built in.  If you're going to be writing code in PHP on a regular a regular basis, just drop the $60 for PHPStorm.  You won't regret it.
+http://www.jetbrains.com/phpstorm/
+It lets you format your code however you like using a simple keyboard shortcut at the file or directory level, and has a zillion other great features.
+
+phpformatter.com works best
+"This free online PHP Formatter is designed so that you can beautify all your PHP script with the style that you prefer"
+
+This is an excellent question. I have an application that reads json and outputs php and html and css. I run a program and generate dozens (hundreds?) of files. I hope the answer here is useful.
+I started my project using heredocs, special include files, meta chars, etc but that quickly became a mess. I wanted a stand-alone solution that didn't require framework or ide.  So I removed all the heredoc and other junk and created a generic text buffering class with no concern for formatting. It can all be one line for all I care. For html, I do tidy() built-in. For php, I use phpstylist.  phpstylist is older but still works well for php format.
+To set up the phpstylist options I used UniversalIndent (updated Jan 2012) in windows gui. 
+UniversalStylist lists 24 (!) formatter programs (c, php, ruby, html,...). It specifically knows the options for phpstylist and gives you a live refresh on a file as you turn options on and off. Very great.  Then, when you have your style, it has an option to save the command line options and generates a script. For some formatting options you'll have to add paths to perl, python, etc.
+If you are using windows and want to try phpstylist with UniversalIndent, just add directory for php.exe to your env path. I use ampps so mine is set to c:\ampps\php.
+It was not very easy to find a good solid solution. I'm also interested in hearing what other people do for simple as possible batch formatting of auto-generated php/html files for code review and archiving purposes.
+
+Use NetBeans PHP and press alt+shift+F.
+
+I've been having a lot of trouble finding a decent free formatter for PHP as well, there are many online and command-line tools but they just don't seem to work for some reason, the results are all still full of bad indenting with combinations of tabs and spaces, and they never get the braces the way you want them!
+I tried the snippet above and that didn't work for me either, indenting still full of spaces and tabs all mixed up.
+So I've had a go at writing a simple one too, this one just uses all regex, no fancy compiler magic, so it's possible that it could break things, and is still very beta and being tested on various messy code. The interface is very basic at the moment too, but should improve over the next few days.
+It's hardwired for MediaWiki's conventions, but you can modify it pretty easily (I may add options later).
+https://www.organicdesign.co.nz/Special:CodeTidy

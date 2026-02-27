@@ -1,0 +1,88 @@
+How to Create a Managed Path through SharePoint Object Model
+sharepoint object model managed path
+This is a question for a WSS/SharePoint guru. 
+Consider this scenario: I have an ASP.Net web service which links our corporate CRM system and WSS-based intranet together. What I am trying to do is provision a new WSS site collection whenever a new client is added to the CRM system. In order to make this work, I need to programmatically add the managed path to the new site collection. I know that this is possible via the Object Model, but when I try it in my own web service, it fails. Sample code extract below:
+
+Dim _ClientSiteUrl As String = "http://myintranet/clients/sampleclient"
+
+        Using _RootWeb As SPSite = New SPSite("http://myintranet")
+
+            Dim _ManagedPaths As SPPrefixCollection = _RootWeb.WebApplication.Prefixes
+
+            If Not (_ManagedPaths.Contains(_ClientSiteUrl)) Then
+
+                _ManagedPaths.Add(_ClientSiteUrl, SPPrefixType.ExplicitInclusion)
+
+            End If
+
+        End Using
+
+
+This code fails with a NullReferenceException on SPUtility.ValidateFormDigest(). Research suggested that this may be due to insufficient privileges, I tried running the code within an elevated privileges block using SPSecurity.RunWithElevatedPrivileges(AddressOf AddManagedPath), where AddManagedPath is a Sub procedure containing the above code sample.
+This then fails with an InvalidOperationException, "Operation is not valid due to the current state of the object."
+Where am I going wrong?
+One workaround I have managed to do is to call out to STSADM.EXE via Process.Start(), supplying the requisite parameters, and this works.
+Update: whilst developing the web service, I am running it using the built-in Visual Studio 2005 web server - what security context will this be running under? Can I change the security context by putting entries in web.config?
+Update: I think the problem is definitely to do with not running the web service within the correct SharePoint security context. I decided to go with the workaround I suggested and shell out to STSADM, although to do this, the application pool identity that the web service runs under must be a member of the SharePoint administrators.
+
+
+Update
+I think you have proved that the issue is not with the code.
+SPSecurity.RunWithElevatedPrivileges: Normally the code in the SharePoint web application executes with the privileges of the user taking the action. The RunWithElevatedPrivileges runs the code in the context of the SharePoint web application pools account (i think)
+The description on MSDN could go into the details a tiny bit more.
+The issue with the call may be that the web service is not actually running the code within a SharePoint process, so explaining why it cannot elevate (wild guess alert). 
+Have a crack at changing the user of your web services application pool and see if that gives any joy.
+
+It is likely to be a permissions issue.
+Maybe try:
+Dim clientSiteUrl As String = "http://myintranet/clients/sampleclient"
+Using SPSite = new SPSite(clientSiteUrl) 
+    webApp As SPWebApplication = SPWebApplication.Lookup(new Uri(clientSiteUrl));
+    If Not (webApp.Prefixes.Contains(clientSiteUrl)) Then
+        webApp.Prefixes.Add(clientSiteUrl, SPPrefixType.ExplicitInclusion)
+    End If
+End Using
+
+This is not exact code.
+
+Since the above code is not the exact code, here is the exact working code for a Web Application scopped feature in the Feature Activated event:
+On feature activation at the Mange web application features page, activate feature will create a new Explicit managed path in the specified web application (I want to replace the hard coding, maybe with Properties.Feature.Parent, or something similar.)
+using (SPSite site = new SPSite("http://dev-moss07-eric/PathHere")) {
+    SPWebApplication webApp = SPWebApplication.Lookup(new Uri("http://dev-moss07-eric"));
+    if (webApp.Prefixes.Contains("PathHere"))
+    {
+        //
+    }
+    else
+    {
+        webApp.Prefixes.Add("PathHere", SPPrefixType.ExplicitInclusion);
+    }
+}
+
+Code can probably be improved, but its my attempt at converting the above code.
+
+If you want to create a managed path (explicit) and a site collection at that path, do the following:
+using (SPSite site = new SPSite("http://dev-moss07-eric")) {
+                SPWebApplication webApp = SPWebApplication.Lookup(new Uri("http://dev-moss07-eric"));
+                if (webApp.Prefixes.Contains("ManagedPathHere"))
+                {
+                    //
+                }
+                else
+                {
+                    webApp.Prefixes.Add("ManagedPathHere", SPPrefixType.ExplicitInclusion);
+                }
+                using (SPWeb web = site.OpenWeb())
+                {
+                    SPWebApplication webApplication = web.Site.WebApplication;
+                    try
+                    {
+                        webApplication.Sites.Add("ManagedPathHere","Site Title Here","This site is used for hosting styling assets.", 1033, "STS#1", "6scdev\\eric.schrader", "Eric Schrader", "eric.schrader@6sc.com");
+                    }
+                    catch (Exception ex)
+                    {
+                        //ex.ToString;
+                    }
+                }
+            }
+

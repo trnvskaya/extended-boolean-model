@@ -1,0 +1,119 @@
+While-clause in T-SQL that loops forever
+sql sql-server tsql
+I was recently tasked with debugging a strange problem within an e-commerce application. After an application upgrade the site started to hang from time to time and I was sent in to debug. After checking the event log I found that the SQL-server wrote ~200 000 events in a couple of minutes with the message saying that a constraint had failed. After much debugging and some tracing I found the culprit. I've removed some unnecessary code and cleaned it up a bit but essentially this is it
+WHILE EXISTS (SELECT * FROM ShoppingCartItem WHERE ShoppingCartItem.PurchID = @PurchID)
+BEGIN
+	SELECT TOP 1 
+		@TmpGFSID = ShoppingCartItem.GFSID, 
+		@TmpQuantity = ShoppingCartItem.Quantity,
+		@TmpShoppingCartItemID = ShoppingCartItem.ShoppingCartItemID,
+	FROM
+		ShoppingCartItem INNER JOIN GoodsForSale on ShoppingCartItem.GFSID = GoodsForSale.GFSID
+	WHERE ShoppingCartItem.PurchID = @PurchID
+
+	EXEC @ErrorCode = spGoodsForSale_ReverseReservations @TmpGFSID, @TmpQuantity
+	IF @ErrorCode <> 0
+	BEGIN
+		Goto Cleanup	
+	END
+
+	DELETE FROM ShoppingCartItem WHERE ShoppingCartItem.ShoppingCartItemID = @TmpShoppingCartItemID
+	-- @@ROWCOUNT is 1 after this
+END
+
+Facts:
+
+There's only one or two records matching the first select-clause
+RowCount from the DELETE statement indicates that it has been removed
+The WHILE-clause will loop forever
+
+The procedure has been rewritten to select the rows that should be deleted into a temporary in-memory table instead so the immediate problem is solved but this really sparked my curiosity.
+Why does it loop forever?
+Clarification: The delete doesn't fail (@@rowcount is 1 after the delete stmt when debugged)
+Clarification 2: It shouldn't matter whether or not the SELECT TOP ... clause is ordered by any specific field since the record with the returned id will be deleted so in the next loop it should get another record.
+Update: After checking the subversion logs I found the culprit commit that made this stored procedure to go haywire. The only real difference that I can find is that there previously was no join in the SELECT TOP 1 statement i.e. without that join it worked without any transaction statements surrounding the delete. It appears to be the introduction of the join that made SQL server more picky.
+Update clarification:  brien pointed out that there's no need for the join but we actually do use some fields from the GoodsForSale table but I've removed them to keep the code simply so that we can concentrate on the problem at hand
+
+
+Obviously, something is not being deleted or modified where it should. If the condition is still the same on the next iteration, it's going to keep going.
+Also, you're comparing @TmpShoppingCartItemID, and not @PurchID. I can see how these could be different, and you could delete a different row than the one that's being checked for in the while statement.
+
+Is SQL Server caching the result of the while clause query?  
+Is the delete being committed to the database, or does it end up in some transaction that never closes?
+
+I not sure if I understand the problem, but in the select clause it's making an inner join with another table. That join can cause to get no records and then the delete fails. Try using a left join.
+
+Is there a record in ShoppingCartItem with that @PurchID where the GFSID is not in the GoodsForSale table?  That would explain why the EXISTS returns true, but there are no more  records to delete.
+
+Are you operating in explicit or implicit transaction mode?
+Since you're in explicit mode, I think you need to surround the DELETE operation with BEGIN TRANSACTION and COMMIT TRANSACTION statements.
+WHILE EXISTS (SELECT * FROM ShoppingCartItem WHERE ShoppingCartItem.PurchID = @PurchID)
+BEGIN
+    SELECT TOP 1 
+            @TmpGFSID = ShoppingCartItem.GFSID, 
+            @TmpQuantity = ShoppingCartItem.Quantity,
+            @TmpShoppingCartItemID = ShoppingCartItem.ShoppingCartItemID,
+    FROM
+            ShoppingCartItem INNER JOIN GoodsForSale on ShoppingCartItem.GFSID = GoodsForSale.GFSID
+    WHERE ShoppingCartItem.PurchID = @PurchID
+
+    EXEC @ErrorCode = spGoodsForSale_ReverseReservations @TmpGFSID, @TmpQuantity
+    IF @ErrorCode <> 0
+    BEGIN
+            Goto Cleanup    
+    END
+
+    BEGIN TRANSACTION delete
+
+        DELETE FROM ShoppingCartItem WHERE ShoppingCartItem.ShoppingCartItemID = @TmpShoppingCartItemID
+        -- @@ROWCOUNT is 1 after this
+
+    COMMIT TRANSACTION delete
+END
+
+Clarification: The reason you'd need to use transactions is that the delete doesn't actually happen in the database until you do a COMMIT operation.  This is generally used when you have multiple write operations in an atomic transaction.  Basically, you only want the changes to happen to the DB if all of the operations are successful.
+In your case, there's only 1 operation, but since you're in explicit transaction mode, you need to tell SQL Server to really make the changes.
+
+What is the point of the join?  You aren't getting anything from the GoodsForSale table, so why bother with the join?
+
+I think we need some more information on the constraint failure error you're getting in the logs.  
+
+If the above comments did not help you so far, I propose adding / replacing:
+DECLARE Old@ShoppingCartItemID INT
+
+SET @OldShoppingCartItemID = 0
+
+WHILE EXISTS (SELECT ... WHERE ShoppingCartItemID > @ShoppingCartItemID)
+
+SELECT TOP 1 WHERE ShoppingCartItemID > @OldShoppingCartItemID ORDER BY ShoppingCartItemID 
+
+SET @OldShoppingCartItemID = @TmpShoppingCartItemID
+
+
+FROM
+  ShoppingCartItem
+    INNER JOIN
+  GoodsForSale
+    on ShoppingCartItem.GFSID = GoodsForSale.GFSID
+
+Oops, your join brings the result set down to zero rows.
+ SELECT TOP 1
+    @TmpGFSID = ShoppingCartItem.GFSID,
+    @TmpQuantity = ShoppingCartItem.Quantity,
+    @TmpShoppingCartItemID =
+      ShoppingCartItem.ShoppingCartItemID
+
+Oops, you used multi-assignment against a set with no rows.  This causes the variables to remain unchanged (they will have the same value that they had last time through the loop).  The variables do NOT get assigned to null in this case.
+If you put this code at the start of the loop, it will (correctly) fail faster:
+ SELECT
+    @TmpGFSID = null,
+    @TmpQuantity = null,
+    @TmpShoppingCartItemID = null
+
+If you change your code to fetch a key (without joining) and then fetching the related data by key in a second query, you'll win.
+
+If there are any shopping cart items that do not exist in the GoodsForSale table then this will spin into an infinite loop. 
+Try changing your exists statement to take account of that 
+(SELECT * FROM ShoppingCartItem WHERE  JOIN GoodsForSale on ShoppingCartItem.GFSID = GoodsForSale.GFSID where ShoppingCartItem.PurchID = @PurchID)
+
+Or better still, rewriting this so it does not require a loop. Looping like this is an infinite loop waiting to happen. You should replace with set based operations and a transaction. 

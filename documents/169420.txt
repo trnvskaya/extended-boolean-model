@@ -1,0 +1,104 @@
+Generic Java Framework to Manage Bidirectional Associations and Inverse Updates
+java associations bidirectional inverse
+I've been looking for a generic way to deal with bidirectional associations and a way to handle the inverse updates in manual written Java code.
+For those who don't know what I'm talking about, here is an example. Below it are my current results of (unsatisfying) solutions.
+public class A {
+    public B getB();
+    public void setB(B b);
+}
+
+public class B {
+    public List<A> getAs();
+}
+
+Now, when updating any end of the association, in order to maintain consistency, the other end must be updated as well. Either manually each time 
+a.setB(b);
+b.getA().add(a);
+
+or by putting matching code in the setter / getter and use a custom List implementation.
+I've found an outdated, unmaintained project whose dependencies are no longer available (https://e-nspire-gemini.dev.java.net/). It deals with the problem by using annotations that are used to inject the necessary code automatically.
+Does anyone know of another framework that deals with this in a generic, unobtrusive way ala gemini?
+ciao,
+Elmar
+
+
+google collections (from google's internal code) -- http://code.google.com/p/google-collections/ is Java Generics compatible(not only compatible, uses generics very well)
+Class BiMap -- http://google-collections.googlecode.com/svn/trunk/javadoc/index.html?http://google-collections.googlecode.com/svn/trunk/javadoc/com/google/common/collect/package-summary.html
+allows for Bidirectional associations.
+Some of these classes are expected to make their way into JDK 7.
+
+Unless you abstract out the setters, you are going to have to provide some sort of event notification mechanism.  If your objects are JavaBeans, then you are looking at using PropertyChangeSupport and firing property change events.
+If you do that (or have some other mechanism for detecting changes), then Glazed Lists provides an ObservableElementList that could easily be used to handle the association synchronization from the list end (i.e. adding A to List< A> automatically calls a.setB(b)).  The other direction is easily handled using property change monitoring (or equivalent).
+I realize that this isn't a generic solution, but it seems like it would be an easy foundation for one.
+Note that something like this would require a special list implementation in the B class - no way short of AOP type solutions that you could handle it in the general case (i.e. using ArrayList or something like that).
+I should also point out that what you are trying to achieve is something of the holy grail of data binding.  There are some decent implementations for binding at the field level (stuff like getters and setters) (see JGoodies binding and JSR 295 for examples).  There is also one really good implementation for list type binding (Glazed Lists, referred to above).  We use both techniques in concert with each other in almost all of our applications, but have never tried to go quite as abstract as what you are asking about.
+If I were designing this, I would look at something like this:
+AssociationBuilder.createAssociation(A a, Connector< A> ca, B b,  Connector< B> cb, Synchronizer< A,B> sync)
+
+Connector is an interface that allows for a single interface for various change notification types.  Synchronizer is an interface that is called to make sure both objects are in sync whenever one of them is changed.
+sync(ChangeInfo info, A a, B b) // make sure that b reflects current state of a and vice-versa.
+
+ChangeInfo provides data on which member changed, and what the changes actually were.  We are.  If you are trying to really keep this generic, then you pretty much have to punt the implementation of this up to the framework user.
+With the above in place, it would be possible to have a number of pre-defined Connectors and Synchronizers that meet different binding criteria.
+Interestingly, the above method signature is pretty similar to the JSR 295 createAutoBinding() method call.  Property objects are the equivalent of Connector.  JSR 295 doesn't have the Synchronizer (instead, they have a binding strategy specified as an ENUM - plus JSR 295 works only with property->property binding, trying to bind a field value of one object to that object's list membership in another object is not even on the table for them).
+
+To make sense, these calsses will be peers. I suggest a package-private mechanism (in the absense of friend) to keep consistency.
+public final class A {
+    private B b;
+    public B getB() {
+        return b;
+    }
+    public void setB(final B b) {
+        if (b == this.b) {
+            // Important!!
+            return;
+        }
+        // Be a member of both Bs (hence check in getAs).
+        if (b != null) {
+            b.addA(this);
+        }
+        // Atomic commit to change.
+        this.b = b;
+        // Remove from old B.
+        if (this.b != null) {
+            this.b.removeA(this);
+        }
+    }
+}
+
+public final class B {
+    private final List<A> as;
+    /* pp */ void addA(A a) {
+        if (a == null) {
+            throw new NullPointerException();
+        }
+        // LinkedHashSet may be better under more demanding usage patterns.
+        if (!as.contains(a)) {
+            as.add(a);
+        }
+    }
+    /* pp */ void removeA(A a) {
+        if (a == null) {
+            throw new NullPointerException();
+        }
+        as.removeA(a);
+    }
+    public List<A> getAs() {
+        // Copy only those that really are associated with us.
+        List<A> copy = new ArrayList<A>(as.size());
+        for (A a : as) {
+            if (a.getB() == this) {
+                copy.add(a);
+            }
+        }
+        return Collection.unmodifiableList(copy);
+    }
+}
+
+(Disclaime: Not tested or even compiled.)
+Mostly exception safe (may leak in exception case). Thread safety, many-many, performance, libraryisation, etc., is left as an exercise to the interested reader.
+
+Thanks for all suggestions. But none came close to what I was looking for, I probably formulated the question in a wrong way.
+I was looking for a replacement for gemini, so for a way to handle this in an unobtrusive manner, without polluting the code with endless checks and special List implementations. This calls of course for an AOP based approach, as suggested by Kevin.
+When i looked around a little more I found a package of gemini on cnet that contain all sources and dependencies with sources. The missing sources for the dependencies was the only concern that stopped me from using it. Since now all sources are available bugs can be fixed. 
+In case anyone looks for this: http://www.download.com/Gemini/3000-2413_4-10440077.html

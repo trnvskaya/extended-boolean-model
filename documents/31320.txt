@@ -1,0 +1,61 @@
+Profile a rails controller action
+ruby-on-rails ruby
+What is the best way to profile a controller action in Ruby on Rails. Currently I am using the brute-force method of throwing in puts Time.now calls between what I think will be a bottleneck. But that feels really, really dirty. There has got to be a better way.
+
+
+Use the Benchmark standard library and the various tests available in Rails (unit, functional, integration). Here's an example:
+def test_do_something
+  elapsed_time = Benchmark.realtime do
+    100.downto(1) do |index|
+      # do something here
+    end
+  end
+  assert elapsed_time < SOME_LIMIT
+end
+
+So here we just do something 100 times, time it via the Benchmark library, and ensure that it took less than SOME_LIMIT amount of time.
+You also may find these links useful: The Benchmark.realtime reference and the Test::Unit reference. Also, if you're into the 'book reading' thing, I picked up the idea for the example from Agile Web Development with Rails, which talks all about the different testing types and a little on performance testing.
+
+There's a Railscast on profiling that's well worth watching
+http://railscasts.com/episodes/98-request-profiling
+
+You might want to give the FiveRuns TuneUp service a try, as it's really rather impressive. Disclaimer: I'm not associated with FiveRuns in any way, I've just tried this service out.
+TuneUp is a free service whereby you download a plugin and when you run your application it injects a panel at the top of the screen that can be expanded to display detailed performance metrics.
+It gives you some nice graphs, including one that shows what proportion of time is spent in the Model, View and Controller. You can even drill right down to see the individual SQL queries that ActiveRecord is executing if you need to and it can show you the underlying database schema with another click.
+Finally, you can optionally upload your profiling data to the FiveRuns site for community performance analysis and advice.
+
+I picked up this technique a while back and have found it quite handy.
+When it's in place, you can add ?profile=true to any URL that hits a controller. Your action will run as usual, but instead of delivering the rendered page to the browser, it'll send a detailed, nicely formatted ruby-prof page that shows where your action spent its time.
+First, add ruby-prof to your Gemfile, probably in the development group:
+group :development do
+    gem "ruby-prof"
+end
+
+Then add an around filter to your ApplicationController:
+around_filter :profile if Rails.env == 'development'
+
+def profile
+  if params[:profile] && result = RubyProf.profile { yield }
+
+    out = StringIO.new
+    RubyProf::GraphHtmlPrinter.new(result).print out, :min_percent => 0
+    self.response_body = out.string
+
+  else
+    yield
+  end
+end
+
+Reading the ruby-prof output is a bit of an art, but I'll leave that as an exercise.
+Additional note by ScottJShea:
+If you want to change the measurement type place this:
+RubyProf.measure_mode = RubyProf::GC_TIME #example
+Before the if in the profile method of the application controller. You can find a list of the available measurements at the ruby-prof page. As of this writing the memory and allocations data streams seem to be corrupted (see defect).
+
+This works in Rails 4.2.6:
+    o=OpenStruct.new(logger: Rails.logger)
+    o.extend ActiveSupport::Benchmarkable
+    o.benchmark 'name' do
+      # ... your code ...
+    end
+

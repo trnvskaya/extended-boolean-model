@@ -1,0 +1,269 @@
+How does c# figure out the hash code for an object?
+c# hash internals
+This question comes out of the discussion on tuples.
+I started thinking about the hash code that a tuple should have. 
+What if we will accept KeyValuePair class as a tuple? It doesn't override the GetHashCode() method, so probably it won't be aware of the hash codes of it's "children"... So, run-time will call Object.GetHashCode(), which is not aware of the real object structure.
+Then we can make two instances of some reference type, which are actually Equal, because of the overloaded GetHashCode() and Equals(). And use them as "children" in tuples to "cheat" the dictionary.
+But it doesn't work! Run-time somehow figures out the structure of our tuple and calls the overloaded GetHashCode of our class!
+How does it work? What's the analysis made by Object.GetHashCode()? 
+Can it affect the performance in some bad scenario, when we use some complicated keys? (probably, impossible scenario... but still)
+Consider this code as an example:
+namespace csharp_tricks
+{
+    class Program
+    {
+        class MyClass
+        {
+            int keyValue;
+            int someInfo;
+
+            public MyClass(int key, int info)
+            {
+                keyValue = key;
+                someInfo = info;
+            }
+
+            public override bool Equals(object obj)
+            {
+                MyClass other = obj as MyClass;
+                if (other == null) return false;
+
+                return keyValue.Equals(other.keyValue);
+            }
+
+            public override int GetHashCode()
+            {
+                return keyValue.GetHashCode();
+            }
+        }
+
+        static void Main(string[] args)
+        {
+            Dictionary<object, object> dict = new Dictionary<object, object>();
+
+            dict.Add(new KeyValuePair<MyClass,object>(new MyClass(1, 1), 1), 1);
+
+            //here we get the exception -- an item with the same key was already added
+            //but how did it figure out the hash code?
+            dict.Add(new KeyValuePair<MyClass,object>(new MyClass(1, 2), 1), 1); 
+
+            return;
+        }
+    }
+}
+
+Update I think I've found an explanation for this as stated below in my answer. The main outcomes of it are:
+
+Be careful with your keys and their hash codes :-)
+For complicated dictionary keys you must override Equals() and GetHashCode() correctly.
+
+
+
+I don't have the book reference anymore, and I'll have to find it just to confirm, but I thought the default base hash just hashed together all of the members of your object.  It got access to them because of the way the CLR worked, so it wasn't something that you could write as well as they had.
+That is completely from memory of something I briefly read so take it for what you will.
+Edit: The book was Inside C# from MS Press. The one with the Saw blade on the cover.  The author spent a good deal of time explaining how things were implemented in the CLR, how the language translated down to MSIL, ect. ect.  If you can find the book it's not a bad read.
+Edit: Form the link provided it looks like
+
+Object.GetHashCode() uses an
+  internal field in the System.Object class to generate the hash value. Each
+  object created is assigned a unique object key, stored as an integer,when it
+  is created. These keys start at 1 and increment every time a new object of
+  any type gets created.
+
+Hmm I guess I need to write a few of my own hash codes, if I expect to use objects as hash keys.
+
+This is an excellent article on GetHashCode from Effective C#: http://www.awprofessional.com/content/images/0321245660/items/wagner_item10.pdf
+
+Don't override GetHashcode() and Equals() on mutable classes, only override it on immutable classes or structures, else if you modify a object used as key the hash table won't function properly anymore (you won't be able to retrieve the value associated to the key after the key object was modified)
+Also hash tables don't use hashcodes to identify objects they use the key objects themselfes as identifiers, it's not required that all keys that are used to add entries in a hash table return different hashcodes, but it is recommended that they do, else performance suffers greatly. 
+
+Check out this post by Brad Abrams and also the comment by Brian Grunkemeyer for some more information on how object.GetHashCode works. Also, take a look at the first comment on Ayande's blog post. I don't know if the current releases of the Framework still follow these rules or if they have actually changed it like Brad implied.
+
+
+so probably it won't be aware of the hash codes of it's "children".
+
+Your example seems to prove otherwise :-)  The hash code for the key MyClass and the value 1 is the same for both KeyValuePair's .  The KeyValuePair implementation must be using both its Key and Value for its own hash code  
+Moving up, the dictionary class wants unique keys.  It is using the hashcode provided by each key to figure things out.  Remember that the runtime isn't calling Object.GetHashCode(), but it is calling the GetHashCode() implementation provided by the instance you give it.
+Consider a more complex case:
+
+public class HappyClass
+{
+
+
+    enum TheUnit
+    {
+        Points,
+        Picas,
+        Inches
+    }
+
+    class MyDistanceClass
+    {
+        int distance;
+        TheUnit units;
+
+        public MyDistanceClass(int theDistance, TheUnit unit)
+        {
+            distance = theDistance;
+
+            units = unit;
+        }
+        public static int ConvertDistance(int oldDistance, TheUnit oldUnit, TheUnit newUnit)
+        {
+            // insert real unit conversion code here :-)
+            return oldDistance * 100;
+        }
+
+        /// <summary>
+        /// Figure out if we are equal distance, converting into the same units of measurement if we have to
+        /// </summary>
+        /// <param name="obj">the other guy</param>
+        /// <returns>true if we are the same distance</returns>
+        public override bool Equals(object obj)
+        {
+            MyDistanceClass other = obj as MyDistanceClass;
+            if (other == null) return false;
+
+            if (other.units != this.units)
+            {
+                int newDistance = MyDistanceClass.ConvertDistance(other.distance, other.units, this.units);
+                return distance.Equals(newDistance);
+            }
+            else
+            {
+                return distance.Equals(other.distance);
+            }
+
+
+        }
+
+        public override int GetHashCode()
+        {
+            // even if the distance is equal in spite of the different units, the objects are not
+            return distance.GetHashCode() * units.GetHashCode();
+        }
+    }
+    static void Main(string[] args)
+    {
+
+        // these are the same distance... 72 points = 1 inch
+        MyDistanceClass distPoint = new MyDistanceClass(72, TheUnit.Points);
+        MyDistanceClass distInch = new MyDistanceClass(1, TheUnit.Inch);
+
+        Debug.Assert(distPoint.Equals(distInch), "these should be true!");
+        Debug.Assert(distPoint.GetHashCode() != distInch.GetHashCode(), "But yet they are fundimentally different values");
+
+        Dictionary<object, object> dict = new Dictionary<object, object>();
+
+        dict.Add(new KeyValuePair<MyDistanceClass, object>(distPoint, 1), 1);
+
+        //this should not barf
+        dict.Add(new KeyValuePair<MyDistanceClass, object>(distInch, 1), 1);
+
+        return;
+    }
+
+}
+
+
+Basically... in the case of my example, you'd want two objects that are the same distance to return "true" for Equals, but yet return different hash codes.
+
+It seems that I have a clue now.
+I thought KeyValuePair is a reference type, but it is not, it is a struct. And so it uses ValueType.GetHashCode() method. MSDN for it says: "One or more fields of the derived type is used to calculate the return value".
+If you will take a real reference type as a "tuple-provider" you'll cheat the dictionary (or yourself...).
+using System.Collections.Generic;
+
+namespace csharp_tricks
+{
+    class Program
+    {
+        class MyClass
+        {
+            int keyValue;
+            int someInfo;
+
+            public MyClass(int key, int info)
+            {
+                keyValue = key;
+                someInfo = info;
+            }
+
+            public override bool Equals(object obj)
+            {
+                MyClass other = obj as MyClass;
+                if (other == null) return false;
+
+                return keyValue.Equals(other.keyValue);
+            }
+
+            public override int GetHashCode()
+            {
+                return keyValue.GetHashCode();
+            }
+        }
+
+        class Pair<T, R>
+        {
+            public T First { get; set; }
+            public R Second { get; set; }
+        }
+
+        static void Main(string[] args)
+        {
+            var dict = new Dictionary<Pair<int, MyClass>, object>();
+
+            dict.Add(new Pair<int, MyClass>() { First = 1, Second = new MyClass(1, 2) }, 1);
+
+            //this is a pair of the same values as previous! but... no exception this time...
+            dict.Add(new Pair<int, MyClass>() { First = 1, Second = new MyClass(1, 3) }, 1);
+
+            return;
+        }
+    }
+}
+
+
+Here are the proper Hash and equality implementations for the Quad tuple (contains 4 tuple components inside). This code ensures proper usage of this specific tuple in HashSets and the dictionaries.
+More on the subject (including the source code) here.
+Note usage of the unchecked keyword (to avoid overflows) and throwing NullReferenceException if obj is null (as required by the base method)
+public override bool Equals(object obj)
+{
+	if (ReferenceEquals(null, obj))
+		throw new NullReferenceException("obj is null");
+	if (ReferenceEquals(this, obj)) return true;
+	if (obj.GetType() != typeof (Quad<T1, T2, T3, T4>)) return false;
+	return Equals((Quad<T1, T2, T3, T4>) obj);
+}
+
+public bool Equals(Quad<T1, T2, T3, T4> obj)
+{
+	if (ReferenceEquals(null, obj)) return false;
+	if (ReferenceEquals(this, obj)) return true;
+	return Equals(obj.Item1, Item1)
+		&& Equals(obj.Item2, Item2)
+			&& Equals(obj.Item3, Item3)
+				&& Equals(obj.Item4, Item4);
+}
+
+public override int GetHashCode()
+{
+	unchecked
+	{
+		int result = Item1.GetHashCode();
+		result = (result*397) ^ Item2.GetHashCode();
+		result = (result*397) ^ Item3.GetHashCode();
+		result = (result*397) ^ Item4.GetHashCode();
+		return result;
+	}
+}
+public static bool operator ==(Quad<T1, T2, T3, T4> left, Quad<T1, T2, T3, T4> right)
+{
+	return Equals(left, right);
+}
+
+
+public static bool operator !=(Quad<T1, T2, T3, T4> left, Quad<T1, T2, T3, T4> right)
+{
+	return !Equals(left, right);
+}
+

@@ -1,0 +1,117 @@
+modern for loop for primitive array
+java performance arrays iteration
+Is there any performance difference between the for loops on a primitive array? 
+Assume:
+double[] doubleArray = new double[300000];
+
+
+for (double var: doubleArray) 
+   someComplexCalculation(var);
+
+or :
+for ( int i = 0, y = doubleArray.length; i < y; i++)
+   someComplexCalculation(doubleArray[i]);
+
+Test result
+I actually profiled it:
+Total timeused for modern loop= 13269ms
+Total timeused for old loop   = 15370ms
+
+So the modern loop actually runs faster, at least on my Mac OSX JVM 1.5. 
+
+
+Why not measure it yourself?
+This sounds a bit harsh, but this kind of questions are very easy to verify yourself.
+Just create the array and execute each loop 1000 or more times, and measure the amount of time. Repeat several times to eliminate glitches.
+
+There is no difference. Java will transform the enhanced for into the normal for loop. The enhanced for is just a "syntax sugar". The bytecode generated is the same for both loops.
+
+My opinion is that you don't know and shouldn't guess.  Trying to outsmart compilers these days is fruitless. 
+There have been times people learned "Patterns" that seemed to optimize some operation, but in the next version of Java those patterns were actually slower.
+Always write it as clear as you possibly can and don't worry about optimization until you actually have some user spec in your hand and are failing to meet some requirement, and even then be very careful to run before and after tests to ensure that your "fix" actually improved it enough to make that requirement pass.
+The compiler can do some amazing things that would really blow your socks off, and even if you make some test that iterates over some large range, it may perform completely differently if you have a smaller range or change what happens inside the loop.
+Just in time compiling means it can occasionally outperform C, and there is no reason it can't outperform static assembly language in some cases (assembly can't determine beforehand that a call isn't required, Java can at times do just that.
+To sum it up: the most value you can put into your code is to write it to be readable.
+
+Your hand-written, "old" form executes fewer instructions, and may be faster, although you'd have to profile it under a given JIT compiler to know for sure. The "new" form is definitely not faster.
+If you look at the disassembled code (compiled by Sun's JDK 1.5), you'll see that the "new" form is equivalent to the following code:
+1: double[] tmp = doubleArray;
+2: for (int i = 0, y = tmp.length; i < y; i++) {
+3:   double var = tmp[i];
+4:   someComplexCalculation(var);
+5: }
+
+So, you can see that more local variables are used. The assignment of doubleArray to tmp at line 1 is "extra", but it doesn't occur in the loop, and probably can't be measured. The assignment to var at line 3 is also extra. If there is a difference in performance, this would be responsible.
+Line 1 might seem unnecessary, but it's boilerplate to cache the result if the array is computed by a method before entering the loop.
+That said, I would use the new form, unless you need to do something with the index variable. Any performance difference is likely to be optimized away by the JIT compiler at runtime, and the new form is more clear. If you continue to do it "by hand", you may miss out on future optimizations. Generally, a good compiler can optimize "stupid" code well, but stumbles on "smart" code.
+
+I got very curious about your question, even after my previous answer. So I decided to check it myself too. I wrote this small piece of code (please ignore math correctness about checking if a number is prime ;-)):
+public class TestEnhancedFor {
+
+    public static void main(String args[]){
+    	new TestEnhancedFor();
+    }
+
+    public TestEnhancedFor(){
+    	int numberOfItems = 100000;
+    	double[] items = getArrayOfItems(numberOfItems);
+    	int repetitions = 0;
+    	long start, end;
+
+    	do {
+    		start = System.currentTimeMillis();
+    		doNormalFor(items);
+    		end = System.currentTimeMillis();
+    		System.out.printf("Normal For. Repetition %d: %d\n", 
+    				repetitions, end-start);
+
+    		start = System.currentTimeMillis();
+    		doEnhancedFor(items);
+    		end = System.currentTimeMillis();
+    		System.out.printf("Enhanced For. Repetition %d: %d\n\n", 
+    				repetitions, end-start);
+
+    	} while (++repetitions < 5);
+    }
+
+    private double[] getArrayOfItems(int numberOfItems){
+    	double[] items = new double[numberOfItems];
+    	for (int i=0; i < numberOfItems; i++)
+    		items[i] = i;
+    	return items;
+    }
+
+    private void doSomeComplexCalculation(double item){
+    	// check if item is prime number
+    	for (int i = 3; i < item / 2; i+=2){
+    		if ((item / i) == (int) (item / i)) break;
+    	}
+    }
+
+    private void doNormalFor(double[] items){
+    	for (int i = 0; i < items.length; i++)
+    		doSomeComplexCalculation(items[i]);
+    }
+
+    private void doEnhancedFor(double[] items){
+    	for (double item : items)
+    		doSomeComplexCalculation(item);
+    }
+
+}
+
+Running the app gave the following results for me:
+
+Normal For. Repetition 0: 5594
+  Enhanced For. Repetition 0: 5594
+Normal For. Repetition 1: 5531
+  Enhanced For. Repetition 1: 5547
+Normal For. Repetition 2: 5532
+  Enhanced For. Repetition 2: 5578
+Normal For. Repetition 3: 5531
+  Enhanced For. Repetition 3: 5531
+Normal For. Repetition 4: 5547
+  Enhanced For. Repetition 4: 5532
+
+As we can see, the variation among the results is very small, and sometimes the normal loop runs faster, sometimes the enhanced loop is faster. Since there are other apps open in my computer, I find it normal. Also, only the first execution is slower than the others -- I believe this has to do with JIT optimizations.
+Average times (excluding the first repetition) are 5535,25ms for the normal loop and 5547ms for the enhanced loop. But we can see that the best running times for both loops is the same (5531ms), so I think we can come to the conclusion that both loops have the same performance -- and the variations of time elapsed are due to other applications (even the OS) of the machine.

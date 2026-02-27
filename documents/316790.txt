@@ -1,0 +1,114 @@
+Dynamic Id's in JSF/Seam
+jsf seam
+Got a little problem with a Seam application I'm working on and I was wondering if anyone knows a way round it.  I've got a form in my application that uses AJAX to show certain input boxes depending on an item in a dropdown box.  The code works fine except for setting the ID's in my input boxes.  It looks like JSF doesn't let me set an ID via a variable.  Other attributes like "for" in labels are fine.  Here's some code explaining what I mean:
+<ui:repeat value="#{serviceHome.instance.serviceSettings}" var="currSetting" >
+  <li>
+    <!-- Imagine the below works out as "settingABC" -->
+    <c:set var="labelKey" value="setting#{jsfUtils.removeWhitespace(currSetting.key.name)}" />
+
+    <!-- Labelkey is correctly added into this input so for = "settingABC" -->
+    <h:outputLabel for="#{labelKey}" styleClass="required generated" value="#{currSetting.key.name}:"/>
+
+    <s:decorate styleClass="errorwrapper">
+
+      <!-- Labelkey ISN'T correctly added into this input. Instead we just get "setting" -->
+      <h:inputText id="#{labelKey}" value="#{currSetting.value}"/>
+
+      <a4j:outputPanel ajaxRendered="true">
+        <h:message for="#{labelKey}" styleClass="errormessage" />
+      </a4j:outputPanel>
+    </s:decorate>
+  </li>
+</ui:repeat>
+
+Does anyone have any idea how I can get past this?
+
+
+I'm assuming you want to control the ID of your input component so you can reference it later in Javascript?
+Since you can't set the ID via an expression, I do this:
+<h:inputText id="whatever" value="..." />
+
+Then later in the code:
+<script type="text/javascript">
+var theElement = document.getElementById('<h:outputText value="#{pagecode.whateverClientId}"/ >');
+...
+</script>
+
+In the pagecode:
+protected HtmlInputText getWhatever() {
+    if (whatever == null) {
+        whatever = (HtmlInputText) findComponentInRoot("whatever");
+    }
+}
+
+public String getWhateverClientId() {
+    return getWhatever().getClientId(getFacesContext());
+}
+
+Hope that helps.
+
+You see why they don't let you set the ID, right?  JSF takes over id creation because you're in a repeated loop of components and, if they let you just set the id, you'd end up with duplicate IDs, which wouldn't help you anyway.
+Without knowing WHY you want to set the ID explicitly, it's hard to give you a workaround.  If it's for JavaScript, you can do what Grant Wagner suggests, and let JSF give you what it put as the id.  You can also take a peek at the generated HTML and see what format the id is in.  JSF usually uses 
+"form_id:loop_id:loop_index:component_id"
+
+as the id it generates for components in a form/repeat.  You'd have to be sure and give id's to your form and ui:repeat tags to know what they were.
+Ok, you answered that you want to have an h:message tag for a specific inputText inside the loop, that's easy.
+<h:inputText id="myInput" .... />
+<h:message for="myInput" ... />
+
+Now, messages generated for the input will be displayed in the message, and JSF will mangle the "for" attribute (though that isn't generated to HTML) just like it will the "id" attribute in the inputText so they match.
+You can even make your OWN messages in your handler code to go to the specific h:message, but you'll need to use a call to clientId to get the target of the message, given the backing bean (not the value backing bean) of the component in question.  
+
+Have you tried use facelets?
+That will allow you to assing your own ids ie:
+
+me:labelKeyThingo can then use the id=#{labelKey} to make a unique label.  Here is an example facelet called m:textPassword from my bad code:
+   <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" 
+             "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+   <html xmlns="http://www.w3.org/1999/xhtml" xmlns:ui="http://java.sun.com/jsf/facelets"
+    xmlns:h="http://java.sun.com/jsf/html" xmlns:f="http://java.sun.com/jsf/core"
+    xmlns:c="http://java.sun.com/jstl/core" xmlns:a4j="http://richfaces.org/a4j"
+    xmlns:rich="http://richfaces.org/rich">
+
+   <ui:composition>
+
+    <c:set var="styleClass" value="formPrompt" />
+    <c:set var="requiredLabel" value="" />
+    <c:choose>
+    	<c:when test="${required=='true'}">
+
+    		<c:set var="required" value="true" />
+    		<c:set var="styleClass" value="formRequiredPrompt" />
+    		<c:set var="requiredLabel" value="*" />
+    	</c:when>
+    </c:choose>
+
+    <h:panelGroup id="#{id}_formRowTemplateLabel_panelGroup">
+    	<h:outputLabel for="#{id}" styleClass="#{styleClass}" id="#{id}_formRowTemplate_outPut"
+    		value="#{label}" />
+    	<c:if test="${required == 'true'}">
+    		<h:outputText value="#{requiredLabel}" styleClass="formRequiredPromptAsterix"></h:outputText>
+    	</c:if>
+    </h:panelGroup>
+
+    <h:panelGroup id="#{id}_textPasswordTemplate_panelGroup">
+    	<h:inputSecret required="${required}" id="#{id}" value="#{property}"
+    		styleClass="formText">
+
+    		<f:validator validatorId="Maserati.Password" />
+    		<f:validateLength maximum="16" minimum="8" />
+    		<ui:insert name="additionalTags"></ui:insert>
+    	</h:inputSecret>
+
+    	<h:message styleClass="formErrorMsg" id="#{id}_textPasswordTemplate_msg" for="#{id}" />
+    </h:panelGroup>
+
+   </ui:composition>
+
+   </html>
+
+It is used thusly:
+ <m:textPassword id="password" label="#{msgs.passwordPrompt}"
+ property="#{individualApplicationMBean.password}"
+ required="true" maxlength="16" />
+

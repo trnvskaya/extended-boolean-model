@@ -1,0 +1,117 @@
+2.9999999999999999 >> .5?
+javascript bit-manipulation precision
+I heard that you could right-shift a number by .5 instead of using Math.floor(). I decided to check its limits to make sure that it was a suitable replacement, so I checked the following values and got the following results in Google Chrome:
+
+2.5 >> .5 == 2;
+2.9999 >> .5 == 2;
+2.999999999999999 >> .5 == 2;  // 15 9s
+2.9999999999999999 >> .5 == 3;  // 16 9s
+
+After some fiddling, I found out that the highest possible value of two which, when right-shifted by .5, would yield 2 is 2.9999999999999997779553950749686919152736663818359374999999Â¯ (with the 9 repeating) in Chrome and Firefox. The number is  2.9999999999999997779Â¯ in IE.
+My question is: what is the significance of the number .0000000000000007779553950749686919152736663818359374? It's a very strange number and it really piqued my curiosity.
+I've been trying to find an answer or at least some kind of pattern, but I think my problem lies in the fact that I really don't understand the bitwise operation. I understand the idea in principle, but shifting a bit sequence by .5 doesn't make any sense at all to me. Any help is appreciated.
+For the record, the weird digit sequence changes with 2^x. The highest possible values of the following numbers that still truncate properly:
+
+for 0: 0.9999999999999999444888487687421729788184165954589843749Â¯
+for 1: 1.9999999999999999888977697537484345957636833190917968749Â¯
+for 2-3: x+.99999999999999977795539507496869191527366638183593749Â¯
+for 4-7: x+.9999999999999995559107901499373838305473327636718749Â¯
+for 8-15: x+.999999999999999111821580299874767661094665527343749Â¯
+...and so forth
+
+
+
+This is possibly the single worst idea I have ever seen. Its only possible purpose for existing is for winning an obfusticated code contest. There's no significance to the long numbers you posted -- they're an artifact of the underlying floating-point implementation, filtered through god-knows how many intermediate layers. Bit-shifting by a fractional number of bytes is insane and I'm surprised it doesn't raise an exception -- but that's Javascript, always willing to redefine "insane".
+If I were you, I'd avoid ever using this "feature". Its only value is as a possible root cause for an unusual error condition. Use Math.floor() and take pity on the next programmer who will maintain the code.
+
+Confirming a couple suspicions I had when reading the question:
+
+Right-shifting any fractional number x by any fractional number y will simply truncate x, giving the same result as Math.floor() while thoroughly confusing the reader.
+2.999999999999999777955395074968691915... is simply the largest number that can be differentiated from "3". Try evaluating it by itself -- if you add anything to it, it will evaluate to 3. This is an artifact of the browser and local system's floating-point implementation.
+
+
+My guess is that you'll get the same results by merely casting the values to ints.  
+
+I don't think your right shift is relevant.  You are simply beyond the resolution of a double precision floating point constant.
+In Chrome:
+var x = 2.999999999999999777955395074968691915273666381835937499999;
+var y = 2.9999999999999997779553950749686919152736663818359375;
+
+document.write("x=" + x);
+document.write(" y=" + y);
+
+Prints out: x = 2.9999999999999996 y=3
+
+Try this javascript out:
+  alert(parseFloat("2.9999999999999997779553950749686919152736663818359374999999"));
+Then try this:
+  alert(parseFloat("2.9999999999999997779553950749686919152736663818359375"));
+What you are seeing is simple floating point inaccuracy.  For more information about that, see this for example: http://en.wikipedia.org/wiki/Floating_point#Accuracy_problems.
+The basic issue is that the closest that a floating point value can get to representing the second number is greater than or equal to 3, whereas the closes that the a float can get to the first number is strictly less than three.
+As for why right shifting by 0.5 does anything sane at all, it seems that 0.5 is just itself getting converted to an int (0) beforehand.  Then the original float (2.999...) is getting converted to an int by truncation, as usual.
+
+And to add to John's answer, the odds of this being more performant than Math.floor are vanishingly small.
+I don't know if JavaScript uses floating-point numbers or some kind of infinite-precision library, but either way, you're going to get rounding errors on an operation like this -- even if it's pretty well defined.
+
+The shift right operator only operates on integers (both sides). So, shifting right by .5 bits should be exactly equivalent to shifting right by 0 bits. And, the left hand side is converted to an integer before the shift operation, which does the same thing as Math.floor().
+
+Actually, you're simply ending up doing a floor() on the first operand, without any floating point operations going on. Since the left shift and right shift bitwise operations only make sense with integer operands, the JavaScript engine is converting the two operands to integers first:
+2.999999 >> 0.5
+
+Becomes:
+Math.floor(2.999999) >> Math.floor(0.5)
+
+Which in turn is:
+2 >> 0
+
+Shifting by 0 bits means "don't do a shift" and therefore you end up with the first operand, simply truncated to an integer.
+The SpiderMonkey source code has:
+switch (op) {
+  case JSOP_LSH:
+  case JSOP_RSH:
+    if (!js_DoubleToECMAInt32(cx, d, &i)) // Same as Math.floor()
+        return JS_FALSE;
+    if (!js_DoubleToECMAInt32(cx, d2, &j)) // Same as Math.floor()
+        return JS_FALSE;
+    j &= 31;
+    d = (op == JSOP_LSH) ? i << j : i >> j;
+    break;
+
+Your seeing a "rounding up" with certain numbers is due to the fact the JavaScript engine can't handle decimal digits beyond a certain precision and therefore your number ends up getting rounded up to the next integer. Try this in your browser:
+alert(2.999999999999999);
+
+You'll get 2.999999999999999. Now try adding one more 9:
+alert(2.9999999999999999);
+
+You'll get a 3.
+
+If you wanna go deeper, read "What Every Computer Scientist Should Know About Floating-Point Arithmetic": http://docs.sun.com/source/806-3568/ncg_goldberg.html
+
+I suspect that converting 2.9999999999999997779553950749686919152736663818359374999999 to its binary representation would be enlightening. It's probably only 1 bit different from true 3.
+
+It should be noted that the number ".0000000000000007779553950749686919152736663818359374" is quite possibly the Epsilon, defined as "the smallest number E such that (1+E) > 1."
+
+
+I suspect that converting 2.9999999999999997779553950749686919152736663818359374999999
+  to it's binary representation would be enlightening. It's probably only 1 bit different
+  from true 3.
+
+Good guess, but no cigar.
+As the double precision FP number has 53 bits, the last FP number before 3 is actually
+(exact): 2.999999999999999555910790149937383830547332763671875
+But why it is 
+2.9999999999999997779553950749686919152736663818359375
+(and this is exact, not 49999... !)
+which is higher than the last displayable unit ? Rounding. The conversion routine (String to number) simply is correctly programmed to round the input the the next floating point number.
+2.999999999999999555910790149937383830547332763671875
+.......(values between, increasing) -> round down
+2.9999999999999997779553950749686919152736663818359375
+....... (values between, increasing) -> round up to 3 
+3
+The conversion input must use full precision. If the number is exactly the half between
+those two fp numbers (which is 2.9999999999999997779553950749686919152736663818359375)
+the rounding depends on the setted flags. The default rounding is round to even, meaning that the number will be rounded to the next even number.  
+Now
+3        =        11. (binary)
+2.999... =        10.11111111111...... (binary)
+All bits are set, the number is always odd. That means that the exact half number will be rounded up, so you are getting the strange .....49999 period because it must be smaller than the exact half to be distinguishable from 3.

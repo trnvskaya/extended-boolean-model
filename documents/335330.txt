@@ -1,0 +1,41 @@
+Using boost::shared_ptr in a library's public interface
+c++ api boost shared-ptr
+We have a C++ library that we provide to several different clients. Recently we made the switch from using raw pointers in the public interface to using boost::sharedptr instead. This has provided an enormous benefit, as you might guess, in that now the clients no longer have to worry about who needs to delete what and when. When we made the switch I believed it was the right thing to do, but it bothered me that we had to include something from a third-party library in our public interface - generally you avoid that kind of thing if you can. I rationalized it that boost was practically part of the C++ language now, and our use case requires that both the client code and the library hold pointers to the objects.  However recently one of our clients has asked us if we could switch to using a neutral smart pointer class in the interface, because our library is essentially forcing them to a particular version of boost- a point which I certainly understand and appreciate. So now I am wondering what the best course of action might be. I have thought about it a little bit, and wondered about creating a simple smart pointer class that simply held a real boost smart pointer. But then the clients would probably immediately stuff one of those into their flavor of boost::sharedptr, and then we'd be three shared pointers deep - which might be a problem, or it might not. Anyway, I'd love to hear some opinions from the community about the best way to solve this problem.
+Edit: I originally said transfer of ownership, but I should have specified that code on both sides of the API boundary need to hold a pointer to the object.
+
+
+This is C++. You know, you could template the interface class over the shared pointer implementation.
+
+boost::intrusive_ptr perhaps?
+
+If the semantics are really transfer of ownership, why not use auto_ptr since it is standard C++? Internally, you can still construct your shared_ptr's from the auto_ptr and then have shared ownership if you need it.
+
+shared_ptr<> is part of the language, as of the release of TR1.
+See: (TR1)
+
+You could use the boost copy utility to build a custom version of boost which had only the smart pointer class.
+Since the smart pointer class is a header-only library, this should result in a few headers that you could include with your library.
+
+One possible solution is to ship boost::shared_ptr with your project. As it all consists of headers, this would free your clients from having to install the boost libraries manually. You can use bcp to get all files needed by a particular boost library, including the libraries itself. I did that when i worked for a company back then and needed boost::shared_ptr and it actually worked greatly.
+
+This is an interesting question I have had for some time. Do you force your users into whatever library you provide, or let them decide on what is best in their project? As always, the question is what you are offering and what you are requiring from the user. 
+If you use raw pointers, you allow all sorts of possibilities. The user code can use a raw pointer, store it into std::auto_ptr, shared_ptr (whether boost or TR1), or their homebrewed version of a smart pointer. But this may also get the user into trouble if they forget to release the memory, and it requires some more code in their side if they just want a temporary created for a method call (if you provide raw pointers, they will have to store the pointer in a non-temporary [possibly smart] pointer variable).
+Now, if you use a smart pointer you are forcing your solution into the user. If they plan on using their own version of a smart pointer (say you use boost::shared_ptr and they want std::tr1::shared_ptr) they are no longer allowed to use it if they work with your interface. Whatever smart pointer you decide upon (besides std::auto_ptr that is special) you are not only forcing a solution, but also the problems it has.
+If your user has a multithreaded application, and your solution is not thread safe, the user is bound to an unsafe solution. If on the other hand the smart pointer is thread safe but inccurs locking costs, those costs are pushed to your users even if they work in a multithreaded application. If you compile your library (not a header only lib) then you are forcing not only a type of smart pointer, but also a particular version of it, since any changes in the smart pointer library will break compatibility of your code.
+As a side note, boost::shared_ptr (boost 1.33+) is thread safe in most situations, and it uses a lock-free implementation in many platforms. Anyway this should give you an idea of things you should consider.
+Finally, you must consider that you are not only binding the user into using your type of smart pointer, but also the same version of it. If you compile your lib against a particular version of boost the user is bound to that particular implementation o
+
+First of all, if you distribute your library as source code rather than as a compiled library, you can disregard this answer. There are also some windows specific problems that may not be relevant for other platforms.
+I personally think you should avoid having too much funky c++ in the public interface of your library since it can cause a lot of problems at the client.
+I'm not sure how applicable this is to your particular example, but I've personally run into problems where symbols from the stl library I used conflicted with the ones in the third party library when I upgraded to a new version. This meant we got crashes in strange places and I had to do lots of tricks to avoid the problem. In the end I stayed with the old version of the library because of this.
+Another problem you can run into is that different c++ compilers can mangle the same symbols differently which means you potentially need to provide a separate library for every compiler you want to support even if they use the same Boost version. Check out the book "Imperfect C++" for a discussion on this.
+In the current world of different C++ compilers and environments I think the sad truth is that you should avoid having anything but C in your interface and make sure you link your library dynamically (to avoid conflicts when linking your customers links your library, windows runtime library can be a real pain here). You can still use boost and as much fancy c++ on the inside of your library as you want since all your symbols will be isolated from your customers environment in the dll.
+If you really want to have smart pointers and other nice C++ functionality in the interface of your library, build a convenience layer which you distribute the source code for. This will make sure it's always compiled in the customers environment. This interface then calls your exposed C functions in clever ways. I don't think it's a good idea to use boost in that layer either since it will force your customers to adopt it even if they don't want, however it's easy to replace it or find another solution since that layer is distributed as source code.
+Another nice feature is that it's generally easier to call C functions in a dll than c++ functions with strange name mangling if you want to expose your library to other languages than C/C++.
+This approach definitely makes your life more complicated in many ways, but it's a way of making it less likely that people avoid your library because it just wasn't possible to link successfully with their own code.
+
+introducing boost::shared_ptr forces your client to use boost. to some people, this is a minor issue.
+it also forces your clients to use the same compiler as used by your lib, if your lib is distributed as compiled binary. or, if your library is distributed in source code, the clients have to stick to their own choice of compiler used to compile your lib. this isn't a minor issue to any project of considerable size.
+
+Use auto_ptr or stick to a C interface. Forcing C++ libs into your interface is always ugly, kills any chance of being cross platform, and causes a maintenance nightmare for customers with different "downstream" configurations.
+As soon as C++0x is mainstream enough for your clients, switch to std::shared_ptr.

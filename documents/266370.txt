@@ -1,0 +1,113 @@
+How do I unit test jdbc code in java?
+java database unit-testing jdbc junit
+I'd like to write some unit tests for some code that connects to a database, runs one or more queries, and then processes the results.
+(Without actually using a database)
+Another developer here wrote our own DataSource, Connection, Statement, PreparedStatement, and ResultSet implementation that will return the corresponding objects based on an xml configuration file. (we could use the bogus datasource and just run tests against the result sets it returns).
+Are we reinventing the wheel here? Does something like this exist already for unit testing?
+Are there other / better ways to test jdbc code?
+
+
+There is DBUnit.  It won't allow you to test your jdbc code without a database, but it seems like you could introduce a different set of buys by emulating a database.
+
+You could use DBUnit together with a HSQLDB which can read its initial data from CSV files for example.
+
+That's why you have derby (now called JavaDB) or sqlite -- they are small, simple databases that you can create, load, test against and destroy relatively quickly and simply.
+
+Use any of the Mock frameworks for such a task. (jMock, etc.)
+Some examples
+
+I would say that HSQL is the way to go during your unit tests. The point of your test is to test your jdbc code and make sure it works. Adding custom classes or mocking the jdbc calls can easily hide bugs.
+I mostly use mysql and when the tests run the driver class and url is changed to org.hsqldb.jdbcDriver and jdbc:hsqldb:mem:test.
+
+While the way to mock jdbc in your application is of course dependant on how you've implemented your actual jdbc transactions.
+If you're using jdbc as is, I'd assume you have written yourself an utility class of sorts to do some tasks in the line of DBUtils.getMetadataFor(String tablename). What this would mean is that you'd have to create a mock of that class and that could be all you need. This would be rather easy solution for you since you apparently already have a series of jdbc related mock objects available. Note that I'm assuming your jdbc code isn't exploded all around the application - if it is, refactor!!!
+If you're however using any framework for database handling (like Spring Framework's JDBC Template classes) you can and should mock the interface class using EasyMock or some other equivalent. That way you can have all the power in the world required for easy mocking of the connection.
+And last if nothing else works, you can do what others have said already and use DBUnit and/or derby.
+
+You have several options:
+
+Mock the database with a Mock library, e.g. JMock. The huge drawback of this that your queries and the data will most likely be not tested at all.
+Use a light weight database for the tests, such as HSQLDB. If your queries are simple, this is probably the easiest way to go. 
+Dedicate a database for the tests. DBUnit is a good option, or if you are using Maven, you can also use the sql-maven-plugin to set up and tear down the database properly (be careful of dependencies between tests). I recommend this option as it will give you the biggest confidence that the queries work properly with your db vendor. 
+
+Sometimes it is necessary and useful to make these tests configurable so that these tests are only executed if the database is available. This can be done with e.g. build properties.
+
+I prefer using EasyMock for testing a not-so-easy-to-test code.
+
+We use Mockrunner. http://mockrunner.sourceforge.net/  It has mock connections and datasources built in so there is no need to implement them your selves.
+
+I like to use a combination of:
+
+DBUnit
+HSQLDB
+Unitils (specifically, the database testing and maintenance modules)
+
+You can get pretty far with just DBUnit and HSQLDB. Unitils provides the last mile of code to manage and reset database state. It also provides a nice way of managing database schema changes and makes it easy to use specific RBDMS (Oracle, DB2, SQL Server, etc). Finally, Unitils provides some nice wrappers around DBUnit which modernizes the API and makes DBUnit much more pleasant to work with.
+If you haven't checked out Unitils yet, you definitely should. Unitils is often overlooked and under-appreciated.
+
+Acolyte driver can be used to mock up a JDBC connection, managing it during tests and returning data as result set (with its typesafe row list API): https://github.com/cchantep/acolyte
+
+If you want to do unit tests, not an integration tests, than
+you can use a very basic and simple approach, using Mockito only, like this:
+public class JDBCLowLevelTest {
+
+    private TestedClass tested;
+    private Connection connection;
+    private static Driver driver;
+
+    @BeforeClass
+    public static void setUpClass() throws Exception {
+        // (Optional) Print DriverManager logs to system out
+        DriverManager.setLogWriter(new PrintWriter((System.out)));
+
+        // (Optional) Sometimes you need to get rid of a driver (e.g JDBC-ODBC Bridge)
+        Driver configuredDriver = DriverManager.getDriver("jdbc:odbc:url");
+
+        System.out.println("De-registering the configured driver: " + configuredDriver);
+        DriverManager.deregisterDriver(configuredDriver);
+
+        // Register the mocked driver
+        driver = mock(Driver.class);
+        System.out.println("Registering the mock driver: " + driver);
+        DriverManager.registerDriver(driver);
+    }
+
+    @AfterClass
+    public static void tearDown() throws Exception {
+        // Let's cleanup the global state
+        System.out.println("De-registering the mock driver: " + driver);
+        DriverManager.deregisterDriver(driver);
+    }
+
+    @Before
+    public void setUp() throws Exception {
+        // given
+        tested = new TestedClass();
+
+        connection = mock(Connection.class);
+
+        given(driver.acceptsURL(anyString())).willReturn(true);
+        given(driver.connect(anyString(), Matchers.<Properties>any()))
+                .willReturn(connection);
+
+        given(connection.prepareCall(anyString())).willReturn(statement);        
+    }
+}
+
+Than you can test various scenarios, like in any other Mockito test e.g.
+@Test
+public void shouldHandleDoubleException() throws Exception {
+    // given
+    SomeData someData = new SomeData();
+
+    given(connection.prepareCall(anyString()))
+            .willThrow(new SQLException("Prepare call"));
+    willThrow(new SQLException("Close exception")).given(connection).close();
+
+    // when
+    SomeResponse response = testClass.someMethod(someData);
+
+    // then
+    assertThat(response, is(SOME_ERROR));
+}
+

@@ -1,0 +1,113 @@
+What's the best way to implement a SQL script that will grant permissions to a database role on all the user tables in a database?
+sql sql-server tsql permissions
+What's the best way to implement a SQL script that will grant select, references, insert, update, and delete permissions to a database role on all the user tables in a database?
+Ideally, this script could be run multiple times, as new tables were added to the database. SQL Server Management Studio generates scripts for individual database objects, but I'm looking for more of a "fire-and-forget" script.
+
+
+I'm sure there is an easier way, but you could loop through the sysobjects table in the database and grant permissions to any user table objects that exist.  You could then run that multiple times whenever new tables are added.
+
+Dr Zimmerman is on the right track here. I'd be looking to write a stored procedure that has a cursor looping through user objects using execute immediate to affect the grant. Something like this:
+ IF EXISTS (
+    SELECT 1 FROM sysobjects
+    WHERE name = 'sp_grantastic'
+    AND type = 'P'
+)
+DROP PROCEDURE sp_grantastic
+GO
+CREATE PROCEDURE sp_grantastic
+AS
+DECLARE
+ @object_name VARCHAR(30)
+,@time       VARCHAR(8)
+,@rights     VARCHAR(20)
+,@role       VARCHAR(20)
+
+DECLARE c_objects CURSOR FOR
+    SELECT  name
+    FROM    sysobjects
+    WHERE   type IN ('P', 'U', 'V')
+    FOR READ ONLY
+
+BEGIN
+
+    SELECT  @rights = 'ALL'
+           ,@role = 'PUBLIC'
+
+    OPEN c_objects
+    WHILE (1=1)
+    BEGIN
+        FETCH c_objects INTO @object_name
+        IF @@SQLSTATUS <> 0 BREAK
+
+        SELECT @time = CONVERT(VARCHAR, GetDate(), 108)
+        PRINT '[%1!] hitting up object %2!', @time, @object_name
+        EXECUTE('GRANT '+ @rights +' ON '+ @object_name+' TO '+@role)
+
+    END
+
+    PRINT '[%1!] fin!', @time
+
+    CLOSE c_objects
+    DEALLOCATE CURSOR c_objects
+END
+GO
+GRANT ALL ON sp_grantastic TO PUBLIC
+GO
+
+Then you can fire and forget:
+EXEC sp_grantastic
+
+
+We use something similar where I work. Looping through every Tables, Views, Stored Procedures of the system. 
+CREATE PROCEDURE dbo.SP_GrantFullAccess 
+    @username varchar(300)
+AS
+
+DECLARE @on varchar(300) 
+DECLARE @count int
+SET @count = 0
+
+PRINT 'Granting access to user ' + @username + ' on the following objects:'
+
+DECLARE c CURSOR FOR 
+SELECT name FROM sysobjects WHERE type IN('U', 'V', 'SP', 'P') ORDER BY name
+OPEN c 
+FETCH NEXT FROM c INTO @on 
+WHILE @@FETCH_STATUS = 0 
+BEGIN 
+ SET @count = @count + 1
+ EXEC('GRANT ALL ON [' + @on + '] TO [' + @username + ']') 
+ --PRINT 'GRANT ALL ON [' + @on + '] TO ' + @username
+ PRINT @on
+ FETCH NEXT FROM c INTO @on 
+END 
+CLOSE c 
+DEALLOCATE c
+
+PRINT 'Granted access to ' + cast(@count as varchar(4)) + ' object(s).'
+GO
+
+
+There's an undocumented MS procedure called sp_MSforeachtable that you could use which is definitely in 2000 and 2005. 
+To grant select permissions the usage would be: 
+EXECUTE sp_MSforeachtable @command1=' Grant Select on ? to RoleName'
+
+To grant the other permissions either have a new statement for each one or just add them to the command like this: 
+EXECUTE sp_MSforeachtable @command1=' Grant Select on ? to RoleName; Grant Delete on ? to RoleName;'
+
+With a bit of playing around it might be possible to turn the role name into a parameter as well.
+
+use [YourDb]
+GO
+exec sp_MSforeachtable @command1=
+    "GRANT DELETE, INSERT, REFERENCES, SELECT, UPDATE ON ? TO Admins, Mgmt",
+    @whereand = " and o.name like 'tbl_%'"
+GO
+
+use [YourDb]
+GO
+exec sp_MSforeachtable @command1=
+    "GRANT REFERENCES, SELECT ON ? TO Employee, public",
+    @whereand = " and o.name like 'tbl_%'"
+GO
+

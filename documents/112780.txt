@@ -1,0 +1,80 @@
+Conflicting desires in Database Design, with fields of two similar functions
+database database-design normalizing database-relations
+Okay, so I'm making a table right now for "Box Items".
+Now, a Box Item, depending on what it's being used for/the status of the item, may end up being related to a "Shipping" box or a "Returns" box.
+A Box Item may be defective:if it is, a flag will be set in the Box Item's row (IsDefective), and the Box Item will be put in a "Returns" box (with other items to be returned to that vendor).  Otherwise, the Box Item will eventually be put into a "Shipping" box (with other items to be shipped).  (Note that Shipping and Returns boxes have their own tables: there's not one common table for all boxes... though maybe I should consider doing that if possible as a third possibility?)
+Maybe I'm just not thinking clearly today, but I started questioning what should be done in this situation.
+My gut tells me that I should have a separate field for each possible relation, even if only one of the relations can happen at any given time, which would make the schema for Box Items look like:
+BoxItemID
+Description
+IsDefective
+ShippingBoxID
+ReturnBoxID
+etc...
+This would make the relations clear, but it seems wasteful (since only one of the relations will be used at any time).  So then I thought I could have just one field for the BoxID, and determine which BoxID it's referring to (a Shipping or a Returns Box ID) based on the IsDefective field:
+BoxItemID
+Description
+IsDefective
+BoxID
+etc...
+This seems less wasteful, but doesn't sit right with me.  The relation isn't obvious.
+So, I put it to you, database gurus of Stackoverflow.  What would you do in this situation?
+EDIT: Thank you everyone for your input!  It's given me a lot to think about.  For one, I'm going to use an ORM next time I start a project like this. =)  For two, since I'm not right now, I'll bite the four bytes and use two fields.
+Thanks everyone again!
+
+
+What you're talking about is polymorphic relations.   A single ID that can reference multiple other tables.   There are several frameworks that support this, however, it is (potentially) bad for database integrity (that could be a whole other discussion whether or not your database or your application should maintain referential integrity).
+What about this?
+BoxItem:
+BoxItemID, Description, IsDefective
+
+Box:
+BoxID, Description
+
+BoxItemMap:
+BoxID, BoxItemID, BoxItemType
+
+Then you can have BoxItemType be an enumeration, or an integer where you define constants in your application as "Return" or "Shipping" as the type of box.
+
+I would consider making a single table for the boxes and the box type be a column of the box table.  This would simplify the relationships and make it easy to still query for box type. So the box item only has one foreign key to the boxId.
+
+Agree about the polymorphic discussion above, although it has potential to be used poorly, it is still a viable solution.
+Basically you have a base table called box. Then you have two other tables, shipping box and return box. Those two add any extra fields that are special to them. they are related to box with a 1:1 fk.Boz base table has the common fields of all box types.
+You relate BoxItem with the box table. The way you you get the proper box type is by doing a query that joins the child box with the root box based on the key. The record that has in both the base box and the child box is of that type.
+You just have to be careful like mentioned that when you create a box type that it is done correctly. BUt thats what testing is for. The code to add them only needs ot written once. Or use an ORM.
+Almost all ORM's support this strategy.
+
+I'm with Psychotic Venom and mattlant.
+Going the polymorphic route (having to figure out which table your foreign key points to based on the contents of another field) is going to be a pain. Coding the constraints for that maybe tough (I'm not sure most databases would support that natively, I think you'd have to use a trigger).
+Do items ever move between the tables? Sticking with two tables with identical definitions where one is for returns and one is for shipping may be the easiest route. If you want to stick with the definition you first proposed (with the two separate fields) is perfectly reasonable. 
+"Premature optimization is the root of all evil" and all that. While it seems wasteful, remember what you're storing. Since they are IDs they are probably just integers, maybe 4 bytes. Wasting four bytes per record is basically nothing. In fact, due to padding to put things on even addresses or other such things it may be "free" to put that extra field in there. It all depends on the DB design.
+Unless you have a very good reason to go the polymorphic route (like you're on an embedded system with little memory or you have to replicate across some really slow 9600bps link) it probably won't be worth the headaches you can end up with. Having to write all those special cases into your queries can get annoying.
+Quick example: doing a join between two tables where if you want to join is based on if the isDefective flag is set is going to be a pain. Being able to just use one of the two columns alone is probably enough of a hassle you may save, at least for me.
+
+I'd probably go with:
+BoxTable:
+box_id, box_descrip, box_status_id ...
+     1, Lovely Box, 1
+     2, Borked box, 2
+     3, Ugly Box, 3
+     4, Flammable Box, 4
+
+       BoxStatus:
+       box_status_id, box_status_name, box_type_id, ....
+                   1,Shippable, 1
+                   2,Return, 2
+                   3,Ugly, 2
+                   4,Dangerous,3
+
+                BoxType:
+                box_type_id, box_type_name, ...
+                          1, Shipping box, ...
+                          2, Return box, ....
+                          3, Hazmat box, ...
+
+That way the Box Status defines the box type, and it's flexible if you need to expand into a few more status levels or box types later on.
+
+I'd go with just a single BoxItems table with IsDefective, ShippingBoxID, the shipping-box-related fields, ReturnBoxID and the return-box-related fields.  Some fields will always be NULL for each record.
+This is a very simple and self-evident design that the next developer is unlikely to be confused by.  In theory this design is inefficient because of the guaranteed empty fields for each row.  In practice, databases tend to have a minimum required storage size for each row anyway, so (unless the number of fields is huge) this design is as efficient as possible anyway, and much easier to code to.
+
+I'd use what Hibernate calls Table-per-subclass, so my DB would wind up with 3 tables for Boxes: Box, ShippingBox, and ReturnBox. The FK in BoxItem would point to Box.

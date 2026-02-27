@@ -1,0 +1,73 @@
+How to register file types/extensions with a WiX installer?
+installer installation wix windows-installer wix3
+I didn't find an explicit answer to this question in the WiX Documentation (or Google, for that matter). Of course I could just write the appropriate registry keys in HKCR, but it makes me feel dirty and I'd expect this to be a standard task which should have a nice default solution.
+For bonus points, I'd like to know how to make it "safe", i.e. don't overwrite existing registrations for the file type and remove the registration on uninstall only if it has been registered during installation and is unchanged.
+
+
+"If your application handles its own file data type, you will need to register a file association for it. Put a ProgId inside your component. FileId should refer to the Id attribute of the File element describing the file meant to handle the files of this extension. Note the exclamation mark: it will return the short path of the file instead of the long one:"
+<ProgId Id='AcmeFoobar.xyzfile' Description='Acme Foobar data file'>
+  <Extension Id='xyz' ContentType='application/xyz'>
+     <Verb Id='open' Sequence='10' Command='Open' Target='[!FileId]' Argument='"%1"' />
+  </Extension>
+</ProgId>
+
+Reference: http://wix.tramontana.co.hu/tutorial/getting-started/beyond-files
+
+After some additional research, I found a partial answer to this question in the WiX Tutorial. It shows an advertised solution and does not work with WiX 3.0, but given that information, I figured it out. Add a ProgId element to the component containing your executable, like the following:
+<ProgId Id="MyApplication.MyFile" Description="My file type">
+  <Extension Id="myext" ContentType="application/whatever">
+    <Verb Id="open" Command="open" TargetFile="MyApplication.exe" Argument="&quot;%1&quot;"/>
+  </Extension>
+</ProgId>
+
+myext is the file extension without the dot, and MyApplication.exe is the file id (not name) of the executable file (i.e. the Id attribute of the File element).
+This will register the file type with your executable and will supply a default icon (a white page with the application icon on it), which is sufficient for my needs. If you want to specify a dedicated icon, it seems you still have to do this yourself, like the following (code from the linked tutorial):
+<Registry Id='FooIcon1' Root='HKCR' Key='.xyz' Action='write' Type='string' Value='AcmeFoobar.xyzfile' />
+<Registry Id='FooIcon2' Root='HKCR' Key='AcmeFoobar.xyzfile' Action='write' Type='string' Value='Acme Foobar data file' />
+<Registry Id='FooIcon3' Root='HKCR' Key='AcmeFoobar.xyzfile\DefaultIcon' Action='write' Type='string' Value='[INSTALLDIR]Foobar.exe,1' />
+
+I didn't find a good solution for my bonus question though.
+Edit: I started writing this before the previous answer came. However, my solution actually works, in contrast to the previous answer.
+
+Unfortunately there's no way to do a "safe" association with Windows Installer. 
+We just write everything out to the registry and then have a separate component that takes over the system-wide default and is only installed if no other application has already registered itself as the default.
+With Vista there's the new "default programs" interface, again you write everything out to the registry. Here's a complete example that we're using in our installer. (WiX 3.0)
+Update: 12 months have passed since my original answer and I have a better understanding of file associations. Rather than writing everything manually I'm now using proper ProgId definitions which improves handling for advertised packages. See the updated code posted in response to this question. 
+<Component ....>
+    <RegistryValue Root="HKLM" Key="SOFTWARE\AcmeFoobar\Capabilities" Name="ApplicationDescription" Value="ACME Foobar XYZ Editor" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\AcmeFoobar\Capabilities" Name="ApplicationIcon" Value="[APPLICATIONFOLDER]AcmeFoobar.exe,0" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\AcmeFoobar\Capabilities" Name="ApplicationName" Value="ACME Foobar" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\AcmeFoobar\Capabilities\DefaultIcon" Value="[APPLICATIONFOLDER]AcmeFoobar.exe,1" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\AcmeFoobar\Capabilities\FileAssociations" Name=".xyz" Value="AcmeFoobar.Document" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\AcmeFoobar\Capabilities\MIMEAssociations" Name="application/xyz" Value="AcmeFoobar.Document" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\AcmeFoobar\Capabilities\shell\Open\command" Value="&quot;[APPLICATIONFOLDER]AcmeFoobar.exe&quot; &quot;%1&quot;" Type="string" />
+
+    <RegistryValue Root="HKLM" Key="SOFTWARE\RegisteredApplications" Name="Acme Foobar" Value="SOFTWARE\AcmeFoobar\Capabilities" Type="string" />
+
+    <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\.xyz" Name="Content Type" Value="application/xyz" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\.xyz\AcmeFoobar.Document\ShellNew" Value="" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\.xyz\OpenWithList\AcmeFoobar.exe" Value="" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\.xyz\OpenWithProgids" Name="AcmeFoobar.Document" Value="" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\Applications\AcmeFoobar.exe\SupportedTypes" Name=".xyz" Value="" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\Applications\AcmeFoobar.exe\shell\open" Name="FriendlyAppName" Value="ACME Foobar" Type="string" />
+
+    <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\AcmeFoobar.exe" Value="[!AcmeFoobar.exe]" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\AcmeFoobar.exe" Name="Path" Value="[APPLICATIONFOLDER]" Type="string" />
+
+    <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\SystemFileAssociations\.xyz\shell\edit.AcmeFoobar.exe" Value="Edit with ACME Foobar" Type="string" />
+    <RegistryValue Root="HKLM" Key="SOFTWARE\Classes\SystemFileAssociations\.xyz\shell\edit.AcmeFoobar.exe\command" Value="&quot;[APPLICATIONFOLDER]AcmeFoobar.exe&quot; &quot;%1&quot;" Type="string" />
+
+</Component>
+
+
+
+<Component ....>
+    <ProgId Id="AcmeFoobar.Document" Description="ACME XYZ Document">
+        <Extension Id="pdf" ContentType="application/xyz">
+            <Verb Id="open" Command="Open" TargetFile="[APPLICATIONFOLDER]AcmeFoobar.exe" Argument="%1" />
+        </Extension>
+    </ProgId>
+
+    <Condition><![CDATA[DEFAULTVIEWER=1]]></Condition>
+</Component>
+

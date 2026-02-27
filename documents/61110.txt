@@ -1,0 +1,57 @@
+How to save the output of a console application
+c# .net console stdout
+I need advice on how to have my C# console application display text to the user through the standard output while still being able access it later on. The actual feature I would like to implement is to dump the entire output buffer to a text file at the end of program execution.
+The workaround I use while I don't find a cleaner approach is to subclass TextWriter overriding the writing methods so they would both write to a file and call the original stdout writer. Something like this:
+public class DirtyWorkaround {
+  private class DirtyWriter : TextWriter {
+    private TextWriter stdoutWriter;
+    private StreamWriter fileWriter;
+
+    public DirtyWriter(string path, TextWriter stdoutWriter) {
+      this.stdoutWriter = stdoutWriter;
+      this.fileWriter = new StreamWriter(path);
+    }
+
+    override public void Write(string s) {
+      stdoutWriter.Write(s);
+
+      fileWriter.Write(s);
+      fileWriter.Flush();
+    }
+
+    // Same as above for WriteLine() and WriteLine(string),
+    // plus whatever methods I need to override to inherit
+    // from TextWriter (Encoding.Get I guess).
+  }
+
+  public static void Main(string[] args) {
+    using (DirtyWriter dw = new DirtyWriter("path", Console.Out)) {
+      Console.SetOut(dw);
+
+      // Teh codez
+    }
+  }
+}
+
+See that it writes to and flushes the file all the time. I'd love to do it only at the end of the execution, but I couldn't find any way to access to the output buffer.
+Also, excuse inaccuracies with the above code (had to write it ad hoc, sorry ;).
+
+
+I don't think there's anything wrong with your approach.
+If you wanted reusable code, consider implementing a class called MultiWriter or somesuch that takes as input two (or N?) TextWriter streams and distributes all writs, flushes, etc. to those streams.  Then you can do this file/console thing, but just as easily you can split any output stream.  Useful!
+
+Probably not what you want, but just in case... Apparently, PowerShell implements a version of the venerable tee command. Which is pretty much intended for exactly this purpose. So... smoke 'em if you got 'em.
+
+The perfect solution for this is to use log4net with a console appender and a file appender.  There are many other appenders available as well.  It also allows you to turn the different appenders off and on at runtime. 
+
+I would say mimic the diagnostics that .NET itself uses (Trace and Debug).
+Create a "output" class that can have different classes that adhere to a text output interface. You report to the output class, it automatically sends the output given to the classes you have added (ConsoleOutput, TextFileOutput, WhateverOutput).. And so on.. This also leaves you open to add other "output" types (such as xml/xslt to get a nicely formatted report?).
+Check out the Trace Listeners Collection to see what I mean.
+
+Consider refactoring your application to separate the user-interaction portions from the business logic.  In my experience, such a separation is quite beneficial to the structure of your program.
+For the particular problem you're trying to solve here, it becomes straightforward for the user-interaction part to change its behavior from Console.WriteLine to file I/O.
+
+I'm working on implementing a similar feature to capture output sent to the Console and save it to a log while still passing the output in real time to the normal Console so it doesn't break the application (eg. if it's a console application!).
+If you're still trying to do this in your own code by saving the console output (as opposed to using a logging system to save just the information you really care about), I think you can avoid the flush after each write, as long as you also override Flush() and make sure it flushes the original stdoutWriter you saved as well as your fileWriter.  You want to do this in case the application is trying to flush a partial line to the console for immediate display (such as an input prompt, a progress indicator, etc), to override the normal line-buffering.
+If that approach has problems with your console output being buffered too long, you might need to make sure that WriteLine() flushes stdoutWriter (but probably doesn't need to flush fileWriter except when your Flush() override is called).  But I would think that the original Console.Out (actually going to the console) would automatically flush its buffer upon a newline, so you shouldn't have to force it.
+You might also want to override Close() to (flush and) close your fileWriter (and probably stdoutWriter as well), but I'm not sure if that's really needed or if a Close() in the base TextWriter would issue a Flush() (which you would already override) and you might rely on application exit to close your file.  You should probably test that it gets flushed on exit, to be sure.  And be aware that an abnormal exit (crash) likely won't flush buffered output.  If that's an issue, flushing fileWriter on newline may be desirable, but that's another tricky can of worms to work out.

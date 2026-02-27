@@ -1,0 +1,245 @@
+MS Access: How to bypass/suppress an error?
+ms-access vba error-handling
+I'm executing a query like this
+select field from table;
+
+In that query, there is a loop running on many tables. So, if the field is not present in a table I get a 
+
+Runtime Error 3061
+
+How can I by pass this error such as that on this error flow should go to another point?
+This is the code I have recently after going through this forum.
+Option Explicit
+
+Private Sub UpdateNulls()
+ Dim rs2 As DAO.Recordset
+  Dim tdf As DAO.TableDef
+  Dim db As Database
+  Dim varii As Variant, strField As String
+  Dim strsql As String, strsql2 As String, strsql3 As String
+  Dim astrFields As Variant
+  Dim intIx As Integer
+  Dim field As Variant
+  Dim astrvalidcodes As Variant
+  Dim found As Boolean
+  Dim v As Variant
+
+
+  Open "C:\Documents and Settings\Desktop\testfile.txt" For Input As #1
+  varii = ""
+  Do While Not EOF(1)
+    Line Input #1, strField
+    varii = varii & "," & strField
+  Loop
+  Close #1
+  astrFields = Split(varii, ",")  'Element 0 empty
+
+
+
+
+        For intIx = 1 To UBound(astrFields)
+
+
+        'Function ListFieldDescriptions()
+                            Dim cn As New ADODB.Connection, cn2 As New ADODB.Connection
+                            Dim rs As ADODB.Recordset, rs3 As ADODB.Recordset
+                            Dim connString As String
+                            Dim SelectFieldName
+
+                            Set cn = CurrentProject.Connection
+
+                            SelectFieldName = astrFields(intIx)
+
+                            Set rs = cn.OpenSchema(adSchemaColumns, Array(Empty, Empty, Empty, SelectFieldName))
+
+                           'Show the tables that have been selected '
+                            While Not rs.EOF
+
+                           'Exclude MS system tables '
+                            If Left(rs!Table_Name, 4) <> "MSys" Then
+                            strsql = "Select t.* From [" & rs!Table_Name & "] t Inner Join 01UMWELT On t.fall = [01UMWELT].fall Where [01UMWELT].Status = 4"
+                            End If
+
+                            Set rs3 = CurrentDb.OpenRecordset(strsql)
+
+            'End Function
+
+            strsql2 = "SELECT label.validcode FROM variablen s INNER JOIN label ON s.id=label.variablenid WHERE varname='" & astrFields(intIx) & "'"
+
+            Set db = OpenDatabase("C:\Documents and Settings\Desktop\Codebook.mdb")
+            Set rs2 = db.OpenRecordset(strsql2)
+
+                With rs2
+                .MoveLast
+                .MoveFirst
+                 astrvalidcodes = rs2.GetRows(.RecordCount)
+                .Close '
+                End With
+
+
+                    With rs3
+                    .MoveFirst
+                    While Not rs3.EOF
+                        found = False
+                        For Each v In astrvalidcodes
+                        If v = .Fields(0) Then
+                        found = True
+                        Debug.Print .Fields(0)
+                        Debug.Print .Fields(1)
+
+
+              Exit For
+                    End If
+                    Next
+                If Not found Then
+                msgbox "xxxxxxxxxxxxxxxx"
+
+                End If
+                End If
+                .MoveNext
+
+
+                Wend
+                End With
+
+           On Error GoTo 0        'End of special handling
+
+    Wend
+
+
+
+Next intIx
+
+
+  End Sub
+
+I'm getting a
+
+Type Mismatch Runtime Error 
+
+in Set rs3 = CurrentDb.OpenRecordset(strsql)
+I guess I'm mixing up ado and dao but I'm not certainly sure where it is.
+
+
+Try this: 
+On Error Resume Next   ' If an error occurs, move to next statement.
+...statement that tries the select...
+If (Err <> 0) Then
+...act on error, or simply ignore if necessary...
+
+End If
+On Error Goto 0    ' Reset error handling to previous state.
+
+Use the On Error statement that VBA supplies:
+Sub TableTest
+  On Error Goto TableTest_Error
+
+  ' ...code that can fail... '
+
+  Exit Sub
+
+:TableTest_Error
+  If Err.Number = 3061 Then
+    Err.Clear()
+    DoSomething()
+  Else
+    MsgBox Err.Description ' or whatever you find appropriate '
+  End If
+End Sub
+
+Alternatively, you can switch off automatic error handling (e.g. breaking execution and displaying an error message) on a line-by-line basis:
+Sub TableTest
+  ' ... fail-safe code ... '
+
+  On Error Resume Next
+  ' ...code that can fail... '
+  If Err.Number = 3061 Then
+    Err.Clear()
+    DoSomething()
+  Else
+    MsgBox Err.Description
+  End If
+  On Error Goto 0
+
+  ' ...mode fail-safe code... '
+End Sub
+
+There are these statements available:
+
+On Error Resume Next switches off VBA-integrated error handling (message box etc.) completely, execution simply resumes on the next line. Be sure to check for an error very early after you've used that, as a dangling error can disrupt the normal execution flow. Clear the error as soon as you caught it to prevent that. 
+On Error Goto <Jump Label> resumes execution at a given label, primarily used for per-function error handlers that catch all sorts of errors.
+On Error Goto <Line Number> resumes at a given line number. Stay away from that, it's not useful, even dangerous.
+On Error Goto 0 it's close cousin. Reinstates the VBA integrated error management (message box etc.)
+
+
+EDIT
+From the edited qestion, this is my proposal to solve your problem.
+For Each FieldName In FieldNames ' assuming you have some looping construct here '
+
+  strsql3 = "SELECT " & FieldName & " FROM table"
+
+  On Error Resume Next
+  Set rs3 = CurrentDb.OpenRecordset(strsql3)
+
+  If Err.Number = 3061 Then
+    ' Do nothing. We dont care about this error '
+    Err.Clear
+  Else
+    MsgBox "Uncaught error number " & Err.Number & " (" & Err.Description & ")"
+    Err.Clear
+  End If
+
+  On Error GoTo 0
+
+Next FieldName
+
+Be sure to clear the error in any case before you go on with a loop in the same Sub or Function. As I said, a dangling error causes code flow to become unexpected!
+
+Rather than trapping the error, why not use the TableDefs to check for the field or use a mixture of ADO and DAO? ADO Schemas can provide a list of tables that contain the required field:
+Function ListTablesContainingField()
+Dim cn As New ADODB.Connection, cn2 As New ADODB.Connection
+Dim rs As ADODB.Recordset, rs2 As ADODB.Recordset
+Dim connString As String
+Dim SelectFieldName
+
+    Set cn = CurrentProject.Connection
+
+    SelectFieldName = "Fall" 'For tksy '
+
+    'Get names of all tables that have a column called 'ID' '
+    Set rs = cn.OpenSchema(adSchemaColumns, _
+    Array(Empty, Empty, Empty, SelectFieldName))
+
+    'Show the tables that have been selected '
+    While Not rs.EOF
+
+        'Exclude MS system tables '
+        If Left(rs!Table_Name, 4) <> "MSys" Then
+            ' Edit for tksy, who is using more than one forum '
+            If tdf.Name = "01UMWELT" Then
+                strSQL = "Select * From 01UMWELT Where Status = 5"
+            Else
+                strSQL = "Select a.* From [" & rs!Table_Name _
+                & "] a Inner Join 01UMWELT On a.fall = 01UMWELT.fall " _
+                & "Where 01UMWELT.Status = 5"
+            End If
+            Set rs2 = CurrentDb.OpenRecordset(strSQL)
+
+            Do While Not rs2.EOF
+                For i = 0 To rs2.Fields.Count - 1
+                    If IsNull(rs2.Fields(i)) Then
+                        rs2.Edit
+                        rs2.Fields(i) = 111111
+                        rs2.Update
+                    End If
+                Next
+                rs2.MoveNext
+             Loop
+        End If
+        rs.MoveNext
+    Wend
+    rs.Close
+    Set cn = Nothing
+
+End Function
+

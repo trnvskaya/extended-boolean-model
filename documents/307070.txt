@@ -1,0 +1,63 @@
+How do you spawn a child process in Ruby?
+ruby
+I want to offload a block of code in my main process to child process to make it run concurrently. I also want to have the PID of the spawned child process so I can monitor and kill it if necessary.
+
+
+You can use the fork kernel method. Here is an example:
+#!/usr/bin/env ruby
+puts "This is the master process."
+
+child_pid = fork do
+  puts "This is the child process"
+  exit
+end
+
+puts "The PID of the child process is #{child_pid}"
+
+The fork method returns the PID of the process it forks and executes any code in the block passed. Like regular Ruby blocks it keeps the bindings of the parent process.
+It is a good idea to make your forked process exit.
+
+In addition to Chris' great answer, remember to call Process.wait from your master in order to reap your child process, else you'll leave zombies behind.
+Example as requested in comments:
+pid = Process.fork do
+  puts "child, pid #{Process.pid} sleeping..."
+  sleep 5
+  puts "child exiting"
+end
+
+puts "parent, pid #{Process.pid}, waiting on child pid #{pid}"
+Process.wait
+puts "parent exiting"
+
+
+If you are happy to use Threads, rather than Processes, then something like this may be a bit more scaleable to more-than-one fork:
+def doit(x)
+    sleep(rand(10))
+    puts "Done... #{x}"
+end
+
+thingstodo = ["a","b","c","d","e","f","g"]
+tasklist = []
+
+# Set the threads going
+
+thingstodo.each { |thing|
+    task = Thread.new(thing) { |this| doit(this) } 
+    tasklist << task
+} 
+
+# Wait for the threads to finish
+
+tasklist.each { |task|
+    task.join
+}
+
+Please see John Topley's excellent comments and reference, below, regarding the Ruby execution model and its restrictions. 
+
+Just edited to correct a glaring error (no assignment to task), and to follow @(Jason King)'s advice.
+
+In 1.9 you can use Process.spawn command.
+See also http://en.wikibooks.org/wiki/Ruby_Programming/Running_Multiple_Processes
+
+A good alternative to fork/exec/spawn is the posix-spawn gem for Ruby 1.9: https://github.com/rtomayko/posix-spawn
+They did most of the hard work to make it easier, efficient, and flexible compared to the lower level methods.  

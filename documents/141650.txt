@@ -1,0 +1,107 @@
+How do you make a generic memoize function in Haskell?
+haskell monads memoization
+I've seen the other post about this, but is there a clean way of doing this in Haskell?
+As a 2nd part, can it also be done without making the function monadic?
+
+
+If your arguments are going to be natural numbers, you can do simply:
+memo f = let values = map f [0..]
+     in \n -> values !! n
+
+However, that doesn't really help you with the stack overflowing, and it doesn't work with recursive calls. You can see some fancier solutions at http://www.haskell.org/haskellwiki/Memoization.
+
+Doing a direct translation from the more imperative languages, I came up with this.
+memoize :: Ord a => (a -> IO b) -> IO (a -> IO b)
+memoize f =
+  do r <- newIORef Map.empty
+     return $ \x -> do m <- readIORef r
+                       case Map.lookup x m of
+                            Just y  -> return y
+                            Nothing -> do y <- f x
+                                          writeIORef r (Map.insert x y m)
+                                          return y
+
+But this is somehow unsatisfactory.  Also, Data.Map constrains the parameter to be an instance of Ord.
+
+This largely follows http://www.haskell.org/haskellwiki/Memoization.
+You want a function of type (a -> b).  If it doesn't call itself, then
+you can just write a simple wrapper that caches the return values.  The 
+best way to store this mapping depends on what properties of a you can
+exploit.  Ordering is pretty much a minimum.  With integers 
+you can construct an infinite lazy list or tree holding the values.
+type Cacher a b = (a -> b) -> a -> b
+
+positive_list_cacher :: Cacher Int b
+positive_list_cacher f n = (map f [0..]) !! n
+
+or
+integer_list_cacher :: Cacher Int b
+integer_list_cacher f n = (map f (interleave [0..] [-1, -2, ..]) !!
+    index n where
+        index n | n < 0  = 2*abs(n) - 1
+        index n | n >= 0 = 2 * n
+
+So, suppose it is recursive.  Then you need it to call not itself, but
+the memoized version, so you pass that in instead:
+f_with_memo :: (a -> b) -> a -> b
+f_with_memo memoed base = base_answer
+f_with_memo memoed arg  = calc (memoed (simpler arg))
+
+The memoized version is, of course, what we're trying to define.
+But we can start by creating a function that caches its inputs:
+We could construct one level by passing in a function that creates a 
+structure that caches values.  Except we need to create the version of f
+that already has the cached function passed in.
+Thanks to laziness, this is no problem:
+memoize cacher f = cached where
+         cached = cacher (f cached)
+
+then all we need is to use it: 
+exposed_f = memoize cacher_for_f f
+
+The article gives hints as to how to use a type class selecting on the 
+input to the function to do the above, rather than choosing an explicit 
+caching function.  This can be really nice -- rather than explicitly 
+constructing a cache for each combination of input types, we can implicitly
+combine caches for types a and b into a cache for a function taking a and b.
+One final caveat: using this lazy technique means the cache never shrinks,
+it only grows.  If you instead use the IO monad, you can manage this, but
+doing it wisely depends on usage patterns.
+
+The package data-memocombinators on hackage provides lots of reusable memoization routines.  The basic idea is:
+type Memo a = forall r. (a -> r) -> (a -> r)
+
+I.e. it can memoize any function from a.  The module then provides some primitives (like unit :: Memo () and integral :: Memo Int), and combinators for building more complex memo tables (like pair :: Memo a -> Memo b -> Memo (a,b) and list :: Memo a -> Memo [a]).
+
+You can modify JonathanÂ´s solution with unsafePerformIO to create a "pure" memoizing version of your function.
+import qualified Data.Map as Map
+import Data.IORef
+import System.IO.Unsafe
+
+memoize :: Ord a => (a -> b) -> (a -> b)
+memoize f = unsafePerformIO $ do 
+    r <- newIORef Map.empty
+    return $ \ x -> unsafePerformIO $ do 
+        m <- readIORef r
+        case Map.lookup x m of
+            Just y  -> return y
+            Nothing -> do 
+                    let y = f x
+                    writeIORef r (Map.insert x y m)
+                    return y
+
+This will work with recursive functions:
+fib :: Int -> Integer
+fib 0 = 1
+fib 1 = 1
+fib n = fib_memo (n-1) + fib_memo (n-2)
+
+fib_memo :: Int -> Integer
+fib_memo = memoize fib
+
+Altough this example is a function with one integer parameter, the type of memoize tells us that it can be used with any function that takes a comparable type. If you have a function with more than one parameter just group them in a tuple before applying memoize. F.i.:
+f :: String -> [Int] -> Float
+f ...
+
+f_memo = curry (memoize (uncurry f))
+

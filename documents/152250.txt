@@ -1,0 +1,77 @@
+Get class property name
+.net reflection
+I have my winform application gathering data using databinding. Everything looks fine except that I have to link the property with the textedit using a string:
+
+Me.TextEdit4.DataBindings.Add(New System.Windows.Forms.Binding("EditValue", Me.MyClassBindingSource, "MyClassProperty", True))
+
+This works fine but if I change the class' property name, the compiler obviously will not warn me . 
+I would like to be able to get the property name by reflection but I don't know how to  specify the name of the property I want (I only know how to iterate among all the properties of the class) 
+Any idea?
+
+
+Ironically reflection expects that you provide property name to get it's info :) 
+You can create custom attribute, apply it to desired property. Then you will be able to simply get name of the property having this attribute.
+
+You'll have the same problem using reflection because in order to find the right property in all the type's properties, you'll have to know its name, right?
+
+You can reflect a Type, but you can't reflect its members except by name.
+If that were the only property, or you knew for certain the ordering you could find it by index, but generally speaking a string is the safest way to go.
+I believe changing the name will cause a run-time exception, but am not 100% certain, in either case that is probably the best possibility.
+Assuming no exception occurs automatically, you could add a Debug.Assert that checks to see if the property by that name exists, but again that is run time only.
+
+1) Specify the exact property name that you want and keep it that way
+2) Write a test involving that property name.
+
+Here is an example of what I'm talking about:
+[AttributeUsage(AttributeTargets.Property)]
+class TextProperyAttribute: Attribute
+{}
+
+class MyTextBox
+{
+    [TextPropery]
+    public string Text { get; set;}
+    public int Foo { get; set;}
+    public double Bar { get; set;}
+}
+
+
+static string GetTextProperty(Type type)
+{
+    foreach (PropertyInfo info in type.GetProperties())
+    {
+        if (info.GetCustomAttributes(typeof(TextProperyAttribute), true).Length > 0)
+        {
+            return info.Name;
+        }
+    }
+
+    return null;
+}
+
+...
+
+Type type = typeof (MyTextBox);
+
+string name = GetTextProperty(type);
+
+Console.WriteLine(name); // Prints "Text"
+
+
+If you are using C# 3.0, there is a way to get the name of the property dynamically, without hard coded it.
+private string GetPropertyName<TValue>(Expression<Func<BindingSourceType, TValue>> propertySelector)
+{
+    var memberExpression = propertySelector.Body as MemberExpression;
+    return memberExpression != null 
+           ? memberExpression.Member.Name 
+           : string.empty;
+}
+
+Where BindingSourceType is the class name of your datasource object instance.
+Then, you could use a lambda expression to select the property you want to bind, in a strongly typed manner :
+this.textBox.DataBindings.Add(GetPropertyName(o => o.MyClassProperty),
+                              this.myDataSourceObject,
+                              "Text");
+
+It will allow you to refactor your code safely, without braking all your databinding stuff. But using expression trees is the same as using reflection, in terms of performance.
+The previous code is quite ugly and unchecked, but you get the idea.

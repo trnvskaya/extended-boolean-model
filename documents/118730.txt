@@ -1,0 +1,116 @@
+GCC inline assembler, mixing register sizes (x86)
+gcc assembly x86 gas
+Does anyone know how I can get rid of the following assembler warning?
+Code is x86, 32 bit:
+int test (int x)
+{
+  int y;
+  // do a bit-rotate by 8 on the lower word. leave upper word intact.
+  asm ("rorw $8, %0\n\t": "=q"(y) :"0"(x));
+  return y;
+}
+
+If I compile it I get the following (very valid) warning:
+Warning: using `%ax' instead of `%eax' due to `w' suffix
+
+What I'm looking for is a way to tell the compiler/assembler that I want to access the lower 16 bit sub-register of %0. Accessing the byte sub-registers (in this case AL and AH) would be nice to know as well. 
+I've already chosen the "q" modifier, so the compiler is forced to use EAX, EBX, ECX or EDX. I've made sure the compiler has to pick a register that has sub-registers.
+I know that I can force the asm-code to use a specific register (and its sub-registers), but I want to leave the register-allocation job up to the compiler.
+
+
+You can use %w0 if I remember right. I just tested it, too. :-)
+int
+test(int x)
+{
+    int y;
+    asm ("rorw $8, %w0" : "=q" (y) : "0" (x));
+    return y;
+}
+
+Edit: In response to the OP, yes, you can do the following too:
+int
+test(int x)
+{
+    int y;
+    asm ("xchg %b0, %h0" : "=Q" (y) : "0" (x));
+    return y;
+}
+
+At present, the only place (that I know of) it's documented in is gcc/config/i386/i386.md, not in any of the standard documentation.
+
+So apparently there are tricks to do this... but it may not be so efficient.  32-bit x86 processors are generally slow at manipulating 16-bit data in general purpose registers.  You ought to benchmark it if performance is important.
+Unless this is (a) performance critical and (b) proves to be much faster, I would save myself some maintenance hassle and just do it in C:
+uint32_t y, hi=(x&~0xffff), lo=(x&0xffff);
+y = hi + (((lo >> 8) + (lo << 8))&0xffff);
+
+With GCC 4.2 and -O2 this gets optimized down to six instructions...
+
+Gotcha.  Well if it's a primitive routine that you're going to be reusing over and over, I have no argument with it... the register naming trick that Chris pointed out is a nice one that I'm going to have to remember.
+It would be nice if it made it into the standard GCC docs too!
+
+While I'm thinking about it ... you should replace the "q" constraint with a capital "Q" constraint in Chris's second solution:
+int
+test(int x)
+{
+    int y;
+    asm ("xchg %b0, %h0" : "=Q" (y) : "0" (x));
+    return y;
+}
+
+"q" and "Q" are slightly different in 64-bit mode, where you can get the lowest byte for all of the integer registers (ax, bx, cx, dx, si, di, sp, bp, r8-r15).  But you can only get the second-lowest byte (e.g. ah) for the four original 386 registers (ax, bx, cx, dx).
+
+Long ago, but I'll likely need this for my own future reference...
+Adding on to Chris's fine answer says, the key is using a modifier between the '%' and the number of the output operand.  For example, "MOV %1, %0" might become "MOV %q1, %w0". 
+I couldn't find anything in constraints.md, but /gcc/config/i386/i386.c had this potentially useful comment in the source for print_reg():
+/* Print the name of register X to FILE based on its machine mode and number.
+   If CODE is 'w', pretend the mode is HImode.
+   If CODE is 'b', pretend the mode is QImode.
+   If CODE is 'k', pretend the mode is SImode.
+   If CODE is 'q', pretend the mode is DImode.
+   If CODE is 'x', pretend the mode is V4SFmode.
+   If CODE is 't', pretend the mode is V8SFmode.
+   If CODE is 'h', pretend the reg is the 'high' byte register.
+   If CODE is 'y', print "st(0)" instead of "st", if the reg is stack op.
+   If CODE is 'd', duplicate the operand for AVX instruction.
+ */
+
+A comment below for ix86_print_operand() offer an example: 
+
+b -- print the QImode name of the register for the indicated operand. 
+%b0 would print %al if operands[0] is reg 0.
+
+A few more useful options are listed under Output Template of the GCC Internals documentation:
+
+â%cdigitâ can be used to substitute an operand that is a constant
+  value without the syntax that normally indicates an immediate operand.
+â%ndigitâ is like â%cdigitâ except that the value of the constant is
+  negated before printing.
+â%adigitâ can be used to substitute an operand as if it were a memory
+  reference, with the actual operand treated as the address. This may be
+  useful when outputting a âload addressâ instruction, because often the
+  assembler syntax for such an instruction requires you to write the
+  operand as if it were a memory reference.
+â%ldigitâ is used to substitute a label_ref into a jump instruction.
+â%=â outputs a number which is unique to each instruction in the
+  entire compilation. This is useful for making local labels to be
+  referred to more than once in a single template that generates
+  multiple assembler instructions.
+
+The '%c2' construct allows one to properly format an LEA instruction using an offset: 
+#define ASM_LEA_ADD_BYTES(ptr, bytes)                            \
+    __asm volatile("lea %c1(%0), %0" :                           \
+                   /* reads/writes %0 */  "+r" (ptr) :           \
+                   /* reads */ "i" (bytes));
+
+Note the crucial but sparsely documented 'c' in '%c1'.  This macro is equivalent to 
+ptr = (char *)ptr + bytes
+
+but without making use of the usual integer arithmetic execution ports. 
+Edit to add:
+Making direct calls in x64 can be difficult, as it requires yet another undocumented modifier: '%P0' (which seems to be for PIC)
+#define ASM_CALL_FUNC(func)                                         \
+    __asm volatile("call %P0") :                                    \
+              /* no writes */ :                                     \
+              /* reads %0 */ "i" (func))                           
+
+A lower case 'p' modifier also seems to function the same in GCC, although only the capital 'P' is recognized by ICC.  More details are probably available at /gcc/config/i386/i386.c.  Search for "'p'".

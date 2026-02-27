@@ -1,0 +1,76 @@
+Encrypted database query
+sql database encryption theory
+I've just found out about Stack Overflow and I'm just checking if there are ideas for a constraint I'm having with some friends in a project, though this is more of a theoretical question to which I've been trying to find an answer for some time.
+I'm not much given into cryptography but if I'm not clear enough I'll try to edit/comment to clarify any questions.
+Trying to be brief, the environment is something like this:
+
+An application where the front-end as access to encrypt/decrypt keys and the back-end is just used for storage and queries.
+Having a database to which you can't have access for a couple of fields for example let's say "address" which is text/varchar as usual.
+You don't have access to the key for decrypting the information, and all information arrives to the database already encrypted.
+
+The main problem is something like this, how to consistently make queries on the database, it's impossible to do stuff like "where address like '%FÂ§YU/Â´~#JKSks23%'". (IF there is anyone  feeling with an answer for this feel free to shoot it).
+But is it ok to do where address='Â±!NNsj3~^Âº-:'? Or would it also completely eat up the database? 
+Another restrain that might apply is that the front end doesn't have much processing power available, so already encrypting/decrypting information starts to push it to its limits. (Saying this just to avoid replies like "Exporting a join of tables to the front end and query it there".)
+Could someone point me in a direction to keep thinking about it?
+
+Well thanks for so fast replies at 4 AM, for a first time usage I'm really feeling impressed with this community. (Or maybe I'm it's just for the different time zone)
+Just feeding some information:
+The main problem is all around partial matching. As a mandatory requirement in most databases is to allow partial matches. The main constraint is actually the database owner would not be allowed to look inside the database for information. During the last 10 minutes I've come up with a possible solution which extends again to possible database problems, to which I'll add here:
+Possible solution to allow semi partial matching:
+
+The password + a couple of public fields of the user are actually the key for encrypting. For authentication the idea is to encrypt a static value and compare it within the database.
+Creating a new set of tables where information is stored in a parsed way, meaning something like: "4th Street" would become 2 encrypted rows (one for '4th' another for 'Street'). This would already allow semi-partial matching as a search could already be performed on the separate tables.
+
+New question:
+
+Would this probably eat up the database server again, or does anyone think it is a viable solution for the partial matching problem?
+
+Post Scriptum: I've unaccepted the answer from Cade Roux just to allow for further discussion and specially a possible answer to the new question.
+
+
+You can do it the way you describe - effectively querying the hash, say, but there's not many systems with that requirement, because at that point the security requirements are interfering with other requirements for the system to be usable - i.e. no partial matches, since the encryption rules that out.  It's the same problem with compression.  Years ago, in a very small environment, I had to compress the data before putting it in the data format.  Of course, those fields could not easily be searched.
+In a more typical application, ultimately, the keys are going to be available to someone in the chain - probably the web server.
+For end user traffic SSL protects that pipe.  Some network switches can protect it between web server and database, and storing encrypted data in the database is fine, but you're not going to query on encrypted data like that.
+And once the data is displayed, it's out there on the machine, so any general purpose computing device can be circumvented at that point, and you have perimeter defenses outside of your application which really come into play.
+
+You want do use md5 hashing. Basically, it takes your string and turns it into a hash that cannot be reproduced. You can then use it to validate against things later. For example:
+$salt = "123-=asd";
+$address = "3412 g ave";
+
+$sql = "INSERT INTO addresses (address) VALUES ('" . md5($salt . $address) . "')";
+mysql_query($sql);
+
+Then, to validate an address in the future:
+$salt = "123-=asd";
+$address = "3412 g ave";
+
+$sql = "SELECT address FROM addresses WHERE address = '" . md5($salt . $address) . "'";
+$res = mysql_query($sql);
+if (mysql_fetch_row($res))
+    // exists
+else
+    // does not
+
+Now it is encrypted on the database side so nobody can find it out - even if they looked in your source code. However, finding the salt will help them decrypt it though.
+http://en.wikipedia.org/wiki/MD5
+
+If you need to store sensitive data that you want to query later I'd recommend to store it in plain text, restricting access to that tables as much as you can.
+If you can't do that, and you don't want overhead in the front end you can make a component in the back end, running in a server, that processes the encrypted data.
+Making querys to encrypted data? If you're using a good encryption algorithm I can't imagine how to do that.
+
+why not encrypt the disk holding the database tables, encrypt the database connections, and let the database operate normally?
+[i don't really understand the context/contraints that require this level of paranoia]
+EDIT: "law constraints" eh? I hope you're not involved in anything illegal, I'd hate to be an inadvertent accessory... ;-)
+if the - ahem - legal constraints - force this solution, then that's all there is to be done - no LIKE matches, and slow response if the client machines can't handle it.
+
+A few months ago I came across the same problem: the whole database (except for indexes) is encrypted and the problem on partial matches raised up.
+I searched the Internet looking for a solution, but it seems that there's not much to do about this but a "workaround".
+The solution I've finally adopted is:
+
+Create a temporary table with the data of the field against which the query is being performed, decrypted and another field that is the primary key of the table (obviously, this field doesn't have to be decrypted as is plain-text).
+Perform the partial match agains that temporary table and retrieve the identifiers.
+Query the real table for those identifiers and return the result.
+Drop the temporary table.
+
+I am aware that this supposes a non-trivial overhead, but I haven't found another way to perform this task when it is mandatory that the database is fully encrypted.
+Depending on each particular case, you may be able to filter the number of lines that are inserted into the temporary table without losing data for the result (only consider those rows which belong to the user that is performing the query, etc...).

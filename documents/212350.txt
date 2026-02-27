@@ -1,0 +1,75 @@
+Which annotation should I use: @IdClass or @EmbeddedId
+java jpa annotations java-persistence-api
+The JPA (Java Persistence API) specification has 2 different ways to specify entity composite keys: @IdClass and @EmbeddedId. 
+I'm using both annotations on my mapped entities, but it turns out to be a big mess to people who aren't very familiar with JPA. 
+I want to adopt only one way to specify composite keys. Which one is really the best? Why?
+
+
+I consider that @EmbeddedId is probably more verbose because with @IdClass you cannot access the entire primary key object using any field access operator. Using the @EmbeddedId you can do like this:
+@Embeddable class EmployeeId { name, dataOfBirth }
+@Entity class Employee {
+  @EmbeddedId EmployeeId employeeId;
+  ...
+}
+
+This gives a clear notion of the fields that make the composite key because they are all aggregated in a class that is accessed trough a field access operator.
+Another difference with @IdClass and @EmbeddedId is when it comes to write HQL :
+With @IdClass you write:
+select e.name from Employee e
+and with @EmbeddedId you have to write:
+select e.employeeId.name from Employee e
+You have to write more text for the same query. Some may argue that this differs from a more natural language like the one promoted by IdClass. But most of the times understanding right from the query that a given field is part of the composite key is of invaluable help.
+
+I discovered an instance where I had to use EmbeddedId instead of IdClass. In this scenario there is a join table that has additional columns defined. I attempted to solve this problem using IdClass to represent the key of an entity that explicitly represents rows in the join table. I couldn't get it working this way. Thankfully "Java Persistence With Hibernate" has a section dedicated to this topic. One proposed solution was very similar to mine but it used EmbeddedId instead. I modeled my objects after those in the book it now behaves correctly.
+
+I think the main advantage is that we could use @GeneratedValue for the id when using the @IdClass? I'm sure we can't use @GeneratedValue for @EmbeddedId.
+
+As far as i know if your composite PK contains FK it's easier and more straightforward to use @IdClass
+With @EmbeddedId you have to define mapping for your FK column twice, onece in @Embeddedable and once for as i.e. @ManyToOne where @ManyToOne has to be read-only(@PrimaryKeyJoinColumn) because you can't have one column set in two variables (possible conflicts).
+So you have to set your FK using simple type in @Embeddedable.
+On the other site using @IdClass this situation can be handled much easier as shown in Primary Keys through OneToOne and ManyToOne Relationships:
+Example JPA 2.0 ManyToOne id annotation
+...
+@Entity
+@IdClass(PhonePK.class)
+public class Phone {
+
+    @Id
+    private String type;
+
+    @ManyToOne
+    @Id
+    @JoinColumn(name="OWNER_ID", referencedColumnName="EMP_ID")
+    private Employee owner;
+    ...
+}
+
+Example JPA 2.0 id class
+...
+public class PhonePK {
+    private String type;
+    private long owner;
+
+    public PhonePK() {}
+
+    public PhonePK(String type, long owner) {
+        this.type = type;
+        this.owner = owner;
+    }
+
+    public boolean equals(Object object) {
+        if (object instanceof PhonePK) {
+            PhonePK pk = (PhonePK)object;
+            return type.equals(pk.type) && owner == pk.owner;
+        } else {
+            return false;
+        }
+    }
+
+    public int hashCode() {
+        return type.hashCode() + owner;
+    }
+}
+
+
+Composite Key must not have an @Id property when @EmbeddedId is used. 

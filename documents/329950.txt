@@ -1,0 +1,74 @@
+Rationale behind return 0 as default value in C/C++
+c++ c
+Is there a reason why zero is used as a "default" function return value? I noticed that several functions from the stdlib and almost everywhere else, when not returning a proper number (e.g pow(), strcpy()) or an error (negative numbers), simply return zero.
+I just became curious after seeing several tests performed with negated logic. Very confusing.
+Why not return 1, or 0xff, or any positive number for that matter?
+
+
+Because Bash and most other UNIX shell environments regard 0 as success, and -x as a system error, and x as a user-defined error.
+
+In shell scripting, 0 represents true, where another number typically represents an error code.  Returning 0 from a main application means everything went successfully.  The same logic may be being applied to the library code.
+It could also just be that they return nothing, which is interpreted as 0.  (Essentially the same concept.) 
+
+Because 0 is false and null in C/C++ and you can make handy short cuts when that happens.
+
+There's probably a bunch of forgotten history dating back to the days when everything was written in asm.  In general it is much easier to test for zero than for other specific values.
+
+Originally, C did not have "void".  If a function didn't return anything, you just left the return type in the declaration blank.  But that meant, that it returned an int.
+So, everything returned something, even if it didn't mean anything.  And, if you didn't specifically provide a return value, whatever value happened to be in the register the compiler used to return values became the function's return value.
+// Perfectly good K&R C code.
+NoReturn()
+{
+   // do stuff;
+   return;
+}
+
+int unknownValue = NoReturn();
+
+People took to clearing that to zero to avoid problems.
+
+I may be wrong about this, but I think that it's mainly for historical reasons (hysterical raisins?).  I believe that K&R C (pre-ANSI) didn't have a void type, so the logical way to write a function that didn't return anything interesting was to have it return 0.
+Surely somebody here will correct me if I'm wrong... :)
+
+The rationale is that you want to distinguish the set of all the possible (negative) return values corresponding to different errors from the only situation in which all went OK. The simplest, most concise and most C-ish way to pursue such distinction is a logical test, and since in C all integers are "true" except for zero, you want to return zero to mean "the only situation", i.e. you want zero as the "good" value.
+The same line of reasoning applies to the return values of Unix programs, but indeed in the tests within Unix shell scripts the logic is inverted: a return value of 0 means "true" (for example, look at the return value of /bin/true).
+
+It is because when used from a UNIX shell a command that returns 0 indicates success.
+Any other value indicates a failure.
+As Paul Betts indicates positive and negative values delimitate where the error probably originated, but this is only a convention and not an absolute. A user application may return a negative value without any bad consequence (other than it is indicating to the shell that the application failed).
+
+My understanding is that it was related to the behaviour of system calls.
+Consider the open() system call; if it is successful, it returns a non-negative integer, which is the file descriptor that was created.  However, down at the assembler level (where there's a special, non-C instruction that traps into the kernel), when an error is returned, it is returned as a negative value.  When it detects an error return, the C code wrapper around the system call stores the negated value into errno (so errno has a positive value), and the function returns -1.
+For some other system calls, the negative return code at the assembler level is still negated and placed into errno and -1 is returned.  However, these system calls have no special value to return, so zero was chosen to indicate success.  Clearly, there is a large variety of system calls, but most manage to fit these conventions.  For example, stat() and its relatives return a structure, but a pointer to that structure is passed as an input parameter, and the return value is a 0 or -1 status.  Even signal() manages it; -1 was SIG_DFL and 0 was SIG_IGN, and other values were function pointers.  There are a few system calls with no error return - getpid(), getuid() and so on.
+This zero-indicates-success mechanism was then emulated by other functions which were not actually system calls.
+
+Another (minor) reason has to do with machine-level speed and code size.
+In most processors, any operation that results in a zero automatically sets the zero flag, and there is a very cheap operation to jump against the zero flag.
+In other words, if the last machine operation (e.g., PUSH) got us to zero, all we need is a jump-on-zero or a jump-not-zero.
+On the other hand, if we test things against some other value, then we have to move that value into the register, run a compare operation that essentially subtracts the two numbers, and equality results in our zero. 
+
+Conventionally, a return code of 0 specifies that your program has ended normally and all is well. (You can remember this as "zero errors", although for technical reasons, you cannot use the number of errors your program found as the return code. See Style.) A return code other than 0 indicates that some sort of error has occurred. If your code terminates when it encounters an error, use exit, and specify a non-zero return code. Source
+
+Besides all the fine points made by previous posters, it also cleans up the code considerably when a function returns 0 on success.
+Consider:
+if ( somefunc() ) {
+   // handle error
+}
+
+is much cleaner than:
+if ( !somefunc() ) {
+   // handle error
+}
+
+or:
+if ( somefunc() == somevalue ) {
+   // handle error 
+}
+
+
+This argument falls to pieces since:
+BOOL isTrue = TRUE;
+or
+boolean isTrue = true;
+isTrue = 1
+Everything other than 1 is considered FALSE (including 0).

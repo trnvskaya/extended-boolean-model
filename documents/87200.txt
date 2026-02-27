@@ -1,0 +1,250 @@
+Mocking WebResponse's from a WebRequest
+xml web-services rest webrequest webresponse
+I have finally started messing around with creating some apps that work with RESTful web interfaces, however, I am concerned that I am hammering their servers every time I hit F5 to run a series of tests..
+Basically, I need to get a series of web responses so I can test I am parsing the varying responses correctly, rather than hit their servers every time, I thought I could do this once, save the XML and then work locally.
+However, I don't see how I can "mock" a WebResponse, since (AFAIK) they can only be instantiated by WebRequest.GetResponse
+How do you guys go about mocking this sort of thing? Do you? I just really don't like the fact I am hammering their servers :S I dont want to change the code too much, but I expect there is a elegant way of doing this..
+Update Following Accept
+Will's answer was the slap in the face I needed, I knew I was missing a fundamental point!
+
+Create an Interface that will return a proxy object which represents the XML.
+Implement the interface twice, one that uses WebRequest, the other that returns static "responses".
+The interface implmentation then either instantiates the return type based on the response, or the static XML.
+You can then pass the required class when testing or at production to the service layer.
+
+Once I have the code knocked up, I'll paste some samples.
+
+
+You can't.  Best thing to do is wrap it in a proxy object, and then mock that.  Alternatively, you'd have to use a mock framework that can intercept types that can't be mocked, like TypeMock.  But you're talking about bucks, there.  Better to do a little wrapping.
+
+Apparently you can with a little extra work.  Check the highest voted answer here.
+
+This is not a perfect solution yet it worked for me before and deserves extra care for the simplicity :
+HTTPSimulator
+Also a typemock example documented in typemock forums:
+using System;
+using System.IO;
+using System.Net;
+using NUnit.Framework;
+using TypeMock;
+
+namespace MockHttpWebRequest
+{
+  public class LibraryClass
+  {
+    public string GetGoogleHomePage()
+    {
+      HttpWebRequest request = (HttpWebRequest)WebRequest.Create("http://www.google.com");
+      HttpWebResponse response = (HttpWebResponse)request.GetResponse();
+      using (StreamReader reader = new StreamReader(response.GetResponseStream()))
+      {
+        return reader.ReadToEnd();
+      }
+    }
+  }
+
+  [TestFixture]
+  [VerifyMocks]
+  public class UnitTests
+  {
+    private Stream responseStream = null;
+    private const string ExpectedResponseContent = "Content from mocked response.";
+
+    [SetUp]
+    public void SetUp()
+    {
+      System.Text.UTF8Encoding encoding = new System.Text.UTF8Encoding();
+      byte[] contentAsBytes = encoding.GetBytes(ExpectedResponseContent);
+      this.responseStream = new MemoryStream();
+      this.responseStream.Write(contentAsBytes, 0, contentAsBytes.Length);
+      this.responseStream.Position = 0;
+    }
+
+    [TearDown]
+    public void TearDown()
+    {
+      if (responseStream != null)
+      {
+        responseStream.Dispose();
+        responseStream = null;
+      }
+    }
+
+    [Test(Description = "Mocks a web request using natural mocks.")]
+    public void NaturalMocks()
+    {
+      HttpWebRequest mockRequest = RecorderManager.CreateMockedObject<HttpWebRequest>(Constructor.Mocked);
+      HttpWebResponse mockResponse = RecorderManager.CreateMockedObject<HttpWebResponse>(Constructor.Mocked);
+      using (RecordExpectations recorder = RecorderManager.StartRecording())
+      {
+        WebRequest.Create("http://www.google.com");
+        recorder.CheckArguments();
+        recorder.Return(mockRequest);
+
+        mockRequest.GetResponse();
+        recorder.Return(mockResponse);
+
+        mockResponse.GetResponseStream();
+        recorder.Return(this.responseStream);
+      }
+
+      LibraryClass testObject = new LibraryClass();
+      string result = testObject.GetGoogleHomePage();
+      Assert.AreEqual(ExpectedResponseContent, result);
+    }
+
+    [Test(Description = "Mocks a web request using reflective mocks.")]
+    public void ReflectiveMocks()
+    {
+      Mock<HttpWebRequest> mockRequest = MockManager.Mock<HttpWebRequest>(Constructor.Mocked);
+      MockObject<HttpWebResponse> mockResponse = MockManager.MockObject<HttpWebResponse>(Constructor.Mocked);
+      mockResponse.ExpectAndReturn("GetResponseStream", this.responseStream);
+      mockRequest.ExpectAndReturn("GetResponse", mockResponse.Object);
+
+      LibraryClass testObject = new LibraryClass();
+      string result = testObject.GetGoogleHomePage();
+      Assert.AreEqual(ExpectedResponseContent, result);
+    }
+  }
+}
+
+
+I found this question while looking to do exactly the same thing. Couldn't find an answer anywhere, but after a bit more digging found that the .Net Framework has built in support for this.
+You can register a factory object with WebRequest.RegisterPrefix which WebRequest.Create will call when using that prefix (or url). The factory object must implement IWebRequestCreate which has a single method Create which returns a WebRequest. Here you can return your mock WebRequest.
+I've put some sample code up at
+http://blog.salamandersoft.co.uk/index.php/2009/10/how-to-mock-httpwebrequest-when-unit-testing/
+
+I found the following blog earlier which explains quite a nice approach using Microsoft Moles.
+http://maraboustork.co.uk/index.php/2011/03/mocking-httpwebresponse-with-moles/
+In short the solution suggests the following:
+    [TestMethod]
+    [HostType("Moles")]
+    [Description("Tests that the default scraper returns the correct result")]
+    public void Scrape_KnownUrl_ReturnsExpectedValue()
+    {
+        var mockedWebResponse = new MHttpWebResponse();
+
+        MHttpWebRequest.AllInstances.GetResponse = (x) =>
+        {
+            return mockedWebResponse;
+        };
+
+        mockedWebResponse.StatusCodeGet = () => { return HttpStatusCode.OK; };
+        mockedWebResponse.ResponseUriGet = () => { return new Uri("http://www.google.co.uk/someRedirect.aspx"); };
+        mockedWebResponse.ContentTypeGet = () => { return "testHttpResponse"; }; 
+
+        var mockedResponse = "<html> \r\n" +
+                             "  <head></head> \r\n" +
+                             "  <body> \r\n" +
+                             "     <h1>Hello World</h1> \r\n" +
+                             "  </body> \r\n" +
+                             "</html>";
+
+        var s = new MemoryStream();
+        var sw = new StreamWriter(s);
+
+            sw.Write(mockedResponse);
+            sw.Flush();
+
+            s.Seek(0, SeekOrigin.Begin);
+
+        mockedWebResponse.GetResponseStream = () => s;
+
+        var scraper = new DefaultScraper();
+        var retVal = scraper.Scrape("http://www.google.co.uk");
+
+        Assert.AreEqual(mockedResponse, retVal.Content, "Should have returned the test html response");
+        Assert.AreEqual("http://www.google.co.uk/someRedirect.aspx", retVal.FinalUrl, "The finalUrl does not correctly represent the redirection that took place.");
+    }
+
+
+Here is a solution that doesn't require mocking.  You implement all three components of the WebRequest: IWebRequestCreate WebRequest and WebResponse.  See below.  My example generates failing requests (by throwing WebException), but should be able to adapt it to send "real" responses:
+class WebRequestFailedCreate : IWebRequestCreate {
+    HttpStatusCode status;
+    String statusDescription;
+    public WebRequestFailedCreate(HttpStatusCode hsc, String sd) {
+        status = hsc;
+        statusDescription = sd;
+    }
+    #region IWebRequestCreate Members
+    public WebRequest Create(Uri uri) {
+        return new WebRequestFailed(uri, status, statusDescription);
+    }
+    #endregion
+}
+class WebRequestFailed : WebRequest {
+    HttpStatusCode status;
+    String statusDescription;
+    Uri itemUri;
+    public WebRequestFailed(Uri uri, HttpStatusCode status, String statusDescription) {
+        this.itemUri = uri;
+        this.status = status;
+        this.statusDescription = statusDescription;
+    }
+    WebException GetException() {
+        SerializationInfo si = new SerializationInfo(typeof(HttpWebResponse), new System.Runtime.Serialization.FormatterConverter());
+        StreamingContext sc = new StreamingContext();
+        WebHeaderCollection headers = new WebHeaderCollection();
+        si.AddValue("m_HttpResponseHeaders", headers);
+        si.AddValue("m_Uri", itemUri);
+        si.AddValue("m_Certificate", null);
+        si.AddValue("m_Version", HttpVersion.Version11);
+        si.AddValue("m_StatusCode", status);
+        si.AddValue("m_ContentLength", 0);
+        si.AddValue("m_Verb", "GET");
+        si.AddValue("m_StatusDescription", statusDescription);
+        si.AddValue("m_MediaType", null);
+        WebResponseFailed wr = new WebResponseFailed(si, sc);
+        Exception inner = new Exception(statusDescription);
+        return new WebException("This request failed", inner, WebExceptionStatus.ProtocolError, wr);
+    }
+    public override WebResponse GetResponse() {
+        throw GetException();
+    }
+    public override IAsyncResult BeginGetResponse(AsyncCallback callback, object state) {
+        Task<WebResponse> f = Task<WebResponse>.Factory.StartNew (
+            _ =>
+            {
+                throw GetException();
+            },
+            state
+        );
+        if (callback != null) f.ContinueWith((res) => callback(f));
+        return f;
+    }
+    public override WebResponse EndGetResponse(IAsyncResult asyncResult) {
+        return ((Task<WebResponse>)asyncResult).Result;
+    }
+
+}
+class WebResponseFailed : HttpWebResponse {
+    public WebResponseFailed(SerializationInfo serializationInfo, StreamingContext streamingContext)
+        : base(serializationInfo, streamingContext) {
+    }
+}
+
+You must create a HttpWebResponse subclass, because you cannot otherwise create one.
+The tricky part (in the GetException() method) is feeding in the values you cannot override, e.g. StatusCode and this is where our bestest buddy SerializaionInfo comes in!  This is where you supply the values you cannot override.  Obviously, override the parts (of HttpWebResponse) you are able, to get the rest of the way there.
+How did I obtain the "names" in all those AddValue() calls?  From the exception messages!  It was nice enough to tell me every one in turn, until I made it happy.
+Now, the compiler will complain about "obsolete" but this nevertheless works, including .NET Framework version 4.
+Here is a (passing) test case for reference:
+    [TestMethod, ExpectedException(typeof(WebException))]
+    public void WebRequestFailedThrowsWebException() {
+        string TestURIProtocol = TestContext.TestName;
+        var ResourcesBaseURL = TestURIProtocol + "://resources/";
+        var ContainerBaseURL = ResourcesBaseURL + "container" + "/";
+        WebRequest.RegisterPrefix(TestURIProtocol, new WebRequestFailedCreate(HttpStatusCode.InternalServerError, "This request failed on purpose."));
+        WebRequest wr = WebRequest.Create(ContainerBaseURL);
+        try {
+            WebResponse wrsp = wr.GetResponse();
+            using (wrsp) {
+                Assert.Fail("WebRequest.GetResponse() Should not have succeeded.");
+            }
+        }
+        catch (WebException we) {
+            Assert.IsInstanceOfType(we.Response, typeof(HttpWebResponse));
+            Assert.AreEqual(HttpStatusCode.InternalServerError, (we.Response as HttpWebResponse).StatusCode, "Status Code failed");
+            throw we;
+        }
+    }
+

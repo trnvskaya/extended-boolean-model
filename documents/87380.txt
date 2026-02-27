@@ -1,0 +1,87 @@
+How can I find the location of a regex match in Perl?
+regex perl
+I need to write a function that receives a string and a regex. I need to check if there is a match and return the start and end location of a match. (The regex was already compiled by qr//.)
+The function might also receive a "global" flag and then I need to return the (start,end) pairs of all the matches.
+I cannot change the regex, not even add () around it as the user might use () and \1. Maybe I can use (?:).
+Example: given "ababab" and the regex qr/ab/, in the global case I need to get back 3 pairs of (start, end).
+
+
+The pos function gives you the position of the match. If you put your regex in parentheses you can get the length (and thus the end) using length $1.  Like this
+sub match_positions {
+    my ($regex, $string) = @_;
+    return if not $string =~ /($regex)/;
+    return (pos($string), pos($string) + length $1);
+}
+sub all_match_positions {
+    my ($regex, $string) = @_;
+    my @ret;
+    while ($string =~ /($regex)/g) {
+        push @ret, [pos($string), pos($string) + length $1];
+    }
+    return @ret
+}
+
+
+You can also use the deprecated $` variable, if you're willing to have all the REs in your program execute slower.  From perlvar:
+   $â      The string preceding whatever was matched by the last successful pattern match (not
+           counting any matches hidden within a BLOCK or eval enclosed by the current BLOCK).
+           (Mnemonic: "`" often precedes a quoted string.)  This variable is read-only.
+
+           The use of this variable anywhere in a program imposes a considerable performance penalty
+           on all regular expression matches.  See "BUGS".
+
+
+Forget my previous post, I've got a better idea.
+sub match_positions {
+    my ($regex, $string) = @_;
+    return if not $string =~ /$regex/;
+    return ($-[0], $+[0]);
+}
+sub match_all_positions {
+    my ($regex, $string) = @_;
+    my @ret;
+    while ($string =~ /$regex/g) {
+        push @ret, [ $-[0], $+[0] ];
+    }
+    return @ret
+}
+
+This technique doesn't change the the regex in any way.
+Edited to add: to quote from perlvar on $1..$9. "These variables are all read-only and dynamically scoped to the current BLOCK." In other words, if you want to use $1..$9, you cannot use a subroutine to do the matching.
+
+The built-in variables @- and @+ hold the start and end positions, respectively, of the last successful match. $-[0] and $+[0] correspond to entire pattern, while $-[N] and $+[N] correspond to the $N ($1, $2, etc.) submatches.
+
+#!/usr/bin/perl
+
+# search the postions for the CpGs in human genome
+
+sub match_positions {
+    my ($regex, $string) = @_;
+    return if not $string =~ /($regex)/;
+    return (pos($string), pos($string) + length $1);
+}
+sub all_match_positions {
+    my ($regex, $string) = @_;
+    my @ret;
+    while ($string =~ /($regex)/g) {
+        push @ret, [(pos($string)-length $1),pos($string)-1];
+    }
+    return @ret
+}
+
+my $regex='CG';
+my $string="ACGACGCGCGCG";
+my $cgap=3;    
+my @pos=all_match_positions($regex,$string);
+
+my @hgcg;
+
+foreach my $pos(@pos){
+    push @hgcg,@$pos[1];
+}
+
+foreach my $i(0..($#hgcg-$cgap+1)){
+my $len=$hgcg[$i+$cgap-1]-$hgcg[$i]+2;
+print "$len\n"; 
+}
+

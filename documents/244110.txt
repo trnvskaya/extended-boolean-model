@@ -1,0 +1,97 @@
+Strange error when creating Excel files with Spreadsheet_Excel_Writer
+php export-to-excel pear
+Here's the code.  Not much to it.  
+<?php
+include("Spreadsheet/Excel/Writer.php");
+
+$xls = new Spreadsheet_Excel_Writer();
+
+$sheet = $xls->addWorksheet('At a Glance');
+
+$colNames = array('Foo', 'Bar');
+$sheet->writeRow(0, 0, $colNames, $colHeadingFormat);
+
+for($i=1; $i<=10; $i++)
+{
+    $row = array( "foo $i", "bar $i");
+
+    $sheet->writeRow($rowNumber++, 0, $row);
+}
+
+header ("Expires: " . gmdate("D,d M Y H:i:s") . " GMT");
+header ("Last-Modified: " . gmdate("D,d M Y H:i:s") . " GMT");
+header ("Cache-Control: no-cache, must-revalidate");
+header ("Pragma: no-cache");
+$xls->send("test.xls");
+$xls->close();
+?>
+
+The issue is that I get the following error when I actually open the file with Excel:
+File error:  data may have been lost.
+
+Even stranger is the fact that, despite the error, the file seems fine.  Any data I happen to be writing is there.
+Any ideas on how to get rid of this error?
+
+Edit
+I've modified the code sample to better illustrate the problem.  I don't think the first sample was a legit test.
+
+
+Hmm I just installed it to test and didn't get an error - it said Foo like it should.
+The file generated was 3,584 bytes; I opened it in Excel 2002
+
+The code in the question has a bug which causes the error.
+This line writes a bunch of column names to row 0
+$sheet->writeRow(0, 0, $colNames, $colHeadingFormat);
+
+Then we have the loop which is supposed to write out the value rows.
+for($i=1; $i<=10; $i++)
+{
+    $row = array( "foo $i", "bar $i");
+
+    $sheet->writeRow($rowNumber++, 0, $row);
+}
+
+The problem is that $rowNumber isn't declared anywhere so it overwrites row 0 on the first pass through the loop.
+This overwriting seems to cause an issue with Excel Writer.
+The strange thing is that, on the Excel file that gives the error, you still see the row with the column names even though it's technically been overwritten.
+I found the solution here on Google Groups.  Scroll down to the bottom.  It's the last post by Micah that mentions the issue.
+
+And here's the fix
+<?php
+include("Spreadsheet/Excel/Writer.php");
+
+$xls = new Spreadsheet_Excel_Writer();
+
+$rowNumber = 0;
+$sheet = $xls->addWorksheet('At a Glance');
+
+$colNames = array('Foo', 'Bar');
+$sheet->writeRow($rowNumber, 0, $colNames, $colHeadingFormat);
+
+for($i=1; $i<=10; $i++)
+{
+    $rowNumber++;
+    $row = array( "foo $i", "bar $i");
+
+    $sheet->writeRow($rowNumber, 0, $row);
+}
+
+header ("Expires: " . gmdate("D,d M Y H:i:s") . " GMT");
+header ("Last-Modified: " . gmdate("D,d M Y H:i:s") . " GMT");
+header ("Cache-Control: no-cache, must-revalidate");
+header ("Pragma: no-cache");
+$xls->send("test.xls");
+$xls->close();
+?>
+
+
+As Mark Biek points out the main problem is that $rowNumber is uninitialised and as such overwrites row 0.
+This means that the generated Excel file will contain 2 data entries for cells A1 and B1, (0, 0 and 0, 1).
+This wasn't a problem prior to Office Service Pack 3. However, once SP3 is installed Excel will raise a "data may have been lost" warning if it encounters duplicate entries for a cell.
+The general solution is to not write more than one data to a cell. :-)
+Here is a more detailed explanation of the issue. It is in relation to the Perl Spreadsheet::WriteExcel module (from which the PHP module is derived) but the thrust is the same.
+
+I got this error when writing to column 0 (A0) with PHPExcel. Excel is 1-indexed (A1), that's why it said "data may have been lost".
+$this->m_excel->getActiveSheet()->SetCellValue($chr[$col].$row, $data));
+
+$row was initialized to 0

@@ -1,0 +1,87 @@
+How do I unload a externally loaded SWF file from a SWFLoader component in Adobe Flex?
+flex air adobe swfloader
+I have an application that loads external SWF files and plays them inside a Adobe Flex / Air application via the SWFLoader Flex component. I have been trying to find a way to unload them from a button click event. I have Google'd far and wide and no one seems to have been able to do it without a hack. The combination of code I see people use is:
+swfLoader.source = ""; // Removes the external link to the SWF.
+swfLoader.load(null); // Forces the loader to try to load nothing.
+// Note: At this point sound from the SWF is still playing, and
+// seems to still be playing in memory.
+flash.media.SoundMixer.stopAll();
+// Stops the sound. This works on my development machine, but not 
+// on the client's.
+
+If the SWFs are closed (hidden) this way, eventually the program crashes.
+Any ideas? I have found tons of posts in various forums with people having the same problem. I assume I will get one wrong/incomplete answer here, and than my post will sink into nothingness as usual, but either way, thanks in advance!
+Edit 1:  I can't edit the actual SWF movies, they're created by the client. If I can't close any SWF opened through Flex, isn't that a problem with the Flex architecture? Is my only option sending the SWFs to the web browser?
+
+
+The problem resides in the loaded swf, it simply does not clean up the audio after itself.
+Try attaching an unload event onto movieclips like this:
+MovieClip(event.target.content).loaderInfo.addEventListener(Event.UNLOAD, unloadMovieClipHandler);
+private function unloadMovieClipHandler(event:Event) : void
+{
+  SoundMixer.stopAll();                           
+}
+
+
+Try the following:
+try {
+   new LocalConnection().connect('foo');
+   new LocalConnection().connect('foo');
+} catch (e:*) {}
+
+That will force a Garbage Collection routine. If your SWF is still attached, then you've missed some sort of connection, like the audio. 
+There are a couple ways to force GC, which all kind of suck because they spike CPU, but the good news is that an official way is coming in Flash Player 10:
+unloadAndStop
+
+link: http://www.gskinner.com/blog/archives/2008/07/unloadandstop_i.html
+Until then, I'm afraid you'll have to force it with hacks like I showed above.
+
+You have not shown all of your code so I am going to assume you didn't use the unload method of the Loader class.  Also swfLoader.load(null) seems wrong to me as the load method is expecting a URLRequest object.  When you want to clean things up at the end, set the object's value to null instead of calling a null load.  The fact that your still hearing audio indicates that your data wasn't unloaded, or the audio file does not reside inside the content that was unloaded.  Lets walk through this.
+Example below
+var loader:Loader = new Loader();
+var request:URLRequest = new URLRequest('test.swf');
+loader.contentLoaderInfo.addEventListener(Event.COMPLETE, onSwfLoad, false, 0, true);
+function onSwfLoad(e:Event):void
+{
+   addChild(loader);
+   loader.contentLoaderInfo.addEventListener(Event.UNLOAD, onLoaderUnload, false, 0, true);
+loader.contentLoaderInfo.removeEventListener(Event.COMPLETE, onSwfLoad, false);
+}
+function onLoaderUnload(e:Event):void
+{
+   trace('LOADER WAS SUCCESSFULLY UNLOADED.');
+}
+//Now to remove this with the click of a button, assuming the buttons name is button_mc
+button_mc.addEventListener(MouseEvent.MOUSE_DOWN, onButtonDown, false, 0, true);
+function onButtonDown(e:MouseEvent):void
+{
+   loader.unload();
+   loader.contentLoaderInfo.removeEventListener(Event.UNLOAD, onLoaderUnload);
+   //When you want to remove things completely from memory you simply set their value to null.
+   loader = null;
+   button_mc.removeEventListener(MouseEvent.MOUSE_DOWN, onButtonDown);
+}
+
+
+I do hope that this was helpful, and I am sorry if it was redundant, but without seeing your code I have no way of knowing exactly how you approached this.
+
+It is a problem that a badly created SWF can sink your application, and many of the issues with this will be fixed in Flash Player 10, as others have mentioned. However, regardless of platform you will always risk having problems if you load third party code, there's always the possibility that it contains bugs, memory leaks or downright malicious code. Unless you can load content into a sandbox (and you can't in Flash, at least not yet), loading bad things will sink your app, it's as simple as that.
+I'm sorry to say that unless you can guarantee the quality of the loaded content you can't guarantee the quality of your own application. Flash developers are notorious for writing things that leak, or can't be unloaded, because Flash makes it easy to do the wrong thing, especially for things that live on the time line. Loading any Flash content that you don't have control over directly is very perilous.
+
+
+... isn't that a problem with the Flex architecture?
+
+Yes it is, and it also affects Flash in general. Until you can take advantage of the Loader.unloadAndStop() method in FP10 (AIR 1.5), you can't guarantee that externally loaded content will not continue to consume memory and cpu resources, even if you use the Loader.unload() method. (To be honest, I'm not 100% sure that even that will guarantee freeing of resources, but maybe I'm a pessimist.)
+The next best thing is for you to insist that the creators of the content you load adhere to a set of guidelines, including exposing something like a dispose() method which your app can call to ask it to release as many resources as possible before you unload() it. If this isn't possible, then your application will almost definitely bloat in memory and cpu usage each time you load an external swf. Sorry. 
+If it makes you feel any better, you're not alone. ;)
+
+I'd generally stay away from SWFLoader and use the classes in the mx.modules package. 
+Flex has a module system that enables this type of behavior. You can check it out here : http://livedocs.adobe.com/flex/3/html/help.html?content=modular_3.html . In general, dynamically loading and unloading swf components is tricky, especially if those modules modify any global state in the application (styles, etc..). But if you create an interface for your modules, and then each class you load/unload implement that interface as well as extend the flex module class, you can load and unload them cleanly. 
+
+The best solution is 
+swfLoader.autoLoad = false;
+swfLoader.unloadAndStop();
+swfLoader.autoLoad = true;
+
+In this way you stop the player, unload the content from memory and avoid the sound to remain playing..
+Cheers

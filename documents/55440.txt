@@ -1,0 +1,63 @@
+Checking Inheritance with templates in C++
+java c++ templates
+I've a class which is a wrapper class(serves as a common interface) around another class implementing the functionality required. So my code looks like this.
+template<typename ImplemenationClass> class WrapperClass {
+// the code goes here
+}
+
+Now, how do I make sure that ImplementationClass can be derived from a set of classes only, similar to java's generics
+<? extends BaseClass>
+
+syntax?
+
+
+In the current state of things, there is no good way other than by comments or a third-party solution. Boost provides a concept check library for this, and I think gcc also has an implementation. Concepts are on the list of C++0x improvements, but I'm not sure if you can specify subtypes - they are more for "must support these operations" which is (roughly) equivalent.
+Edit: Wikipedia has this section about concepts in C++0x, which is significantly easier to read than draft proposals.
+
+It's verbose, but you can do it like this:
+#include <boost/utility/enable_if.hpp>
+#include <boost/type_traits/is_base_of.hpp>
+
+struct base {};
+
+template <typename ImplementationClass, class Enable = void>
+class WrapperClass;
+
+template <typename ImplementationClass>
+class WrapperClass<ImplementationClass,
+      typename boost::enable_if<
+        boost::is_base_of<base,ImplementationClass> >::type>
+{};
+
+struct derived : base {};
+struct not_derived {};
+
+int main() {
+    WrapperClass<derived> x;
+
+    // Compile error here:
+    WrapperClass<not_derived> y;
+}
+
+This requires a compiler with good support for the standard (most recent compilers should be fine but old versions of Visual C++ won't be). For more information, see the Boost.Enable_If documentation.
+As Ferruccio said, a simpler but less powerful implementation:
+#include <boost/static_assert.hpp>
+#include <boost/type_traits/is_base_of.hpp>
+
+struct base {};
+
+template <typename ImplementationClass>
+class WrapperClass
+{
+    BOOST_STATIC_ASSERT((
+        boost::is_base_of<base, ImplementationClass>::value));
+};
+
+
+See Stoustrup's own words on the subject.
+Basically a small class, that you instantiate somewhere, e.g. the templated classes constructor.
+template<class T, class B> struct Derived_from {
+	static void constraints(T* p) { B* pb = p; }
+	Derived_from() { void(*p)(T*) = constraints; }
+};
+

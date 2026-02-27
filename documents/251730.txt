@@ -1,0 +1,76 @@
+Is there a way to separate long running (e.g. stress tests) out so they're not run by default in Maven 2?
+java maven-2 build-process junit build-automation
+We've had an ongoing need here that I can't figure out how to address using the stock Maven 2 tools and documentation.
+Some of our developers have some very long running JUnit tests (usually stress tests) that under no circumstances should be run as a regular part of the build process / nightly build.
+Of course we can use the surefire plugin's exclusion mechanism and just punt them from the build, but ideally we'd love something that would allow the developer to run them at will through Maven 2.
+
+
+Normally you would add a profile to your maven configuration that runs a different set of tests:
+run this with mvn -Pintegrationtest install
+    <profile>
+        <id>integrationtest</id>
+        <build>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <argLine>-client -Xmx896m -XX:MaxPermSize=192m</argLine>
+                        <forkMode>once</forkMode>
+                        <includes>
+                            <include>**/**/*Test.java</include>
+                            <include>**/**/*IntTest.java</include>
+                        </includes>
+                        <excludes>
+                            <exclude>**/**/*SeleniumTest.java</exclude>
+                        </excludes>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </build>
+        <activation>
+            <property>
+                <name>integrationtest</name>
+            </property>
+        </activation>
+    </profile>
+
+
+Use an integration test plugin such as the Super Helpful Integration Test Thingy to separate Integration Tests (long running, systemic) from Unit Test (purists say 30 seconds max for all true unit tests to run).  Make two Java packages for your unit tests versus integration tests.
+Then do not bind this plugin to a phase (the normal maven lifecycle) and only run it when it is explicitly called as a target, like so:
+mvn shitty:clean shitty:install shitty:test 
+<plugins>
+  <plugin>
+    <groupId>org.codehaus.mojo</groupId>
+    <artifactId>shitty-maven-plugin</artifactId>
+  </plugin>
+</plugins>
+
+This way, your normal developers will not be impacted, and you'll be able to run integration tests on demand.
+
+Another option is to have the stress test detect it is running in maven and run only once or twice. i.e. turn into a regular functional test. This way you can check the code is still good, but not run for a long time.
+
+Adding to krosenvold's answer, to ensure no unexpected behavior, make sure you also have a default profile that is active by default that excludes the integration or stresstests you want to run in your special profile. 
+<profile>
+    <id>normal</id>
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <excludes>
+                        <exclude>**/**/*IntTest.java</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+    <activation>
+        <activeByDefault>true</activeByDefault>
+    </activation>
+</profile>
+
+You will need to create a profile like this, simply listing the surefire-plugin outside of a profile will override the profile should it be selected with:
+mvn -P integrationtest clean install
+

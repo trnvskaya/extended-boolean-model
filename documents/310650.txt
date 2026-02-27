@@ -1,0 +1,55 @@
+Decode gzipped web page retrieved via cURL in PHP
+php encoding gzip decoding
+I'm retrieving a gzipped web page via curl, but when I output the retrieved content to the browser I just get the raw gzipped data. How can I decode the data in PHP?
+One method I found was to write the content to a tmp file and then ...
+$f = gzopen($filename,"r");
+$content = gzread($filename,250000);
+gzclose($f);
+
+.... but man, there's got to be a better way.
+Edit: This isn't a file, but a gzipped html page returned by a web server.
+
+
+There are several solutions proposed in the comments on the PHP page for gzdecode.
+
+I use curl and:
+curl_setopt($ch,CURLOPT_ENCODING , "gzip");
+
+
+Versatile GUNZIP function:
+
+   function gunzip($zipped) {
+      $offset = 0;
+      if (substr($zipped,0,2) == "\x1f\x8b")
+         $offset = 2;
+      if (substr($zipped,$offset,1) == "\x08")  {
+         # file_put_contents("tmp.gz", substr($zipped, $offset - 2));
+         return gzinflate(substr($zipped, $offset + 8));
+      }
+      return "Unknown Format";
+   }  
+
+Example of integrating function with CURL:
+
+      $headers_enabled = 1;
+      curl_setopt($c, CURLOPT_HEADER,  $headers_enabled)
+      $ret = curl_exec($c);
+
+      if ($headers_enabled) {
+         # file_put_contents("preungzip.html", $ret);
+
+         $sections = explode("\x0d\x0a\x0d\x0a", $ret, 2);
+         while (!strncmp($sections[1], 'HTTP/', 5)) {
+            $sections = explode("\x0d\x0a\x0d\x0a", $sections[1], 2);
+         }
+         $headers = $sections[0];
+         $data = $sections[1];
+
+         if (preg_match('/^Content-Encoding: gzip/mi', $headers)) {
+            printf("gzip header found\n");
+            return gunzip($data);
+         }
+      }
+
+      return $ret;
+

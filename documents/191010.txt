@@ -1,0 +1,78 @@
+How to get a complete list of object's methods and attributes?
+python
+dir(re.compile(pattern)) 
+
+does not return pattern as one of the lists's elements. Namely it returns:
+['__copy__', '__deepcopy__', 'findall', 'finditer', 'match', 'scanner', 'search', 'split', 'sub', 'subn']
+
+According to the manual, it is supposed to contain 
+
+the object's attributes' names, the
+  names of its class's attributes, and
+  recursively of the attributes of its
+  class's base classes.
+
+It says also that
+
+The list is not necessarily complete.
+
+Is there a way to get the complete list? I always assumed that dir returns a complete list but apparently it does not...
+Also: is there a way to list only attributes? Or only methods?
+Edit: this is actually a bug in python -> supposedly it is fixed in the 3.0 branch (and perhaps also in 2.6)
+
+
+For the complete list of attributes, the short answer is: no. The problem is that the attributes are actually defined as the arguments accepted by the getattr built-in function. As the user can reimplement __getattr__, suddenly allowing any kind of attribute, there is no possible generic way to generate that list. The dir function returns the keys in the __dict__ attribute, i.e. all the attributes accessible if the __getattr__ method is not reimplemented.
+For the second question, it does not really make sense. Actually, methods are callable attributes, nothing more. You could though filter callable attributes, and, using the inspect module determine the class methods, methods or functions.
+
+That is why the new __dir__() method has been added in python 2.6
+see:
+
+http://docs.python.org/whatsnew/2.6.html#other-language-changes (scroll down a little bit)
+http://bugs.python.org/issue1591665
+
+
+Here is a practical addition to the answers of PierreBdR and Moe:  
+-- for Python >= 2.6 and new-style classes, dir() seems to be enough;
+-- for old-style classes, we can at least do what a standard module does to support tab completion: in addition to dir(), look for __class__ -- and then to go for its __bases__:
+# code borrowed from the rlcompleter module
+# tested under Python 2.6 ( sys.version = '2.6.5 (r265:79063, Apr 16 2010, 13:09:56) \n[GCC 4.4.3]' )
+
+# or: from rlcompleter import get_class_members
+def get_class_members(klass):
+    ret = dir(klass)
+    if hasattr(klass,'__bases__'):
+        for base in klass.__bases__:
+            ret = ret + get_class_members(base)
+    return ret
+
+
+def uniq( seq ): 
+    """ the 'set()' way ( use dict when there's no set ) """
+    return list(set(seq))
+
+
+def get_object_attrs( obj ):
+    # code borrowed from the rlcompleter module ( see the code for Completer::attr_matches() )
+    ret = dir( obj )
+    ## if "__builtins__" in ret:
+    ##    ret.remove("__builtins__")
+
+    if hasattr( obj, '__class__'):
+        ret.append('__class__')
+        ret.extend( get_class_members(obj.__class__) )
+
+        ret = uniq( ret )
+
+    return ret
+
+( Test code and output are deleted for brevity, but basically for new-style objects we seem to have the same results for get_object_attrs() as for dir(), and for old-style classes the main addition to the dir() output seem to be the __class__ attribute ) )
+
+This is how I did it, useful only for simple custom objects to whom you keep adding attributes:
+given an obj object created with obj = type("CustomObj",(object,),{}), or by simply: 
+class CustomObj(object):
+   pass
+obj=CustomObject()
+
+then, to obtain a dictionary with only the custom attributes, what I do is to:
+{key: value for key, value in self.__dict__.items() if not key.startswith("__")}
+

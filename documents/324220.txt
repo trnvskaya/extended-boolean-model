@@ -1,0 +1,54 @@
+How to run my program on before logout on windows XP?
+windows-xp registry logout runonce
+I am looking for an inverse version of "RunOnceEx".
+RunOnceEx does run some program, before the user's shell(desktop&taskbar) start. The login progress will not continue before the runonceex complete.
+I want to do exact the same but on user logout.
+When she/he logout, all running program shutdown, leaving shell(desktop&taskbar), then ""I wish my program will be execute this moment"", finally logout.
+I think it is possible because the "mobsync.exe" is doing that. But I cannot find where and how to do it.
+
+
+found in the first result on google for me
+To execute a program you can create a script to run it and use group policy to enforce it.
+In Group Policy Editor navigate to User Configuration-->Windows Settings-->Scripts (Logon/Logoff)
+more information here
+
+Warning, as said here, gpedit.msc will allow you to configure a logoff script for all users.
+If you need that script only for one user, you need to declare it directly in the registry, both in HKCU and HKLM.
+
+What you need is an implementation of GINA. You can run your custom commands in WlxIsLogoffOk function, which gets called when the user initiates a logoff
+Once you create the proper GINA dll you can register it here: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\@GinaDLL
+Here is an implementation which may fit your needs (it provides a Logoff registry key where you could specify your command): 
+http://wwwthep.physik.uni-mainz.de/~frink/newgina_pre09/readme.html
+
+As VonC and TFD already mentioned, the Group Policy Editor is just another way to manipulate the registry.
+Just make with gpedit the changes (in Userconfig - Windows Settings - Scripts) you like and afterwards take a look in the registry at [HKEY_CURRENT_USER\Software\Policies\Microsoft\Windows\System\Scripts] 
+to find out how you can do that directly.
+Also on my PC (hanging in a domain) is a hidden folder C:\WINDOWS\System32\GroupPolicy with subfolders for user and machine. Both having additional subfolders called Shutdown and Startup. Maybe you can also use these ones.
+
+If you need something simple and working for a single (or any) user you can make a simple application in C++ or C# for example.
+The simplest is having a C# in tray (by simply adding the tray component to the form) and register and event handler for the FormClosing event. It'd look like this:
+    private void Form1_FormClosing(object sender, FormClosingEventArgs e)
+    {
+        if (e.CloseReason != CloseReason.UserClosing)
+        {
+            // It's not the user closing the application,
+            // Let's do whatever you want here, for example starting a process
+            Process notePad = new Process();
+
+            notePad.StartInfo.FileName   = "notepad.exe";
+            notePad.StartInfo.Arguments = "ProcessStart.cs";
+
+            notePad.Start();
+        }
+    }
+
+So your application will be started with Windows or with the user. It'll wait (using a little bit of memory) and will do something when the system shuts down, or the user log off, etc (by checking "CloseReason" above).
+
+If you want a running program to execute code on logoff, then you should hook the WM_QUERYENDSESSION message and look for an lParam value of ENDSESSION_LOGOFF (0x80000000).
+It's important to test for this lParam value because the other ones indicate a "forced close" - i.e. your process may be killed before your code is even allowed to run.  In fact, most shutdown/session-end messages are only intended to give you an opportunity to run last-minute cleanup code and aren't that safe to respond to with long-running actions; but this particular combination should be OK.
+Note: I've never tried to actually run a separate process in response to the WM_QUERYENDSESSION message.  It's possible that the window manager will disallow this, like it does during shutdown.  Try it and see, I guess.
+If you're in a .NET environment (you didn't specify), a quicker way is to add an event handler to the Microsoft.Win32.SystemEvents.SessionEnding event.
+
+To run this only for the current user, you can use WMI to get an information when a shutdown/logout occurs.
+Either you write a small C# (or any other language that can use WMI) application or vbs script to listen on the *Win32_ComputerShutdownEvent* WMI event.
+An example C# app can be found here in this question: http://stackoverflow.com/questions/984881/get-log-off-event-from-system

@@ -1,0 +1,168 @@
+In C# what is the recommended way of passing data between 2 threads?
+c# multithreading
+I have my main GUI thread, and a second thread running inside it's own ApplicationContext (to keep it alive, even when there is no work to be done). I want to call a method on my 2nd thread from my GUI thread, but if I just call thread.Method(); it seems to be running on my main GUI thread and causes my GUI to become unresponsive. What is the best way to call methods on different threads?
+Update:
+What I'm really looking to do here is communicate between 2 threads, not communicate with a GUI. The GUI just happens to be one of the threads that will need to communicate with my 2nd thread.
+Update #2:
+Ok, I must really be missing something. I created an event and a delegate and had my worker thread subscribe to the event. But when I call Invoke(MyEvent); from my GUI thread the work that the worker thread does ends up being on the GUI thread and hangs the GUI thread until it's done processing. Is what I'm trying to do even possible, without polling on a static object?
+
+
+In effect, you have created a poor man's version of a ThreadPool. Your second thread is just sitting there doing nothing and without a fair amount of work on your part, you can't just get it to do work for you. You would have to pass delegates into a queue that your thread then takes off and executes.
+Your best bet is to do what you intended and just use the .NET ThreadPool and give it work to do.
+
+Use a synchronization object to signal the thread that it needs to process the new data (or the GUI's new state).  One relatively simple way to do this is to use an event object.  Here's a run-down of how that would work:
+
+GUI thread an 2nd thread share an event object (so they both know about it)
+2nd thread typically runs in a loop of some sort, and each time it waits for the event to be signaled
+GUI thread signals the event when it needs the 2nd thread to do something
+When the 2nd thread is done, it resets the event and waits again (or exits)
+
+
+.Net already comes with a System.ComponentModel.BackgroundWorker class specifically to handle performing background tasks and communicating with a GUI. Use it.
+
+Put a loop in your second thread, that sleeps most of the time, but every [Interval] it wakes up and checks a shared variable that tells it whether to run your method or not, and if that shared boolean is set to true, then it runs a method that performs whatever task you are trying to perform... In that method, have the method gather the data required from another shared variable.  
+In main GUI thread, put the data into the method parameter shared variable, then set the boolean "Run" shared variable to true... 
+Inside the worker method,   remember to reset the shared bool "run" variable to false when you're done, so the loop won;t run the same instance over and over... 
+
+I'm assuming some event in the GUI requires some long-running task to start which be run in the background - there are two main ways to do this. If you simply want to call a method on a different thread then you can do it by Calling Synchronous Methods Asynchronously. I usually do something like this:
+
+
+//delegate with same prototype as the method to call asynchrously
+delegate void ProcessItemDelegate(object item);
+
+//method to call asynchronously
+private void ProcessItem(object item) { ... }
+
+//method in the GUI thread
+private void DoWork(object itemToProcess)
+{
+    //create delegate to call asynchronously...
+    ProcessItemDelegate d = new ProcessItemDelegate(this.ProcessItem);
+    IAsyncResult result = d.BeginInvoke(itemToProcess,
+                                        new AsyncCallback(this.CallBackMethod),
+                                        d); 
+}
+
+//method called when the async operation has completed
+private void CallbackMethod(IAsyncResult ar)
+{
+    ProcessItemDelegate d = (ProcessItemDelegate)ar.AsyncState;
+    //EndInvoke must be called on any delegate called asynchronously!
+    d.EndInvoke(ar);
+}
+
+Be aware when using this method that the callback is executed on the background thread, so any updates to the GUI must be done using Invoke.
+Alternatively you could use shared state to communicate between threads and use an EventWaitHandle to signal updates to the shared state - in this example a method in the GUI adds work items to a queue to be handled in the background. The worker thread processes items from the queue when work becomes available.
+
+//shared state
+private Queue workQueue;
+private EventWaitHandle eventHandle;
+
+//method running in gui thread
+private void DoWork(Item itemToProcess)
+{
+   //use a private lock object instead of lock...
+   lock(this.workQueue)
+   {
+       this.workQueue.Add(itemToProcess);
+       this.eventHandle.Set();
+   }
+}
+
+//method that runs on the background thread
+private void QueueMonitor()
+{
+   while(keepRunning)
+   {
+       //if the event handle is not signalled the processing thread will sleep here until it is signalled or the timeout expires
+       if(this.eventHandle.WaitOne(optionalTimeout))
+       {
+           lock(this.workQueue)
+           {
+              while(this.workQueue.Count > 0)
+              {
+                 Item itemToProcess = this.workQueue.Dequeue();
+                 //do something with item...
+              }
+           }
+           //reset wait handle - note that AutoResetEvent resets automatically
+           this.eventHandle.Reset();
+       }
+   }
+}
+
+
+The convenience of Control.BeginInvoke() is hard to pass up.  You don't have to.  Add a new class to your project and paste this code:
+using System;
+using System.Threading;
+using System.Windows.Forms;
+
+public partial class frmWorker : Form {
+  public frmWorker() {
+    // Start the worker thread
+    Thread t = new Thread(new ParameterizedThreadStart(WorkerThread));
+    t.IsBackground = true;
+    t.Start(this);
+  }
+  public void Stop() {
+    // Synchronous thread stop
+    this.Invoke(new MethodInvoker(stopWorker), null);
+  }
+  private void stopWorker() {
+    this.Close();
+  }
+  private static void WorkerThread(object frm) {
+    // Start the message loop
+    frmWorker f = frm as frmWorker;
+    f.CreateHandle();
+    Application.Run(f);
+  }
+  protected override void SetVisibleCore(bool value) {
+    // Shouldn't become visible
+    value = false;
+    base.SetVisibleCore(value);
+  }
+}
+
+Here's some sample code to test it:
+  public partial class Form1 : Form {
+    private frmWorker mWorker;
+    public Form1() {
+      InitializeComponent();
+      mWorker = new frmWorker();
+    }
+
+    private void button1_Click(object sender, EventArgs e) {
+      Console.WriteLine(System.Threading.Thread.CurrentThread.ManagedThreadId);
+      mWorker.BeginInvoke(new MethodInvoker(RunThisOnThread));
+    }
+    private void RunThisOnThread() {
+      Console.WriteLine(System.Threading.Thread.CurrentThread.ManagedThreadId);
+    }
+
+    private void button2_Click(object sender, EventArgs e) {
+      mWorker.Stop();
+    }
+  }
+
+
+Wow, I can't believe how may people didn't bother reading the question.
+Anyways, this is what I do.
+
+Create you "message" classes. This stores all the information you want to share.
+Create a Queue<T> for each thread. Use a SyncLock (C# lock) to read/write to it.
+When you want to talk to a thread, send it a message object with a copy of all the information it needs by adding the message to the queue. 
+The worker thread can then read from the queue, reading and processing each message in order. When there are no messages, simply sleep.
+
+Make sure that you don't share objects between the two threads. Once your GUI thread sticks a message in the Queue, the GUI thread no longer owns the message. It cannot hold a reference to the message, or you will get yourself into trouble.
+This won't give you the best possible performance, but it will be good enough for most applications. And more importantly, it will make it much harder to make a mistake.
+UPDATE: Don't use a SyncLock and Queue. Instead use a ConcurrentQueue, which will handle any locking automatically for you. You'll get better performance and are less likely to make a mistake.
+
+You can use events or as Grauenwolf said - a message cue.  I wrap each of my thread as a management singleton, from there you can implement either easily.  You could even do poor man public properties to flip bits.
+Also you could implement a state machine, and instead of pass messages each thread could monitor each other
+
+Dude, read Albahari's .Net threading free ebook.
+I'm connected to it by any means, so this is no plug. 
+I've read it, had my coworkers read it, and i've used it many times.
+I would recommend creating a producer/consumer class, where you can start a single thread that waits (non blocking), enqueue tasks to its queue, and signal it to start working.
+just google for it.

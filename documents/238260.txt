@@ -1,0 +1,360 @@
+How to calculate the bounding box for a given lat/lng location?
+geocoding panoramio
+I have given a location defined by latitude and longitude.
+Now i want to calculate a bounding box within e.g. 10 kilometers of that point.
+The bounding box should be defined as latmin, lngmin and latmax, lngmax.
+I need this stuff in order to use the panoramio API.
+Does someone know the formula of how to get thos points?
+Edit: Guys i am looking for a formula/function which takes lat & lng as input and returns a bounding box as latmin & lngmin and latmax & latmin.
+Mysql, php, c#, javascript is fine but also pseudocode should be okay.
+Edit: I am not looking for a solution which shows me the distance of 2 points
+
+
+You're looking for an ellipsoid formula.  
+The best place I've found to start coding is based on the Geo::Ellipsoid library from CPAN.  It gives you a baseline to create your tests off of and to compare your results with its results.  I used it as the basis for a similar library for PHP at my previous employer.
+Geo::Ellipsoid
+Take a look at the location method.  Call it twice and you've got your bbox.
+You didn't post what language you were using.  There may already be a geocoding library available for you.
+Oh, and if you haven't figured it out by now, Google maps uses the WGS84 ellipsoid.
+
+I suggest to approximate locally the Earth surface as a sphere with radius given by the WGS84 ellipsoid at the given latitude. I suspect that the exact computation of latMin and latMax would require elliptic functions and would not yield an appreciable increase in accuracy (WGS84 is itself an approximation).
+My implementation follows (It's written in Python; I have not tested it):
+# degrees to radians
+def deg2rad(degrees):
+    return math.pi*degrees/180.0
+# radians to degrees
+def rad2deg(radians):
+    return 180.0*radians/math.pi
+
+# Semi-axes of WGS-84 geoidal reference
+WGS84_a = 6378137.0  # Major semiaxis [m]
+WGS84_b = 6356752.3  # Minor semiaxis [m]
+
+# Earth radius at a given latitude, according to the WGS-84 ellipsoid [m]
+def WGS84EarthRadius(lat):
+    # http://en.wikipedia.org/wiki/Earth_radius
+    An = WGS84_a*WGS84_a * math.cos(lat)
+    Bn = WGS84_b*WGS84_b * math.sin(lat)
+    Ad = WGS84_a * math.cos(lat)
+    Bd = WGS84_b * math.sin(lat)
+    return math.sqrt( (An*An + Bn*Bn)/(Ad*Ad + Bd*Bd) )
+
+# Bounding box surrounding the point at given coordinates,
+# assuming local approximation of Earth surface as a sphere
+# of radius given by WGS84
+def boundingBox(latitudeInDegrees, longitudeInDegrees, halfSideInKm):
+    lat = deg2rad(latitudeInDegrees)
+    lon = deg2rad(longitudeInDegrees)
+    halfSide = 1000*halfSideInKm
+
+    # Radius of Earth at given latitude
+    radius = WGS84EarthRadius(lat)
+    # Radius of the parallel at given latitude
+    pradius = radius*math.cos(lat)
+
+    latMin = lat - halfSide/radius
+    latMax = lat + halfSide/radius
+    lonMin = lon - halfSide/pradius
+    lonMax = lon + halfSide/pradius
+
+    return (rad2deg(latMin), rad2deg(lonMin), rad2deg(latMax), rad2deg(lonMax))
+
+EDIT: The following code converts (degrees, primes, seconds) to degrees + fractions of a degree, and vice versa (not tested):
+def dps2deg(degrees, primes, seconds):
+    return degrees + primes/60.0 + seconds/3600.0
+
+def deg2dps(degrees):
+    intdeg = math.floor(degrees)
+    primes = (degrees - intdeg)*60.0
+    intpri = math.floor(primes)
+    seconds = (primes - intpri)*60.0
+    intsec = round(seconds)
+    return (int(intdeg), int(intpri), int(intsec))
+
+
+I wrote an article about finding the bounding coordinates:
+http://JanMatuschek.de/LatitudeLongitudeBoundingCoordinates
+The article explains the formulae and also provides a Java implementation. (It also shows why Federico's formula for the min/max longitude is inaccurate.)
+
+I adapted a PHP script I found to do just this.  You can use it to find the corners of a box around a point (say, 20 km out).  My specific example is for Google Maps API:
+http://www.richardpeacock.com/blog/2011/11/draw-box-around-coordinate-google-maps-based-miles-or-kilometers
+
+Here I have converted Federico A. Ramponi's answer to C# for anybody interested:
+public class MapPoint
+{
+    public double Longitude { get; set; } // In Degrees
+    public double Latitude { get; set; } // In Degrees
+}
+
+public class BoundingBox
+{
+    public MapPoint MinPoint { get; set; }
+    public MapPoint MaxPoint { get; set; }
+}        
+
+// Semi-axes of WGS-84 geoidal reference
+private const double WGS84_a = 6378137.0; // Major semiaxis [m]
+private const double WGS84_b = 6356752.3; // Minor semiaxis [m]
+
+// 'halfSideInKm' is the half length of the bounding box you want in kilometers.
+public static BoundingBox GetBoundingBox(MapPoint point, double halfSideInKm)
+{            
+    // Bounding box surrounding the point at given coordinates,
+    // assuming local approximation of Earth surface as a sphere
+    // of radius given by WGS84
+    var lat = Deg2rad(point.Latitude);
+    var lon = Deg2rad(point.Longitude);
+    var halfSide = 1000 * halfSideInKm;
+
+    // Radius of Earth at given latitude
+    var radius = WGS84EarthRadius(lat);
+    // Radius of the parallel at given latitude
+    var pradius = radius * Math.Cos(lat);
+
+    var latMin = lat - halfSide / radius;
+    var latMax = lat + halfSide / radius;
+    var lonMin = lon - halfSide / pradius;
+    var lonMax = lon + halfSide / pradius;
+
+    return new BoundingBox { 
+        MinPoint = new MapPoint { Latitude = Rad2deg(latMin), Longitude = Rad2deg(lonMin) },
+        MaxPoint = new MapPoint { Latitude = Rad2deg(latMax), Longitude = Rad2deg(lonMax) }
+    };            
+}
+
+// degrees to radians
+private static double Deg2rad(double degrees)
+{
+    return Math.PI * degrees / 180.0;
+}
+
+// radians to degrees
+private static double Rad2deg(double radians)
+{
+    return 180.0 * radians / Math.PI;
+}
+
+// Earth radius at a given latitude, according to the WGS-84 ellipsoid [m]
+private static double WGS84EarthRadius(double lat)
+{
+    // http://en.wikipedia.org/wiki/Earth_radius
+    var An = WGS84_a * WGS84_a * Math.Cos(lat);
+    var Bn = WGS84_b * WGS84_b * Math.Sin(lat);
+    var Ad = WGS84_a * Math.Cos(lat);
+    var Bd = WGS84_b * Math.Sin(lat);
+    return Math.Sqrt((An*An + Bn*Bn) / (Ad*Ad + Bd*Bd));
+}
+
+
+It is very simple just go to panoramio website and then open World Map from panoramio website.Then go to specified location whichs latitude and longitude required.
+Then you found latitude and longitude in address bar for example in this address.
+http://www.panoramio.com/map#lt=32.739485&ln=70.491211&z=9&k=1&a=1&tab=1&pl=all
+lt=32.739485 =>latitude
+ln=70.491211 =>longitude
+this Panoramio JavaScript API widget create a bounding box around a lat/long pair and then returning all photos with in those bounds.
+Another type of Panoramio JavaScript API widget in which you can also change background color with example and code is here.
+It does not show in composing mood.It show after publishing.
+<div dir="ltr" style="text-align: center;" trbidi="on">
+<script src="https://ssl.panoramio.com/wapi/wapi.js?v=1&amp;hl=en"></script>
+<div id="wapiblock" style="float: right; margin: 10px 15px"></div>
+<script type="text/javascript">
+var myRequest = {
+  'tag': 'kahna',
+  'rect': {'sw': {'lat': -30, 'lng': 10.5}, 'ne': {'lat': 50.5, 'lng': 30}}
+};
+  var myOptions = {
+  'width': 300,
+  'height': 200
+};
+var wapiblock = document.getElementById('wapiblock');
+var photo_widget = new panoramio.PhotoWidget('wapiblock', myRequest, myOptions);
+photo_widget.setPosition(0);
+</script>
+</div>
+
+
+I was working on the bounding box problem as a side issue to finding all the points within SrcRad radius of a static LAT, LONG point.  There have been quite a few calculations that use
+maxLon = $lon + rad2deg($rad/$R/cos(deg2rad($lat)));
+minLon = $lon - rad2deg($rad/$R/cos(deg2rad($lat)));
+
+to calculate the longitude bounds, but I found this to not give all the answers that were needed.  Because what you really want to do is 
+(SrcRad/RadEarth)/cos(deg2rad(lat))
+
+I know, I know the answer should be the same, but I found that it wasn't. It appeared that by not making sure I was doing the (SRCrad/RadEarth) First and then dividing by the Cos part I was leaving out some location points.  
+After you get all your bounding box points, if you have a function that calculates the Point to Point Distance given lat, long it is easy to only get those points that are a certain distance radius from the fixed point.  Here is what I did.
+I know it took a few extra steps but it helped me
+-- GLOBAL Constants
+gc_pi CONSTANT REAL := 3.14159265359;  -- Pi
+
+-- Conversion Factor Constants
+gc_rad_to_degs          CONSTANT NUMBER := 180/gc_pi; -- Conversion for Radians to Degrees 180/pi
+gc_deg_to_rads          CONSTANT NUMBER := gc_pi/180; --Conversion of Degrees to Radians
+
+lv_stat_lat    -- The static latitude point that I am searching from 
+lv_stat_long   -- The static longitude point that I am searching from 
+
+-- Angular radius ratio in radians
+lv_ang_radius := lv_search_radius / lv_earth_radius;
+lv_bb_maxlat := lv_stat_lat + (gc_rad_to_deg * lv_ang_radius);
+lv_bb_minlat := lv_stat_lat - (gc_rad_to_deg * lv_ang_radius);
+
+--Here's the tricky part, accounting for the Longitude getting smaller as we move up the latitiude scale
+-- I seperated the parts of the equation to make it easier to debug and understand
+-- I may not be a smart man but I know what the right answer is... :-)
+
+lv_int_calc := gc_deg_to_rads * lv_stat_lat;
+lv_int_calc := COS(lv_int_calc);
+lv_int_calc := lv_ang_radius/lv_int_calc;
+lv_int_calc := gc_rad_to_degs*lv_int_calc;
+
+lv_bb_maxlong := lv_stat_long + lv_int_calc;
+lv_bb_minlong := lv_stat_long - lv_int_calc;
+
+-- Now select the values from your location datatable 
+SELECT *  FROM (
+SELECT cityaliasname, city, state, zipcode, latitude, longitude, 
+-- The actual distance in miles
+spherecos_pnttopntdist(lv_stat_lat, lv_stat_long, latitude, longitude, 'M') as miles_dist    
+FROM Location_Table 
+WHERE latitude between lv_bb_minlat AND lv_bb_maxlat
+AND   longitude between lv_bb_minlong and lv_bb_maxlong)
+WHERE miles_dist <= lv_limit_distance_miles
+order by miles_dist
+;
+
+
+I wrote a JavaScript function that returns the four coordinates of a square bounding box, given a distance and a pair of coordinates:
+'use strict';
+
+/**
+ * @param {number} distance - distance (km) from the point represented by centerPoint
+ * @param {array} centerPoint - two-dimensional array containing center coords [latitude, longitude]
+ * @description
+ *   Computes the bounding coordinates of all points on the surface of a sphere
+ *   that has a great circle distance to the point represented by the centerPoint
+ *   argument that is less or equal to the distance argument.
+ *   Technique from: Jan Matuschek <http://JanMatuschek.de/LatitudeLongitudeBoundingCoordinates>
+ * @author Alex Salisbury
+*/
+
+getBoundingBox = function (centerPoint, distance) {
+  var MIN_LAT, MAX_LAT, MIN_LON, MAX_LON, R, radDist, degLat, degLon, radLat, radLon, minLat, maxLat, minLon, maxLon, deltaLon;
+  if (distance < 0) {
+    return 'Illegal arguments';
+  }
+  // helper functions (degrees<â>radians)
+  Number.prototype.degToRad = function () {
+    return this * (Math.PI / 180);
+  };
+  Number.prototype.radToDeg = function () {
+    return (180 * this) / Math.PI;
+  };
+  // coordinate limits
+  MIN_LAT = (-90).degToRad();
+  MAX_LAT = (90).degToRad();
+  MIN_LON = (-180).degToRad();
+  MAX_LON = (180).degToRad();
+  // Earth's radius (km)
+  R = 6378.1;
+  // angular distance in radians on a great circle
+  radDist = distance / R;
+  // center point coordinates (deg)
+  degLat = centerPoint[0];
+  degLon = centerPoint[1];
+  // center point coordinates (rad)
+  radLat = degLat.degToRad();
+  radLon = degLon.degToRad();
+  // minimum and maximum latitudes for given distance
+  minLat = radLat - radDist;
+  maxLat = radLat + radDist;
+  // minimum and maximum longitudes for given distance
+  minLon = void 0;
+  maxLon = void 0;
+  // define deltaLon to help determine min and max longitudes
+  deltaLon = Math.asin(Math.sin(radDist) / Math.cos(radLat));
+  if (minLat > MIN_LAT && maxLat < MAX_LAT) {
+    minLon = radLon - deltaLon;
+    maxLon = radLon + deltaLon;
+    if (minLon < MIN_LON) {
+      minLon = minLon + 2 * Math.PI;
+    }
+    if (maxLon > MAX_LON) {
+      maxLon = maxLon - 2 * Math.PI;
+    }
+  }
+  // a pole is within the given distance
+  else {
+    minLat = Math.max(minLat, MIN_LAT);
+    maxLat = Math.min(maxLat, MAX_LAT);
+    minLon = MIN_LON;
+    maxLon = MAX_LON;
+  }
+  return [
+    minLon.radToDeg(),
+    minLat.radToDeg(),
+    maxLon.radToDeg(),
+    maxLat.radToDeg()
+  ];
+};
+
+
+Illustration of @Jan Philip Matuschek excellent explanation.(Please up-vote his answer, not this; I am adding this as I took a little time in understanding the original answer)
+The bounding box technique of optimizing of finding nearest neighbors would need to derive the minimum and maximum latitude,longitude pairs, for a point P at distance d . All points that fall outside these are definitely at a distance  greater than d from the point.
+One thing to note here is the calculation of latitude of intersection as is highlighted in Jan Philip Matuschek explanation. The latitude of intersection is not at the latitude of point P but slightly offset from it. This is a often missed but important  part in determining the correct minimum and maximum bounding longitude for point P for the distance d.This is also useful in verification. 
+The haversine distance between (latitude of intersection,longitude high) to (latitude,longitude) of P is equal to distance d.
+Python gist here https://gist.github.com/alexcpn/f95ae83a7ee0293a5225
+
+
+Here I have converted Federico A. Ramponi's answer to PHP if anybody is interested:
+<?php
+# deg2rad and rad2deg are already within PHP
+
+# Semi-axes of WGS-84 geoidal reference
+$WGS84_a = 6378137.0;  # Major semiaxis [m]
+$WGS84_b = 6356752.3;  # Minor semiaxis [m]
+
+# Earth radius at a given latitude, according to the WGS-84 ellipsoid [m]
+function WGS84EarthRadius($lat)
+{
+    global $WGS84_a, $WGS84_b;
+
+    $an = $WGS84_a * $WGS84_a * cos($lat);
+    $bn = $WGS84_b * $WGS84_b * sin($lat);
+    $ad = $WGS84_a * cos($lat);
+    $bd = $WGS84_b * sin($lat);
+
+    return sqrt(($an*$an + $bn*$bn)/($ad*$ad + $bd*$bd));
+}
+
+# Bounding box surrounding the point at given coordinates,
+# assuming local approximation of Earth surface as a sphere
+# of radius given by WGS84
+function boundingBox($latitudeInDegrees, $longitudeInDegrees, $halfSideInKm)
+{
+    $lat = deg2rad($latitudeInDegrees);
+    $lon = deg2rad($longitudeInDegrees);
+    $halfSide = 1000 * $halfSideInKm;
+
+    # Radius of Earth at given latitude
+    $radius = WGS84EarthRadius($lat);
+    # Radius of the parallel at given latitude
+    $pradius = $radius*cos($lat);
+
+    $latMin = $lat - $halfSide / $radius;
+    $latMax = $lat + $halfSide / $radius;
+    $lonMin = $lon - $halfSide / $pradius;
+    $lonMax = $lon + $halfSide / $pradius;
+
+    return array(rad2deg($latMin), rad2deg($lonMin), rad2deg($latMax), rad2deg($lonMax));
+}
+?>
+
+
+Since I needed a very rough estimate, so to filter out some needless documents in an elasticsearch query, I employed the below formula:  
+Min.lat = Given.Lat - (0.009 x N)
+Max.lat = Given.Lat + (0.009 x N)
+Min.lon = Given.lon - (0.009 x N)
+Max.lon = Given.lon + (0.009 x N)
+
+N = kms required form the given location. For your case N=10
+Not accurate but handy. 

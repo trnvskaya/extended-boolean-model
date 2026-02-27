@@ -1,0 +1,34 @@
+MySQL efficient "select id else insert" query
+performance mysql
+I have a MySQL table consisting of:
+CREATE TABLE `url_list` (
+  `id` int(10) unsigned NOT NULL auto_increment,
+  `crc32` int(10) unsigned NOT NULL,
+  `url` varchar(512) NOT NULL,
+  PRIMARY KEY  (`id`),
+  KEY `crc32` (`crc32`)
+);
+
+When inserting data into a related table I need to lookup the primary key from this table, and using the crc32 really speeds that up whilst allowing a small index. The URLs do need to be unique, but I'd like to avoid having more index than actual data.
+If the value isn't present I need to insert it, but using structures such as INSERT IGNORE, or ON DUPLICATE KEY either requires me to put a unique on the huge varchar, or don't take advantage of my index.
+How can I "SELECT id else INSERT", whilst preserving the lookup speed for the 80-90% of hits that are already in the table?
+
+
+This website offers a solution to a similar problem.
+
+I would recommend ditching the id column and the crc32 because they're not necessary.
+You can use an MD5() hash to provide a fixed-length, virtually unique value computed from the lengthy URL data, and then use that hash as the primary key.
+CREATE TABLE `url_list` (
+  `url_hash` BINARY(16) NOT NULL PRIMARY KEY
+  `url`      VARCHAR(512) NOT NULL
+);
+
+DELIM !!
+CREATE TRIGGER `url_ins` BEFORE INSERT ON `url_list`
+FOR EACH ROW
+BEGIN
+  SET NEW.`url_hash` = UNHEX( MD5( NEW.`url` ) );
+END!!
+
+Then you can use INSERT..ON DUPLICATE KEY UPDATE because unlike crc32, the hash should have a very low chance of collision.
+edit: See http://en.wikipedia.org/wiki/Birthday_attack.  If you log 1 million distinct URL's per day for 2,000 years, the MD5 hashes of these URL's are still less likely to include a collision than your hard disk is to have an uncorrectable bit error.

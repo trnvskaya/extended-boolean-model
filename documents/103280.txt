@@ -1,0 +1,84 @@
+Portable way to catch signals and report problem to the user
+c++ c posix signals reentrant
+If by some miracle a segfault occurs in our program, I want to catch the SIGSEGV and let the user (possibly a GUI client) know with a single return code that a serious problem has occurred.  At the same time I would like to display information on the command line to show which signal was caught.
+Today our signal handler looks as follows:
+void catchSignal (int reason) {
+  std :: cerr << "Caught a signal: " << reason << std::endl;
+  exit (1);
+}
+
+I can hear the screams of horror with the above, as I have read from this thread that it is evil to call a non-reentrant function from a signal handler.
+Is there a portable way to handle the signal and provide information to users?
+EDIT: Or at least portable within the POSIX framework?
+
+
+Write a launcher program to run your program and report abnormal exit code to the user.
+
+This table lists all of the functions that POSIX guarantees to be async-signal-safe and so can be called from a signal handler.
+By using the 'write' command from this table, the following relatively "ugly" solution hopefully will do the trick:
+#include <csignal>
+
+#ifdef _WINDOWS_
+#define _exit _Exit
+#else
+#include <unistd.h>
+#endif
+
+#define PRINT_SIGNAL(X) case X: \
+          write (STDERR_FILENO, #X ")\n" , sizeof(#X ")\n")-1); \
+          break;
+
+void catchSignal (int reason) {
+  char s[] = "Caught signal: (";
+  write (STDERR_FILENO, s, sizeof(s) - 1);
+  switch (reason)
+  {
+    // These are the handlers that we catch
+    PRINT_SIGNAL(SIGUSR1);
+    PRINT_SIGNAL(SIGHUP);
+    PRINT_SIGNAL(SIGINT);
+    PRINT_SIGNAL(SIGQUIT);
+    PRINT_SIGNAL(SIGABRT);
+    PRINT_SIGNAL(SIGILL);
+    PRINT_SIGNAL(SIGFPE);
+    PRINT_SIGNAL(SIGBUS);
+    PRINT_SIGNAL(SIGSEGV);
+    PRINT_SIGNAL(SIGTERM);
+  }
+
+  _Exit (1);  // 'exit' is not async-signal-safe
+}
+
+EDIT: Building on windows.
+After trying to build this one windows, it appears that 'STDERR_FILENO' is not defined.  From the documentation however its value appears to be '2'.
+#include <io.h>
+#define STDIO_FILENO 2
+
+EDIT: 'exit' should not be called from the signal handler either!
+As pointed out by fizzer, calling _Exit in the above is a sledge hammer approach for signals such as HUP and TERM.  Ideally, when these signals are caught a flag with "volatile sig_atomic_t" type can be used to notify the main program that it should exit.
+The following I found useful in my searches.
+
+Introduction To Unix Signals Programming 
+Extending Traditional Signals
+
+
+FWIW, 2 is standard error on Windows also, but you're going to need some conditional compilation because their write() is called _write().  You'll also want 
+#ifdef SIGUSR1 /* or whatever */
+
+etc around all references to signals not guaranteed to be defined by the C standard.
+Also, as noted above, you don't want to handle SIGUSR1, SIGHUP, SIGINT, SIGQUIT and SIGTERM like this.
+
+Richard, still not enough karma to comment, so a new answer I'm afraid.  These are asynchronous signals; you have no idea when they are delivered, so possibly you will be in library code which needs to complete to stay consistent.  Signal handlers for these signals are therefore required to return.  If you call exit(), the library will do some work post-main(), including calling functions registered with atexit() and cleaning up the standard streams. This processing may fail if, say, your signal arrived in a standard library I/O function. Therefore in C90 you are not allowed to call exit().  I see now C99 relaxes the requirement by providing a new function _Exit() in stdlib.h.  _Exit() may safely be called from a handler for an asynchronous signal.  _Exit() will not call atexit() functions and may omit cleaning up the standard streams at the implementation's discretion.
+To bk1e (commenter a few posts up)
+The fact that SIGSEGV is synchronous is why you can't use functions that are not designed to be reentrant. What if the function that crashed was holding a lock, and the function called by the signal handler tries to acquire the same lock? 
+This is a possibility, but it's not 'the fact that SIGSEGV is synchronous' which is the problem.  Calling non-reentrant functions from the handler is much worse with asynchronous signals for two reasons:
+
+asynchronous signal handlers are
+(generally) hoping to return and
+resume normal program execution.  A
+handler for a synchronous signal is
+(generally) going to terminate
+anyway, so you've not lost much if
+you crash.
+in a perverse sense, you have absolute control over when a synchronous signal is delivered - it happens as you execute your defective code, and at no other time.  You have no control at all over when an async signal is delivered.  Unless the OP's own I/O code is ifself the cause of the defect - e.g. outputting a bad char* - his error message has a reasonable chance of succeeding.
+

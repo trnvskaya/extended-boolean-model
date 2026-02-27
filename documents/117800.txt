@@ -1,0 +1,43 @@
+How to get Django AutoFields to start at a higher number
+django autofield
+For our Django App, we'd like to get an AutoField to start at a number other than 1.  There doesn't seem to be an obvious way to do this.  Any ideas?
+
+
+A quick peek at the source shows that there doesn't seem to be any option for this, probably because it doesn't always increment by one; it picks the next available key: "An IntegerField that automatically increments according to available IDs" â djangoproject.com
+
+The auto fields depend, to an extent, on the database driver being used.
+You'll have to look at the objects actually created for the specific database to see what's happening.
+
+Like the others have said, this would be much easier to do on the database side than the Django side. 
+For Postgres, it'd be like so: ALTER SEQUENCE sequence_name RESTART WITH 12345; Look at your own DB engine's docs for how you'd do it there.
+
+For MySQL i created a signal that does this after syncdb:
+from django.db.models.signals import post_syncdb
+from project.app import models as app_models
+
+def auto_increment_start(sender, **kwargs):
+    from django.db import connection, transaction
+    cursor = connection.cursor()
+    cursor = cursor.execute("""
+                                ALTER table app_table AUTO_INCREMENT=2000
+                            """)
+    transaction.commit_unless_managed()
+
+post_syncdb.connect(auto_increment_start, sender=app_models)
+
+After a syncdb the alter table statement is executed. This will exempt you from having to login into mysql and issuing it manually.
+EDIT: I know this is an old thread, but I thought it might help someone.
+
+Here is what I did..
+def update_auto_increment(value=5000, app_label="remrate_data"):
+    """Update our increments"""
+    from django.db import connection, transaction, router
+    models = [m for m in get_models() if m._meta.app_label == app_label]
+    cursor = connection.cursor()
+    for model in models:
+        _router = settings.DATABASES[router.db_for_write(model)]['NAME']
+        alter_str = "ALTER table {}.{} AUTO_INCREMENT={}".format(
+            _router, model._meta.db_table, value)
+        cursor.execute(alter_str)
+        transaction.commit_unless_managed()
+

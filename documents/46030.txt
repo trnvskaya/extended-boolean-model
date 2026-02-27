@@ -1,0 +1,348 @@
+C# Force Form Focus
+c# winforms
+So, I did search google and SO prior to asking this question. Basically I have a DLL that has a form compiled into it. The form will be used to display information to the screen. Eventually it will be asynchronous and expose a lot of customization in the dll. For now I just want it to display properly. The problem that I am having is that I use the dll by loading it in a Powershell session. So when I try to display the form and get it to come to the top and have focus, It has no problem with displaying over all the other apps, but I can't for the life of me get it to display over the Powershell window. Here is the code that I am currently using to try and get it to display. I am sure that the majority of it won't be required once I figure it out, this just represents all the things that I found via google.
+CLass Blah
+{
+        [DllImport("user32.dll", EntryPoint = "SystemParametersInfo")]
+        public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, uint pvParam, uint fWinIni);
+
+        [DllImport("user32.dll", EntryPoint = "SetForegroundWindow")]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("User32.dll", EntryPoint = "ShowWindowAsync")]
+        private static extern bool ShowWindowAsync(IntPtr hWnd, int cmdShow);
+        private const int WS_SHOWNORMAL = 1;
+
+    public void ShowMessage(string msg)
+    {
+            MessageForm msgFrm = new MessageForm();
+            msgFrm.lblMessage.Text = "FOO";
+            msgFrm.ShowDialog();
+            msgFrm.BringToFront();
+            msgFrm.TopMost = true;
+            msgFrm.Activate();
+
+            SystemParametersInfo((uint)0x2001, 0, 0, 0x0002 | 0x0001);
+            ShowWindowAsync(msgFrm.Handle, WS_SHOWNORMAL);
+            SetForegroundWindow(msgFrm.Handle);
+            SystemParametersInfo((uint)0x2001, 200000, 200000, 0x0002 | 0x0001);
+    }
+}
+
+As I say I'm sure that most of that is either not needed or even flat out wrong, I just wanted to show the things that I had tried. Also, as I mentioned, I plan to have this be asynchronously displayed at some point which I suspect will wind up requiring a separate thread. Would splitting the form out into it's own thread make it easier to cause it to get focus over the Powershell session? 
+
+@Joel, thanks for the info. Here is what I tried based on your suggestion:
+msgFrm.ShowDialog();
+msgFrm.BringToFront();
+msgFrm.Focus();
+Application.DoEvents();
+
+The form still comes up under the Powershell session. I'll proceed with working out the threading. I've spawned threads before but never where the parent thread needed to talk to the child thread, so we'll see how it goes.
+Thnks for all the ideas so far folks.
+
+Ok, threading it took care of the problem. @Quarrelsome, I did try both of those. Neither (nor both together) worked. I am curious as to what is evil about using threading? I am not using Application.Run and I have yet to have a problem. I am using a mediator class that both the parent thread and the child thread have access to. In that object I am using a ReaderWriterLock to lock one property that represents the message that I want displayed on the form that the child thread creates. The parent locks the property then writes what should be displayed. The child thread locks the property and reads what it should change the label on the form to. The child has to do this on a polling interval (I default it to 500ms) which I'm not real happy about, but I could not find an event driven way to let the child thread know that the proerty had changed, so I'm stuck with polling.
+
+
+I also had trouble activating and bringing a window to the foreground. Here is the code that eventually worked for me. I'm not sure if it will solve your problem.
+Basically, call ShowWindow() then SetForegroundWindow().
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+
+// Sets the window to be foreground
+[DllImport("User32")]
+private static extern int SetForegroundWindow(IntPtr hwnd);
+
+// Activate or minimize a window
+[DllImportAttribute("User32.DLL")]
+private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+private const int SW_SHOW = 5;
+private const int SW_MINIMIZE = 6;
+private const int SW_RESTORE = 9;
+
+private void ActivateApplication(string briefAppName)
+{
+    Process[] procList = Process.GetProcessesByName(briefAppName);
+
+    if (procList.Length > 0)
+    {
+        ShowWindow(procList[0].MainWindowHandle, SW_RESTORE);
+        SetForegroundWindow(procList[0].MainWindowHandle);
+    }
+}
+
+
+You shouldn't need to import any win32 functions for this.  If .Focus() isn't enough the form should also have a .BringToFront() method you can use.  If that fails, you can set it's .TopMost property to true.  You don't want to leave it true forever, so then call Application.DoEvents so the form can process that message and set it back to false.
+
+Doesn't ShowDialog() have different window behavior than just Show()?
+What if you tried:
+msgFrm.Show();
+msgFrm.BringToFront();
+msgFrm.Focus();
+
+
+TopMost = true;
+.Activate() ?
+Either of those any good?
+Splitting it out into its own thread is a bit evil as it wont work properly if you don't call it with Application.Run and that will swallow up the thread. In the worst case scenario I guess you could separate it out into a different process and communicate via the disk or WCF.
+
+Here is some code that I've used on one form or another for a few years. There are a few gotchas to making a window in another app pop up. Once you have the window handle do this:
+      if (IsIconic(hWnd))
+        ShowWindowAsync(hWnd, SW_RESTORE);
+
+      ShowWindowAsync(hWnd, SW_SHOW);
+
+      SetForegroundWindow(hWnd);
+
+      // Code from Karl E. Peterson, www.mvps.org/vb/sample.htm
+      // Converted to Delphi by Ray Lischner
+      // Published in The Delphi Magazine 55, page 16
+      // Converted to C# by Kevin Gale
+      IntPtr foregroundWindow = GetForegroundWindow();
+      IntPtr Dummy = IntPtr.Zero;
+
+      uint foregroundThreadId = GetWindowThreadProcessId(foregroundWindow, Dummy);
+      uint thisThreadId       = GetWindowThreadProcessId(hWnd, Dummy);
+
+      if (AttachThreadInput(thisThreadId, foregroundThreadId, true))
+      {
+        BringWindowToTop(hWnd); // IE 5.5 related hack
+        SetForegroundWindow(hWnd);
+        AttachThreadInput(thisThreadId, foregroundThreadId, false);
+      }
+
+      if (GetForegroundWindow() != hWnd)
+      {
+        // Code by Daniel P. Stasinski
+        // Converted to C# by Kevin Gale
+        IntPtr Timeout = IntPtr.Zero;
+        SystemParametersInfo(SPI_GETFOREGROUNDLOCKTIMEOUT, 0, Timeout, 0);
+        SystemParametersInfo(SPI_SETFOREGROUNDLOCKTIMEOUT, 0, Dummy, SPIF_SENDCHANGE);
+        BringWindowToTop(hWnd); // IE 5.5 related hack
+        SetForegroundWindow(hWnd);
+        SystemParametersInfo(SPI_SETFOREGROUNDLOCKTIMEOUT, 0, Timeout, SPIF_SENDCHANGE);
+      }
+
+I won't post the whole unit since since it does other things that aren't relevant
+but here are the constants and imports for the above code. 
+//Win32 API calls necesary to raise an unowned processs main window
+
+[DllImport("user32.dll")]
+
+private static extern bool SetForegroundWindow(IntPtr hWnd);
+[DllImport("user32.dll")]
+private static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+[DllImport("user32.dll")]
+private static extern bool IsIconic(IntPtr hWnd);
+[DllImport("user32.dll", SetLastError = true)]
+private static extern bool SystemParametersInfo(uint uiAction, uint uiParam, IntPtr pvParam, uint fWinIni);
+[DllImport("user32.dll", SetLastError = true)]
+private static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr lpdwProcessId);
+[DllImport("user32.dll")]
+private static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")]
+private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+[DllImport("user32.dll")]
+static extern bool BringWindowToTop(IntPtr hWnd);
+
+[DllImport("user32.dll")] 
+private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, Int32 nMaxCount);
+[DllImport("user32.dll")]
+private static extern int GetWindowThreadProcessId(IntPtr hWnd, ref Int32 lpdwProcessId);
+[DllImport("User32.dll")]
+public static extern IntPtr GetParent(IntPtr hWnd); 
+
+private const int SW_HIDE = 0;
+private const int SW_SHOWNORMAL = 1;
+private const int SW_NORMAL = 1;
+private const int SW_SHOWMINIMIZED = 2;
+private const int SW_SHOWMAXIMIZED = 3;
+private const int SW_MAXIMIZE = 3;
+private const int SW_SHOWNOACTIVATE = 4;
+private const int SW_SHOW = 5;
+private const int SW_MINIMIZE = 6;
+private const int SW_SHOWMINNOACTIVE = 7;
+private const int SW_SHOWNA = 8;
+private const int SW_RESTORE = 9;
+private const int SW_SHOWDEFAULT = 10;
+private const int SW_MAX = 10;
+
+private const uint SPI_GETFOREGROUNDLOCKTIMEOUT = 0x2000;
+private const uint SPI_SETFOREGROUNDLOCKTIMEOUT = 0x2001;
+private const int  SPIF_SENDCHANGE = 0x2;
+
+
+Don't you just want the dialog to be a child of the calling form?
+To do that you'll need the pass in the calling window and 
+use the ShowDialog( IWin32Window owner ) method.
+
+The following solution should meet your requirements:
+
+Assembly can be loaded into PowerShell and main class instantiated
+When ShowMessage method on this instance is called, a new window is shown and activated
+If you call ShowMessage multiple times, this same window updates its title text and is activated
+To stop using the window, call Dispose method
+
+Step 1: Let's create a temporary working directory (you can naturally use your own dir)
+(powershell.exe)
+mkdir C:\TEMP\PshWindow
+cd C:\TEMP\PshWindow
+
+Step 2: Now let's define class that we will be interacting with in PowerShell:
+// file 'InfoProvider.cs' in C:\TEMP\PshWindow
+using System;
+using System.Threading;
+using System.Windows.Forms;
+
+namespace PshWindow
+{
+	public sealed class InfoProvider : IDisposable
+	{
+		public void Dispose()
+		{
+			GC.SuppressFinalize(this);
+			lock (this._sync)
+			{
+				if (!this._disposed)
+				{
+					this._disposed = true;
+					if (null != this._worker)
+					{
+						if (null != this._form)
+						{
+							this._form.Invoke(new Action(() => this._form.Close()));
+						}
+						this._worker.Join();
+						this._form = null;
+						this._worker = null;
+					}
+				}
+			}
+		}
+
+		public void ShowMessage(string msg)
+		{
+			lock (this._sync)
+			{
+				// make sure worker is up and running
+				if (this._disposed) { throw new ObjectDisposedException("InfoProvider"); }
+				if (null == this._worker)
+				{
+					this._worker = new Thread(() => (this._form = new MyForm(this._sync)).ShowDialog()) { IsBackground = true };
+					this._worker.Start();
+					while (this._form == null || !this._form.Created)
+					{
+						Monitor.Wait(this._sync);
+					}
+				}
+
+				// update the text
+				this._form.Invoke(new Action(delegate
+				{
+					this._form.Text = msg;
+					this._form.Activate();
+				}));
+			}
+		}
+
+		private bool _disposed;
+		private Form _form;
+		private Thread _worker;
+		private readonly object _sync = new object();
+	}
+}
+
+As well as the Form that will be shown:
+// file 'MyForm.cs' in C:\TEMP\PshWindow
+using System;
+using System.Drawing;
+using System.Threading;
+using System.Windows.Forms;
+
+namespace PshWindow
+{
+	internal sealed class MyForm : Form
+	{
+		public MyForm(object sync)
+		{
+			this._sync = sync;
+			this.BackColor = Color.LightGreen;
+			this.Width = 200;
+			this.Height = 80;
+			this.FormBorderStyle = FormBorderStyle.SizableToolWindow;
+		}
+
+		protected override void OnShown(EventArgs e)
+		{
+			base.OnShown(e);
+			this.TopMost = true;
+
+			lock (this._sync)
+			{
+				Monitor.PulseAll(this._sync);
+			}
+		}
+
+		private readonly object _sync;
+	}
+}
+
+Step 3: Let's compile the assembly...
+(powershell.exe)
+csc /out:PshWindow.dll /target:library InfoProvider.cs MyForm.cs
+
+Step 4: ... and load the assembly in PowerShell to have fun with it:
+(powershell.exe)
+[System.Reflection.Assembly]::LoadFile('C:\TEMP\PshWindow\PshWindow.dll')
+$a = New-Object PshWindow.InfoProvider
+$a.ShowMessage('Hello, world')
+
+A green-ish window with title 'Hello, world' should now pop-up and be active. If you reactivate the PowerShell window and enter:
+$a.ShowMessage('Stack overflow')
+
+The Window's title should change to 'Stack overflow' and the window should be active again.
+To stop working with our window, dispose the object:
+$a.Dispose()
+
+This solution works as expected in both Windows XP SP3, x86 and Windows Vista SP1, x64. If there are question about how this solution works I can update this entry with detailed discussion. For now I'm hoping the code if self-explanatory.
+
+Huge thanks people.
+I think I've made it a bit shorter, here's what I put on a seperate thread and seems to be working ok.
+ private static void StatusChecking()
+        {
+            IntPtr iActiveForm = IntPtr.Zero, iCurrentACtiveApp = IntPtr.Zero;
+            Int32 iMyProcID = Process.GetCurrentProcess().Id, iCurrentProcID = 0;
+            IntPtr iTmp = (IntPtr)1;
+            while (bIsRunning)
+            {
+                try
+                {
+                    Thread.Sleep(45);
+                    if (Form.ActiveForm != null)
+                    {
+                        iActiveForm = Form.ActiveForm.Handle;
+                    }
+                    iTmp = GetForegroundWindow();
+                    if (iTmp == IntPtr.Zero) continue;
+                    GetWindowThreadProcessId(iTmp, ref iCurrentProcID);
+                    if (iCurrentProcID == 0)
+                    {
+                        iCurrentProcID = 1;
+                        continue;
+                    }
+                    if (iCurrentProcID != iMyProcID)
+                    {
+                        SystemParametersInfo(SPI_GETFOREGROUNDLOCKTIMEOUT, 0, IntPtr.Zero, 0);
+                        SystemParametersInfo(SPI_SETFOREGROUNDLOCKTIMEOUT, 0, IntPtr.Zero, SPIF_SENDCHANGE);
+                        BringWindowToTop(iActiveForm);
+                        SetForegroundWindow(iActiveForm);
+                    }
+                    else iActiveForm = iTmp;
+                }
+                catch (Exception ex)
+                {
+                    Definitions.UnhandledExceptionHandler(ex, 103106);
+                }
+            }
+        }
+
+I don`t bother repasting the definitions ...

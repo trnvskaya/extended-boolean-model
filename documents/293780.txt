@@ -1,0 +1,118 @@
+Free space in a CMD shell
+windows cmd
+Is there a way to get the amount of free diskspace of a disk or a folder in a CMD
+without having to install some thirdparty applications?
+I have a CMD that copies a big file to a given directory and could of course use
+the errorlevel return from the copy command, but then I have to wait for the time
+it takes to copy the file (eg...to that then the disk is full and the copy operation fails).
+I would like to know before I start the copy if it is any idea at all. Tried the DU.EXE utility from Sysinternals, but that show occupied space only.
+
+
+If you run "dir c:\", the last line will give you the free disk space.
+Edit:
+Better solution: "fsutil volume diskfree c:"
+
+A possible solution:
+dir|find "bytes free"
+
+a more "advanced solution", for Windows Xp and beyond:
+wmic /node:"%COMPUTERNAME%" LogicalDisk Where DriveType="3" Get DeviceID,FreeSpace|find /I "c:"
+
+The Windows Management Instrumentation Command-line (WMIC) tool (Wmic.exe)
+can gather vast amounts of information about about a Windows Server 2003 as well as Windows XP or Vista. The tool accesses the underlying hardware by using Windows Management Instrumentation (WMI). Not for Windows 2000.
+
+Is cscript a 3rd party app?
+I suggest trying Microsoft Scripting, where you can use a programming language (JScript, VBS) to check on things like List Available Disk Space.
+The scripting infrastructure is present on all current Windows versions (including 2008).
+
+df.exe
+Shows all your disks;  total, used and free capacity.  You can alter the output by various command-line options.
+You can get it from http://www.paulsadowski.com/WSH/cmdprogs.htm, http://unxutils.sourceforge.net/ or somewhere else.  It's a standard unix-util like du.
+df -h will show all your drive's used and available disk space. For example:
+M:\>df -h
+Filesystem      Size  Used Avail Use% Mounted on
+C:/cygwin/bin   932G   78G  855G   9% /usr/bin
+C:/cygwin/lib   932G   78G  855G   9% /usr/lib
+C:/cygwin       932G   78G  855G   9% /
+C:              932G   78G  855G   9% /cygdrive/c
+E:              1.9T  1.3T  621G  67% /cygdrive/e
+F:              1.9T  201G  1.7T  11% /cygdrive/f
+H:              1.5T  524G  938G  36% /cygdrive/h
+M:              1.5T  524G  938G  36% /cygdrive/m
+P:               98G   67G   31G  69% /cygdrive/p
+R:               98G   14G   84G  15% /cygdrive/r
+
+Cygwin is available for free from: https://www.cygwin.com/
+It adds many powerful tools to the command prompt.  To get just the available space on drive M (as mapped in windows to a shared drive), one could enter in:
+M:\>df -h | grep M: | awk '{print $4}'
+
+
+The following script will give you free bytes on the drive:
+@setlocal enableextensions enabledelayedexpansion
+@echo off
+for /f "tokens=3" %%a in ('dir c:\') do (
+    set bytesfree=%%a
+)
+set bytesfree=%bytesfree:,=%
+echo %bytesfree%
+endlocal && set bytesfree=%bytesfree%
+
+Note that this depends on the output of your dir command, which needs the last line containing the free space of the format 24 Dir(s) 34,071,691,264 bytes free. Specifically:
+
+it must be the last line (or you can modify the for loop to detect the line explicitly rather than relying on setting bytesfree for every line).
+the free space must be the third "word" (or you can change the tokens= bit to get a different word).
+thousands separators are the , character (or you can change the substitution from comma to something else).
+
+It doesn't pollute your environment namespace, setting only the bytesfree variable on exit. If your dir output is different (eg, different locale or language settings), you will need to adjust the script.
+
+Using paxdiablo excellent solution I wrote a little bit more sophisticated batch script, which uses drive letter as the incoming argument and checks if drive exists on a tricky (but not beauty) way:
+@echo off
+setlocal enableextensions enabledelayedexpansion
+set chkfile=drivechk.tmp
+if "%1" == "" goto :usage
+set drive=%1
+set drive=%drive:\=%
+set drive=%drive::=%
+dir %drive%:>nul 2>%chkfile%
+for %%? in (%chkfile%) do (
+  set chksize=%%~z?
+)
+if %chksize% neq 0 (
+  more %chkfile%
+  del %chkfile%
+  goto :eof
+)
+del %chkfile%
+for /f "tokens=3" %%a in ('dir %drive%:\') do (
+  set bytesfree=%%a
+)
+set bytesfree=%bytesfree:,=%
+echo %bytesfree% byte(s) free on volume %drive%:
+endlocal
+
+goto :eof
+:usage
+  echo.
+  echo   usage: freedisk ^<driveletter^> (eg.: freedisk c)
+
+note1: you may type simple letter (eg. x) or may use x: or x:\ format as drive letter in the argument
+note2: script will display stderr from %chkfile% only if the size bigger than 0
+note3: I saved this script as freedisk.cmd (see usage)
+
+You can avoid the commas by using /-C on the DIR command.
+FOR /F "usebackq tokens=3" %%s IN (`DIR C:\ /-C /-O /W`) DO (
+    SET FREE_SPACE=%%s
+)
+ECHO FREE_SPACE is %FREE_SPACE%
+
+If you want to compare the available space to the space needed, you could do something like the following. I specified the number with thousands separator, then removed them. It is difficult to grasp the number without commas. The SET /A is nice, but it stops working with large numbers.
+SET EXITCODE=0
+SET NEEDED=100,000,000
+SET NEEDED=%NEEDED:,=%
+
+IF %FREE_SPACE% LSS %NEEDED% (
+    ECHO Not enough.
+    SET EXITCODE=1
+)
+EXIT /B %EXITCODE%
+

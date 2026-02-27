@@ -1,0 +1,98 @@
+Accessing Environment Variables from Windows Services
+c# windows-services permissions
+I am attempting to write a Windows Service in C#.  I need to find the path to a certain file, which is stored in an environment variable.  In a regular C# console application, I can achieve that with the following line:
+string t = System.Environment.GetEnvironmentVariable("TIP_HOME");
+
+If I write that to the console I see that it was successful.
+Now, if I try that same code in a Windows Service, the string t is empty.
+Any idea why?
+
+
+The service is probably running under a different account and is not getting the same environment variables.
+
+Are you aware of system and user environment variables? A Windows Service, by default, runs under the system account.
+
+I modified that line of code to this:
+string t = System.Environment.GetEnvironmentVariable("TIP_HOME", EnvironmentVariableTarget.Machine);
+I can look through my registry and see that TIP_HOME is set.
+This is from MSDN:
+Machine:     The environment variable is stored or retrieved from the HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Session Manager\Environment key in the Windows operating system registry.
+User variables are stored elsewhere in the registry..
+The string is still showing up empty when I run the service with this change, though.
+
+Your problem seems to be something like we've experienced and can be very tricky to figure out what's going on.
+What happens is when environment variables are added/removed/changed, the services environment does not recognize this until it "restarts". This is because these environment variables are stored in the registry and this registry is read only once by the service environment... at system startup. 
+This means that in order for a service to pickup a change in environment variables, a system restart needs to occur. 
+Check out the Microsoft KB on this.
+
+Okay, I don't quite understand this, but here is what I've found..
+In the same service, I first try what I described earlier and the string returns empty.
+Then, if I enumerate through each of the system-level environment variables, it finds the variable I am looking for just fine.
+Here is a code snippet, slightly modified from some sample code found on MSDN:
+foreach(DictionaryEntry de in Environment.GetEnvironmentVariables(tgt))
+{
+    key   = (string)de.Key;
+    value = (string)de.Value;
+
+    if(key.Equals("TIP_HOME") && value != null)
+        log.WriteEntry("TIP_HOME="+value, EventLogEntryType.Information);
+}
+
+
+Are you running the service under the Local System account?
+Have you restarted the machine after adding the TIP_HOME variable?
+Services running under Local System get started from the services.exe service, which only reads its environment when it starts up: http://support.microsoft.com/kb/821761
+
+try this code
+ string getsyspath = System.Environment.GetEnvironmentVariable("TIP_HOME",EnvironmentVariableTarget.Machine);
+
+I've no idea if this is useful, but I've found that for every service, there is an option to add environment variables directly to a service.
+It is done via the registry.
+Say the key to your service is ...
+HKLM\SYSTEM\CurrentControlSet\Services\YourService
+Create a REG_MULTI_SZ called Environment.
+Now you can add entries like ...
+Var1=Value1
+Var2=Value2
+
+and these will be available to the service code.
+If you are using the Windows Resource ToolKit to install scripts as a service (instsrv.exe and srvany.exe), then, again, you have the option of setting Environment variables for the service, but most likely it is the wrong one as these would be for srvany.exe.
+Instead, you use the key ...
+HKLM\SYSTEM\CurrentControlSet\Services\YourService\Parameters
+and create a REG_MULTI_SZ called AppEnvironment
+Set the entries in the same way.
+And now your script service has it's own environment variables.
+I'm using these techniques with PHP+WinCache to allow me to set an APP_POOL_ID unique to each service which allows WinCache to share a central cache (based upon APP_POOL_ID) for all "threads" (using WShell to launch non-blocking child "threads" and still share the same WinCache as the launcher, allowing simplistic, inter-process communication).
+Anyway. I hope this helps somewhat.
+I think, in the main, you aren't adding unnecessary env_vars to the global environment. You can keep them targetted and unique when you have more than 1.
+Regards,
+Richard.
+
+You need to check how the variable was stored.
+There's the overload method for the Set/GetEnvironmentVariable:
+Environment.GetEnvironmentVariable Method (String, EnvironmentVariableTarget)
+The thing is, there are three types of storing the environment variable (EnvironmentVariableTarget):
+
+Machine (available for all users)
+User (available for the current user)
+Process (available only for the current Process [not recommended btw])
+
+If you store the information as Machine or User, then you can test it as running Run (Win + R): %TIP_HOME%
+Hope it helps :)
+
+Services typically are run under one of three service accounts, Local Service Local System and Network Service. For all of which your typical environmental variable will be null.
+
+To Investigate
+
+I tested by having the service write an event log entry, and print what it stores in the HOMEPATH variable. It returned empty for service accounts. In C#:  
+protected override void OnStart(string[] args)
+{
+    EventLog.WriteEntry("The HomePath for this service is '" + Environment.GetEnvironmentVariable("HOMEPATH") + "'", EventLogEntryType.Information);
+}
+
+
+Possible Solutions
+
+You can set what account a service uses (your user account for instance), in the services properties window or in the service install config. When I tested with my user account the event log entry displayed The HomePath for this service is '\Users\Admin-PC'. If it were using your user account it would have access to all of the environmental variables that you typically have access to.
+.
+ 

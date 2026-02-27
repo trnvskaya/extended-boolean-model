@@ -1,0 +1,144 @@
+simple linq to sql has no supported translation to SQL
+.net linq-to-sql c#-3.0
+i have this in my BlogRepository
+public IQueryable<Subnus.MVC.Data.Model.Post> GetPosts()
+    {
+        var query = from p in db.Posts
+                    let categories = GetCategoriesByPostId(p.PostId)
+                    let comments = GetCommentsByPostId(p.PostId)
+                    select new Subnus.MVC.Data.Model.Post
+                    {
+                        Categories = new LazyList<Category>(categories),
+                        Comments = new LazyList<Comment>(comments),
+                        PostId = p.PostId,
+                        Slug = p.Slug,
+                        Title = p.Title,
+                        CreatedBy = p.CreatedBy,
+                        CreatedOn = p.CreatedOn,
+                        Body = p.Body
+                    };
+        return query;
+    }
+
+and 
+public IQueryable<Subnus.MVC.Data.Model.Comment> GetCommentsByPostId(int postId)
+    {
+        var query = from c in db.Comments
+                    where c.PostId == postId
+                    select new Subnus.MVC.Data.Model.Comment
+                    {
+                        Body = c.Body,
+                        EMail = c.EMail,
+                        Date = c.CreatedOn,
+                        WebSite = c.Website,
+                        Name = c.Name
+                    };
+
+        return query;
+    }
+
+private IQueryable<Subnus.MVC.Data.Model.Category> GetCategoriesByPostId(int postId)
+    {
+        var query = from c in db.Categories
+                    join pcm in db.Post_Category_Maps on c.CategoryId equals pcm.CategoryId
+                    where pcm.PostId == postId
+                    select new Subnus.MVC.Data.Model.Category
+                    {
+                        CategoryId = c.CategoryId,
+                        Name = c.Name
+                    };
+        return query;
+    }
+
+and when i aplly this filter  
+namespace Subnus.MVC.Data
+{
+ public static class BlogFilters
+ {
+    public static IQueryable<Post> WherePublicIs(this IQueryable<Post> qry,bool state)
+    {
+
+        return from p in qry
+               where p.IsPublic == state
+               select p;
+    }
+ }
+
+}
+all this is in the same namespace if that help namespace Subnus.MVC.Data
+when i try to do this  
+public class BlogService : IBlogService
+{
+...
+    public IList<Post> GetPublicPosts()
+    {
+         return repository.GetPosts().WherePublicIs(true).ToList();
+    }
+ ...
+ }
+
+that is in the namespace Subnus.MVC.Service
+it throws the error  
+Method 'System.Linq.IQueryable`1[Subnus.MVC.Data.Model.Comment] GetCommentsByPostId(Int32)' has no supported translation to SQL.
+
+
+
+You are calling GetCommentsByPostId within what is ultimately an expression tree. That tree, when composed in BlogService.GetPublicPosts, is converted to SQL.
+During that conversion, it is just a method call, nothing more. Linq to Sql understands certain method calls, and yours is not one of them. Hence the error.
+On the surface, this seems like it should work. You write reusable queries and compose them from other queries. However, what you are actually saying is: "during the processing of each row on the database server, call this method", which it obviously can't do. The fact that it takes an IQueryable<T> and returns an IQueryable<T> does not make it special.
+Think about it this way: you are passing postId to GetCategoriesByPostId. You can't call that method until you have a postId, and you don't have one of those until you are on the server in the query.
+You would probably need to define common Expression<> instances for the sub-queries and use those in the composition. I haven't thought about what this would look like but it's certainly doable.
+Edit:
+If you replace
+let categories = GetCategoriesByPostId(p.PostId)
+let comments = GetCommentsByPostId(p.PostId)
+...
+Categories = new LazyList<Category>(categories),
+Comments = new LazyList<Comment>(comments),
+
+with
+Categories = new LazyList<Category>(GetCategoriesByPostId(p.PostId)),
+Comments = new LazyList<Comment>(GetCommentsByPostId(p.PostId)),
+
+the query will no longer throw an exception.
+This is because let declares range variables, which are in scope for each row. They must be calculated on the server.
+Projections, however, allow you to put arbitrary code in assignments, which is then executed while building results on the client. This means both methods will be called, each of which will issue its own query.
+
+Upadate 2:  this works
+var query = from p in repository.GetPosts()
+           where p.Slug == slug
+       select p;
+return query.SingleOrDefault();
+
+
+if i create this
+public IQueryable<Post> GetPublicPosts()
+    {
+        var query = from p in db.Posts
+                    where p.IsPublic==true
+                    select new Subnus.MVC.Data.Model.Post
+                    {
+                        Categories = new LazyList<Category>(GetCategoriesByPostId(p.PostId)),
+                        Comments = new LazyList<Comment>(GetCommentsByPostId(p.PostId)),
+
+                        PostId = p.PostId,
+                        Slug = p.Slug,
+                        Title = p.Title,
+                        CreatedBy = p.CreatedBy,
+                        CreatedOn = p.CreatedOn,
+                        Body = p.Body
+                    };
+        return query;
+    }
+
+in the BlogRepository it works but that is just the repeating myself i think it because i create i my on class and not the linq to sql created class 
+UPDATE: because then it becomes linq to object and not linq to sql
+if i do:
+public IQueryable<Post> GetPublicPosts()
+    {
+        var query = from p in GetPosts()
+                    where p.IsPublic==true
+                    select p;
+        return query;
+    }
+

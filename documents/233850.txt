@@ -1,0 +1,245 @@
+Tetris Piece Rotation Algorithm
+algorithm rotation tetris
+What are the best algorithms (and explanations) for representing and rotating the pieces of a tetris game?  I always find the piece rotation and representation schemes confusing.
+Most tetris games seem to use a naive "remake the array of blocks" at each rotation:
+http://www.codeplex.com/Project/ProjectDirectory.aspx?ProjectSearchText=tetris
+However, some use pre-built encoded numbers and bit shifting to represent each piece:
+http://www.codeplex.com/wintris
+Is there a method to do this using mathematics (not sure that would work on a cell based board)?
+
+
+There is a limited amount of shapes, so I would use a fixed table and no calculation. That saves time.
+But there are rotation algorithms. 
+Chose a centerpoint and rotate pi/2. 
+If a block of a piece starts at (1,2) it moves clockwise to (2,-1) and (-1,-2) and (-1, 2).
+Apply this for each block and the piece is rotated.
+Each x is the previous y and each y - the previous x. Which gives the following matrix:
+[  0   1 ]
+[ -1   0 ]
+
+For counterclockwise rotation, use:
+[  0  -1 ]
+[  1   0 ]
+
+
+I have used a shape position and set of four coordinates for the four points in all the shapes.  Since it's in 2D space, you can easy apply a 2D rotational matrice to the points.
+The points are divs so their css class is turned from off to on.  (this is after clearing the css class of where they were last turn.)
+
+Personally I've always just represented the rotations by hand - with very few shapes, it's easy to code that way. Basically I had (as pseudo-code)
+class Shape
+{
+    Color color;
+    ShapeRotation[] rotations;
+}
+
+class ShapeRotation
+{
+    Point[4] points;
+}
+
+class Point
+{
+    int x, y;
+}
+
+At least conceptually - a multi-dimensional array of points directly in shape would do the trick too :)
+
+Since there are only 4 possible orientations for each shape, why not use an array of states for the shape and rotating CW or CCW simply increments or decrements the index of the shape state (with wraparound for the index)? I would think that might be quicker than performing rotation calculations and whatnot.
+
+This is how I did it recently in a jQuery/CSS based tetris game.
+Work out the centre of the block (to be used as a pivot point), i.e. the centre of the block shape.
+Call that (px, py).
+Each brick that makes up the block shape will rotate around that point.
+For each brick, you can apply the following calculation...
+Where each brick's width and height is q, the brick's current location (of the upper left corner) is (x1, y1) and the new brick location is (x2, y2):
+x2 = (y1 + px - py)
+
+y2 = (px + py - x1 - q)
+
+To rotate the opposite direction:
+x2 = (px + py - y1 - q)
+
+y2 = (x1 + py - px)
+
+This calculation is based on a 2D affine matrix transformation.
+If you are interested in how I got to this let me know.
+
+If you're doing this in python, cell-based instead of coordinate pairs it's very simple to rotate a nested list.
+rotate = lambda tetrad: zip(*tetrad[::-1])
+
+# S Tetrad
+tetrad = rotate([[0,0,0,0], [0,0,0,0], [0,1,1,0], [1,1,0,0]])
+
+
+I derived a rotation algorithm from matrix rotations here. To sum it up: If you have a list of coordinates for all cells that make up the block, e.g. [(0, 1), (1, 1), (2, 1), (3, 1)] or [(1, 0), (0, 1), (1, 1), (2, 1)]:
+ 0123       012
+0....      0.#.
+1####  or  1###
+2....      2...
+3....
+
+you can calculate the new coordinates using
+x_new = y_old
+y_new = 1 - (x_old - (me - 2))
+
+for clockwise rotation and
+x_new = 1 - (y_old - (me - 2))
+y_new = x_old
+
+for counter-clockwise rotation. me is the maximum extent of the block, i.e. 4 for I-blocks, 2 for O-blocks and 3 for all other blocks.
+
+You can rotate a matrix only by applying mathematical operations to it. If you have a matrix, say:
+Mat A = [1,1,1]
+        [0,0,1]
+        [0,0,0]
+
+To rotate it, multiply it by its transpose and then by this matrix ([I]dentity [H]orizontaly [M]irrored):
+IHM(A) = [0,0,1]
+         [0,1,0]
+         [1,0,0]
+
+Then you'll have:
+Mat Rotation = Trn(A)*IHM(A) = [1,0,0]*[0,0,1] = [0,0,1]
+                               [1,0,0] [0,1,0] = [0,0,1]
+                               [1,1,0] [1,0,0] = [0,1,1]
+
+Note: Center of rotation will be the center of the matrix, in this case at (2,2).
+
+for 3x3 sized tetris pieces
+flip x and y of your piece 
+then swap the outer columns
+that's what I figured out some time
+
+When I was trying to figure out how rotations would work for my tetris game, this was the first question that I found on stack overflow.  Even though this question is old, I think my input will help others trying to figure this out algorithmically.  First, I disagree that hard coding each piece and rotation will be easier.  Gamecat's answer is correct, but I wanted to elaborate on it.  Here are the steps I used to solve the rotation problem in Java.
+
+For each shape, determine where its origin will be.  I used the points on the diagram from this page to assign my origin points. Keep in mind that, depending on your implementation, you may have to modify the origin every time the piece is moved by the user.
+Rotation assumes the origin is located at point (0,0), so you will have to translate each block before it can be rotated.  For example, suppose your origin is currently at point (4, 5).  This means that before the shape can be rotated, each block must be translated -4 in the x-coordinate and -5 in the y-coordinate to be relative to (0,0).
+In Java, a typical coordinate plane starts with point (0,0) in the upper left most corner and then increases to the right and down.  To compensate for this in my implementation, I multiplied each point by -1 before rotation.
+Here are the formulae I used to figure out the new x and y coordinate after a counter-clockwise rotation.  For more information on this, I would check out the Wikipedia page on Rotation Matrix. x' and y' are the new coordinates:
+x' = x * cos(PI/2) - y * sin(PI/2) and y' = x * sin(PI/2) + y * cos(PI/2)
+.
+For the last step, I just went through steps 2 and 3 in reverse order.  So I multiplied my results by -1 again and then translated the blocks back to their original coordinates.
+
+Here is the code that worked for me (in Java) to get an idea of how to do it in your language:
+public synchronized void rotateLeft(){
+
+    Point[] rotatedCoordinates = new Point[MAX_COORDINATES];
+
+    for(int i = 0; i < MAX_COORDINATES; i++){
+
+        // Translates current coordinate to be relative to (0,0)
+        Point translationCoordinate = new Point(coordinates[i].x - origin.x, coordinates[i].y - origin.y);
+
+        // Java coordinates start at 0 and increase as a point moves down, so
+        // multiply by -1 to reverse
+        translationCoordinate.y *= -1;
+
+        // Clone coordinates, so I can use translation coordinates
+        // in upcoming calculation
+        rotatedCoordinates[i] = (Point)translationCoordinate.clone();
+
+        // May need to round results after rotation
+        rotatedCoordinates[i].x = (int)Math.round(translationCoordinate.x * Math.cos(Math.PI/2) - translationCoordinate.y * Math.sin(Math.PI/2)); 
+        rotatedCoordinates[i].y = (int)Math.round(translationCoordinate.x * Math.sin(Math.PI/2) + translationCoordinate.y * Math.cos(Math.PI/2));
+
+        // Multiply y-coordinate by -1 again
+        rotatedCoordinates[i].y *= -1;
+
+        // Translate to get new coordinates relative to
+        // original origin
+        rotatedCoordinates[i].x += origin.x;
+        rotatedCoordinates[i].y += origin.y;
+
+        // Erase the old coordinates by making them black
+        matrix.fillCell(coordinates[i].x, coordinates[i].y, Color.black);
+
+    }
+    // Set new coordinates to be drawn on screen
+    setCoordinates(rotatedCoordinates.clone());
+}
+
+This method is all that is needed to rotate your shape to the left, which turns out to be much smaller (depending on your language) than defining each rotation for every shape.
+
+If array size is 3*3 ,than the simplest way to rotate it for example in anti-clockwise direction is:
+oldShapeMap[3][3] = {{1,1,0},
+                     {0,1,0},
+                     {0,1,1}};
+
+bool newShapeMap[3][3] = {0};
+int gridSize = 3;
+
+for(int i=0;i<gridSize;i++)
+    for(int j=0;j<gridSize;j++)
+        newShapeMap[i][j] = oldShapeMap[j][(gridSize-1) - i];
+/*newShapeMap now contain:    
+                               {{0,0,1},
+                                {1,1,1},
+                                {1,0,0}};
+
+*/ 
+
+
+In Ruby, at least, you can actually use matrices. Represent your piece shapes as nested arrays of arrays like [[0,1],[0,2],[0,3]]
+require 'matrix'
+shape = shape.map{|arr|(Matrix[arr] * Matrix[[0,-1],[1,0]]).to_a.flatten}
+
+However, I agree that hard-coding the shapes is feasible since there are 7 shapes and 4 states for each = 28 lines and it will never be any more than that.
+For more on this see my blog post at 
+http://pivotallabs.com/the-simplest-thing-that-could-possibly-work-in-tetris/ and a completely working implementation (with minor bugs) at https://github.com/andrewfader/Tetronimo
+
+If we assume that the central square of the tetromino has coordinates (x0, y0) which remains unchanged then the rotation of the other 3 squares in Java will look like this:
+private void rotateClockwise()
+{
+    if(rotatable > 0)   //We don't rotate tetromino O. It doesn't have central square.
+    {
+        int i = y1 - y0;
+        y1 = (y0 + x1) - x0;
+        x1 = x0 - i;
+        i = y2 - y0;
+        y2 = (y0 + x2) - x0;
+        x2 = x0 - i;
+        i = y3 - y0;
+        y3 = (y0 + x3) - x0;
+        x3 = x0 - i;  
+    }
+}
+
+private void rotateCounterClockwise()
+{
+    if(rotatable > 0)
+    {
+        int i = y1 - y0;
+        y1 = (y0 - x1) + x0;
+        x1 = x0 + i;
+        i = y2 - y0;
+        y2 = (y0 - x2) + x0;
+        x2 = x0 + i;
+        i = y3 - y0;
+        y3 = (y0 - x3) + x0;
+        x3 = x0 + i;
+    }
+}
+
+
+It's a very simple task actually, unlike people generally think. Linear algebra is just enough to solve this problem, we don't need to invent complex operations.
+Representation
+Represent each piece in minimum possible rectangle.(No need for 4x4 matrices)
+Example: [0, 0, 1]
+         [1, 1, 1]
+
+Rotation
+1.Matrix Transposition
+2.Reverse the orders of the rows(for rotating left, or columns for rotating right) so that the first row becomes the last, and so on.
+Example:       [0, 0, 1]
+               [1, 1, 1]
+
+Transposition: [0, 1]
+               [0, 1]
+               [1, 1]
+
+Reverse Rows:  [1, 1]
+               [0, 1]
+               [0, 1]
+
+Which results left rotated version of the original piece. If we would want to rotate right, we would reverse the columns in the last step, instead of reversing the rows.
+And 180 degree rotations can be produced repeating 90 degree rotations twice.

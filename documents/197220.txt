@@ -1,0 +1,83 @@
+SqlDataReader.HasRows returns false since SQL 2008 upgrade
+c# asp.net sql sql-server-2008
+I've got an ASP.NET 2.0 website that connects to a SQL database. I've upgraded the SQL server from 2000 to 2008 and since then, one page refuses to work. 
+I've worked out the problem is that the call to SqlDataReader.HasRows is returning false even though the dataset is not empty and removing the check allows the loop through reader.Read() to access the expected data. 
+    _connectionString = WebConfigurationManager.ConnectionStrings["SQLServer"].ConnectionString;
+    SqlConnection connection = new SqlConnection(_connectionString);
+    SqlCommand command = new SqlCommand(searchtype, connection);
+    SqlParameter _parSeachTerm = new SqlParameter("@searchterm", SqlDbType.VarChar, 255);
+    _parSeachTerm.Value = searchterm;
+    command.Parameters.Add(_parSeachTerm);
+    command.CommandType = CommandType.StoredProcedure;
+    try
+    {
+        connection.Open();
+        SqlDataReader reader = command.ExecuteReader();
+        if (reader.HasRows) //this always returns false!?
+        {
+            while (reader.Read())
+            {...
+
+Does anybody have any idea what's going on? There are similar code blocks on other pages where HasRows returns the correct value.
+EDIT- Just to clarify, the stored procedure DOES return results which I have confirmed because the loop runs through fine if I remove the HasRows check. Changing just the name of the SQL server in the connection string to an identical database running on SQL 2000 makes the problem go away. I've checked that NOCOUNT is off, so what else could make HasRows return false when that's not the case??
+EDIT2- Here's the SP
+CREATE PROCEDURE StaffEnquirySurnameSearch
+
+@searchterm varchar(255)
+
+AS
+
+SELECT  AD.Name, AD.Company, AD.telephoneNumber, AD.manager, CVS.Position, CVS.CompanyArea, CVS.Location, CVS.Title, AD.guid AS guid,
+AD.firstname, AD.surname
+FROM ADCVS AD
+LEFT OUTER JOIN CVS ON
+AD.Guid=CVS.Guid 
+WHERE AD.SurName LIKE @searchterm
+ORDER BY AD.Surname, AD.Firstname
+GO
+
+Many thanks in advance.
+
+
+Does the stored procedure work if you invoke it in directly, say in SSMS?  I'd start by making sure that it does.
+
+First, check the procedure as @tvanfosson says. 
+Second, the check for HasRows() is actually unnecessary in the code snippet. 
+
+You're not using RAISEERROR by chance?  We found some problems using the same pattern as above (check HasRows, then reader.Read()) and found that if RAISEERROR was used with a certain error code (above 16, I believe) then the HasRows would return false and we would have problems catching an exception.
+
+It is either your connection string, the stored procedure, or a bug in the sql driver.
+Most people are guessing the stored procedure.
+So show us the code.
+While you are at it, show us the connection string and searchtype variable contents.
+
+HasRows requires a scrollable cursor. 
+Do the rows you are bringing back contain any large image/BLOB data?
+As someone else suggested, I think posting the Stored Procedure might throw some light on the matter...
+
+I am speculating again.
+Do you have multiple datareaders open by any chance?
+Add MARS_Connection=yes; OR MultipleActiveResultSets=true to the connection string, if that helps.
+Also, your usage of connection & datareader is not a recommended way of doing things
+a simpler way to write it could be
+
+
+using (connection cnn = new Connection(...)
+{
+using (SqlDataReader rdr = ....
+{
+//some code which deals with datareader
+}
+}
+
+
+This will close the connection and datareader once the operation is complete.
+
+I think you've got NOCOUNT backwards.
+I believe NOCOUNT needs to be on for this to work.
+In your stored procedure add
+SET NOCOUNT ON
+after the AS and before any code.
+Otherwise it returns two result sets.
+One with the count and one with the actual data.
+You only want the result set with the actual data.

@@ -1,0 +1,112 @@
+SQL DataReader missing a row in loop
+c# sql datareader
+When running the following code it leaves out one row. When I do a files.Count it says there are 4 rows but there is no data stored for the 4th row. When I run the stored procedure from within SQL Manager it returns all 4 rows and all the data. Any help?
+            List<File> files = new List<File>();
+            SqlConnection active_connection = new SqlConnection(m_connection_string);
+            SqlCommand cmd = new SqlCommand();
+            SqlDataReader dr = null;
+
+            try
+            {
+                active_connection.Open();
+                cmd.Connection = active_connection;
+                cmd.CommandType = CommandType.StoredProcedure;
+                cmd.CommandText = "dalsp_Select_Organization_Files";
+
+                SqlParameter param;
+
+                param = cmd.Parameters.Add("@p_organization_guid", SqlDbType.UniqueIdentifier);
+                param.Value = new Guid(organization_guid);
+
+                param = cmd.Parameters.Add("@p_file_type", SqlDbType.NVarChar, 50);
+                param.Value = file_type;
+
+                dr = cmd.ExecuteReader(CommandBehavior.CloseConnection);
+
+                if (dr.HasRows)                    
+                {                    
+                    while (dr.Read())
+                    {
+                        File file = new File();
+                        file.OrganizationGuid = dr["OrganizationGuid"].ToString();
+                        file.FileGuid = dr["FileGuid"].ToString();
+                        file.FileLocation = dr["FileLocation"].ToString();
+                        file.FileName = dr["FileName"].ToString();
+                        file.FileType = (FileTypeEnum)Enum.Parse(typeof(FileTypeEnum), dr["FileType"].ToString());
+                        file.FileExtension = dr["FileExtension"].ToString();
+                        file.FileDescription = dr["FileDescription"].ToString();
+                        file.ThumbnailPath = dr["ThumbnailPath"].ToString();
+                        files.Add(file);
+                    }       
+                }
+                dr.Close();
+                dr = null;
+
+                active_connection.Close();
+                cmd = null;
+
+            }
+            catch (Exception)
+            {
+                throw;
+            }
+            finally
+            {
+                if (active_connection.State != ConnectionState.Closed)
+                {
+                    active_connection.Close();
+                    active_connection.Dispose();
+                }
+            }
+
+            return files;
+
+
+
+Have you tried stepping through this in a debugger, and checking your command params before you exec the reader? Do you get the same values in the result set as when you run the sproc direct on sql?
+I could be wrong, cos there are a few ways of doing this, but something looks a little screwy in the way you are adding the params to the command.
+I usually use a pattern more like:
+SqlParameter param = new SqlParameter();  
+// set param stuff - here or in ctor   
+cmd.Parameters.Add(param);
+
+Is largely about what works for you....  
+Most of the times that I have had problems with sprocs is when I pooched the parameters.
+
+If you are saying your files collection has 4 items, but the 4 item contains no value, what do you mean by that? Is it null, does the object have no data, or does it throw an index out of range exception?
+Are you doing a files[4] or something like the following?
+for(int x = 1; x < files.length; x++)
+{
+     files[x]
+}
+
+That won't work. Remember 0 based indexing in C#.
+As a side note, you could do away with your try catch statments by doing something like:
+using (SqlConnection connection = new SqlConnection(conn_string))
+{
+    connection.Open();
+    using (SqlCommand cmd = new SqlCommand("SELECT * FROM MyTable", connection))
+    {
+         using (SqlDataReader dr = cmd.ExecuteReader())
+         {
+             return result;
+         }
+    }
+}
+
+The using statement will guarantee disposal (and therefore the closing) of the reader and connection.
+
+The code looks correct to me. I think you'd definitely want to step through a debugger to see how many rows are returned from ExecuteReader. One comment I have is that the "if (dr.HasRows)" is kinda redundant since the "while (dr.Read())" will give you the same effect.
+Another question I would have is do you know if you are missing the first or last record?
+Brian
+
+You should ditch "if (dr.HasRows)", all it does is duplicate the check in the while loop.
+You shouldn't ever be calling Close on a connection, nor should you set it to null. Instead you should wrap the connection in a "using" block like so:
+using (SqlCommand cmd = new SqlCommand()) {
+   //use the connection
+}
+
+The same can be said for you data reader and SQL Command.
+This next bit does nothing at all, delete it.
+  catch (Exception) { throw; }
+

@@ -1,0 +1,183 @@
+What do I have to do to make my WH_SHELL or WH_CBT hook procedure receive events from other processes?
+windows delphi winapi hook
+I'm trying to use SetWindowsHookEx to set up a WH_SHELL hook to get notified of system-wide HSHELL_WINDOWCREATED and HSHELL_WINDOWDESTROYED events. I pass 0 for the final dwThreadId argument which, according to the docs, should "associate the hook procedure with all existing threads running in the same desktop as the calling thread". I also pass in the handle to my DLL (HInstance in Delphi) for the hMod parameter as did all the examples I looked at.
+Yet, I only ever get notified of windows created by my own app and - more often than not - my tests result in the desktop process going down in flames once I close down my app. Before you ask, I do call UnhookWindowsHookEx. I also always call CallNextHookEx from within my handler.
+I am running my test app from a limited user account but so far I haven't found any hints indicating that this would play a role... (though that actually surprises me)
+AFAICT, I did everything by the book (obviously I didn't but so far I fail to see where).
+I'm using Delphi (2007) but that shouldn't really matter I think.
+EDIT: Maybe I should have mentioned this before: I did download and try a couple of examples (though there are unfortunately not that many available for Delphi - especially none for WH_SHELL or WH_CBT). While they do not crash the system like my test app does, they still do not capture events from other processes (even though I can verify with ProcessExplorer that they get loaded into them alright). So it seems there is either something wrong with my system configuration or the examples are wrong or it is simply not possible to capture events from other processes. Can anyone enlighten me?
+EDIT2: OK, here's the source of my test project.
+The DLL containing the hook procedure:
+library HookHelper;
+
+uses
+  Windows;
+
+{$R *.res}
+
+type
+  THookCallback = procedure(ACode, AWParam, ALParam: Integer); stdcall;
+
+var
+  WndHookCallback: THookCallback;
+  Hook: HHook;
+
+function HookProc(ACode, AWParam, ALParam: Integer): Integer; stdcall;
+begin
+  Result := CallNextHookEx(Hook, ACode, AWParam, ALParam);
+  if ACode < 0 then Exit;
+  try
+    if Assigned(WndHookCallback)
+//    and (ACode in [HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED]) then
+    and (ACode in [HCBT_CREATEWND, HCBT_DESTROYWND]) then
+      WndHookCallback(ACode, AWParam, ALParam);
+  except
+    // plop!
+  end;
+end;
+
+procedure InitHook(ACallback: THookCallback); register;
+begin
+//  Hook := SetWindowsHookEx(WH_SHELL, @HookProc, HInstance, 0);
+  Hook := SetWindowsHookEx(WH_CBT, @HookProc, HInstance, 0);
+  if Hook = 0 then
+    begin
+//      ShowMessage(SysErrorMessage(GetLastError));
+    end
+  else
+    begin
+      WndHookCallback := ACallback;
+    end;
+end;
+
+procedure UninitHook; register;
+begin
+  if Hook <> 0 then
+    UnhookWindowsHookEx(Hook);
+  WndHookCallback := nil;
+end;
+
+exports
+  InitHook,
+  UninitHook;
+
+begin
+end.
+
+And the main form of the app using the hook:
+unit MainFo;
+
+interface
+
+uses
+  Windows, SysUtils, Forms, Dialogs, Classes, Controls, Buttons, StdCtrls;
+
+type
+  THookTest_Fo = class(TForm)
+    Hook_Btn: TSpeedButton;
+    Output_Lbx: TListBox;
+    Test_Btn: TButton;
+    procedure Hook_BtnClick(Sender: TObject);
+    procedure Test_BtnClick(Sender: TObject);
+  public
+    destructor Destroy; override;
+  end;
+
+var
+  HookTest_Fo: THookTest_Fo;
+
+implementation
+
+{$R *.dfm}
+
+type
+  THookCallback = procedure(ACode, AWParam, ALParam: Integer); stdcall;
+
+procedure InitHook(const ACallback: THookCallback); register; external 'HookHelper.dll';
+procedure UninitHook; register; external 'HookHelper.dll';
+
+procedure HookCallback(ACode, AWParam, ALParam: Integer); stdcall;
+begin
+  if Assigned(HookTest_Fo) then
+    case ACode of
+  //    HSHELL_WINDOWCREATED:
+      HCBT_CREATEWND:
+          HookTest_Fo.Output_Lbx.Items.Add('created handle #' + IntToStr(AWParam));
+  //    HSHELL_WINDOWDESTROYED:
+      HCBT_DESTROYWND:
+        HookTest_Fo.Output_Lbx.Items.Add('destroyed handle #' + IntToStr(AWParam));
+    else
+      HookTest_Fo.Output_Lbx.Items.Add(Format('code: %d, WParam: $%x, LParam: $%x', [ACode, AWParam, ALParam]));
+    end;
+end;
+
+procedure THookTest_Fo.Test_BtnClick(Sender: TObject);
+begin
+  ShowMessage('Boo!');
+end;
+
+destructor THookTest_Fo.Destroy;
+begin
+  UninitHook; // just to make sure
+  inherited;
+end;
+
+procedure THookTest_Fo.Hook_BtnClick(Sender: TObject);
+begin
+  if Hook_Btn.Down then
+    InitHook(HookCallback)
+  else
+    UninitHook;
+end;
+
+end.
+
+
+
+Lol, it looks like the error is in the test code.
+If you create two separate buttons, one for Init and one for UnInit (I prefer Exit).
+procedure THooktest_FO.UnInitClick(Sender: TObject);
+begin
+  UninitHook;
+end;
+
+procedure THooktest_FO.InitClick(Sender: TObject);
+begin
+  InitHook(HookCallback)
+end;
+
+Start the app. Click Init and then The test button, the following output is shown:
+created handle #1902442
+destroyed handle #1902442
+created handle #1967978
+created handle #7276488
+
+Then the messagebox is shown.
+If you click ok you get:
+destroyed handle #1967978
+
+HTH
+
+I found the Delphi base documentation for SetWindowsHookEx. But the text is a bit vague.
+function SetWindowsHookEx(idHook: Integer; lpfn: TFNHookProc; 
+  hmod: HInst; dwThreadId: DWORD): HHOOK;
+
+
+hmod: A handle to the module (a DLL) containing the hook function pointed to by the lpfn parameter. This parameter must be set to zero if dwThreadId identifies a thread created by the current process an dlpfn points to a hook function located in the code associated with the current process.
+dwThreadId: The identifier of the thread to which the installed hook function will be associated. If this parameter is set to zero, the hook will be a system-wide hook that is associated with all existing threads.
+
+By the way, for the hmod parameter you should have used a module handle. (HINSTANCE points to the application handle). 
+hand := GetModuleHandle('hookhelper.dll');
+Hook := SetWindowsHookEx(WH_SHELL, @HookProc, hand, 0);
+
+But although hand differs from HINSTANCE it still shows the same result.
+
+The problem is that your hook DLL is actually being loaded into several different address spaces. Any time Windows detects an event in some foreign process that must be processed by your hook, it loads the hook DLL into that process (if it's not already loaded, of course).
+However, each process has its own address space. This means that the callback function pointer that you passed in InitHook() only makes sense in the context of your EXE (that's why it works for events in your app). In any other process that pointer is garbage; it may point to an invalid memory location or (worse) into some random code section. The result can either be an access violation or silent memory corruption.
+Generally, the solution is to use some sort of interprocess communication (IPC) to properly notify your EXE. The most painless way for your case would be to post a message and cram the needed info (event and HWND) into its WPARAM/LPARAM. You could either use a WM_APP+n or create one with RegisterWindowMessage(). Make sure the message is posted and not sent, to avoid any deadlocks.
+
+This might be tertiary to your question, but as you're seeing, hooks are very hard to get right - if you can avoid using this by any means, do it. You're going to run into all sorts of problems with them, especially on Vista where you'll have to deal with UIPI.
+
+Just to clarify something that "efotinis" mentioned about posting messages back to your process - the wParam and lParam  that you post to your main process can't be pointers, they can just be "numbers". 
+For example, lets say you hook the WM_WINDOWPOSCHANGING message, windows passes you a pointer to a WINDOWPOS in the lparam. You can't just post that lparam back to your main process because the memory the lparam is pointing to is only valid in the process that recieves the message. 
+This is what "efotinis" meant when he said " cram the needed info (event and HWND) into its WPARAM/LPARAM". If you want to pass more complex messages back your going to need to use some other IPC (like named pipes, TCP or memory mapped files).

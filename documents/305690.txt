@@ -1,0 +1,76 @@
+How to determine if a string is a number in C#
+c# .net string value-type
+I am working on a tool where I need to convert string values to their proper object types. E.g. convert a string like "2008-11-20T16:33:21Z" to a DateTime value. Numeric values like "42" and "42.42" must be converted to an Int32 value and a Double value respectively. 
+What is the best and most efficient approach to detect if a string is an integer or a number? Are Int32.TryParse or Double.TryParse the way to go? 
+
+
+In terms of efficiency, yes, TryParse is generally the preferred route.
+If you can know (for example, by reflection) the target type in advance - but don't want to have to use a big switch block, you might be interested in using TypeConverter - for example:
+        DateTime foo = new DateTime(2008, 11, 20);
+        TypeConverter converter = TypeDescriptor.GetConverter(foo);
+        string s = converter.ConvertToInvariantString(foo);
+        object val = converter.ConvertFromInvariantString(s);
+
+
+Int.TryParse and Double.TryParse have the benefit of actually returning the number.
+Something like Regex.IsMatch("^\d+$") has the drawback that you still have to parse the string again to get the value out.
+
+I would recommend the .TryParse() personally. That's what I use anyhow. That's if your data is going to be wrong now and again. If you're certain the incoming strings will be able to convert to integers or doubles without a hitch, the .Parse() is faster.
+Here's an interesting link to support this.
+
+Keeping the idea of a converter to skip a switch block, you could use the concept of Duck Typing.  Basically, you want to turn a string to X, so you make a method that will call X.TryParse(string, out X x) if X has TryParse on it, otherwise you just don't bother (Or I suppose you could throw an error).  How would you do this?  Reflection and Generics.
+Basically you would have a method that would take in a type and use reflection to see if it has TryParse on it.  If you find such a method you then call it and return whatever TryParse managed to get.  This works well with just about any value type like say Decimal or DateTime.  
+public static class ConvertFromString
+{
+  public static T? ConvertTo<T>(this String numberToConvert) where T : struct
+  {
+    T? returnValue = null;
+
+    MethodInfo neededInfo = GetCorrectMethodInfo(typeof(T));
+    if (neededInfo != null && !numberToConvert.IsNullOrEmpty())
+    {
+      T output = default(T);
+      object[] paramsArray = new object[2] { numberToConvert, output };
+      returnValue = new T();
+
+      object returnedValue = neededInfo.Invoke(returnValue.Value, paramsArray);
+
+      if (returnedValue is Boolean && (Boolean)returnedValue)
+      {
+        returnValue = (T)paramsArray[1];
+      }
+      else
+      {
+        returnValue = null;
+      }    
+    }
+
+    return returnValue;
+  }
+}
+
+Where GetCorrectMethodInfo would look something like this:
+private static MethodInfo GetCorrectMethodInfo(Type typeToCheck)
+{
+
+  MethodInfo returnValue = someCache.Get(typeToCheck.FullName);
+
+  if(returnValue == null)
+  {
+    Type[] paramTypes = new Type[2] { typeof(string), typeToCheck.MakeByRefType() };
+    returnValue = typeToCheck.GetMethod("TryParse", paramTypes);
+    if (returnValue != null)
+    {
+      CurrentCache.Add(typeToCheck.FullName, returnValue);
+    }
+  }
+
+  return returnValue;
+}
+
+And use would be:
+decimal? converted = someString.ConvertTo<decimal>();
+
+I hate plugging myself, but I have this fully explained here:
+GetCorrectMethodInfo
+Rest of It

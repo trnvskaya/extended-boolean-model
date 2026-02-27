@@ -1,0 +1,40 @@
+Can I maintain state between calls to a SQL Server UDF?
+sql sql-server sql-server-2005
+I have a SQL script that inserts data (via INSERT statements currently numbering in the thousands) One of the columns contains a unique identifier (though not an IDENTITY type, just a plain ol' int) that's actually unique across a few different tables. 
+I'd like to add a scalar function to my script that gets the next available ID (i.e. last used ID + 1) but I'm not sure this is possible because there doesn't seem to be a way to use a global or static variable from within a UDF, I can't use a temp table, and I can't update a permanent table from within a function. 
+Currently my script looks like this: 
+
+   declare @v_baseID int 
+   exec dbo.getNextID @v_baseID out  --sproc to get the next available id
+   --Lots of these - where n is a hardcoded value
+   insert into tableOfStuff (someStuff, uniqueID) values ('stuff', @v_baseID + n ) 
+   exec dbo.UpdateNextID @v_baseID + lastUsedn  --sproc to update the last used id
+
+But I would like it to look like this: 
+
+   --Lots of these
+   insert into tableOfStuff (someStuff, uniqueID) values ('stuff', getNextID() ) 
+
+Hardcoding the offset is a pain in the arse, and is error prone.  Packaging it up into a simple scalar function is very appealing, but I'm starting to think it can't be done that way since there doesn't seem to be a way to maintain the offset counter between calls.  Is that right, or is there something I'm missing.  
+We're using SQL Server 2005 at the moment. 
+edits for clarification:
+Two users hitting it won't happen.  This is an upgrade script that will be run only once, and never concurrently. 
+The actual sproc isn't prefixed with sp_, fixed the example code. 
+In normal usage, we do use an id table and a sproc to get IDs as needed, I was just looking for a cleaner way to do it in this script, which essentially just dumps a bunch of data into the db. 
+
+
+If you have 2 users hitting it at the same time they will get the same id. Why didn't you use an id table with an identity instead, insert into that and use that as the unique (which is guaranteed) id, this will also perform much faster
+
+
+sp_getNextID 
+
+
+never ever prefix procs with sp_, this has performance implication because the optimizer first checks the master DB to see if that proc exists there and then th local DB, also if MS decide to create a sp_getNextID in a service pack yours will never get executed
+
+It would probably be more work than it's worth, but you can use static C#/VB variables in a SQL CLR UDF, so I think you'd be able to do what you want to do by simply incrementing this variable every time the UDF is called.  The static variable would be lost whenever the appdomain unloaded, of course.  So if you need continuity of your ID from one day to the next, you'd need a way, on first access of NextId, to poll all of tables that use this ID, to find the highest value.
+
+
+I'm starting to think it can't be done that way since there doesn't seem to be a way to maintain the offset counter between calls. Is that right, or is there something I'm missing.
+
+You aren't missing anything; SQL Server does not support global variables, and it doesn't support data modification within UDFs.  And even if you wanted to do something as kludgy as using CONTEXT_INFO (see http://weblogs.sqlteam.com/mladenp/archive/2007/04/23/60185.aspx), you can't set that from within a UDF anyway.
+Is there a way you can get around the "hardcoding" of the offset by making that a variable and looping over the iteration of it, doing the inserts within that loop?

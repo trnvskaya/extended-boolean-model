@@ -1,0 +1,45 @@
+Win32 WriteProcessMemory() magical offset value
+c++ winapi visual-c++ virtualalloc
+I'm trying to read the data in a Win32 ListView owned by another process. Unfortunately, my WriteProcessMemory() call fails with the error "This function is not supported on this system." when I specify "NULL" for the base address in my VirtualAlloc() call. If, however, I offset that VirtualAlloc() address by some "magic" value that I got lucky with and picked at random during a moment of frustration, the call works on my system, but fails on other ones. (see the code below)
+Can anybody suggest what this magical offset is doing for me? By trial and error, I can find values that work on specific systems, but I can't find a general solution to this problem.
+Thanks,
+PaulH
+#define MAGIC_OFFSET (DWORD)0x01020000
+
+LVHITTESTINFO hti   = { 0 };
+hti.pt              = clientPoint;
+
+LPVOID lpBuffer = ::VirtualAlloc( NULL, 1, MEM_RESERVE, PAGE_READWRITE );
+::VirtualFree( lpBuffer, 0, MEM_RELEASE );
+
+lpBuffer = ::VirtualAlloc( (LPVOID)((DWORD)lpBuffer + MAGIC_OFFSET), sizeof( hti ), MEM_RESERVER, PAGE_READWRITE );
+DWORD dwBuffer = (DWORD)lpBuffer + MAGIC_OFFSET - sizeof( hti );
+
+if( !::WriteProcessMemory( hProcess, (LPVOID)dwBuffer, (LPVOID)&hti, sizeof( hti ), NULL ) )
+    return 0;
+
+if( ListView_HitTest( hWndListView, (LPVOID)dwBuffer ) < 0 )
+    return 0;
+
+if( !::ReadProcessMemory( hProcess, (LPVOID)dwBuffer, (LPVOID)&hti, sizeof( hti ), NULL ) )
+    return 0;
+
+::VirtualFree( lpBuffer, 0, MEM_RELEASE );
+
+Clarification (added by Cd-MaN): this is on a Windows Mobile platform, probably non-x86 architecture. So the situation may be different (are there separate address spaces in ARM processors?).
+
+
+VirtualAlloc allocates memory in YOUR address space.  It is absolutely not valid to use that address when writing the memory space of another process.  You should be using VirualAllocEx instead and passing in the hProcess.
+You are just getting lucky and scribbling over some random piece of memory when it works.
+If specifying NULL to the first parameter of the VirtualAllocEx isn't supported when you are querying another process (no idea if it is or isn't) ... then you could use VirtualQueryEx to map out the address space of the other process and find a valid free region to pass to VirtualAlloc.
+You will likely have to put this in a retry loop since the state of the other processes address space could change while you are looking for an empty spot.
+
+You have to keep in mind that you're writing to the virtual address space of a program. On Windows, it often starts at an address like your magic number.
+Have you ever debugged a program? What do addresses look like?
+On my system, the executables are usually loaded around 00400000 or 01000000. It changes from executable to executable, and I believe Windows has the capability to change this address even on consecutive runs of the same executable.
+Furthermore, executables have sections which have their own (and comparatively smaller) offsets. For example, the code section is usually around +1000, then come the data, zeroed data sections, etc.
+What this all means is that if your executable has a base of 00400000 and its data section has an offset of +2000, the first byte of the data will be at 00402000. In order to read/write this byte, you will have to specify a base address of 00402000, not 2000 and definitely not 0.
+Try printing the value of a pointer. If the object pointed to has static lifetime, it will probably reside in the data section and you will get an address like 00402000. Then, if you WriteProcessMemory to that address, you will have modified the object.
+The various Win32 executable formats all contain this "0040000" base address as well as offsets of the various sections, but since such a hack reading another process' memory will probably be targeted at a specific version of a specific executable anyway, you might be better off just leaving the magic number as is.
+
+Instead of trying to allocate memory in another process, why not use named shared memory instead.  This article will take you through the basic setup of shared memory, and I did a quick check to make sure these functions are supported by Windows Mobile 5.

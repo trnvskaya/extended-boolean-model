@@ -1,0 +1,98 @@
+Hibernate Annotation Placement Question
+java hibernate annotations
+I've got what I think is a simple question.  I've seen examples both ways.  The question is - "why can't I place my annotations on the field?".  Let me give you an example....
+@Entity
+@Table(name="widget")
+public class Widget {
+ private Integer id;
+
+ @Id
+ @GeneratedValue(strategy=GenerationType.AUTO)
+ public Integer getId() { return this.id; }
+ public Integer setId(Integer Id) { this.id = id;}
+}
+
+The above code works fine (assuming there's not a typo in there).  When the annotation is placed on the getter of the property everything is perfect.
+However, that seems awkward to me.  In my mind it's cleaner to place the annotation on the field, like so --
+@Entity
+@Table(name="widget")
+public class Widget {
+ @Id
+ @GeneratedValue(strategy=GenerationType.AUTO)
+ private Integer id;
+
+ public Integer getId() { return this.id; }
+ public Integer setId(Integer Id) { this.id = id;}
+}
+
+I've seen examples of both ways.  However, when I run this second example I get the following...
+
+java.lang.NullPointerException
+    at com.widget.util.hibernate.HibernateSessionFactory$ThreadLocalSession.initialValue(HibernateSessionFactory.java:25)
+    at com.widget.util.hibernate.HibernateSessionFactory$ThreadLocalSession.initialValue(HibernateSessionFactory.java:1)
+    at java.lang.ThreadLocal$ThreadLocalMap.getAfterMiss(Unknown Source)
+    at java.lang.ThreadLocal$ThreadLocalMap.get(Unknown Source)
+    at java.lang.ThreadLocal$ThreadLocalMap.access$000(Unknown Source)
+    at java.lang.ThreadLocal.get(Unknown Source)
+    at com.widget.util.hibernate.HibernateSessionFactory.get(HibernateSessionFactory.java:33)
+    at com.widget.db.dao.AbstractDao.(AbstractDao.java:12)
+    at com.widget.db.dao.WidgetDao.(WidgetDao.java:9)
+    at com.widget.db.dao.test.WidgetDaoTest.findById(WidgetDaoTest.java:17)
+    at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+    at sun.reflect.NativeMethodAccessorImpl.invoke(Unknown Source)
+    at sun.reflect.DelegatingMethodAccessorImpl.invoke(Unknown Source)
+    at java.lang.reflect.Method.invoke(Unknown Source)
+    ...
+
+Here's the skeleton of HibernateSessionFactory (line 25 is marked) ....
+protected Session initialValue() {
+	SessionFactory sessionFactory = null;
+	try {
+		Configuration cfg = new AnnotationConfiguration().configure();
+		String url = System.getProperty("jdbc.url");
+		if (url != null) {
+			cfg.setProperty("hibernate.connection.url", url);
+		}
+		sessionFactory = cfg.buildSessionFactory();
+	}
+	catch (Exception e) {
+	}
+
+	Session session = sessionFactory.openSession();  // LINE 25
+	return session;
+}
+
+Anyone have an idea what's going on here?
+
+
+Does it work if you do the following:
+@Entity
+@Table(name="widget")
+public class Widget {
+    @Id
+    @GeneratedValue(strategy=GenerationType.AUTO)
+
+    private Integer id;
+
+    public Integer getId() { return this.id; }
+    public Integer setId(Integer Id) { this.id = id;}
+}
+
+
+A long reach, but do you have an old *.hbm.xml file floating around?
+Perhaps it might be picking up the wrong setting for default-access and using property instead of field ?
+
+You got me on the right track toolkit.  Thanks.  Here's the deal... Of course, my contrived example didn't include the whole story.  My Widget class was actually much larger than the example I gave.  I have several extra fields/getters and I was MIXING my annotations.  So I was annotating the @Id on the field but others were being annotated on the getter.
+So the moral of the story is that you cannot mix annotation locations.  Either all annotations are on the fields or they are on the getter methods.  Long time Java and Hibernate, new to Annotations.  Learn something every day.
+Once I knew what to Google for I came across this which was helpful - http://chstath.blogspot.com/2007/05/field-access-vs-property-access-in-jpa.html
+Of course, this now brings up the question as to which is better from design and performance perspectives.
+
+From a performance and design perspective, using annotations on getters is a better idea than member variables, because the getter setters are called using reflection if placed on the field, than a method. Also if you plan to use validation and other features of hibernate, you'll have all the annotations at one place, rather than scattering them all over the place.
+My recommendation go with methods not member variables.
+From the documentation
+
+Depending on whether you annotate fields or methods, the access type used by Hibernate will be field or property. The EJB3 spec requires that you declare annotations on the element type that will be accessed, i.e. the getter method if you use property access, the field if you use field access. Mixing EJB3 annotations in both fields and methods should be avoided. Hibernate will guess the access type from the position of @Id or @EmbeddedId.
+
+
+This is a very nice link that can help you with understanding the accesstypes and the relted best practices!
+Understading @AccessType in Hibernate

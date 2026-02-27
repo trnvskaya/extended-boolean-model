@@ -1,0 +1,306 @@
+Should try...catch go inside or outside a loop?
+java performance loops try-catch
+I have a loop that looks something like this:
+for (int i = 0; i < max; i++) {
+    String myString = ...;
+    float myNum = Float.parseFloat(myString);
+    myFloats[i] = myNum;
+}
+
+This is the main content of a method whose sole purpose is to return the array of floats. I want this method to return null if there is an error, so I put the loop inside a try...catch block, like this:
+try {
+    for (int i = 0; i < max; i++) {
+        String myString = ...;
+        float myNum = Float.parseFloat(myString);
+        myFloats[i] = myNum;
+    }
+} catch (NumberFormatException ex) {
+    return null;
+}
+
+But then I also thought of putting the try...catch block inside the loop, like this:
+for (int i = 0; i < max; i++) {
+    String myString = ...;
+    try {
+        float myNum = Float.parseFloat(myString);
+    } catch (NumberFormatException ex) {
+        return null;
+    }
+    myFloats[i] = myNum;
+}
+
+Is there any reason, performance or otherwise, to prefer one over the other?
+
+Edit: The consensus seems to be that it is cleaner to put the loop inside the try/catch, possibly inside its own method. However, there is still debate on which is faster. Can someone test this and come back with a unified answer?
+
+
+In your examples there is no functional difference.  I find your first example more readable.
+
+Performance: as Jeffrey said in his reply, in Java it doesn't make much difference.
+Generally, for readability of the code, your choice of where to catch the exception depends upon whether you want the loop to keep processing or not.  
+In your example you returned upon catching an exception.  In that case, I'd put the try/catch around the loop.  If you simply want to catch a bad value but carry on processing, put it inside.  
+The third way: You could always write your own static ParseFloat method and have the exception handling dealt with in that method rather than your loop.  Making the exception handling isolated to the loop itself!
+class Parsing
+{
+    public static Float MyParseFloat(string inputValue)
+    {
+        try
+        {
+            return Float.parseFloat(inputValue);
+        }
+        catch ( NumberFormatException e )
+        {
+            return null;
+        }
+    }
+
+    // ....  your code
+    for(int i = 0; i < max; i++) 
+    {
+        String myString = ...;
+        Float myNum = Parsing.MyParseFloat(myString);
+        if ( myNum == null ) return;
+        myFloats[i] = (float) myNum;
+    }
+}
+
+
+You should prefer the outer version over the inner version. This is just a specific version of the rule, move anything outside the loop that you can move outside the loop. Depending on the IL compiler and JIT compiler your two versions may or may not end up with different performance characteristics.
+On another note you should probably look at float.TryParse or Convert.ToFloat.
+
+If it's inside, then you'll gain the overhead of the try/catch structure N times, as opposed to just the once on the outside.
+
+Every time a Try/Catch structure is called it adds overhead to the execution of the method. Just the little bit of memory & processor ticks needed to deal with the structure.  If you're running a loop 100 times, and for hypothetical sake, let's say the cost is 1 tick per try/catch call, then having the Try/Catch inside the loop costs you 100 ticks, as opposed to only 1 tick if it's outside of the loop.
+
+If you put the try/catch inside the loop, you'll keep looping after an exception.  If you put it outside the loop you'll stop as soon as an exception is thrown.
+
+If its an all-or-nothing fail, then the first format makes sense.  If you want to be able to process/return all the non-failing elements, you need to use the second form.  Those would be my basic criteria for choosing between the methods.  Personally, if it is all-or-nothing, I wouldn't use the second form.
+
+setting up a special stack frame for the try/catch adds additional overhead, but the JVM may be able to detect the fact that you're returning and optimize this away.
+depending on the number of iterations, performance difference will likely be negligible.
+However i agree with the others that having it outside the loop make the loop body look cleaner.
+If there's a chance that you'll ever want to continue on with the processing rather than exit if there an invalid number, then you would want the code to be inside the loop.
+
+PERFORMANCE:
+There is absolutely no performance difference in where the try/catch structures are placed. Internally, they are implemented as a code-range table in a structure that is created when the method is called. While the method is executing, the try/catch structures are completely out of the picture unless a throw occurs, then the location of the error is compared against the table.
+Here's a reference: http://www.javaworld.com/javaworld/jw-01-1997/jw-01-hood.html
+The table is described about half-way down.
+
+The whole point of exceptions is to encourage the first style: letting the error handling be consolidated and handled once, not immediately at every possible error site.
+
+All right, after Jeffrey L Whitledge said that there was no performance difference (as of 1997), I went and tested it. I ran this small benchmark:
+public class Main {
+
+    private static final int NUM_TESTS = 100;
+    private static int ITERATIONS = 1000000;
+    // time counters
+    private static long inTime = 0L;
+    private static long aroundTime = 0L;
+
+    public static void main(String[] args) {
+        for (int i = 0; i < NUM_TESTS; i++) {
+            test();
+            ITERATIONS += 1; // so the tests don't always return the same number
+        }
+        System.out.println("Inside loop: " + (inTime/1000000.0) + " ms.");
+        System.out.println("Around loop: " + (aroundTime/1000000.0) + " ms.");
+    }
+    public static void test() {
+        aroundTime += testAround();
+        inTime += testIn();
+    }
+    public static long testIn() {
+        long start = System.nanoTime();
+        Integer i = tryInLoop();
+        long ret = System.nanoTime() - start;
+        System.out.println(i); // don't optimize it away
+        return ret;
+    }
+    public static long testAround() {
+        long start = System.nanoTime();
+        Integer i = tryAroundLoop();
+        long ret = System.nanoTime() - start;
+        System.out.println(i); // don't optimize it away
+        return ret;
+    }
+    public static Integer tryInLoop() {
+        int count = 0;
+        for (int i = 0; i < ITERATIONS; i++) {
+            try {
+                count = Integer.parseInt(Integer.toString(count)) + 1;
+            } catch (NumberFormatException ex) {
+                return null;
+            }
+        }
+        return count;
+    }
+    public static Integer tryAroundLoop() {
+        int count = 0;
+        try {
+            for (int i = 0; i < ITERATIONS; i++) {
+                count = Integer.parseInt(Integer.toString(count)) + 1;
+            }
+            return count;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+}
+
+I checked the resulting bytecode using javap to make sure that nothing got inlined.
+The results showed that, assuming insignificant JIT optimizations, Jeffrey is correct; there is absolutely no performance difference on Java 6, Sun client VM (I did not have access to other versions). The total time difference is on the order of a few milliseconds over the entire test.
+Therefore, the only consideration is what looks cleanest. I find that the second way is ugly, so I will stick to either the first way or Ray Hayes's way.
+
+I agree with all the performance and readability posts.  However, there are cases where it really does matter.  A couple other people mentioned this, but it might be easier to see with examples.
+Consider this slightly modified example:
+public static void main(String[] args) {
+    String[] myNumberStrings = new String[] {"1.2345", "asdf", "2.3456"};
+    ArrayList asNumbers = parseAll(myNumberStrings);
+}
+
+public static ArrayList parseAll(String[] numberStrings){
+    ArrayList myFloats = new ArrayList();
+
+    for(int i = 0; i < numberStrings.length; i++){
+        myFloats.add(new Float(numberStrings[i]));
+    }
+    return myFloats;
+}
+
+If you want the parseAll() method to return null if there are any errors (like the original example), you'd put the try/catch on the outside like this:
+public static ArrayList parseAll1(String[] numberStrings){
+    ArrayList myFloats = new ArrayList();
+    try{
+        for(int i = 0; i < numberStrings.length; i++){
+            myFloats.add(new Float(numberStrings[i]));
+        }
+    } catch (NumberFormatException nfe){
+        //fail on any error
+        return null;
+    }
+    return myFloats;
+}
+
+In reality, you should probably return an error here instead of null, and generally I don't like having multiple returns, but you get the idea.
+On the other hand, if you want it to just ignore the problems, and parse whatever Strings it can, you'd put the try/catch on the inside of the loop like this:
+public static ArrayList parseAll2(String[] numberStrings){
+    ArrayList myFloats = new ArrayList();
+
+    for(int i = 0; i < numberStrings.length; i++){
+        try{
+            myFloats.add(new Float(numberStrings[i]));
+        } catch (NumberFormatException nfe){
+            //don't add just this one
+        }
+    }
+
+    return myFloats;
+}
+
+
+put it inside.  You can keep processing (if you want) or you can throw a helpful exception that tells the client the value of myString and the index of the array containing the bad value. I think NumberFormatException will already tell you the bad value but the principle is to place all the helpful data in the exceptions that you throw.  Think about what would be interesting to you in the debugger at this point in the program.  
+Consider: 
+try {
+   // parse
+} catch (NumberFormatException nfe){
+   throw new RuntimeException("Could not parse as a Float: [" + myString + 
+                              "] found at index: " + i, nfe);
+}
+
+In the time of need you will really appreciate an exception like this with as much information in it as possible.
+
+I's like to add my own 0.02c about two competing considerations when looking at the general problem of where to position exception handling:
+
+The "wider" the responsibility of the try-catch block (i.e. outside the loop in your case) means that when changing the code at some later point, you may mistakenly add a line which is handled by your existing catch block; possibly unintentionally. In your case, this is less likely because you are explicitly catching a NumberFormatException
+The "narrower" the responsibility of the try-catch block, the more difficult refactoring becomes. Particularly when (as in your case) you are executing a "non-local" instruction from within the catch block (the return null statement).  
+
+
+That depends on the failure handling. If you just want to skip the error elements, try inside:
+for(int i = 0; i < max; i++) {
+    String myString = ...;
+    try {
+        float myNum = Float.parseFloat(myString);
+        myFloats[i] = myNum;
+    } catch (NumberFormatException ex) {
+        --i;
+    }
+}
+
+In any other case i would prefer the try outside. The code is more readable, it is more clean. Maybe it would be better to throw an IllegalArgumentException in the error case instead if returning null.
+
+I'll put my $0.02 in.  Sometimes you wind up needing to add a "finally" later on in your code (because who ever writes their code perfectly the first time?).  In those cases, suddenly it makes more sense to have the try/catch outside the loop.  For example:
+try {
+    for(int i = 0; i < max; i++) {
+        String myString = ...;
+        float myNum = Float.parseFloat(myString);
+        dbConnection.update("MY_FLOATS","INDEX",i,"VALUE",myNum);
+    }
+} catch (NumberFormatException ex) {
+    return null;
+} finally {
+    dbConnection.release();  // Always release DB connection, even if transaction fails.
+}
+
+Because if you get an error, or not, you only want to release your database connection (or pick your favorite type of other resource...) once.
+
+As already mentioned, the performance is the same.  However, user experience isn't necessarily identical.  In the first case, you'll fail fast (i.e. after the first error), however if you put the try/catch block inside the loop, you can capture all the errors that would be created for a given call to the method.  When parsing an array of values from strings where you expect some formatting errors, there are definitely cases where you'd like to be able to present all the errors to the user so that they don't need to try and fix them one by one.
+
+Another aspect not mentioned in the above is the fact that every try-catch has some impact on the stack, which can have implications for recursive methods.
+If method "outer()" calls method "inner()" (which may call itself recursively), try to locate the try-catch in method "outer()" if possible.  A simple "stack crash" example we use in a performance class fails at about 6,400 frames when the try-catch is in the inner method, and at about 11,600 when it is in the outer method.
+In the real world, this can be an issue if you're using the Composite pattern and have large, complex nested structures.
+
+As long as you are aware of what you need to accomplish in the loop you could put the try catch outside the loop. But it is important to understand that the loop will then end as soon as the exception occurs and that may not always be what you want. This is actually a very common error in Java based software. People need to process a number of items, such as emptying a queue, and falsely rely on an outer try/catch statement handling all possible exceptions. They could also be handling only a specific exception inside the loop and not expect any other exception to occur.
+Then if an exception occurs that is not handled inside the loop then the loop will be "preemted", it ends possibly prematurely and the outer catch statement handles the exception.
+If the loop had as its role in life to empty a queue then that loop very likely could end before that queue was really emptied.  Very common fault.
+
+While performance might be the same and what "looks" better is very subjective, there is still a pretty big difference in functionality. Take the following example:
+Integer j = 0;
+    try {
+        while (true) {
+            ++j;
+
+            if (j == 20) { throw new Exception(); }
+            if (j%4 == 0) { System.out.println(j); }
+            if (j == 40) { break; }
+        }
+    } catch (Exception e) {
+        System.out.println("in catch block");
+    }
+
+The while loop is inside the try catch block, the variable 'j' is incremented until it hits 40, printed out when j mod 4 is zero and an exception is thrown when j hits 20.
+Before any details, here the other example:
+Integer i = 0;
+    while (true) {
+        try {
+            ++i;
+
+            if (i == 20) { throw new Exception(); }
+            if (i%4 == 0) { System.out.println(i); }
+            if (i == 40) { break; }
+
+        } catch (Exception e) { System.out.println("in catch block"); }
+    }
+
+Same logic as above, only difference is that the try/catch block is now inside the while loop. 
+Here comes the output (while in try/catch):
+4
+8
+12 
+16
+in catch block
+
+And the other output (try/catch in while):
+4
+8
+12
+16
+in catch block
+24
+28
+32
+36
+40
+
+There you have quite a significant difference: 
+while in try/catch breaks out of the loop
+try/catch in while keeps the loop active

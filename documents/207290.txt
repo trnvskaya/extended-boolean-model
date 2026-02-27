@@ -1,0 +1,174 @@
+extracting a parenthesized Python expression from a string
+python parsing
+I've been wondering about how hard it would be to write some Python code to search a string for the index of a substring of the form ${expr}, for example, where expr is meant to be a Python expression or something resembling one.  Given such a thing, one could easily imagine going on to check the expression's syntax with compile(), evaluate it against a particular scope with eval(), and perhaps even substitute the result into the original string.  People must do very similar things all the time.
+I could imagine solving such a problem using a third-party parser generator [oof], or by hand-coding some sort of state machine [eek], or perhaps by convincing Python's own parser to do the heavy lifting somehow [hmm].  Maybe there's a third-party templating library somewhere that can be made to do exactly this.  Maybe restricting the syntax of expr is likely to be a worthwhile compromise in terms of simplicity or execution time or cutting down on external dependencies -- for example, maybe all I really need is something that matches any expr that has balanced curly braces.
+What's your sense?
+Update:
+Thanks very much for your responses so far!  Looking back at what I wrote yesterday, I'm not sure I was sufficiently clear about what I'm asking.  Template substitution is indeed an interesting problem, and probably much more useful to many more people than the expression extraction subproblem I'm wondering about, but I brought it up only as a simple example of how the answer to my question might be useful in real life.  Some other potential applications might include passing the extracted expressions to a syntax highlighter; passing the result to a real Python parser and looking at or monkeying with the parse tree; or using the sequence of extracted expressions to build up a larger Python program, perhaps in conjunction with some information taken from the surrounding text.
+The ${expr} syntax I mentioned is also intended as an example, and in fact I wonder if I shouldn't have used $(expr) as my example instead, because it makes the potential drawbacks of the obvious approach, along the lines of re.finditer(r'$\{([^}]+)\}', s), a bit easier to see.  Python expressions can (and often do) contain the ) (or }) character.  It seems possible that handling any of those cases might be much more trouble than it's worth, but I'm not convinced of that yet.  Please feel free to try to make this case!
+Prior to posting this question, I spent quite a bit of time looking at Python template engines hoping that one might expose the sort of low-level functionality I'm asking about -- namely, something that can find expressions in a variety of contexts and tell me where they are rather than being limited to finding expressions embedded using a single hard-coded syntax, always evaluating them, and always substituting the results back into the original string.  I haven't figured out how to use any of them to solve my problem yet, but I do very much appreciate the suggestions regarding more to look at (can't believe I missed that wonderful list on the wiki!).  The API documentation for these things tends to be pretty high-level, and I'm not too familiar with the internals of any of them, so I'm sure I could use help looking at those and figuring out how to get them to do this sort of thing.
+Thanks for your patience!
+
+
+I think your best bet is to match for all curly braced entries, and then check against Python itself whether or not it's valid Python, for which compiler would be helpful.
+
+I think what you're asking about is being able to insert Python code into text files to be evaluated. There are several modules that already exist to provide this kind of functionality. You can check the Python.org Templating wiki page for a comprehensive list.
+Some google searching also turned up a few other modules you might be interested in:
+
+texttemplate (part of py-templates project)
+template module
+
+If you're really looking just into writing this yourself for whatever reason, you can also dig into this Python cookbook solution Yet Another Python Templating Utility (YAPTU) :
+
+"Templating" (copying an input file to output, on the fly inserting Python 
+  expressions and statements) is a frequent need, and YAPTU is a small but 
+  complete Python module for that; expressions and statements are identified 
+  by arbitrary user-chosen regular-expressions.
+
+EDIT: Just for the heck of it, I whipped up a severely simplistic code sample for this. I'm sure it has bugs but it illustrates a simplified version of the concept at least: 
+#!/usr/bin/env python
+
+import sys
+import re
+
+FILE = sys.argv[1]
+
+handle = open(FILE)
+fcontent = handle.read()
+handle.close()
+
+for myexpr in re.finditer(r'\${([^}]+)}', fcontent, re.M|re.S):
+    text = myexpr.group(1)
+    try:
+        exec text
+    except SyntaxError:
+        print "ERROR: unable to compile expression '%s'" % (text)
+
+Tested against the following text: 
+This is some random text, with embedded python like 
+${print "foo"} and some bogus python like
+
+${any:thing}.
+
+And a multiline statement, just for kicks: 
+
+${
+def multiline_stmt(foo):
+  print foo
+
+multiline_stmt("ahem")
+}
+
+More text here.
+
+Output: 
+[user@host]$ ./exec_embedded_python.py test.txt
+foo
+ERROR: unable to compile expression 'any:thing'
+ahem
+
+
+If you want to handle arbitrary expressions like {'{spam': 42}["spam}"], you can't get away without full-blown parser.
+
+After posting this, reading the replies so far (thanks everyone!), and thinking about the problem for a while, here is the best approach I've been able to come up with:
+
+Find the first ${.
+Find the next } after that.
+Feed whatever's in between to compile().  If it works, stick a fork in it and we're done.
+Otherwise, keep extending the string by looking for subsequent occurences of }.  As soon as something compiles, return it.
+If we run out of } without being able to compile anything, use the results of the last compilation attempt to give information about where the problem lies.
+
+Advantages of this approach:
+
+The code is quite short and easy to understand.
+It's pretty efficient -- optimal, even, in the case where the expression contains no }.  Worst-case seems like it wouldn't be too bad either.
+It works on many expressions that contain ${ and/or }.
+No external dependencies.  No need to import anything, in fact.  (This surprised me.)
+
+Disadvantages:
+
+Sometimes it grabs too much or too little.  See below for an example of the latter.  I could imagine a scary example where you have two expressions and the first one is subtly wrong and the algorithm ends up mistakenly grabbing the whole thing and everything in between and returning it as valid, though I haven't been able to demonstrate this.  Perhaps things are not so bad as I fear.  I don't think misunderstandings can be avoided in general -- the problem definition is kind of slippery -- but it seems like it ought to be possible to do better, especially if one were willing to trade simplicity or execution time.
+I haven't done any benchmarks, but I could imagine there being faster alternatives, especially in cases that involve lots of } in the expression.  That could be a big deal if one wanted to apply this technique to sizable blocks of Python code rather than just very short expressions.
+
+Here is my implementation.
+def findExpr(s, i0=0, begin='${', end='}', compArgs=('<string>', 'eval')):
+  assert '\n' not in s, 'line numbers not implemented'
+  i0 = s.index(begin, i0) + len(begin)
+  i1 = s.index(end, i0)
+  code = errMsg = None
+  while code is None and errMsg is None:
+    expr = s[i0:i1]
+    try: code = compile(expr, *compArgs)
+    except SyntaxError, e:
+      i1 = s.find(end, i1 + 1)
+      if i1 < 0: errMsg, i1 = e.msg, i0 + e.offset
+  return i0, i1, code, errMsg
+
+And here's the docstring with some illustrations in doctest format, which I didn't insert into the middle of the function above only because it's long and I feel like the code is easier to read without it.
+'''
+Search s for a (possibly invalid) Python expression bracketed by begin
+and end, which default to '${' and '}'.  Return a 4-tuple.
+
+>>> s = 'foo ${a*b + c*d} bar'
+>>> i0, i1, code, errMsg = findExpr(s)
+>>> i0, i1, s[i0:i1], errMsg
+(6, 15, 'a*b + c*d', None)
+>>> ' '.join('%02x' % ord(byte) for byte in code.co_code)
+'65 00 00 65 01 00 14 65 02 00 65 03 00 14 17 53'
+>>> code.co_names
+('a', 'b', 'c', 'd')
+>>> eval(code, {'a': 1, 'b': 2, 'c': 3, 'd': 4})
+14
+>>> eval(code, {'a': 'a', 'b': 2, 'c': 'c', 'd': 4})
+'aacccc'
+>>> eval(code, {'a': None})
+Traceback (most recent call last):
+  ...
+NameError: name 'b' is not defined
+
+Expressions containing start and/or end are allowed.
+
+>>> s = '{foo ${{"}": "${"}["}"]} bar}'
+>>> i0, i1, code, errMsg = findExpr(s)
+>>> i0, i1, s[i0:i1], errMsg
+(7, 23, '{"}": "${"}["}"]', None)
+
+If the first match is syntactically invalid Python, i0 points to the
+start of the match, i1 points to the parse error, code is None and
+errMsg contains a message from the compiler.
+
+>>> s = '{foo ${qwerty asdf zxcvbnm!!!} ${7} bar}'
+>>> i0, i1, code, errMsg = findExpr(s)
+>>> i0, i1, s[i0:i1], errMsg
+(7, 18, 'qwerty asdf', 'invalid syntax')
+>>> print code
+None
+
+If a second argument is given, start searching there.
+
+>>> i0, i1, code, errMsg = findExpr(s, i1)
+>>> i0, i1, s[i0:i1], errMsg
+(33, 34, '7', None)
+
+Raise ValueError if there are no further matches.
+
+>>> i0, i1, code, errMsg = findExpr(s, i1)
+Traceback (most recent call last):
+  ...
+ValueError: substring not found
+
+In ambiguous cases, match the shortest valid expression.  This is not
+always ideal behavior.
+
+>>> s = '{foo ${x or {} # return {} instead of None} bar}'
+>>> i0, i1, code, errMsg = findExpr(s)
+>>> i0, i1, s[i0:i1], errMsg
+(7, 25, 'x or {} # return {', None)
+
+This implementation must not be used with multi-line strings.  It does
+not adjust line number information in the returned code object, and it
+does not take the line number into account when computing the offset
+of a parse error.
+
+'''
+

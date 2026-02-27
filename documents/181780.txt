@@ -1,0 +1,308 @@
+Is there a documented way to set the iPhone orientation?
+iphone objective-c cocoa-touch
+I have an app where I would like to support device rotation in certain views but other don't particularly make sense in Landscape mode, so as I swapping the views out I would like to force the rotation to be set to portrait.
+There is an undocumented property setter on UIDevice that does the trick but obviously generates a compiler warning and could disappear with a future revision of the SDK.
+[[UIDevice currentDevice] setOrientation:UIInterfaceOrientationPortrait];
+
+Are there any documented ways to force the orientation?
+Update: I thought I would provide an example as I am not looking for shouldAutorotateToInterfaceOrientation as I have already implemented that.
+I want my app to support landscape and portrait in View 1 but only portrait in View 2.  I have already implemented shouldAutorotateToInterfaceOrientation for all views but if the user is in landscape mode in View 1 and then switches to View 2, I want to force the phone to rotate back to Portrait.
+
+
+If you are using UIViewControllers, there is this method:
+- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)interfaceOrientation
+
+Return NO for the view controllers containing the views you don't want to rotate.
+More info here
+
+I don't think this is possible to do at run-time, though you could of course just apply a 90 degree transform to your UI.
+
+This is what I use. (You get some compile warnings but it works in both the Simulator and the iPhone)
+[[UIApplication sharedApplication] setStatusBarOrientation:UIInterfaceOrientationLandscapeRight];
+[[UIDevice currentDevice] setOrientation:UIInterfaceOrientationLandscapeRight];
+
+
+From what I can tell, the setOrientation: method doesn't work (or perhaps works no longer).  Here's what I'm doing to do this:
+first, put this define at the top of your file, right under your #imports:
+#define degreesToRadian(x) (M_PI * (x) / 180.0)
+
+then, in the viewWillAppear: method
+[[UIApplication sharedApplication] setStatusBarHidden:YES animated:NO];     
+if (self.interfaceOrientation == UIInterfaceOrientationPortrait) {  
+    self.view.transform = CGAffineTransformIdentity;
+    self.view.transform = CGAffineTransformMakeRotation(degreesToRadian(90));
+    self.view.bounds = CGRectMake(0.0, 0.0, 480, 320);
+}
+
+if you want that to be animated, then you can wrap the whole thing in an animation block, like so:
+[UIView beginAnimations:@"View Flip" context:nil];
+[UIView setAnimationDuration:1.25];
+[UIView setAnimationCurve:UIViewAnimationCurveEaseInOut];
+
+[[UIApplication sharedApplication] setStatusBarHidden:YES animated:NO];     
+if (self.interfaceOrientation == UIInterfaceOrientationPortrait) {  
+    self.view.transform = CGAffineTransformIdentity;
+    self.view.transform = CGAffineTransformMakeRotation(degreesToRadian(90));
+    self.view.bounds = CGRectMake(0.0, 0.0, 480, 320);
+}
+[UIView commitAnimations];
+
+Then, in your portrait mode controller, you can do the reverse - check to see if its currently in landscape, and if so, rotate it back to Portrait.
+
+If you want to force it to rotate from portrait to landscape here is the code. Just note that you need adjust the center of your view. I noticed that mine didn't place the view in the right place. Otherwise, it worked perfectly. Thanks for the tip.
+if(UIInterfaceOrientationIsLandscape(self.interfaceOrientation)){
+
+    	[UIView beginAnimations:@"View Flip" context:nil];
+    	[UIView setAnimationDuration:0.5f];
+    	[UIView setAnimationCurve:UIViewAnimationCurveEaseInOut];
+
+    	self.view.transform = CGAffineTransformIdentity;
+    	self.view.transform = CGAffineTransformMakeRotation(degreesToRadian(90));
+    	self.view.bounds = CGRectMake(0.0f, 0.0f, 480.0f, 320.0f);
+    	self.view.center = CGPointMake(160.0f, 240.0f);
+
+    	[UIView commitAnimations];
+}
+
+
+This is no longer an issue on the later iPhone 3.1.2 SDK.  It now appears to honor the requested orientation of the view being pushed back onto the stack.  That likely means that you would need to detect older iPhone OS versions and only apply the setOrientation when it is prior to the latest release.
+It is not clear if Apple's static analysis will understand that you are working around the older SDK limitations.  I personally have been told by Apple to remove the method call on my next update so I am not yet sure if having a hack for older devices will get through the approval process.
+
+I was having an issue where I had a UIViewController on the screen, in a UINavigationController, in landscape orientation. When the next view controller is pushed in the flow, however, I needed the device to return to portrait orientation.
+What I noticed, was that the shouldAutorotateToInterfaceOrientation: method isn't called when a new view controller is pushed onto the stack, but it is called when a view controller is popped from the stack.
+Taking advantage of this, I am using this snippet of code in one of my apps:
+- (void)selectHostingAtIndex:(int)hostingIndex {
+
+    self.transitioning = YES;
+
+    UIViewController *garbageController = [[[UIViewController alloc] init] autorelease];
+    [self.navigationController pushViewController:garbageController animated:NO];
+    [self.navigationController popViewControllerAnimated:NO];
+
+    BBHostingController *hostingController = [[BBHostingController alloc] init];
+    hostingController.hosting = [self.hostings objectAtIndex:hostingIndex];
+    [self.navigationController pushViewController:hostingController animated:YES];
+    [hostingController release];
+
+    self.transitioning = NO;
+}
+
+- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)toInterfaceOrientation {
+    if (self.transitioning)
+        return (toInterfaceOrientation == UIInterfaceOrientationPortrait);
+    else
+        return YES;
+}
+
+Basically, by creating an empty view controller, pushing it onto the stack, and immediately popping it off, it's possible to get the interface to revert to the portrait position. Once the controller has been popped, I just push on the controller that I intended to push in the first place. Visually, it looks great - the empty, arbitrary view controller is never seen by the user.
+
+I found a solution and wrote something in french (but code are in english). here
+The way is to add the controller to the window view (the controller must possess a good implementation of the shouldRotate.... function).
+
+I've been digging and digging looking for a good solution to this. Found this blog post that does the trick: remove your outermost view from the key UIWindow and add it again, the system will then re-query the shouldAutorotateToInterfaceOrientation: methods from your viewcontrollers, enforcing the correct orientation to be applied.
+See it : iphone forcing uiview to reorientate
+
+FWIW, here's my implementation of manually setting orientation (to go in your app's root view controller, natch): 
+-(void)rotateInterfaceToOrientation:(UIDeviceOrientation)orientation{
+
+    CGRect bounds = [[ UIScreen mainScreen ] bounds ];
+    CGAffineTransform t;
+    CGFloat r = 0;
+    switch ( orientation ) {
+        case UIDeviceOrientationLandscapeRight:
+            r = -(M_PI / 2);
+            break;
+        case UIDeviceOrientationLandscapeLeft:
+            r  = M_PI / 2;
+            break;
+    }
+    if( r != 0 ){
+        CGSize sz = bounds.size;
+        bounds.size.width = sz.height;
+        bounds.size.height = sz.width;
+    }
+    t = CGAffineTransformMakeRotation( r );
+
+    UIApplication *application = [ UIApplication sharedApplication ];
+
+    [ UIView beginAnimations:@"InterfaceOrientation" context: nil ];
+    [ UIView setAnimationDuration: [ application statusBarOrientationAnimationDuration ] ];
+    self.view.transform = t;
+    self.view.bounds = bounds;
+    [ UIView commitAnimations ];
+
+    [ application setStatusBarOrientation: orientation animated: YES ];     
+}
+
+coupled with the following UINavigationControllerDelegate method (assuming you're using a UINavigationController):
+-(void)navigationController:(UINavigationController *)navigationController willShowViewController:(UIViewController *)viewController animated:(BOOL)animated{
+    // rotate interface, if we need to
+    UIDeviceOrientation orientation = [[ UIDevice currentDevice ] orientation ];
+    BOOL bViewControllerDoesSupportCurrentOrientation = [ viewController shouldAutorotateToInterfaceOrientation: orientation ];
+    if( !bViewControllerDoesSupportCurrentOrientation ){
+        [ self rotateInterfaceToOrientation: UIDeviceOrientationPortrait ];
+    }
+}
+
+That takes care of rotating the root view according to whether an incoming UIViewController supports the current device orientation. Finally, you'll want to hook up rotateInterfaceToOrientation to actual device orientation changes in order to mimic standard iOS functionality. Add this event handler to the same root view controller:
+-(void)onUIDeviceOrientationDidChangeNotification:(NSNotification*)notification{
+    UIViewController *tvc = self.rootNavigationController.topViewController;
+    UIDeviceOrientation orientation = [[ UIDevice currentDevice ] orientation ];
+    // only switch if we need to (seem to get multiple notifications on device)
+    if( orientation != [[ UIApplication sharedApplication ] statusBarOrientation ] ){
+        if( [ tvc shouldAutorotateToInterfaceOrientation: orientation ] ){
+            [ self rotateInterfaceToOrientation: orientation ];
+        }
+    }
+}
+
+Finally, register for UIDeviceOrientationDidChangeNotification notifications in init or loadview like so:
+[[ NSNotificationCenter defaultCenter ] addObserver: self
+                                           selector: @selector(onUIDeviceOrientationDidChangeNotification:)
+                                               name: UIDeviceOrientationDidChangeNotification
+                                             object: nil ];
+[[ UIDevice currentDevice ] beginGeneratingDeviceOrientationNotifications ];
+
+
+This is long after the fact, but just in case anybody comes along who isn't using a navigation controller and/or doesn't wish to use undocumented methods:
+UIViewController *c = [[UIViewController alloc]init];
+[self presentModalViewController:c animated:NO];
+[self dismissModalViewControllerAnimated:NO];
+[c release];
+
+It is sufficient to present and dismiss a vanilla view controller.
+Obviously you'll still need to confirm or deny the orientation in your override of shouldAutorotateToInterfaceOrientation.  But this will cause shouldAutorotate... to be called again by the system.
+
+This works for me (thank you Henry Cooke):
+The aim for me was to deal with landscape orientations changes only.
+init method:
+[[UIDevice currentDevice] beginGeneratingDeviceOrientationNotifications];
+[[NSNotificationCenter defaultCenter] addObserver:self
+                                         selector:@selector(orientationChanged:)
+                                             name:UIDeviceOrientationDidChangeNotification
+                                           object:nil];
+
+
+- (void)orientationChanged:(NSNotification *)notification {    
+    //[[UIDevice currentDevice] endGeneratingDeviceOrientationNotifications];
+    UIDeviceOrientation orientation = [UIDevice currentDevice].orientation;
+    CGRect bounds = [[ UIScreen mainScreen ] bounds ];
+    CGAffineTransform t;
+    CGFloat r = 0;
+    switch ( orientation ) {
+        case UIDeviceOrientationLandscapeRight:
+            r = 0;
+            NSLog(@"Right");
+            break;
+        case UIDeviceOrientationLandscapeLeft:
+            r  = M_PI;
+            NSLog(@"Left");
+            break;
+        default:return;
+    }
+
+    t = CGAffineTransformMakeRotation( r );
+
+    UIApplication *application = [ UIApplication sharedApplication ];
+    [ UIView beginAnimations:@"InterfaceOrientation" context: nil ];
+    [ UIView setAnimationDuration: [ application statusBarOrientationAnimationDuration ] ];
+    self.view.transform = t;
+    self.view.bounds = bounds;
+    [ UIView commitAnimations ];
+
+    [ application setStatusBarOrientation: orientation animated: YES ];
+}
+
+
+Josh's answer works fine for me.
+However, I prefer posting an "orientation did change, please update UI" notification. When this notification is received by a view controller, it calls shouldAutorotateToInterfaceOrientation:, allowing you to set any orientation by returning YES for the orientation you want.
+[[NSNotificationCenter defaultCenter] postNotificationName:UIDeviceOrientationDidChangeNotification object:nil];
+
+The only problem is that this forces a re-orientation without an animation. You would need to wrap this line between beginAnimations: and commitAnimations to achieve a smooth transition.
+Hope that helps.
+
+
+I have an app where I would like to support device rotation in certain views but other don't particularly make sense in Landscape mode, so as I swapping the views out I would like to force the rotation to be set to portrait.
+
+I realise that the above original post in this thread is very old now, but I had a similar problem to it - ie. all of the screens in my App are portrait only, with the exception of one screen, which can be rotated between landscape and portrait by the user.
+This was straightforward enough, but like other posts, I wanted the App to automatically return to portrait regardless of the current device orientation, when returning to the previous screen.
+The solution I implemented was to hide the Navigation Bar while in landscape mode, meaning that the user can only return to previous screens whilst in portrait. Therefore, all other screens can only be in portrait.
+- (void)didRotateFromInterfaceOrientation:(UIInterfaceOrientation)pInterfaceOrientation {
+    BOOL lHideNavBar = self.interfaceOrientation == UIInterfaceOrientationPortrait ? NO : YES;
+    [self.navigationController setNavigationBarHidden:lHideNavBar animated:YES];
+}
+
+This also has the added benefit for my App in that there is more screen space available in landscape mode. This is useful because the screen in question is used to display PDF files.
+Hope this helps.
+
+There is a simple way to programmatically force iPhone to the necessary orientation - using two of already provided answers by kdbdallas, Josh :
+//will rotate status bar
+[[UIApplication sharedApplication] setStatusBarOrientation:UIInterfaceOrientationLandscapeRight];
+
+
+//will re-rotate view according to statusbar
+UIViewController *c = [[UIViewController alloc]init];
+[self presentModalViewController:c animated:NO];
+[self dismissModalViewControllerAnimated:NO];
+[c release];
+
+works like a charm :)
+EDIT:
+for iOS 6 I need to add this function:
+(works on modal viewcontroller)
+- (NSUInteger)supportedInterfaceOrientations
+{
+    return (UIInterfaceOrientationMaskLandscapeLeft | UIInterfaceOrientationMaskLandscapeRight);
+}
+
+
+I solved this quite easily in the end. I tried every suggestion above and still came up short, so this was my solution:
+In the ViewController that needs to remain Landscape (Left or Right), I listen for orientation changes:
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                         selector:@selector(didRotate:)
+                                             name:UIDeviceOrientationDidChangeNotification object:nil];
+
+Then in didRotate:
+- (void) didRotate:(NSNotification *)notification
+{   if (orientationa == UIDeviceOrientationPortrait) 
+    {
+        if (hasRotated == NO) 
+        {
+            NSLog(@"Rotating to portait");
+            hasRotated = YES;
+            [UIView beginAnimations: @"" context:nil];
+            [UIView setAnimationDuration: 0];
+            self.view.transform = CGAffineTransformIdentity;
+            self.view.transform = CGAffineTransformMakeRotation(DEGREES_TO_RADIANS(-90));
+            self.view.bounds = CGRectMake(0.0f, 0.0f, 480.0f, 320.0f);
+            self.view.frame = CGRectMake(0.0f, 0.0f, 480.0f, 320.0f);
+            [UIView commitAnimations];
+
+    }
+}
+else if (UIDeviceOrientationIsLandscape( orientationa))
+{
+    if (hasRotated) 
+    {
+        NSLog(@"Rotating to lands");
+        hasRotated = NO;
+        [UIView beginAnimations: @"" context:nil];
+        [UIView setAnimationDuration: 0];
+        self.view.transform = CGAffineTransformIdentity;
+        self.view.transform = CGAffineTransformMakeRotation(DEGREES_TO_RADIANS(0));
+        self.view.bounds = CGRectMake(0.0f, 0.0f, 320.0f, 480.0f);
+        self.view.frame = CGRectMake(0.0f, 0.0f, 320.0f, 480.0f);
+        [UIView commitAnimations];
+
+    }
+}
+
+Keep in mind any Super Views/Subviews that use autoresizing, as the view.bounds/frame are being reset explicitly... 
+The only caveat to this method for keeping the view Landscape, is the inherent animation switching between orientations that has to occur, when it would be better to have it appear to have no change. 
+
+iOS 6 solution:
+[[[self window] rootViewController] presentViewController:[[UIViewController alloc] init] animated:NO completion:^{
+    [[[self window] rootViewController] dismissViewControllerAnimated:NO completion:nil];
+}];
+
+The exact code depends per app and also where you place it (I used it in my AppDelegate). Replace [[self window] rootViewController] with what you use. I was using a UITabBarController.

@@ -1,0 +1,199 @@
+Get the subdomain from a URL
+url parsing dns subdomain
+Getting the subdomain from a URL sounds easy at first.
+http://www.domain.example
+
+Scan for the first period then return whatever came after the "http://" ...
+Then you remember
+http://super.duper.domain.example
+
+Oh. So then you think, okay, find the last period, go back a word and get everything before! 
+Then you remember
+http://super.duper.domain.co.uk
+
+And you're back to square one. Anyone have any great ideas besides storing a list of all TLDs?
+
+
+
+Anyone have any great ideas besides
+  storing a list of all TLDs?
+
+No, because each TLD differs on what counts as a subdomain, second level domain, etc.
+Keep in mind that there are top level domains, second level domains, and subdomains.  Technically speaking, everything except the TLD is a subdomain.
+In the domain.com.uk example, domain is a subdomain, com is a second level domain, and uk is the tld.
+So the question remains more complex than at first blush, and it depends on how each TLD is managed.  You'll need a database of all the TLDs that include their particular partitioning, and what counts as a second level domain and a subdomain.  There aren't too many TLDs, though, so the list is reasonably manageable, but collecting all that information isn't trivial.  There may already be such a list available.
+Looks like http://publicsuffix.org/ is one such list - all the common suffixes (.com, .co.uk, etc) in a list suitable for searching.  It still won't be easy to parse it, but at least you don't have to maintain the list.  
+
+A "public suffix" is one under which
+  Internet users can directly register
+  names. Some examples of public
+  suffixes are ".com", ".co.uk" and
+  "pvt.k12.wy.us". The Public Suffix
+  List is a list of all known public
+  suffixes.
+The Public Suffix List is an
+  initiative of the Mozilla Foundation.
+  It is available for use in any
+  software, but was originally created
+  to meet the needs of browser
+  manufacturers. It allows browsers to,
+  for example:
+
+Avoid privacy-damaging "supercookies" being set for
+  high-level domain name suffixes
+Highlight the most important part of a domain name in the user
+  interface
+Accurately sort history entries by site
+
+
+Looking through the list, you can see it's not a trivial problem.  I think a list is the only correct way to accomplish this...
+-Adam
+
+As Adam says, it's not easy, and currently the only practical way is to use a list.
+Even then there are exceptions - for example in .uk there are a handful of domains that are valid immediately at that level that aren't in .co.uk, so those have to be added as exceptions.
+This is currently how mainstream browsers do this - it's necessary to ensure that example.co.uk can't set a Cookie for .co.uk which would then be sent to any other website under .co.uk.
+The good news is that there's already a list available at http://publicsuffix.org/.
+There's also some work in the IETF to create some sort of standard to allow TLDs to declare what their domain structure looks like.  This is slightly complicated though by the likes of .uk.com, which is operated as if it were a public suffix, but isn't sold by the .com registry.
+
+It's not working it out exactly, but you could maybe get a useful answer by trying to fetch the domain piece by piece and checking the response, ie, fetch 'http://uk', then 'http://co.uk', then 'http://domain.co.uk'. When you get a non-error response you've got the domain and the rest is subdomain.
+Sometimes you just gotta try it :)
+Edit:
+Tom Leys points out in the comments, that some domains are set up only on the www subdomain, which would give us an incorrect answer in the above test. Good point! Maybe the best approach would be to check each part with 'http://www' as well as 'http://', and count a hit to either as a hit for that section of the domain name? We'd still be missing some 'alternative' arrangements such as 'web.domain.com', but I haven't run into one of those for a while :)
+
+List of common suffixes (.co.uk, .com, et cetera) to strip out along with the http:// and then you'll only have "sub.domain" to work with instead of "http://sub.domain.suffix", or at least that's what I'd probably do.
+The biggest problem is the list of possible suffixes. There's a lot, after all.
+
+Having taken a quick look at the publicsuffix.org list, it appears that you could make a reasonable approximation by removing the final three segments ("segment" here meaning a section between two dots) from domains where the final segment is two characters long, on the assumption that it's a country code and will be further subdivided.  If the final segment is "us" and the second-to-last segment is also two characters, remove the last four segments.  In all other cases, remove the final two segments.  e.g.:
+
+http://www.domain.example
+
+"example" is not two characters, so remove "domain.example", leaving "www"
+
+http://super.duper.domain.example
+
+"example" is not two characters, so remove "domain.example", leaving "super.duper"
+
+http://super.duper.domain.co.uk
+
+"uk" is two characters (but not "us"), so remove "domain.co.uk", leaving "super.duper"
+
+http://foo.pvt.k12.wy.us
+
+"us" is two characters and is "us", plus "wy" is also two characters, so remove "pvt.k12.wy.us", leaving "foo".
+Note that, although this works for all examples that I've seen in the responses so far, it remains only a reasonable approximation.  It is not completely correct, although I suspect it's about as close as you're likely to get without making/obtaining an actual list to use for reference.
+
+Publicsuffix.org seems the way to do.  There are plenty of implementations out there to parse the contents of the publicsuffix data file file easily:
+
+Perl: Domain::PublicSuffix
+Java: http://sourceforge.net/projects/publicsuffix/
+PHP: http://tobyinkster.co.uk/blog/2007/07/19/php-domain-class/
+C# / .NET: https://github.com/danesparza/domainname-parser
+Python: http://pypi.python.org/pypi/publicsuffix
+Ruby: domainatrix, public_suffix
+
+
+You can have a look at my solution at
+http://www.nimeshdotnet.info/post/Getting-Subdomain-from-an-URL-in-Net.aspx
+
+Use the URIBuilder
+then get the URIBUilder.host attribute
+split it into an array on "."
+you now have an array with the domain split out.
+
+Just wrote a program for this in clojure based on the info from publicsuffix.org:
+https://github.com/isaksky/url_dom
+For example:
+(parse "sub1.sub2.domain.co.uk") 
+;=> {:public-suffix "co.uk", :domain "domain.co.uk", :rule-used "*.uk"}
+
+
+echo tld('http://www.example.co.uk/test?123'); // co.uk
+
+/**
+ * http://publicsuffix.org/
+ * http://www.alandix.com/blog/code/public-suffix/
+ * http://tobyinkster.co.uk/blog/2007/07/19/php-domain-class/
+ */
+function tld($url_or_domain = null)
+{
+    $domain = $url_or_domain ?: $_SERVER['HTTP_HOST'];
+    preg_match('/^[a-z]+:\/\//i', $domain) and 
+        $domain = parse_url($domain, PHP_URL_HOST);
+    $domain = mb_strtolower($domain, 'UTF-8');
+    if (strpos($domain, '.') === false) return null;
+
+    $url = 'http://mxr.mozilla.org/mozilla-central/source/netwerk/dns/effective_tld_names.dat?raw=1';
+
+    if (($rules = file($url)) !== false)
+    {
+        $rules = array_filter(array_map('trim', $rules));
+        array_walk($rules, function($v, $k) use(&$rules) { 
+            if (strpos($v, '//') !== false) unset($rules[$k]);
+        });
+
+        $segments = '';
+        foreach (array_reverse(explode('.', $domain)) as $s)
+        {
+            $wildcard = rtrim('*.'.$segments, '.');
+            $segments = rtrim($s.'.'.$segments, '.');
+
+            if (in_array('!'.$segments, $rules))
+            {
+                $tld = substr($wildcard, 2);
+                break;
+            }
+            elseif (in_array($wildcard, $rules) or 
+                    in_array($segments, $rules))
+            {
+                $tld = $segments;
+            }
+        }
+
+        if (isset($tld)) return $tld;
+    }
+
+    return false;
+}
+
+
+For a C library (with data table generation in Python), I wrote http://code.google.com/p/domain-registry-provider/ which is both fast and space efficient.
+The library uses ~30kB for the data tables and ~10kB for the C code. There is no startup overhead since the tables are constructed at compile time. See http://code.google.com/p/domain-registry-provider/wiki/DesignDoc for more details.
+To better understand the table generation code (Python), start here: http://code.google.com/p/domain-registry-provider/source/browse/trunk/src/registry_tables_generator/registry_tables_generator.py
+To better understand the C API, see: http://code.google.com/p/domain-registry-provider/source/browse/trunk/src/domain_registry/domain_registry.h
+
+As already said by Adam and John publicsuffix.org is the correct way to go. But, if for any reason you cannot use this approach, here's a heuristic based on an assumption that works for 99% of all domains:
+There is one property that distinguishes (not all, but nearly all) "real" domains from subdomains and TLDs and that's the DNS's MX record. You could create an algorithm that searches for this: Remove the parts of the hostname one by one and query the DNS until you find an MX record. Example:
+super.duper.domain.co.uk => no MX record, proceed
+duper.domain.co.uk       => no MX record, proceed
+domain.co.uk             => MX record found! assume that's the domain
+
+Here is an example in php:
+function getDomainWithMX($url) {
+    //parse hostname from URL 
+    //http://www.example.co.uk/index.php => www.example.co.uk
+    $urlParts = parse_url($url);
+    if ($urlParts === false || empty($urlParts["host"])) 
+        throw new InvalidArgumentException("Malformed URL");
+
+    //find first partial name with MX record
+    $hostnameParts = explode(".", $urlParts["host"]);
+    do {
+        $hostname = implode(".", $hostnameParts);
+        if (checkdnsrr($hostname, "MX")) return $hostname;
+    } while (array_shift($hostnameParts) !== null);
+
+    throw new DomainException("No MX record found");
+}
+
+
+I just wrote a objc library : https://github.com/kejinlu/KKDomain 
+
+As already said Public Suffix List is only one way to parse domain correctly. For PHP you can try TLDExtract. Here is sample code:
+$extract = new LayerShifter\TLDExtract\Extract();
+
+$result = $extract->parse('super.duper.domain.co.uk');
+$result->getSubdomain(); // will return (string) 'super.duper'
+$result->getSubdomains(); // will return (array) ['super', 'duper']
+$result->getHostname(); // will return (string) 'domain'
+$result->getSuffix(); // will return (string) 'co.uk'
+

@@ -1,0 +1,100 @@
+How do I create a temporary file with Cocoa?
+objective-c cocoa file-io
+Years ago when I was working with C# I could easily create a temporary file and get its name with this function:
+Path.GetTempFileName();
+
+This function would create a file with a unique name in the temporary directory and return the full path to that file. 
+In the Cocoa API's, the closest thing I can find is:
+NSTemporaryDirectory
+
+Am I missing something obvious or is there no built in way to do this?
+
+
+You could use mktemp to get a temp filename.
+
+A safe way is to use mkstemp(3).
+
+[Note: This applies to the iPhone SDK, not the Mac OS SDK] 
+From what I can tell, these functions aren't present in the SDK (the unistd.h file is drastically pared down when compared to the standard Mac OS X 10.5 file).  I would use something along the lines of: 
+[NSTemporaryDirectory() stringByAppendingPathComponent: [NSString stringWithFormat: @"%.0f.%@", [NSDate timeIntervalSinceReferenceDate] * 1000.0, @"txt"]];
+
+Not the prettiest, but functional
+
+You could use an NSTask to uuidgen to get a unique file name, then append that to a string from NSTemporaryDirectory(). This won't work on Cocoa Touch. It is a bit long-winded though.
+
+Though it's nearly a year later, I figured it's still helpful to mention a blog post from Cocoa With Love by Matt Gallagher. http://cocoawithlove.com/2009/07/temporary-files-and-folders-in-cocoa.html He shows how to use mkstemp() for files and mkdtemp() for directories, complete with NSString conversions.
+
+I created a pure Cocoa solution by way of a category on NSFileManager that uses a combination of NSTemporary() and a globally unique ID.
+Here the header file:
+@interface NSFileManager (TemporaryDirectory)
+
+-(NSString *) createTemporaryDirectory;
+
+@end
+
+And the implementation file:
+@implementation NSFileManager (TemporaryDirectory)
+
+-(NSString *) createTemporaryDirectory {
+ // Create a unique directory in the system temporary directory
+ NSString *guid = [[NSProcessInfo processInfo] globallyUniqueString];
+ NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:guid];
+ if (![self createDirectoryAtPath:path withIntermediateDirectories:NO attributes:nil error:nil]) {
+  return nil;
+ }
+ return path;
+}
+
+@end
+
+This creates a temporary directory but could be easily adapted to use createFileAtPath:contents:attributes: instead of createDirectoryAtPath: to create a file instead.
+
+Apple has provided an excellent way for accessing temp directory and creating unique names for the temp files.
+- (NSString *)pathForTemporaryFileWithPrefix:(NSString *)prefix
+{
+    NSString *  result;
+    CFUUIDRef   uuid;
+    CFStringRef uuidStr;
+
+    uuid = CFUUIDCreate(NULL);
+    assert(uuid != NULL);
+
+    uuidStr = CFUUIDCreateString(NULL, uuid);
+    assert(uuidStr != NULL);
+
+    result = [NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"%@-%@", prefix, uuidStr]];
+    assert(result != nil);
+
+    CFRelease(uuidStr);
+    CFRelease(uuid);
+
+    return result;
+}
+
+LINK :::: http://developer.apple.com/library/ios/#samplecode/SimpleURLConnections/Introduction/Intro.html#//apple_ref/doc/uid/DTS40009245
+see file :::AppDelegate.m
+
+Adding to @Philipp:
+- (NSString *)createTemporaryFile:(NSData *)contents {
+    // Create a unique file in the system temporary directory
+    NSString *guid = [[NSProcessInfo processInfo] globallyUniqueString];
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:guid];
+    if(![self createFileAtPath:path contents:contents attributes:nil]) {
+        return nil;
+    }
+    return path;
+}
+
+
+If targeting iOS 6.0 or Mac OS X 10.8 or higher:
+NSString *tempFilePath = [NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID] UUIDString]];
+
+
+User muzz his answer, Swift-ified:
+func pathForTemporaryFileWithPrefix(prefix: String) -> String {
+    let uuid: CFUUIDRef = CFUUIDCreate(nil)
+    let uuidString = CFUUIDCreateString(nil, uuid)
+    let result = NSTemporaryDirectory().stringByAppendingPathComponent("\(prefix)-\(uuidString)")
+    return result
+}
+

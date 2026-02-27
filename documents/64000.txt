@@ -1,0 +1,52 @@
+Draining Standard Error in Java
+java multithreading process-management
+When launching a process from Java, both stderr and stdout can block on output if I don't read from the pipes.  Currently I have a thread that pro-actively reads from one and the main thread blocks on the other.
+Is there an easy way to join the two streams or otherwise cause the subprocess to continue while not losing the data in stderr? 
+
+
+Just have two threads, one reading from stdout, one from stderr?
+
+Set the redirectErrorStream property on ProcessBuilder to send stderr output to stdout:
+ProcessBuilder builder = new ProcessBuilder(command);
+builder.redirectErrorStream(true);
+
+You should then create a thread to deal with the process stream, something like the following:
+Process p = builder.start();
+
+InputHandler outHandler = new InputHandler(p.getInputStream());
+
+Where InputHandler is defined as:
+private static class InputHandler extends Thread {
+
+    private final InputStream is;
+
+    private final ByteArrayOutputStream os;
+
+    public InputHandler(InputStream input) {
+        this.is = input;
+        this.os = new ByteArrayOutputStream();
+    }
+
+    public void run() {
+        try {
+            int c;
+            while ((c = is.read()) != -1) {
+                os.write(c);
+            }
+        } catch (Throwable t) {
+            throw new IllegalStateException(t);
+        }
+    }
+
+    public String getOutput() {
+        try {
+        os.flush();
+        } catch (Throwable t) {
+            throw new IllegalStateException(t);
+        }
+        return os.toString();
+    }
+
+}
+
+Alternatively, just create two InputHandlers for the InputStream and ErrorStream. Knowing that the program will block if you don't read them is 90% of the battle :)

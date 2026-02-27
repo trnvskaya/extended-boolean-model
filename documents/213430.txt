@@ -1,0 +1,115 @@
+Selenium RC: Run tests in multiple browsers automatically
+ruby-on-rails ruby unit-testing selenium automated-tests
+So, I've started to create some Ruby unit tests that use Selenium RC to test my web app directly in the browser.  I'm using the Selenum-Client for ruby.  I've created a base class for all my other selenium tests to inherit from.
+This creates numerous SeleniumDriver instances and all the methods that are missing are called on each instance.  This essentially runs the tests in parallel.
+How have other people automated this?
+This is my implementation:
+class SeleniumTest < Test::Unit::TestCase
+  def setup
+    @seleniums = %w(*firefox *iexplore).map do |browser|
+      puts 'creating browser ' + browser
+      Selenium::SeleniumDriver.new("localhost", 4444, browser, "http://localhost:3003", 10000)
+    end
+
+    start
+    open start_address
+  end
+
+  def teardown
+      stop
+  end
+
+  #sub-classes should override this if they want to change it
+  def start_address
+    "http://localhost:3003/"
+  end
+
+  # Overrides standard "open" method
+  def open(addr)
+    method_missing 'open', addr
+  end
+
+  # Overrides standard "type" method
+  def type(inputLocator, value)
+    method_missing 'type', inputLocator, value
+  end
+
+  # Overrides standard "select" method
+  def select(inputLocator, optionLocator)
+    method_missing 'select', inputLocator, optionLocator
+  end
+
+  def method_missing(method_name, *args)
+    @seleniums.each do |selenium_driver|
+      if args.empty?
+        selenium_driver.send method_name
+      else
+        selenium_driver.send method_name, *args
+      end
+
+    end
+  end
+end
+
+This works, but if one browser fails, the whole test fails and there is no way to know which browser it failed on.
+
+
+Disclaimer: Not a selenium expert.
+Do you just want to know which browser failed, or do you want to run the test across all browsers and then report the total failures when it's done?
+The former is pretty simple if you store the drivers by hash in your setup. (I'm sure there's a fancy-pants way to do this with Hash.inject, but I'm lazy.)
+@seleniums = {}
+%w(*firefox *iexplore).each do |browser|
+  puts 'creating browser ' + browser
+  @seleniums[browser] = Selenium::SeleniumDriver.new("localhost", 4444, browser, "http://localhost:3003", 10000)
+end
+
+Then change your core function to modify exceptions to include the name of the driver being used, something like:
+@seleniums.each do |name, driver|
+  begin
+    driver.send method_name, *args
+  rescue Exception => ex
+    raise ex.exception(ex.message + " (in #{name})")
+  end
+end
+
+Should get you close.
+
+Did you try Selenium Grid? I think it creates pretty good summary report which shows details you need. I may be wrong, as I didn't use it for quite a while.
+
+I ended up modifying Selenium's protocol.rb to raise an AssertionFailedError with both the @browser_string and the message returned from the Selenium RC if the response didn't start with "OK".  I also modified the http_post method to return the whole response body and the method_missing to return an array of return values for issuing get_X commands to the Selenium RC.
+Add this code to the code in the question and you should be able to see which assertions fail on which browsers.
+# Overrides a few Driver methods to make assertions return the
+# browser string if they fail
+module Selenium
+  module Client
+    class Driver
+      def remote_control_command(verb, args=[])
+        timeout(default_timeout_in_seconds) do
+          status, response = http_post(http_request_for(verb, args))
+          raise Test::Unit::AssertionFailedError.new("Browser:#{@browser_string} result:#{response}") if status != 'OK'
+          return response[3..-1]
+        end
+      end
+
+      def http_post(data)
+        http = Net::HTTP.new(@server_host, @server_port)
+        response = http.post('/selenium-server/driver/', data, HTTP_HEADERS)
+        #return the first 2 characters and the entire response body
+        [ response.body[0..1], response.body ]
+      end
+    end
+  end
+end
+
+#Modify your method_missing to use seleniums.map to return the
+#results of all the function calls as an array
+class SeleniumTest < Test::Unit::TestCase
+  def method_missing(method_name, *args)
+    self.class.seleniums.map do |selenium_driver|
+      selenium_driver.send(method_name, *args)
+    end
+  end
+end
+
+
+you need to treat every test independently. So if one test fails it will carry on testing other tests. Check out phpunit and selenium rc 

@@ -1,0 +1,65 @@
+lock keyword in C#
+c# multithreading design-patterns locking
+I understand the main function of the lock key word from MSDN
+
+lock Statement (C# Reference)
+The lock keyword marks a statement
+  block as a critical section by
+  obtaining the mutual-exclusion lock
+  for a given object, executing a
+  statement, and then releasing the
+  lock.
+
+When should the lock be used?  
+For instance it makes sense with multi-threaded applications because it protects the data.  But is it necessary when the application does not spin off any other threads?
+Is there performance issues with using lock?
+I have just inherited an application that is using lock everywhere, and it is single threaded and I want to know should I leave them in, are they even necessary?
+Please note this is more of a general knowledge question, the application speed is fine, I want to know if that is a good design pattern to follow in the future or should this be avoided unless absolutely needed.
+
+
+Generally speaking if your application is single threaded, you're not going to get much use out of the lock statement. Not knowing your application exactly, I don't know if they're useful or not - but I suspect not. Further, if you're application is using lock everywhere I don't know that I would feel all that confident about it working in a multi-threaded  environment anyways - did the original developer actually know how to develop multi-threaded code, or did they just add lock statements everywhere in the vague hope that that would do the trick?
+
+There is no point in having locks in the app if there is only one thread and yes, it is a performance hit although it does take a fair number of calls for that hit to stack up into something significant. 
+
+You can have performance issues with locking variables, but normally, you'd construct your code to minimize the lengths of time that are spent inside a 'locked' block of code.
+As far as removing the locks. It'll depend on what exactly the code is doing. Even though it's single threaded, if your object is implemented as a Singleton, it's possible that you'll have multiple clients using an instance of it (in memory, on a server) at the same time..
+
+Yes, there will be some performance penalty when using lock but it is generally neglible enough to not matter.
+Using locks (or any other mutual-exclusion statement or construct) is generally only needed in multi-threaded scenarios where multiple threads (either of your own making or from your caller) have the opportunity to interact with the object and change the underlying state or data maintained. For example, if you have a collection that can be accessed by multiple threads you don't want one thread changing the contents of that collection by removing an item while another thread is trying to read it.
+
+Lock(token) is only used to mark one or more blocks of code that should not run simultaneously in multiple threads. If your application is single-threaded, it's protecting against a condition that can't exist.
+And locking does invoke a performance hit, adding instructions to check for simultaneous access before code is executed. It should only be used where necessary.
+
+lock should be used around the code that modifies shared state, state that is modified by other threads concurrently, and those other treads must take the same lock. 
+A lock is actually a memory access serializer, the threads (that take the lock) will wait on the lock to enter until the current thread exits the lock, so memory access is serialized.
+To answer you question lock is not needed in a single threaded application, and it does have performance side effects. because locks in C# are based on kernel sync objects and every lock you take creates a transition to kernel mode from user mode. 
+If you're interested in multithreading performance a good place to start is MSDN threading guidelines
+
+
+When should the lock be used?
+
+A lock should be used to protect shared resources in multithreaded code.  Not for anything else.
+
+But is it necessary when the application does not spin off any other threads?
+
+Absolutely not.  It's just a time waster.  However do be sure that you're not implicitly using system threads.  For example if you use asynchronous I/O you may receive callbacks from a random thread, not your original thread.
+
+Is there performance issues with using lock?
+
+Yes.  They're not very big in a single-threaded application, but why make calls you don't need?
+
+...if that is a good design pattern to follow in the future[?]
+
+Locking everything willy-nilly is a terrible design pattern.  If your code is cluttered with random locking and then you do decide to use a background thread for some work, you're likely to run into deadlocks.  Sharing a resource between multiple threads requires careful design, and the more you can isolate the tricky part, the better.
+
+Bear in mind that there might be reasons why your application is not as single-threaded as you think.  Async I/O in .NET may well call-back on a pool thread, for example, as do some of the various timer classes (not the Windows Forms Timer, though).
+
+See the question about 'Mutex' in C#. And then look at these two questions regarding use of the 'lock(Object)' statement specifically.
+
+All the answers here seem right: locks' usefulness is to block threads from acessing locked code concurrently. However, there are many subtleties in this field, one of which is that locked blocks of code are automatically marked as critical regions by the Common Language Runtime.
+The effect of code being marked as critical is that, if the entire region cannot be entirely executed, the runtime may consider that your entire Application Domain is potentially jeopardized and, therefore, unload it from memory. To quote MSDN:
+
+For example, consider a task that attempts to allocate memory while holding a lock. If the memory allocation fails, aborting the current task is not sufficient to ensure stability of the AppDomain, because there can be other tasks in the domain waiting for the same lock. If the current task is terminated, other tasks could be deadlocked.
+
+Therefore, even though your application is single-threaded, this may be a hazard for you. Consider that one method in a locked block throws an exception that is eventually not handled within the block. Even if the exception is dealt as it bubbles up through the call stack, your critical region of code didn't finish normally. And who knows how the CLR will react?
+For more info, read this article on the perils of Thread.Abort().

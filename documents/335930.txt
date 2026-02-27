@@ -1,0 +1,55 @@
+Discarding the output of a function that needs an output iterator
+c++ stl iterator
+Suppose thereÂ´s a template function in C++ that does some useful work but also outputs a sequence of values via an output iterator. Now suppose that that sequence of values sometimes is interesting, but at others is not useful. Is there a ready-to-use iterator class in the STL that can be instantiated and passed to the function and will ignore any values the function tries to assign to the output iterator? To put in another way, send all data to /dev/null?
+
+
+Do you have Boost available? If so you could use a function_output_iterator wrapping an empty function.
+It's not ideal though. Whatever iterator you use will still need to create an instance of the value_type for return in operator*, even if it then throws it away.
+
+It isn't hard to write one.
+template<typename T>
+class NullOutputIterator
+{
+public:
+    NullOutputIterator() {}
+    NullOutputIterator& operator++() { return *this; }
+    NullOutputIterator& operator++(int) { return *this; }
+    T& operator*() { return m; }
+    T* operator->() { return &m; }
+private:
+    T m;
+};
+
+I haven't tested this, and there's probably something important missing, but I think this is the idea.
+
+The STL does not provide such an iterator. But you could code it yourself (tested that code):
+struct null_output_iterator : 
+    std::iterator< std::output_iterator_tag,
+                   null_output_iterator > {
+    /* no-op assignment */
+    template<typename T>
+    void operator=(T const&) { }
+
+    null_output_iterator & operator++() { 
+        return *this; 
+    }
+
+    null_output_iterator operator++(int) { 
+        return *this;
+    }
+
+    null_output_iterator & operator*() { return *this; }
+};
+
+It doesn't need any data by using itself as the result of operator*. The result of *it = x; is not used in the output iterator requirements, so we can give it a return type of void.
+
+Edit: Let's go into how this operator* works. The Standard says in 24.1.2/1  about the requirements of an output iterator that in both these cases:
+*it = t;
+*it++ = t;
+
+That the result of those expressions is not used. That's what makes this work:
+null_output_iterator it;
+*it; // returns a null_output_iterator& per definition of the `operator*`.
+*it = some_value; // returns void per definition of the templated `operator=`. 
+
+Now we don't need to have any data that we return in operator*: We just use the iterator itself. Note that the templated operator= does not overwrite the builtin copy assignment operator. It's still provided.

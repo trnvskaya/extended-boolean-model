@@ -1,0 +1,82 @@
+Caching paginated results, purging on update - how to solve?
+php caching pagination memcached
+I've created a forum, and we're implementing an apc and memcache caching solution to save the database some work.
+I started implementing the cache layer with keys like "Categories::getAll", and if I had user-specific data, I'd append the keys with stuff like the user ID, so you'd get "User::getFavoriteThreads|1471". When a  user added a new favorite thread, I'd delete the cache key, and it would recreate the entry.
+However, and here comes the problem:
+I wanted to cache the threads in a forum. Simple enough, "Forum::getThreads|$iForumId". But... With pagination, I'd have to split this into several cache entries, for example
+"Forum::getThreads|$iForumId|$iLimit|$iOffset".
+
+Which is alright, until someone posts a new thread in the forum. I will now have to delete all the keys under "Forum::getThreads|$iForumId", no matter what the limit and offset is.
+What would be a good way of solving this problem? I'd really rather not loop through every possible limit and offset until I find something that doesn't match anymore.
+Thanks.
+
+
+You're essentially trying to cache a view, which is always going to get tricky. You should  instead try to cache data only, because data rarely changes. Don't cache a forum, cache the thread rows. Then your db call should just return a list of ids, which you already have in your cache. The db call will be lightening fast on any MyISAM table, and then you don't have to do a big join, which eats db memory.
+
+One possible solution is not to paginate the cache of threads in a forum, but rather put the thread information in to Forum::getThreads|$iForumId. Then in your PHP code only pull out the ones you want for that given page, e.g.
+$page = 2;
+$threads_per_page = 25;
+$start_thread = $page * $threads_per_page;
+
+// Pull threads from cache (assuming $cache class for memcache interface..)
+$threads = $cache->get("Forum::getThreads|$iForumId");
+
+// Only take the ones we need
+for($i=$start_thread; $i<=$start_thread+$threads_per_page; $i++)
+{
+    // Thread display logic here...
+    showThread($threads[$i]);
+}
+
+This means that you do have a bit more work to do pulling them out on each page, but now only have to worry about invalidating the cache in one place on update / addition of new thread.
+
+I've managed to solve this by extending the memcache class with a custom class (say ExtendedMemcache) which has a protected property which will contain a hash table of group to key values.
+The ExtendedMemcache->set method accepts 3 args ($strGroup,$strKey, $strValue)
+When you call set, it will store the relationship between $strGroup, and $strKey, in the protected property and then go on to store the $strKey to $strValue relationship in memcache.
+You can then add a new method to the ExtendedMemcache class called "deleteGroup", which will, when passed a string, find that keys associated to that group, and purge each key in turn.
+It would be something like this:
+http://pastebin.com/f566e913b
+I hope all that makes sense and works out for you.
+PS. I suppose if you wanted to use static calls the protected property could be saved in memcache itself under it's own key. Just a thought.
+
+flungabunga:
+Your solution is very close to what I'm looking for. The only thing keeping me from doing this is having to store the relationships in memcache after each request and loading them back. 
+I'm not sure how much of a performance hit this would mean, but it seems a little inefficient. I will do some tests and see how it pans out. Thank you for a structured suggestion (and some code to show for it, thanks!).
+
+You might also want to have a look at the cost of storing the cache data, in terms of your effort and CPU cost, against how what the cache will buy you. 
+If you find that 80% of your forum views are looking at the first page of threads, then you could decide to cache that page only. That would mean both cache reads and writes are much simpler to implment.
+Likewise with the list of a user's favourite threads. If this is something that each person visits rarely then cache might not improve performance too much.
+
+Be very careful about doing this kind of optimisation without having hard facts to measure against.
+Most databases have several levels of caches. If these are tuned correctly, the database will probably do a much better job at caching, than you can do your self.
+
+Just an update:
+I decided that Josh's point on data usage was a very good one.
+People are unlikely to keep viewing page 50 of a forum.
+Based on this model, I decided to cache the 90 latest threads in each forum. In the fetching function I check the limit and offset to see if the specified slice of threads is within cache or not. If it is within the cache limit, I use array_slice() to retrieve the right part and return it.
+This way, I can use a single cache key per forum, and it takes very little effort to clear/update the cache :-)
+I'd also like to point out that in other more resource heavy queries, I went with flungabunga's model, storing the relations between keys. Unfortunately Stack Overflow won't let me accept two answers. 
+Thanks!
+
+In response to flungabunga:
+Another way to implement grouping is to put the group name plus a sequence number into the keys themselves and increment the sequence number to "clear" the group.  You store the current valid sequence number for each group in its own key.
+e.g.
+get seqno_mygroup
+23
+
+get mygroup23_mykey
+<mykeydata...>
+get mygroup23_mykey2
+<mykey2data...>
+
+Then to "delete" the group simply:
+incr seqno_mygroup
+
+Voila:
+get seqno_mygroup
+24
+
+get mygroup24_mykey
+...empty
+
+etc..

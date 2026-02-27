@@ -1,0 +1,127 @@
+How to debug ORA-01775: looping chain of synonyms?
+sql oracle synonym
+I'm familiar with the issue behind ORA-01775: looping chain of synonyms, but is there any trick to debugging it, or do I just have to "create or replace" my way out of it?  
+Is there a way to query the schema or whatever to find out what the current definition of a public synonym is?  
+Even more awesome would be a graphical tool, but at this point, anything would be helpful.
+
+
+The data dictionary table DBA_SYNONYMS has information about all the synonyms in a database.  So you can run the query
+SELECT table_owner, table_name, db_link
+  FROM dba_synonyms 
+ WHERE owner        = 'PUBLIC'
+   AND synonym_name = <<synonym name>>
+
+to see what the public synonym currently points at.
+
+http://ora-01775.ora-code.com/ suggests:
+ORA-01775:  looping chain of synonyms
+Cause:    Through a series of CREATE synonym statements, a synonym was defined that referred to itself. For example, the following definitions are circular:
+CREATE SYNONYM s1 for s2 CREATE SYNONYM s2 for s3 CREATE SYNONYM s3 for s1
+Action:   Change one synonym definition so that it applies to a base table or view and retry the operation.
+
+As it turns out, the problem wasn't actually a looping chain of synonyms, but the fact that the synonym was pointing to a view that did not exist.
+Oracle apparently errors out as a looping chain in this condition.
+
+I had a similar problem, which turned out to be caused by missing double quotes off the table and schema name.
+
+Today I got this error, and after debugging I figured out that the actual tables were misssing, which I was referring using synonyms. So I suggest - first check that whether the tables exists!! :-))
+
+ORA-01775: looping chain of synonyms
+I faced the above error while I was trying to compile a Package which was using an object for which synonym was created however underlying object was not available.
+
+We had the same ORA-01775 error but in our case, the schema user was missing some 'grant select' on a couple of the public synonyms.
+
+If you are using TOAD, go to View>Toad Options>Oracle>General and remove TOAD_PLAN_TABLE from EXPLAIN PLAN section and put PLAN_TABLE
+
+Step 1) See what Objects exist with the name:
+select * from all_objects where object_name = upper('&object_name');
+
+It could be that a Synonym exists but no Table?
+
+Step 2) If that's not the problem, investigate the Synonym:
+select * from all_synonyms where synonym_name = upper('&synonym_name');
+
+It could be that an underlying Table or View to that Synonym is missing?
+
+Try this select to find the problematic synonyms, it lists all synonyms that are pointing to an object that does not exist (tables,views,sequences,packages, procedures, functions)
+SELECT *
+FROM dba_synonyms
+WHERE table_owner = 'SYSADM'
+    AND (
+        NOT EXISTS (
+            SELECT *
+            FROM dba_tables
+            WHERE dba_synonyms.table_name = dba_tables.TABLE_NAME
+            )
+        AND NOT EXISTS (
+            SELECT *
+            FROM dba_views
+            WHERE dba_synonyms.table_name = dba_views.VIEW_NAME
+            )
+        AND NOT EXISTS (
+            SELECT *
+            FROM dba_sequences
+            WHERE dba_synonyms.table_name = dba_sequences.sequence_NAME
+            )
+        AND NOT EXISTS (
+            SELECT *
+            FROM dba_dependencies
+            WHERE type IN (
+                    'PACKAGE'
+                    ,'PROCEDURE'
+                    ,'FUNCTION'
+                    )
+                AND dba_synonyms.table_name = dba_dependencies.NAME
+            )
+        )
+
+
+If you are compiling a PROCEDURE, possibly this is referring to a table or view that does not exist as it is created in the same PROCEDURE. In this case the solution is to make the query declared as String eg v_query: = 'insert into table select * from table2 and then execute immediate on v_query;
+This is because the compiler does not yet recognize the object and therefore does not find the reference. Greetings.
+
+The less intuitive solution to this error code seems to be problems with the objects that the synonym is pointing to.
+Here is my SQL for finding synonyms that point to erroneous objects.
+SELECT S.OWNER as SYN_OWNER, S.SYNONYM_NAME as SYN_NAME,
+    S.TABLE_OWNER as OBJ_OWNER, S.TABLE_NAME as OBJ_NAME,
+    CASE WHEN O.OWNER is null THEN 'MISSING' ELSE O.STATUS END as OBJ_STATUS
+FROM DBA_SYNONYMS S
+    LEFT JOIN DBA_OBJECTS O ON S.TABLE_OWNER = O.OWNER AND S.TABLE_NAME = O.OBJECT_NAME
+WHERE O.OWNER is null
+    OR O.STATUS != 'VALID';
+
+
+A developer accidentally wrote code that generated and ran the following SQL statement CREATE OR REPLACE PUBLIC SYNONYM "DUAL" FOR "DUAL"; which caused select * from dba_synonyms where table_name = 'DUAL';
+ to return PUBLIC DUAL    SOME_USER   DUAL rather than PUBLIC   DUAL    SYS DUAL.
+We were able to fix it (thanks to How to recreate public synonym "DUAL"?) by running
+ALTER SYSTEM SET "_SYSTEM_TRIG_ENABLED"=FALSE SCOPE=MEMORY;
+CREATE OR REPLACE PUBLIC SYNONYM DUAL FOR SYS.DUAL;
+ALTER SYSTEM SET "_SYSTEM_TRIG_ENABLED"=true SCOPE=MEMORY;
+
+
+We encountered this error today. 
+This is how we debugged and fixed it.
+
+Package went to invalid state due to this error ORA-01775.
+With the error line number , We went thru the package body code and found the code which was trying to insert data into a table.
+We ran below queries to check if the above table and synonym exists.
+SELECT * FROM DBA_TABLES WHERE TABLE_NAME = '&TABLE_NAME';  -- No rows returned
+
+SELECT * FROM DBA_SYNONYMS WHERE SYNONYM_NAME = '&SYNONYM_NAME'; -- 1 row returned
+
+With this we concluded that the table needs to be re- created. As the synonym was pointing to a table that did not exist.
+DBA team re-created the table and this fixed the issue.
+
+
+I'm using the following sql to find entries in all_synonyms where there is no corresponding object for the object_name (in user_objects):
+ select * 
+   from all_synonyms 
+   where table_owner = 'SCOTT' 
+     and synonym_name not like '%/%'
+     and table_name not in (
+       select object_name from user_objects
+         where object_type in (
+           'TABLE', 'VIEW', 'PACKAGE', 'SEQUENCE',
+           'PROCEDURE', 'FUNCTION', 'TYPE'
+         )
+    );
+

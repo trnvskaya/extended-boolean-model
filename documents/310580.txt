@@ -1,0 +1,100 @@
+How can i make a catch all route to handle '404 page not found' queries for ASP.NET MVC?
+asp.net-mvc routes http-status-code-404
+Is it possible to create a final route that catches all .. and bounces the user to a 404 view in ASP.NET MVC?
+NOTE: I don't want to set this up in my IIS settings.
+
+
+Found the answer myself.
+Richard Dingwall has an excellent post going through various strategies. I particularly like the FilterAttribute solution. I'm not a fan of throwing exceptions around willy nilly, so i'll see if i can improve on that :)
+For the global.asax, just add this code as your last route to register:
+routes.MapRoute(
+    "404-PageNotFound",
+    "{*url}",
+    new { controller = "StaticContent", action = "PageNotFound" }
+    );
+
+
+This might be a problem when you use
+throw new HttpException(404);
+
+When you want to catch that, I don't know any other way then editing your web config.
+
+This question came first, but the easier answer came in a later question:
+Custom ASP.NET MVC 404 Error Page
+
+I got my error handling to work by creating an ErrorController that
+  returns the views in this article. I also had to add the "Catch All"
+  to the route in global.asax. 
+I cannot see how it will get to any of these error pages if it is not
+  in the Web.config..? My Web.config had to specify:
+customErrors mode="On" defaultRedirect="~/Error/Unknown"
+
+and then I also added:
+error statusCode="404" redirect="~/Error/NotFound"
+
+Hope this helps.
+
+I love this way now because it is so simple:
+ <customErrors mode="On" defaultRedirect="~/Error/" redirectMode="ResponseRedirect">
+    <error statusCode="404" redirect="~/Error/PageNotFound/" />
+ </customErrors>
+
+
+An alternative to creating a catch-all route is to add an Application_EndRequest method to your MvcApplication per Marco's Better-Than-Unicorns MVC 404 Answer.
+
+Add this lines under your project root web.config File.
+ <system.webServer>
+<httpErrors errorMode="Custom" existingResponse="Replace">
+  <remove statusCode="404" />
+  <error statusCode="404" responseMode="ExecuteURL" path="/Test/PageNotFound" />
+  <remove statusCode="500" />
+  <error statusCode="500" responseMode="ExecuteURL" path="/Test/PageNotFound" />
+</httpErrors>
+<modules>
+  <remove name="FormsAuthentication" />
+</modules>
+
+
+
+If the route cannot be resolved, then MVC framework will through 404 error.. 
+Best approach is to use Exception Filters ... Create a custom exceptionfilter and make like this.. 
+public class RouteNotFoundAttribute : FilterAttribute, IExceptionFilter {
+    public void OnException(ExceptionContext filterContext) {
+        filterContext.Result  = new RedirectResult("~/Content/RouteNotFound.html");
+   }
+}
+
+
+Inside RouterConfig.cs add the follwing piece of code:
+  routes.MapRoute(
+           name: "Error",
+           url: "{id}",
+           defaults: new
+           {
+               controller = "Error",
+               action = "PageNotFound"
+
+           });
+
+
+Also you can handle NOT FOUND error in Global.asax.cs as below 
+protected void Application_Error(object sender, EventArgs e)
+{
+    Exception lastErrorInfo = Server.GetLastError();
+    Exception errorInfo = null;
+
+    bool isNotFuund = false;
+    if (lastErrorInfo != null)
+    {
+        errorInfo = lastErrorInfo.GetBaseException();
+        var error = errorInfo as HttpException;
+        if (error != null)
+            isNotFuund = error.GetHttpCode() == (int)HttpStatusCode.NotFound;
+    }
+    if (isNotFuund)
+    {
+        Server.ClearError();
+        Response.Redirect("~/Error/NotFound");// Do what you need to render in view
+    }
+}
+

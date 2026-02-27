@@ -1,0 +1,167 @@
+Java2D Performance Issues
+java java-2d
+I'm having performance oddities with Java2D. I know of the sun.java2d.opengl VM parameter to enable 3D acceleration for 2D, but even using that has some weird issues. 
+Here are results of tests I ran:
+Drawing a 25x18 map with 32x32 pixel tiles on a JComponent
+Image 1 = .bmp format, Image 2 = A .png format
+Without -Dsun.java2d.opengl=true
+120 FPS using .BMP image 1
+13 FPS using .PNG image 2
+With -Dsun.java2d.opengl=true
+12 FPS using .BMP image 1
+700 FPS using .PNG image 2
+Without acceleration, I'm assuming some kind of transformation is taking place with every drawImage() I do in software, and is pulling down the FPS considerably in the case of .PNG. Why though, with acceleration, would the results switch (and PNG actually performs incredibly faster)?! Craziness!
+.BMP Image 1 is translated to an image type of TYPE_INT_RGB. .PNG Image 2 is translated to an image type of TYPE_CUSTOM. In order to get consistent speed with and without opengl acceleration, I have to create a new BufferedImage with an image type of TYPE_INT_ARGB, and draw Image 1 or Image 2 to this new image. 
+Here are the results running with that:
+Without -Dsun.java2d.opengl=true
+120 FPS using .BMP image 1
+120 FPS using .PNG image 2
+With -Dsun.java2d.opengl=true
+700 FPS using .BMP image 1
+700 FPS using .PNG image 2
+My real question is, can I assume that TYPE_INT_ARGB will be the native image type for all systems and platforms? I'm assuming this value could be different. Is there some way for me to get the native value so that I can always create new BufferedImages for maximum performance? 
+Thanks in advance...
+
+
+From what I remember when I was thinking about doing graphics programming in Java, the built in libraries are slow. I was advised on GameDev.Net that anyone doing anything serious would have to use something like jogl
+
+I think I found a solution by researching and putting bits and pieces together from too many Google searches. 
+Here it is, comments and all:
+private BufferedImage toCompatibleImage(BufferedImage image)
+{
+	// obtain the current system graphical settings
+	GraphicsConfiguration gfx_config = GraphicsEnvironment.
+		getLocalGraphicsEnvironment().getDefaultScreenDevice().
+		getDefaultConfiguration();
+
+	/*
+	 * if image is already compatible and optimized for current system 
+	 * settings, simply return it
+	 */
+	if (image.getColorModel().equals(gfx_config.getColorModel()))
+		return image;
+
+	// image is not optimized, so create a new image that is
+	BufferedImage new_image = gfx_config.createCompatibleImage(
+			image.getWidth(), image.getHeight(), image.getTransparency());
+
+	// get the graphics context of the new image to draw the old image on
+	Graphics2D g2d = (Graphics2D) new_image.getGraphics();
+
+	// actually draw the image and dispose of context no longer needed
+	g2d.drawImage(image, 0, 0, null);
+	g2d.dispose();
+
+	// return the new optimized image
+	return new_image; 
+}
+
+In my previous post, GraphicsConfiguration was what held the information needed to create optimized images on a system. It seems to work pretty well, but I would have thought Java would automatically do this for you. Obviously you can't get too comfortable with Java. :) I guess I ended up answering my own question. Oh well, hopefully it'll help some of you I've seen trying to make use of Java for 2D games.
+
+Well, this is old post but I'd like to share my findings about direct drawing with Swing/AWT, without BufferedImage.
+Some kind of drawing, as 3D, are better done when painting directly to a int[] buffer. Once done the images, you can use an ImageProducer instance, like MemoryImageSource, to produce images. I'm assuming you know how to perform your drawings directly, without help of Graphics/Graphics2.
+    /**
+* How to use MemoryImageSource to render images on JPanel
+* Example by A.Borges (2015)
+*/
+public class MyCanvas extends JPanel implements Runnable {
+
+public int pixel[];
+public int width;
+public int height;
+private Image imageBuffer;   
+private MemoryImageSource mImageProducer;   
+private ColorModel cm;    
+private Thread thread;
+
+
+public MyCanvas() {
+    super(true);
+    thread = new Thread(this, "MyCanvas Thread");
+}
+
+/**
+ * Call it after been visible and after resizes.
+ */
+public void init(){        
+    cm = getCompatibleColorModel();
+    width = getWidth();
+    height = getHeight();
+    int screenSize = width * height;
+    if(pixel == null || pixel.length < screenSize){
+        pixel = new int[screenSize];
+    }        
+    mImageProducer =  new MemoryImageSource(width, height, cm, pixel,0, width);
+    mImageProducer.setAnimated(true);
+    mImageProducer.setFullBufferUpdates(true);  
+    imageBuffer = Toolkit.getDefaultToolkit().createImage(mImageProducer);        
+    if(thread.isInterrupted() || !thread.isAlive()){
+        thread.start();
+    }
+}
+/**
+* Do your draws in here !!
+* pixel is your canvas!
+*/
+public /* abstract */ void render(){
+    // rubisch draw
+    int[] p = pixel; // this avoid crash when resizing
+    if(p.length != width * height) return;        
+    for(int x=0; x < width; x++){
+        for(int y=0; y<height; y++){
+            int color =  (((x + i) % 255) & 0xFF) << 16; //red
+                color |= (((y + j) % 255) & 0xFF) <<  8; //green
+                color |= (((y/2 + x/2 - j) % 255) & 0xFF) ;   //blue         
+            p[ x + y * width] = color;
+        }
+    }        
+    i += 1;
+    j += 1;          
+}    
+private int i=1,j=256;
+
+@Override
+public void run() {
+    while (true) {
+        // request a JPanel re-drawing
+        repaint();                                  
+        try {Thread.sleep(5);} catch (InterruptedException e) {}
+    }
+}
+
+@Override
+public void paintComponent(Graphics g) {
+    super.paintComponent(g);
+    // perform draws on pixels
+    render();
+    // ask ImageProducer to update image
+    mImageProducer.newPixels();            
+    // draw it on panel          
+    g.drawImage(this.imageBuffer, 0, 0, this);  
+}
+
+/**
+ * Overrides ImageObserver.imageUpdate.
+ * Always return true, assuming that imageBuffer is ready to go when called
+ */
+@Override
+public boolean imageUpdate(Image image, int a, int b, int c, int d, int e) {
+    return true;
+}
+}// end class
+
+Note we need unique instance of MemoryImageSource and Image. Do not create new Image or new ImageProducer for each frames, unless you have resized your JPanel. See init() method above.
+In a rendering thread,  ask a repaint(). On Swing, repaint() will call the overridden paintComponent(), where it call your render() method and then ask your imageProducer to update image.
+With Image done, draw it with Graphics.drawImage().
+To have a compatible Image, use proper ColorModel when you create your Image. I use GraphicsConfiguration.getColorModel():
+/**
+ * Get Best Color model available for current screen.
+ * @return color model
+ */
+protected static ColorModel getCompatibleColorModel(){        
+    GraphicsConfiguration gfx_config = GraphicsEnvironment.
+            getLocalGraphicsEnvironment().getDefaultScreenDevice().
+            getDefaultConfiguration();        
+    return gfx_config.getColorModel();
+}
+

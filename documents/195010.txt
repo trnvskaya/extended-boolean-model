@@ -1,0 +1,317 @@
+How can I split multiple joined words?
+string nlp
+I have an array of 1000 or so entries, with examples below:
+wickedweather
+liquidweather
+driveourtrucks
+gocompact
+slimprojector
+
+I would like to be able to split these into their respective words, as:
+wicked weather
+liquid weather
+drive our trucks
+go compact
+slim projector
+
+I was hoping a regular expression my do the trick.  But, since there is no boundary to stop on, nor is there any sort of capitalization that I could possibly key on, I am thinking, that some sort of reference to a dictionary might be necessary?  
+I suppose it could be done by hand, but why - when it can be done with code! =)  But this has stumped me.  Any ideas?  
+
+
+I think you're right in thinking that it's not really a job for a regular expression. I would approach this using the dictionary idea - look for the longest prefix that is a word in the dictionary. When you find that, chop it off and do the same with the remainder of the string.
+The above method is subject to ambiguity, for example "drivereallyfast" would first find "driver" and then have trouble with "eallyfast". So you would also have to do some backtracking if you ran into this situation. Or, since you don't have that many strings to split, just do by hand the ones that fail the automated split.
+
+Well, the problem itself is not solvable with just a regular expression. A solution (probably not the best) would be to get a dictionary and do a regular expression match for each work in the dictionary to each word in the list, adding the space whenever successful. Certainly this would not be terribly quick, but it would be easy to program and faster than hand doing it. 
+
+A dictionary based solution would be required. This might be simplified somewhat if you have a limited dictionary of words that can occur, otherwise words that form the prefix of other words are going to be a problem.
+
+I may get downmodded for this, but have the secretary do it.
+You'll spend more time on a dictionary solution than it would take to manually process.  Further, you won't possibly have 100% confidence in the solution, so you'll still have to give it manual attention anyway.
+
+Can a human do it?
+
+farsidebag
+far sidebag
+farside bag
+far side bag
+
+Not only do you have to use a dictionary, you might have to use a statistical approach to figure out what's most likely (or, god forbid, an actual HMM for your human language of choice...)
+For how to do statistics that might be helpful, I turn you to Dr. Peter Norvig, who addresses a different, but related problem of spell-checking in 21 lines of code:
+http://norvig.com/spell-correct.html
+(he does cheat a bit by folding every for loop into a single line.. but still).
+Update This got stuck in my head, so I had to birth it today.  This code does a similar split to the one described by Robert Gamble, but then it orders the results based on word frequency in the provided dictionary file (which is now expected to be some text representative of your domain or English in general.  I used big.txt from Norvig, linked above, and catted a dictionary to it, to cover missing words).
+A combination of two words will most of the time beat a combination of 3 words, unless the frequency difference is enormous.
+
+I posted this code with some minor changes on my blog
+http://squarecog.wordpress.com/2008/10/19/splitting-words-joined-into-a-single-string/
+and also wrote a little about the underflow bug in this code.. I was tempted to just quietly fix it, but figured this may help some folks who haven't seen the log trick before:
+http://squarecog.wordpress.com/2009/01/10/dealing-with-underflow-in-joint-probability-calculations/
+
+Output on your words, plus a few of my own -- notice what happens with "orcore":
+
+perl splitwords.pl big.txt words
+answerveal: 2 possibilities
+ -  answer veal
+ -  answer ve al
+
+wickedweather: 4 possibilities
+ -  wicked weather
+ -  wicked we at her
+ -  wick ed weather
+ -  wick ed we at her
+
+liquidweather: 6 possibilities
+ -  liquid weather
+ -  liquid we at her
+ -  li quid weather
+ -  li quid we at her
+ -  li qu id weather
+ -  li qu id we at her
+
+driveourtrucks: 1 possibilities
+ -  drive our trucks
+
+gocompact: 1 possibilities
+ -  go compact
+
+slimprojector: 2 possibilities
+ -  slim projector
+ -  slim project or
+
+orcore: 3 possibilities
+ -  or core
+ -  or co re
+ -  orc ore
+
+
+Code:
+#!/usr/bin/env perl
+
+use strict;
+use warnings;
+
+sub find_matches($);
+sub find_matches_rec($\@\@);
+sub find_word_seq_score(@);
+sub get_word_stats($);
+sub print_results($@);
+sub Usage();
+
+our(%DICT,$TOTAL);
+{
+  my( $dict_file, $word_file ) = @ARGV;
+  ($dict_file && $word_file) or die(Usage);
+
+  {
+    my $DICT;
+    ($DICT, $TOTAL) = get_word_stats($dict_file);
+    %DICT = %$DICT;
+  }
+
+  {
+    open( my $WORDS, '<', $word_file ) or die "unable to open $word_file\n";
+
+    foreach my $word (<$WORDS>) {
+      chomp $word;
+      my $arr = find_matches($word);
+
+
+      local $_;
+      # Schwartzian Transform
+      my @sorted_arr =
+        map  { $_->[0] }
+        sort { $b->[1] <=> $a->[1] }
+        map  {
+          [ $_, find_word_seq_score(@$_) ]
+        }
+        @$arr;
+
+
+      print_results( $word, @sorted_arr );
+    }
+
+    close $WORDS;
+  }
+}
+
+
+sub find_matches($){
+    my( $string ) = @_;
+
+    my @found_parses;
+    my @words;
+    find_matches_rec( $string, @words, @found_parses );
+
+    return  @found_parses if wantarray;
+    return \@found_parses;
+}
+
+sub find_matches_rec($\@\@){
+    my( $string, $words_sofar, $found_parses ) = @_;
+    my $length = length $string;
+
+    unless( $length ){
+      push @$found_parses, $words_sofar;
+
+      return @$found_parses if wantarray;
+      return  $found_parses;
+    }
+
+    foreach my $i ( 2..$length ){
+      my $prefix = substr($string, 0, $i);
+      my $suffix = substr($string, $i, $length-$i);
+
+      if( exists $DICT{$prefix} ){
+        my @words = ( @$words_sofar, $prefix );
+        find_matches_rec( $suffix, @words, @$found_parses );
+      }
+    }
+
+    return @$found_parses if wantarray;
+    return  $found_parses;
+}
+
+
+## Just a simple joint probability
+## assumes independence between words, which is obviously untrue
+## that's why this is broken out -- feel free to add better brains
+sub find_word_seq_score(@){
+    my( @words ) = @_;
+    local $_;
+
+    my $score = 1;
+    foreach ( @words ){
+        $score = $score * $DICT{$_} / $TOTAL;
+    }
+
+    return $score;
+}
+
+sub get_word_stats($){
+    my ($filename) = @_;
+
+    open(my $DICT, '<', $filename) or die "unable to open $filename\n";
+
+    local $/= undef;
+    local $_;
+    my %dict;
+    my $total = 0;
+
+    while ( <$DICT> ){
+      foreach ( split(/\b/, $_) ) {
+        $dict{$_} += 1;
+        $total++;
+      }
+    }
+
+    close $DICT;
+
+    return (\%dict, $total);
+}
+
+sub print_results($@){
+    #( 'word', [qw'test one'], [qw'test two'], ... )
+    my ($word,  @combos) = @_;
+    local $_;
+    my $possible = scalar @combos;
+
+    print "$word: $possible possibilities\n";
+    foreach (@combos) {
+      print ' -  ', join(' ', @$_), "\n";
+    }
+    print "\n";
+}
+
+sub Usage(){
+    return "$0 /path/to/dictionary /path/to/your_words";
+}
+
+
+The best tool for the job here is recursion, not regular expressions.  The basic idea is to start from the beginning of the string looking for a word, then take the remainder of the string and look for another word, and so on until the end of the string is reached.  A recursive solution is natural since backtracking needs to happen when a given remainder of the string cannot be broken into a set of words.  The solution below uses a dictionary to determine what is a word and prints out solutions as it finds them (some strings can be broken out into multiple possible sets of words, for example wickedweather could be parsed as "wicked we at her").  If you just want one set of words you will need to determine the rules for selecting the best set, perhaps by selecting the solution with fewest number of words or by setting a minimum word length.
+#!/usr/bin/perl
+
+use strict;
+
+my $WORD_FILE = '/usr/share/dict/words'; #Change as needed
+my %words; # Hash of words in dictionary
+
+# Open dictionary, load words into hash
+open(WORDS, $WORD_FILE) or die "Failed to open dictionary: $!\n";
+while (<WORDS>) {
+  chomp;
+  $words{lc($_)} = 1;
+}
+close(WORDS);
+
+# Read one line at a time from stdin, break into words
+while (<>) {
+  chomp;
+  my @words;
+  find_words(lc($_));
+}
+
+sub find_words {
+  # Print every way $string can be parsed into whole words
+  my $string = shift;
+  my @words = @_;
+  my $length = length $string;
+
+  foreach my $i ( 1 .. $length ) {
+    my $word = substr $string, 0, $i;
+    my $remainder = substr $string, $i, $length - $i;
+    # Some dictionaries contain each letter as a word
+    next if ($i == 1 && ($word ne "a" && $word ne "i"));
+
+    if (defined($words{$word})) {
+      push @words, $word;
+      if ($remainder eq "") {
+        print join(' ', @words), "\n";
+        return;
+      } else {
+        find_words($remainder, @words);
+      }
+      pop @words;
+    }
+  }
+
+  return;
+}
+
+
+The Viterbi algorithm is much faster. It computes the same scores as the recursive search in Dmitry's answer above, but in O(n) time. (Dmitry's search takes exponential time; Viterbi does it by dynamic programming.)
+import re
+from itertools import groupby
+
+def viterbi_segment(text):
+    probs, lasts = [1.0], [0]
+    for i in range(1, len(text) + 1):
+        prob_k, k = max((probs[j] * word_prob(text[j:i]), j)
+                        for j in range(max(0, i - max_word_length), i))
+        probs.append(prob_k)
+        lasts.append(k)
+    words = []
+    i = len(text)
+    while 0 < i:
+        words.append(text[lasts[i]:i])
+        i = lasts[i]
+    words.reverse()
+    return words, probs[-1]
+
+def word_prob(word): return dictionary.get(word, 0) / total
+def words(text): return re.findall('[a-z]+', text.lower()) 
+dictionary = dict((w, len(list(ws)))
+                  for w, ws in groupby(sorted(words(open('big.txt').read()))))
+max_word_length = max(map(len, dictionary))
+total = float(sum(dictionary.values()))
+
+Testing it:
+>>> viterbi_segment('wickedweather')
+(['wicked', 'weather'], 5.1518198982768158e-10)
+>>> ' '.join(viterbi_segment('itseasyformetosplitlongruntogetherblocks')[0])
+'its easy for me to split long run together blocks'
+
+To be practical you'll likely want a couple refinements:
+
+Add logs of probabilities, don't multiply probabilities. This avoids floating-point underflow.
+Your inputs will in general use words not in your corpus. These substrings must be assigned a nonzero probability as words, or you end up with no solution or a bad solution. (That's just as true for the above exponential search algorithm.) This probability has to be siphoned off the corpus words' probabilities and distributed plausibly among all other word candidates: the general topic is known as smoothing in statistical language models. (You can get away with some pretty rough hacks, though.) This is where the O(n) Viterbi algorithm blows away the search algorithm, because considering non-corpus words blows up the branching factor.
+

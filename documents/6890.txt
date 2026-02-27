@@ -1,0 +1,52 @@
+How to wait for thread complete before continuing?
+c# multithreading compact-framework
+I have some code for starting a thread on the .NET CF 2.0:
+ThreadStart tStart = new ThreadStart(MyMethod);
+Thread t = new Thread(tStart);
+t.Start();
+
+If I call this inside a loop the items complete out of order. How do introduce a wait after t.Start(), so that the work on the thread completes before the code continues? Will BeginInvoke/EndInvoke be a better option for this than manually creating threads?
+
+
+If I'm reading this properly, you're starting work items on bunch of threads but you're concerned that the threads are completing out of order, and, would prefer to wait until each thread completes in the order they were started ? 
+If this is the case then I'm not sure why you're creating a thread per work item. Maybe you could expand?
+If you did need to wait for a thread to complete the you could just do:
+t.Join();
+
+
+How much order do you need to impose on the threads? If you just need all of the work started in the loop to finish before the code continues, but you don't care about the order the work within the loop finishes, then calling Join is the answer. To add more detail to Kevin Kenny's answer, you should call Join outside the loop. This means you will need a collection to hold references to the threads you started:
+// Start all of the threads.
+List<Thread> startedThreads = new List<Thread>();
+foreach (...) {
+  Thread thread = new Thread(new ThreadStart(MyMethod));
+  thread.Start();
+  startedThreads.Add(thread);
+}
+
+// Wait for all of the threads to finish.
+foreach (Thread thread in startedThreads) {
+  thread.Join();
+}
+
+In contrast, if you called Join inside the loop, the result would basically be the same as not using threads at all. Each iteration of the loop body would create and start a thread but then immediately Join it and wait for it to finish.
+If the individual threads produce some result (write a message in a log, for example) then the messages may still appear out of order because there's no coordination between the threads. It is possible to get the threads to output their results in order by coordinating them with a Monitor.
+
+Another way of waiting for a thread to finish is using an AutoResetEvent.
+private readonly AutoResetEvent mWaitForThread = new AutoResetEvent(false);
+
+private void Blah()
+{
+    ThreadStart tStart = new ThreadStart(MyMethod);
+    Thread t = new Thread(tStart);
+    t.Start();
+
+    //... (any other things)
+    mWaitForThread.WaitOne();
+}
+
+private void MyMethod()
+{
+     //... (execute any other action)
+     mWaitForThread.Set();
+}
+

@@ -1,0 +1,83 @@
+How to choose returned column name in a SELECT FOR XML query?
+sql sql-server xml sql-server-2005
+MS SQL has a convenient workaround for concatenating a column value from multiple rows into one value:
+SELECT col1
+ FROM table1
+ WHERE col2 = 'x'
+ ORDER by col3
+ FOR XML path('')
+
+and that returns a nice recordset:
+XML_F52E2B61-18A1-11d1-B105-00805F49916B                                     
+---------------------------------------- 
+<col1>Foo</col1><col1>Bar</col1>
+
+only the column name in the returned recordset is rather nasty!
+The column name seems to include random elements (or a GUID), and hence I am reluctant to use it in my application (different instances or different servers might have another GUID).  Unfortunately I cannot use * to select the value, and due to the restrictions in the existing application I cannot iterate through returned columns, either...
+Is there a way to force the column name in the returned recordset to something more sensible?
+
+
+That should do:
+select(
+SELECT col1
+ FROM table1
+ WHERE col2 = 'x'
+ ORDER by col3
+ FOR XML path('')
+) as myName
+
+Not pretty but should give the result that you need
+
+stored procedure
+declare @requestResultXML xml
+
+set @requestResultXML =
+            (
+                SELECT 'NPOIT-1.0' AS '@Interface',
+                (
+                    select  'Query'     as '@Type',
+                            'GetBill'   as '@Query',
+                            'True'      as '@CompressResult'
+                        FOR XML PATH('Head'), TYPE
+                ),
+                (
+                    select  @pin        as '@PIN',
+                            @period     as '@Period',
+                            @number     as '@Number',
+                            @barcode    as '@Barcode'
+                        FOR XML PATH('QueryParams'), TYPE
+                )   as Data
+
+                FOR XML PATH('DataExchangeModule')              
+            )
+
+select @requestResultXML as GetBillRequest
+
+
+Try this...
+select
+(
+    select '@greeting' = 'hello', '@where' = 'there', '@who' = 'world'
+    for xml path ('salutation'), type
+) as 'MyName'
+
+Note: If you omit the "type" after the "for xml", you get (I think) a string.
+
+For EXPLICIT xml generation - with unions you need to wrap results one more time
+(As a bonus result as XML):
+SELECT 
+    CAST(  
+        (
+            SELECT 
+                * 
+            FROM (
+                SELECT 
+                    1 AS Tag
+                    ,NULL AS Parent
+                    ...
+                UNION ALL
+                SELECT ...
+                FOR XML EXPLICIT
+            )
+        ) as XML) as [MyName]
+

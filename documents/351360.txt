@@ -1,0 +1,74 @@
+An algorithm to get the next weekday set in a bitmask
+c++ algorithm
+I've got this small question - given a bitmask of weekdays (e.g., Sunday = 0x01, Monday = 0x02, Tuesday = 0x04, etc...) and today's day (in a form of Sunday = 1, Monday = 2, Tuesday = 3, etc...) - what's the most elegant way to find out the next day from today, that's set in the bitmask? By elegant I mean, is there a way to do this without if/switch/etc..., because I know the non-elegant way?
+Edit I probably should've mentioned (to make this more clear) that the variable holding the bitmask can have several of the days set, so for example (roughly):
+uDay = Sunday | Monday;
+today = Tuesday;
+
+I need to get "Sunday"
+
+
+I understand your question this way:
+// returns t (today) if no weekday is set in the mask.
+int getNextDay(int m, int t) {
+    int i, idx;
+    for(i = 0, idx=t%7; i<7 && !((1<<idx)&m); i++, idx=(idx+1)%7)
+        /* body empty */ ;
+    return (i == 7) ? t : (idx + 1);
+}
+
+// getNextDay(8|2, 2) == 4, getNextDay(64, 2) == 7
+// getNextDay(128, 2) == 2
+
+
+int getNextDay(int days_mask, int today) {
+   if (!days_mask) return -1; // no days set
+   days_mask |= days_mask << 7; // duplicate days into next week
+   mask = 1 << (today % 7); // keep track of the day
+   while (!(mask & days_mask)) {
+      mask <<= 1;
+      ++today;
+   }
+   return today % 7;
+}
+
+So that's just one if at the beginning and while loop. How's that?
+Edit: I just realized there was a degenerate case where if the use passes today>=14 (or greater than the highest bit set) the while loop becomes infinite. The (today % 7) on line 4 fixes this case.
+And if I may grouse (light-heartedly) about the other version getting the checkmark, my version only have 2 modulus calls, while the checked solution will have a minimum of 1 and a maximum of 6 modulus calls.
+Also, the comment about does the function return "today" if today is set is interesting. If the function should not return today unless today is the only day in the set would require that you pre-increment today on line 3 of my solution.
+
+You don't need any extra variables at all. The simplest idea -- start with "tomorrow", look at successive days until you find a day in the mask -- is also the most elegant to implement. The trick to doing it nicely is to think of the days as Sunday=0, Monday=1 and so on (only inside this function). Then, "today" is actually t-1 (where t is the input to the function, so it goes from 1 to 7), and "tomorrow" is (t-1+1)%7 i.e t%7, etc.
+This is simple and has been tested against litb's code exhaustively, just to be sure :-)
+int getNextDay(int m, int t) {
+  if((m&127)==0) return t;          //If no day is set, return today
+  t=t%7;                            //Start with tomorrow
+  while((m&(1<<t))==0) t = (t+1)%7; //Try successive days
+  return t+1;                       //Change back to Sunday=1, etc.
+}
+
+Edit: If you want "next" to mean "today or later", then the "t=t%7" line should be changed to t=t-1 or --t.
+
+
+By elegant I mean, is there a way to do this without if/switch/etc...
+
+You bet! Whether that will mean 'elegant' in any usual sense, well:
+static unsigned next_day_set (unsigned today, unsigned set) {
+  unsigned arev = bitreverse (highest_bit_set (bitreverse ((set << 7) | set)
+                                               & (bitreverse (today) - 1)));
+  return ((arev >> 7) | arev) & 0x7f;
+}
+
+That's assuming you have 'elegant' functions to reverse the bits in a word and find the leftmost bit set -- see Hacker's Delight. If you represented the weekday bits in the reverse order, it'd be simpler and actually even sort of elegant for real, assuming I didn't screw up:
+enum {
+  Sunday  = 1 << 6
+  Monday  = 1 << 5
+  Tuesday = 1 << 4,
+  /* etc */
+  Saturday = 1 << 0
+};
+
+static unsigned next_day_set (unsigned today, unsigned set) {
+  unsigned a = highest_bit_set (((set << 7) | set) & ((today << 7) - 1));
+  return ((a >> 7) | a) & 0x7f;
+}
+

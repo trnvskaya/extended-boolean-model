@@ -1,0 +1,78 @@
+Making locking easier in MTAs
+c# multithreading locking
+In multi-threaded code, when an instance may be read or written by multiple threads, they need to be locked on to perform these operations safely.
+To avoid the repetition of creating an object to lock on and writing a bunch of lock statements through code, I've created a generic class to handle the locking. 
+Am I missing anything, conceptually? This should work, right?
+public class Locked<T> where T : new()
+{
+    private readonly object locker = new object();
+
+    private T value;
+
+    public Locked()
+        : this(default(T))
+    { }
+
+    public Locked(T value)
+    {
+        this.value = value;
+    }
+
+    public T Get()
+    {
+        lock (this.locker)
+        {
+            return this.value;
+        }
+    }
+
+    public void Set(T value)
+    {
+        lock (this.locker)
+        {
+            this.value = value;
+        }
+    }    
+}
+
+And an example of it being used in a class:
+private Locked<bool> stopWorkerThread = new Locked<bool>();
+
+public void WorkerThreadEntryPoint()
+{
+    while (true)
+    {
+        if (this.stopWorkerThread.Get())
+        {
+            break;
+
+}
+
+Also, how would I test something like this, in an automated way (e.g. create a unit test)?
+Lastly, what can I do to implement a ++ and -- operator, to avoid this:
+        this.runningThreads.Set(this.runningThreads.Get() + 1);
+
+
+
+That only locks for the duration of the get/set; of course, in many common cases this will be atomic anyway, simply due to to data size.
+However, in reality most locks need to span more than this, in the same way that collections locking over just the Add etc don't help much - a caller typically needs a single lock to span the "is it there? if so update, else add" sequence.
+For something as simple as a bool, "volatile" might solve the problem a lot more simply - especially if it is just for a loop exit.
+You might also want to consider [MethodImpl(MethodImplOptions.Synchronized)] - although personally I prefer a private lock object (like you have used) to prevent issues with external people locking on the object (the above uses "this" as the lock).
+For unit testing this, you'd need something to prove it broken first - which would be hard since the operations are so small (and already atomic for most data types). One of the other things it avoids (that volatile also fixes) is caching in a register, but again that is an optimisation and hard to force to prove it is broken.
+If you are interested in a lock-wrapper, you might consider existing code like this.
+
+Your code above has quite a few potential and real multi-threading issues, and I wouldn't use something like it in a real-world situation. For example:
+this.runningThreads.Set(this.runningThreads.Get() + 1);
+
+There is a pretty obvious race condition here. When the Get() call returns, the object is no longer locked. To do a real post or pre increment, the counter would need to be locked from before the Get to after the Set.
+Also you don't always need to do a full lock if all you are doing is synchronous reads.
+A better lock interface would (I think) require you to explicitly lock the instance where you need to do it. My experience is mainly with C++ so I can't recommend a full implementation, but my preferred syntax might look something like this:
+using (Locked<T> lock = Locked<T>(instance))
+{
+  // write value
+  instance++;
+}
+
+// read value
+print instance;
+

@@ -1,0 +1,293 @@
+INotifyPropertyChanged property name - hardcode vs reflection?
+.net wpf reflection
+What is the best way to specify a property name when using INotifyPropertyChanged?  
+Most examples hardcode the property name as an argument on the PropertyChanged Event.  I was thinking about using MethodBase.GetCurrentMethod.Name.Substring(4) but am a little uneasy about the reflection overhead.
+
+
+The reflection overhead here is pretty much overkill especially since INotifyPropertyChanged gets called a lot. It's best just to hard code the value if you can.
+If you aren't concerned about performance then I'd look at the various approached mentioned below and pick that that requires the least amount of coding. If you could do something to completely removes the need for the explicit call then that would be best (e.g. AOP).
+
+Yeah I see the use and simplicity of the function you are suggesting, but when considering the running cost due to reflection, yeah that is a bad idea, What I use for this scenario is having a Code snippet added properly to take advantage of the time and error in writing a property with all the Notifyproperty event firing.
+
+Additionally, we found an issue where getting a method name worked differently in Debug vs. Release builds:
+http://social.msdn.microsoft.com/Forums/en-US/wpf/thread/244d3f24-4cc4-4925-aebe-85f55b39ec92
+(The code we were using wasn't exactly reflection in the way you suggested, but it convinced us that hardcoding the property name was the fastest and most reliable solution.)
+
+I did something like this once as an experiment, from memory it worked OK, and removed the need to hardcode all the property names in strings. Performance could be in issue if your building a high volume server application, on the desktop you'll probably never notice the difference.
+protected void OnPropertyChanged()
+{
+    OnPropertyChanged(PropertyName);
+}
+
+protected string PropertyName
+{
+    get
+    {
+        MethodBase mb = new StackFrame(1).GetMethod();
+        string name = mb.Name;
+        if(mb.Name.IndexOf("get_") > -1)
+	        name = mb.Name.Replace("get_", "");
+
+        if(mb.Name.IndexOf("set_") > -1)
+	        name = mb.Name.Replace("set_", "");
+
+        return name;
+    }
+}
+
+
+The problem with the reflection based method is that it's rather expensive, and isn't terribly quick. Sure, it is much more flexible, and less brittle towards refactoring.
+However, it really can hurt performance, especially when things are called frequently. The stackframe method, also (I believe) has issues in CAS (e.g. restricted trust levels, such as XBAP). It's best to hard code it.
+If your looking for fast, flexible property notification in WPF there is a solution -- use DependencyObject :) Thats what it was designed for. If you don't want to take the dependency, or worry about the thread affinity issues, move the property name into a constant, and boom! your good.
+
+Don't forget one thing : PropertyChanged event is mainly consumed by components that will use reflection to get the value of the named property.
+The most obvious example is databinding.
+When you fire PropertyChanged event, passing the name of the property as a parameter, you should know that the subscriber of this event is likely to use reflection by calling, for instance, GetProperty (at least the first time if it uses a cache of PropertyInfo), then GetValue. This last call is a dynamic invocation (MethodInfo.Invoke) of the property getter method, which costs more than the GetProperty which only queries meta data. (Note that data binding relies on the whole TypeDescriptor thing -- but the default implementation uses reflection.)
+So, of course using hard code property names when firing PropertyChanged is more efficient than using reflection for dynamically getting the name of the property, but IMHO, it is important to balance your thoughts. In some cases, the performance overhead is not that critical, and you could benefit from some kind on strongly typed event firing mechanism.
+Here is what I use sometimes in C# 3.0, when performances would not be a concern :
+public class Person : INotifyPropertyChanged
+{
+    private string name;
+
+    public string Name
+    {
+        get { return this.name; }
+        set 
+        { 
+            this.name = value;
+            FirePropertyChanged(p => p.Name);
+        }
+    }
+
+    private void FirePropertyChanged<TValue>(Expression<Func<Person, TValue>> propertySelector)
+    {
+        if (PropertyChanged == null)
+            return;
+
+        var memberExpression = propertySelector.Body as MemberExpression;
+        if (memberExpression == null)
+            return;
+
+        PropertyChanged(this, new PropertyChangedEventArgs(memberExpression.Member.Name));
+    }
+
+    public event PropertyChangedEventHandler PropertyChanged;
+}
+
+Notice the use of the expression tree to get the name of the property, and the use of the lambda expression as an Expression :
+FirePropertyChanged(p => p.Name);
+
+
+Roman:
+I'd say you wouldn't even need the "Person" parameter - accordingly, a completely generic snippet like the one below should do:
+private int age;
+public int Age
+{
+  get { return age; }
+  set
+  {
+    age = value;
+    OnPropertyChanged(() => Age);
+  }
+}
+
+
+private void OnPropertyChanged<T>(Expression<Func<T>> exp)
+{
+  //the cast will always succeed
+  MemberExpression memberExpression = (MemberExpression) exp.Body;
+  string propertyName = memberExpression.Member.Name;
+
+  if (PropertyChanged != null)
+  {
+    PropertyChanged(this, new PropertyChangedEventArgs(propertyName));
+  }
+}
+
+...however, I prefer sticking to string parameters with conditional validation in Debug builds. Josh Smith posted a nice sample on this: 
+A base class which implements INotifyPropertyChanged
+Cheers :)
+Philipp
+
+You might want to avoid INotifyPropertyChanged altogether. It adds unnecessary bookkeeping code to your project. Consider using Update Controls .NET instead.
+
+You might be interessted in this discussion about 
+"Best Practices: How to implement INotifyPropertyChanged right?"
+too.
+
+Another VERY NICE method I can think of is
+Auto-implement INotifyPropertyChanged with Aspects
+AOP: Aspect oriented programming
+Nice article on codeproject: AOP Implementation of INotifyPropertyChanged
+
+The performance hit involved in the use of expression trees is due to the repeated resolution of the expression tree.
+The following code still uses expression trees and thus has the consequent advantages of being refactoring friendly and obfuscation friendly, but is actually approx 40% faster (very rough tests) than the usual technique - which consists of newing up a PropertyChangedEventArgs object for every change notification.
+It's quicker and avoids the performance hit of the expression tree because we cache a static PropertyChangedEventArgs object for each property.
+There's one thing which I'm not yet doing - I intend to add some code which checks for debug builds that the property name for the supplied PropertChangedEventArgs object matches the property within which it is being used - at the moment with this code it is still possible for the developer to supply the wrong object.
+Check it out:
+    public class Observable<T> : INotifyPropertyChanged
+    where T : Observable<T>
+{
+    public event PropertyChangedEventHandler PropertyChanged;
+
+    protected static PropertyChangedEventArgs CreateArgs(
+        Expression<Func<T, object>> propertyExpression)
+    {
+        var lambda = propertyExpression as LambdaExpression;
+        MemberExpression memberExpression;
+        if (lambda.Body is UnaryExpression)
+        {
+            var unaryExpression = lambda.Body as UnaryExpression;
+            memberExpression = unaryExpression.Operand as MemberExpression;
+        }
+        else
+        {
+            memberExpression = lambda.Body as MemberExpression;
+        }
+
+        var propertyInfo = memberExpression.Member as PropertyInfo;
+
+        return new PropertyChangedEventArgs(propertyInfo.Name);
+    }
+
+    protected void NotifyChange(PropertyChangedEventArgs args)
+    {
+        if (PropertyChanged != null)
+        {
+            PropertyChanged(this, args);
+        }
+    }
+}
+
+public class Person : Observable<Person>
+{
+    // property change event arg objects
+    static PropertyChangedEventArgs _firstNameChangeArgs = CreateArgs(x => x.FirstName);
+    static PropertyChangedEventArgs _lastNameChangeArgs = CreateArgs(x => x.LastName);
+
+    string _firstName;
+    string _lastName;
+
+    public string FirstName
+    {
+        get { return _firstName; }
+        set
+        {
+            _firstName = value;
+            NotifyChange(_firstNameChangeArgs);
+        }
+    }
+
+    public string LastName
+    {
+        get { return _lastName; }
+        set
+        {
+            _lastName = value;
+            NotifyChange(_lastNameChangeArgs);
+        }
+    }
+}
+
+
+Take a look at this blog post:
+ http://khason.net/dev/inotifypropertychanged-auto-wiring-or-how-to-get-rid-of-redundant-code 
+
+Without be irrevelant, between Hardcode and reflection, my choice is : notifypropertyweaver.
+This Visual Studio package allow you to have the benefits of reflection (maintainability, readability,..) without have to lose perfs.
+Actually, you just have to implement the INotifyPropertyChanged and it add all the "notification stuff" at the compilation.
+This is also fully parametrable if you want to fully optimize your code.
+For example, with notifypropertyweaver, you will have this code in you editor :
+public class Person : INotifyPropertyChanged
+{
+    public event PropertyChangedEventHandler PropertyChanged;
+
+    public string GivenNames { get; set; }
+    public string FamilyName { get; set; }
+
+    public string FullName
+    {
+        get
+        {
+            return string.Format("{0} {1}", GivenNames, FamilyName);
+        }
+    }
+}
+
+Instead of :
+public class Person : INotifyPropertyChanged
+{
+
+    public event PropertyChangedEventHandler PropertyChanged;
+
+    private string givenNames;
+    public string GivenNames
+    {
+        get { return givenNames; }
+        set
+        {
+            if (value != givenNames)
+            {
+                givenNames = value;
+                OnPropertyChanged("GivenNames");
+                OnPropertyChanged("FullName");
+            }
+        }
+    }
+
+    private string familyName;
+    public string FamilyName
+    {
+        get { return familyName; }
+        set
+        {
+            if (value != familyName)
+            {
+                familyName = value;
+                OnPropertyChanged("FamilyName");
+                OnPropertyChanged("FullName");
+            }
+        }
+    }
+
+    public string FullName
+    {
+        get
+        {
+            return string.Format("{0} {1}", GivenNames, FamilyName);
+        }
+    }
+
+    public virtual void OnPropertyChanged(string propertyName)
+    {
+        var propertyChanged = PropertyChanged;
+        if (propertyChanged != null)
+        {
+            propertyChanged(this, new PropertyChangedEventArgs(propertyName));
+        }
+    }
+}
+
+For french speakers : AmÃ©liorez la lisibilitÃ© de votre code et simplifiez vous la vie avec notifypropertyweaver
+
+Yet another approach: http://www.codeproject.com/Articles/450688/Enhanced-MVVM-Design-w-Type-Safe-View-Models-TVM
+
+In .NET 4.5 (C# 5.0) there is a new attribute called - CallerMemberName it helps avoid hardcoded property names preventing the onset of bugs if developers decide to change a property name, here's an example:
+public event PropertyChangedEventHandler PropertyChanged = delegate { };
+
+public void OnPropertyChanged([CallerMemberName]string propertyName="")
+{
+    PropertyChanged(this, new PropertyChangedEventArgs(propertyName));
+}
+
+private string name;
+public string Name
+{
+    get { return name; }
+    set 
+    { 
+        name = value;
+        OnPropertyChanged();
+    }
+}
+

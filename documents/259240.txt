@@ -1,0 +1,165 @@
+iterator adapter to iterate just the values in a map?
+c++ maps iterator adapter
+I'm just getting back into C++ after a couple of years of doing a lot of C#, and recently Objective C.
+One thing I've done before is to roll my own iterator adapter for std::map that will deref to just the value part, rather than the key-value pair. This is quite a common and natural thing to do. C# provides this facility with its Keys and Values properties of its Dictionary class. Objective-C's NSDictionary, similarly, has allKeys and allValues.
+Since I've been "away", Boost has acquired the Range and ForEach libraries, which I am now using extensively. I wondered if between the two there was some facility to do the same, but I haven't been able to find anything.
+I'm thinking of knocking something up using Boost's iterator adapters, but before I go down that route I thought I'd ask here if anyone knows of such a facility in Boost, or somewhere else ready made?
+
+
+I don't think there's anything out of the box.  You can use boost::make_transform.
+template<typename T1, typename T2> T2& take_second(const std::pair<T1, T2> &a_pair) 
+{
+  return a_pair.second;
+}
+
+void run_map_value()
+{
+  map<int,string> a_map;
+  a_map[0] = "zero";
+  a_map[1] = "one";
+  a_map[2] = "two";
+  copy( boost::make_transform_iterator(a_map.begin(), take_second<int, string>),
+    boost::make_transform_iterator(a_map.end(), take_second<int, string>),
+    ostream_iterator<string>(cout, "\n")
+    );
+}
+
+
+Continuing David's answer, there's another possibility to put the boile by creating a derived class from boost::transform_iterator. I'm using this solution in my projects:
+namespace detail
+{
+
+template<bool IsConst, bool IsVolatile, typename T>
+struct add_cv_if_c
+{
+    typedef T type;
+};
+template<typename T>
+struct add_cv_if_c<true, false, T>
+{
+    typedef const T type;
+};
+template<typename T>
+struct add_cv_if_c<false, true, T>
+{
+    typedef volatile T type;
+};
+template<typename T>
+struct add_cv_if_c<true, true, T>
+{
+    typedef const volatile T type;
+};
+
+template<typename TestConst, typename TestVolatile, typename T>
+struct add_cv_if: public add_cv_if_c<TestConst::value, TestVolatile::value, T>
+{};
+
+}   // namespace detail
+
+
+/** An unary function that accesses the member of class T specified in the MemberPtr template parameter.
+
+    The cv-qualification of T is preserved for MemberType
+ */
+template<typename T, typename MemberType, MemberType T::*MemberPtr>
+struct access_member_f
+{
+    // preserve cv-qualification of T for T::second_type
+    typedef typename detail::add_cv_if<
+        std::tr1::is_const<T>, 
+        std::tr1::is_volatile<T>, 
+        MemberType
+    >::type& result_type;
+
+    result_type operator ()(T& t) const
+    {
+        return t.*MemberPtr;
+    }
+};
+
+/** @short  An iterator adaptor accessing the member called 'second' of the class the 
+    iterator is pointing to.
+ */
+template<typename Iterator>
+class accessing_second_iterator: public 
+    boost::transform_iterator<
+        access_member_f<
+            // note: we use the Iterator's reference because this type 
+            // is the cv-qualified iterated type (as opposed to value_type).
+            // We want to preserve the cv-qualification because the iterator 
+            // might be a const_iterator e.g. iterating a const 
+            // std::pair<> but std::pair<>::second_type isn't automatically 
+            // const just because the pair is const - access_member_f is 
+            // preserving the cv-qualification, otherwise compiler errors will 
+            // be the result
+            typename std::tr1::remove_reference<
+                typename std::iterator_traits<Iterator>::reference
+            >::type, 
+            typename std::iterator_traits<Iterator>::value_type::second_type, 
+            &std::iterator_traits<Iterator>::value_type::second
+        >, 
+        Iterator
+    >
+{
+    typedef boost::transform_iterator<
+        access_member_f<
+            typename std::tr1::remove_reference<
+                typename std::iterator_traits<Iterator>::reference
+            >::type, 
+            typename std::iterator_traits<Iterator>::value_type::second_type, 
+            &std::iterator_traits<Iterator>::value_type::second
+        >, 
+        Iterator
+    > baseclass;
+
+public:
+    accessing_second_iterator(): 
+        baseclass()
+    {}
+
+    // note: allow implicit conversion from Iterator
+    accessing_second_iterator(Iterator it): 
+        baseclass(it)
+    {}
+};
+
+This leads to even cleaner code:
+void run_map_value()
+{
+  typedef map<int, string> a_map_t;
+  a_map_t a_map;
+  a_map[0] = "zero";
+  a_map[1] = "one";
+  a_map[2] = "two";
+
+  typedef accessing_second_iterator<a_map_t::const_iterator> ia_t;
+  // note: specify the iterator adaptor type explicitly as template type, enabling 
+  // implicit conversion from begin()/end()
+  copy<ia_t>(a_map.begin(), a_map.end(),
+    ostream_iterator<string>(cout, "\n")
+  );
+}
+
+
+Replacing the previous answer, in case anybody else finds this like I did. As of boost 1.43, there are some commonly used range adaptors provided. In this case, you want boost::adaptors::map_values. The relevant example:
+http://www.boost.org/doc/libs/1_46_0/libs/range/doc/html/range/reference/adaptors/reference/map_values.html#range.reference.adaptors.reference.map_values.map_values_example
+
+There is a boost range adaptor for exactly this purpose. 
+See http://www.boost.org/doc/libs/1_53_0/libs/range/doc/html/range/reference/adaptors/reference/map_values.html
+(This example cribbed from there)
+int main(int argc, const char* argv[])
+{
+    using namespace boost::assign;
+    using namespace boost::adaptors;
+
+    std::map<int,int> input;
+    for (int i = 0; i < 10; ++i)
+    input.insert(std::make_pair(i, i * 10));
+
+    boost::copy(
+        input | map_values,
+        std::ostream_iterator<int>(std::cout, ","));
+
+    return 0;
+}
+

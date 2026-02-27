@@ -1,0 +1,39 @@
+Suspending and notifying threads when there is work to do
+c# multithreading
+I have multiple threads (C# application running on IIS) running that all need to communicate with the same MQ backend.  To minimize network traffic, I need to only send a backend request when there is work to be done.  There will be one thread to monitor if there is work to be done, and it needs to notify the other threads that they should also begin processing.  The current solution involves the monitor thread setting a global variable and having the other threads loop and check that, ie in the monitor thread:
+CheckIfWorkAvailable() {
+  while(true) {
+    if (queue.Empty != true) {
+      workToBeDone = true;
+    }
+  }//end while loop
+}
+
+and then in the worker threads:
+DoWork() {
+  while(true) {
+    if (workToBeDone == true) {
+      //do work...
+    }
+    else {
+      Thread.Sleep(x seconds)
+    }
+  }//end while loop
+}
+
+Can the monitor thread notify the worker threads when there is work to do instead of having them just loop and sleep?  The worker threads also set a counter indicating they are working and the decrement it when their work is done so the workToBeDone flag can be set to false.
+
+
+Check out WaitHandle and its descending classes. EventWaitHandle may suit your needs.
+
+http://msdn.microsoft.com/en-us/library/yy12yx1f(VS.80).aspx
+You can use AutoReset Events
+
+In your scenario it may also be possible to directly use the ThreadPool class. This means that you do not need to setup the threads you will be consuming and it also allows you to setup the threads based on work to be completed.
+If you are into using CTPs in your projects you might want to check out the TPL as it some more advanced synchronization and tasking features.
+
+As well as the WaitHandle classes pointed out by Kent, simple Monitor.Wait and Monitor.Pulse/PulseAll can do this easily. They're "lighter" than event handles, although somewhat more primitive. (You can't wait on multiple monitors, etc.)
+I have an example of this (as a producer consumer queue) in my threading article.
+
+Use ManualResetEvent for cases where you want all worker threads to proceed when a state is met (looks like what you are wanting here). Use AutoResetEvent in cases where you only want to signal a single worker each time some work becomes available. Use Semaphore when you want to allow a specific number of threads to proceed. Almost never use a global variable for this type of thing, and if you do, mark it as volatile.
+Be careful in this situation. You don't want to cause "lock convoys" to occur because you release all the workers to hit the queue all at once every time a single item gets released only to have to wait again.

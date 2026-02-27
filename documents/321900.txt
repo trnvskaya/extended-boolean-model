@@ -1,0 +1,95 @@
+CreateProcessAsUser not working correctly in my experiments
+createprocessasuser
+I am trying to do the following:
+1. I am logged in as Administrator account in my XP with SP2 machine running VS.NET 2005
+2. This machine also has another account user1 which is a guest account
+3. I am running a program as Administrator, from this program i want to launch a notepad.exe process which will be running under the user1 security context
+4. I specifically want to use CreateProcessasUser to do this..
+This is the code snipper which will explain what i have been trying..
+const string GRANTED_ALL = "10000000";
+
+const int LOGON32_LOGON_INTERACTIVE = 2;
+const int LOGON32_LOGON_NETWORK = 3;
+const int LOGON32_LOGON_BATCH = 4;
+const int LOGON32_LOGON_SERVICE = 5;
+const int LOGON32_LOGON_UNLOCK = 7;
+const int LOGON32_LOGON_NETWORK_CLEARTEXT = 8;
+const int LOGON32_LOGON_NEW_CREDENTIALS = 9;
+
+const int LOGON32_PROVIDER_DEFAULT = 0;
+static IntPtr hToken = IntPtr.Zero;
+static IntPtr hTokenDuplicate = IntPtr.Zero;
+
+static void Main(string[] args)
+{
+    int last_error = 0;
+    if(LogonUser("user1",null,"#welcome123",
+        LOGON32_LOGON_INTERACTIVE, 
+        LOGON32_PROVIDER_DEFAULT, out hToken))
+    {
+        last_error = Marshal.GetLastWin32Error();
+        PROCESS_INFORMATION pi = new PROCESS_INFORMATION();
+        STARTUPINFO si = new STARTUPINFO();
+        SECURITY_ATTRIBUTES sa = new SECURITY_ATTRIBUTES();
+        last_error = 0;
+        last_error = Marshal.GetLastWin32Error();
+        if(DuplicateTokenEx(hToken,UInt32.Parse(GRANTED_ALL,System.Globalization.NumberStyles.HexNumber),
+            ref sa,SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation,
+            TOKEN_TYPE.TokenPrimary,out hTokenDuplicate))
+        {
+            last_error = 0;
+            last_error = Marshal.GetLastWin32Error();
+
+            CreateProcessAsUser(hTokenDuplicate, "d:\\san\\notepad.exe", null,
+            ref sa, ref sa, false, 0, IntPtr.Zero, "d:\\san", ref si, out pi);
+
+            last_error = 0;
+            last_error = Marshal.GetLastWin32Error();
+
+        }
+    }
+
+    last_error = 0;
+    last_error = Marshal.GetLastWin32Error();
+
+
+    if (hToken != IntPtr.Zero) CloseHandle(hToken);
+    if (hTokenDuplicate != IntPtr.Zero) CloseHandle(hTokenDuplicate);
+
+}
+
+}
+For some reason this is not working..
+The DuplicateTokenEx function is returning as error code of 1305 and i cant seem to figure out why..
+Instead of DuplicateTokenEx i also used the DuplicateToken, now the CreateProcessAsUser is returning an error code of 1308.
+Could someone please throw light on this issue.. This appears to be an apparently very simple thing, but just cant get it right..
+[Please note that I specifically want to LogonUser and then DuplicateToken and then CreateProcessAsUSer]
+Thanks
+Santhosh
+
+
+See CreateProcessAsUser() windowstations and desktops.
+But I suggest to do it in managed way:
+...
+using System.Diagnostics;
+using System.Security;
+...
+...
+string progPath = @"c:\WINNT\notepad.exe";
+ProcessStartInfo startInfo = new ProcessStartInfo(progPath);
+startInfo.WindowStyle = ProcessWindowStyle.Normal;
+startInfo.UseShellExecute = false;
+startInfo.UserName = "SomeUser";
+SecureString password = new SecureString();
+
+#region setting password
+password.AppendChar('p');
+password.AppendChar('a');
+...
+#endregion
+
+startInfo.Password = password;
+Process.Start(startInfo);
+...
+...
+

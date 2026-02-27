@@ -1,0 +1,102 @@
+GUIDs as Primary Keys - Offline OLTP
+sql-server synchronization guid offline oltp
+We are working on designing an application that is typically OLTP (think: purchasing system). However, this one in particular has the need that some users will be offline, so they need to be able to download the DB to their machine, work on it, and then sync back once they're on the LAN.
+I would like to note that I know this has been done before, I just don't have experience with this particular model.
+One idea I thought about was using GUIDs as table keys. So for example, a Purchase Order would not have a number (auto-numeric) but a GUID instead, so that every offline client can generate those, and I don't have clashes when I connect back to the DB.
+Is this a bad idea for some reason?
+Will access to these tables through the GUID key be slow?
+Have you had experience with these type of systems? How have you solved this problem?
+Thanks!
+Daniel
+
+
+Guids will certainly be slower (and use more memory) than standard integer keys, but whether or not that is an issue will depend on the type of load your system will see.  Depending on your backend DB there may be issues with indexing guid fields.
+Using guids simplifies a whole class of problems, but you pay for it part will performance and also debuggability - typing guids into those test queries will get old real fast!
+
+This is a perfectly good use of GUIDs. The only draw backs would be a slight complexity in working with GUIDs over INTs and the slight size difference (16 bytes vs 4 bytes).
+I don't think either of those are a big deal.
+
+The backend will be SQL Server 2005
+Frontend / Application Logic will be .Net
+Besides GUIDs, can you think of other ways to resolve the "merge" that happens when the offline computer syncs the new data back into the central database?
+I mean, if the keys are INTs, i'll have to renumber everything when importing basically. GUIDs will spare me of that.
+
+Using GUIDs saved us a lot of work when we had to merge two databases into one.
+
+If your database is small enough to download to a laptop and work with it offline, you probably don't need to worry too much about the performance differences between ints and Guids.  But do not underestimate how useful ints are when developing and troubleshooting a system!  You will probably need to come up with some fairly complex import/synch logic regardless of whether or not you are using Guids, so they might not help as much as you think.
+
+
+Will access to these tables through
+  the GUID key be slow?
+
+There are other problems with GUIDs, you see GUIDs are not sequential, so inserts will be scattered all over the place, this causes page splits and index fragmentation
+In SQL Server 2005 MS introduced NEWSEQUENTIALID() to fix this, the only problem for you might be that you can only use NEWSEQUENTIALID as a default value in a table
+
+Using Guids as primary keys is acceptable and is considered a fairly standard practice for the same reasons that you are considering them.  They can be overused which can make things a bit tedious to debug and manage, so try to keep them out of code tables and other reference data if at all possible.
+The thing that you have to concern yourself with is the human readable identifier.  Guids cannot be exchanged by people - can you imagine trying to confirm your order number over the phone if it is a guid?  So in an offline scenario you may still have to generate something - like a publisher (workstation/user) id and some sequence number, so the order number may be 123-5678 -.  
+However this may not satisfy business requirements of having a sequential number.  In fact regulatory requirements can be and influence - some regulations (SOX maybe) require that invoice numbers are sequential.  In such cases it may be neccessary to generate a sort of proforma number which is fixed up later when the systems synchronise.  You may land up with tables having OrderId (Guid), OrderNo (int), ProformaOrderNo (varchar) - some complexity may creep in.
+At least having guids as primary keys means that you don't have to do a whole lot of cascading updates when the sync does eventually happen - you simply update the human readable number.
+
+@Simon,  
+You raise very good points. I was already thinking about the "temporary" "human-readable" numbers i'd generate while offline, that i'd recreate on sync. But i wanted to avoid doing with with foreign keys, etc.
+
+i would start to look at SQL Server Compact Edition for this! It helps with all of your issues.  
+Data Storage Architecture with SQL Server 2005 Compact Edition
+It specifically designed for 
+
+Field force applications (FFAs). FFAs
+  usually share one or more of the
+  following attributes
+They allow the user to perform their
+  job functions while disconnected from
+  the back-end networkâon-site at a
+  client location, on the road, in an
+  airport, or from home. 
+FFAs are usually designed for
+  occasional connectivity, meaning that
+  when users are running the client
+  application, they do not need to have
+  a network connection of any kind. FFAs
+  often involve multiple clients that
+  can concurrently access and use data
+  from the back-end database, both in a
+  connected and disconnected mode. 
+FFAs must be able to replicate data
+  from the back-end database to the
+  client databases for offline support.
+  They also need to be able to replicate
+  modified, added, or deleted data
+  records from the client to the server
+  when the application is able to
+  connect to the network
+
+
+First thought that comes to mind: Hasn't MS designed the DataSet and DataAdapter model to support scenarios like this?
+I believe I read that MS changed their ADO recordset model to the current DataSet model so it works great offline too. And there's also this Sync Services for ADO.NET
+I believe I have seen code that utilizes the DataSet model which also uses foreign keys and they still sync perfectly when using the DataAdapter. Havn't try out the Sync Services though but I think you might be able to benefit from that too.
+Hope this helps.
+
+@SqlMenace
+
+
+There are other problems with GUIDs, you see GUIDs are not sequential, so inserts will be scattered all over the place, this causes page splits and index fragmentation
+
+
+Not true. Primary key != clustered index.
+If the clustered index is another column ("inserted_on" springs to mind) then the inserts will be sequential and no page splits or excessive fragmentation will occur.
+
+You're correct that this is an old problem, and it has two canonical solutions:
+
+Use unique identifiers as the primary key. Note that if you're concerned about readability you can roll your own unique identifier instead of using a GUID. A unique identifier will use information about the date and the machine to generate a unique value. 
+Use a composite key of 'Actor' + identifier. Every user gets a numeric actor ID, and the keys of newly inserted rows use the actor ID as well as the next available identifier. So if two actors both insert a new row with ID "100", the primary key constraint will not be violated.
+
+Personally, I prefer the first approach, as I think composite keys are really tedious as foreign keys. I think the human readability complaint is overstated -- end-users shouldn't have to know anything about your keys, anyways! 
+
+@Portman  By default PK ==  Clustered Index, creating a primary key constraint will automatically create a clustered index, you need to specify non clustered if you don't want it clustered.
+
+Make sure to utilize guid.comb - takes care of the indexing stuff.  If you are dealing with performance issues after that then you will be, in short order, an expert on scaling.
+Another reason to use GUIDs is to enable database refactoring.  Say you decide to apply polymorphism or inheritance or whatever to your Customers entity.  You now want Customers and Employees to derive from Person and have them share a table.  Having really unique identifiers makes data migration simple.  There are no sequences or integer identity fields to fight with.
+
+I'm just going to point you to http://stackoverflow.com/questions/170346/what-are-the-performance-improvement-of-sequential-guid-over-standard-guid/170363#170363, which covers the GUID talk.
+For human readability, consider assigning machine IDs and then using sequential numbers from those machines as a possibility. This will require managing the assignment of machine IDs, though. Could be done in one or two columns.
+I'm personally fond of the SGUID answer, though.

@@ -1,0 +1,68 @@
+Using SQL Server 2008 Geography types with nHibernate's CreateSQLQuery
+sql-server nhibernate
+I am trying to issue a SQL update statement with nHibernate (2.0.1GA) like this:
+sqlstring = string.Format("set nocount on;update myusers set geo=geography::Point({0}, {1}, 4326) where userid={2};", mlat, mlong, userid);
+_session.CreateSQLQuery(sqlstring).ExecuteUpdate();
+
+However I receive the following error: 'geography@p0' is not a recognized built-in function name.
+I thought CreateSQLQuery would just pass the SQL I gave it and execute it...guess not.  Any ideas on how I can do that within the context of nHibernate?
+
+
+"{whatever} is not a recognized built-in function name" is a SQL Server error message, not sure what Hibernate is doing there but SQL Server is the one complaining about it.
+
+I'm pretty sure I can tell you what is happening, but I don't know if there is a fix for it.
+I think the problem is that the ':' character is used by NHibernate to create a named parameter.  Your expression is getting changed to:
+set nocount on;update myusers set geo=geography@p0({0}, {1}, 4326) where userid={2};
+
+And @p0 is going to be a SQL variable.  Unfortunately I can't find any documentation for escaping colons so they are not treated as a named parameter.
+If an escape character exists (my quick skim of the NHibernate source didn't find one; Named parameters are handled in NHibernate.Engine.Query.ParameterParser if you want to spend a little more time searching), then you could use that.
+Other solutions:
+
+Add an escape character to the source.  You can then use a modified version of NHibernate.  If you do this, you should submit your patch to the team so it can be included in the real thing and you don't have to maintain a modified version of the source (no fun).
+Create a user defined function in your DB that returns a geography::Point, then call your function instead of the standard SQL function.  This seems like the quickest/easiest way to get up and running, but also feels a bit like a band-aid.
+See if there is something in NHibernate Spatial that will let you programmatically add the geography::Point() [or edit the code for that project to add one and submit the patch to that team].
+
+
+There is an implicit conversion from varchar to Point.
+Use NHibernate to set the geographic parameters to their string representation
+Define a SQL query template with named paramter loc:
+const string Query = @"SELECT   {location.*}
+FROM     {location}
+WHERE    {location}.STDistance(:loc) is not null
+ORDER BY {location}.STDistance(:loc)";
+
+Set the parameter to a string representation of Point:
+return session
+                .CreateSQLQuery(Query)
+                .AddEntity("location", typeof (Location))
+                .SetString("loc", "Point (53.39006999999999 -3.0084007)")
+                .SetMaxResults(1)
+                .UniqueResult<Location>();
+
+This is for a Select. but I see no reason why it wouldn't work for an Insert or Update.
+
+Following on @Chris's answer, here is a copy and paste solution:
+CREATE FUNCTION GetPoint 
+(
+    @lat float,
+    @lng float,
+    @srid int
+)
+RETURNS geography
+AS
+BEGIN
+
+declare @point geography = geography::Point(@lat, @lng, @srid);
+
+RETURN @point
+
+END
+GO
+
+The you do 
+dbo.GetPoint(@Latitude, @Longitude, 4326)
+
+instead of 
+geography::Point(@Latitude, @Longitude, 4326);
+
+And NH is happy

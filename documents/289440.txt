@@ -1,0 +1,64 @@
+Cannot get regular expression work correctly with multiline
+c# regex multiline
+I have a quite big XML output from an application. I need to process it with my program and then feed it back to the original program. There are pieces in this XML which needs to be filled out our replaced. The interesting part looks like this:
+<sys:customtag sys:sid="1" sys:type="Processtart" />
+    <sys:tag>value</sys:tag>
+    here are some other tags
+    <sys:tag>value</sys.tag>
+<sys:customtag sys:sid="1" sys:type="Procesend" />
+
+and the document contains several pieces like this.
+I need to get all XML pieces inside these tags to be able to make modifications on it. I wrote a regular expression to get those pieces but it does not work:
+XmlDocument xmlDoc = new XmlDocument();
+xmlDoc.Load(@"output.xml");
+Regex regExp = new Regex(@"<sys:customtag(.*?)Processtart(.*?)/>(.*?)<sys:customtag (.*?)Procesend(.*?)/>", RegexOptions.Multiline & RegexOptions.IgnorePatternWhitespace & RegexOptions.CultureInvariant);
+MatchCollection matches = regExp.Matches(xmlDoc.InnerXml);
+
+If I leave the whole stuff in one line and call this regexp without the multiline option, it does find every occurences. By leaving the file as it is and set the multiline option, it does not work. What is the problem, what should I change? Or is there any easier way to get the XML parts between these tags without regexp?
+
+
+i believe the option to use is RegexOptions.Singleline instead of RegexOptions.Multiline (src). allowing (.) to match newlines should work in your case.
+
+...the mode where the dot also matches newlines is called "single-line mode". This is a bit unfortunate, because it is easy to mix up this term with "multi-line mode". Multi-line mode only affects anchors, and single-line mode only affects the dot ... When using the regex classes of the .NET framework, you activate this mode by specifying RegexOptions.Singleline, such as in Regex.Match("string", "regex", RegexOptions.Singleline).
+
+
+RegExp is a poor tool for xml... could you not juts load it into an XDocument / XmlDocument and use xpath? If you clarify the modifications you want to make, I expect we can fill in the blanks... namespaces are probably the main thing to make it complex in this case, so we just need to use an XmlNamespaceManager.
+Here's an example that is, granted, more complex than just a regex - however, I would expect it to cope a lot better with the nuances of xml:
+    string xml = @"<foo xmlns:sys=""foobar""><bar/><bar><sys:customtag sys:sid=""1"" sys:type=""Processtart"" />
+<sys:tag>value</sys:tag>
+here are some other tags
+<sys:tag>value</sys:tag>
+<sys:customtag sys:sid=""1"" sys:type=""Procesend"" /></bar><bar/></foo>";
+
+    XmlDocument doc = new XmlDocument();
+    doc.LoadXml(xml);
+    XmlNamespaceManager mgr = new XmlNamespaceManager(new NameTable());
+    mgr.AddNamespace("sys", "foobar");
+    var matches = doc.SelectNodes("//sys:customtag[@sys:type='Processtart']", mgr);
+    foreach (XmlElement start in matches)
+    {
+        XmlElement end = (XmlElement) start.SelectSingleNode("following-sibling::sys:customtag[@sys:type='Procesend'][1]",mgr);
+        XmlNode node = start.NextSibling;
+        while (node != null && node != end)
+        {
+            Console.WriteLine(node.OuterXml);
+
+            node = node.NextSibling;
+        }
+    }
+
+
+The regex char "." never matches a newline, even with MultiLine option is set.
+instead, you should use [\s\S] or other combination with matches anything.
+The MultiLine option only modifies the behaviour of ^ (begin-of-line instead fo begin-of-string) and $ (end-of-line instead of end-of-string)
+BTW: Indeed, regex is not the right way to scan an HTML...
+
+If you're still having problems with this, it may be because you are using AND with your RegexOptions instead of OR.
+This code is wrong and will pass zero as the second parameter to the constructor:
+Regex regExp = new Regex(@"<sys:customtag(.*?)Processtart(.*?)/>(.*?)<sys:customtag (.*?)Procesend(.*?)/>",
+RegexOptions.Multiline & RegexOptions.IgnorePatternWhitespace & RegexOptions.CultureInvariant);
+
+This code is correct (as far as using multiple RegexOptions flags):
+Regex regExp = new Regex(@"<sys:customtag(.*?)Processtart(.*?)/>(.*?)<sys:customtag (.*?)Procesend(.*?)/>",
+RegexOptions.Multiline | RegexOptions.IgnorePatternWhitespace | RegexOptions.CultureInvariant);
+

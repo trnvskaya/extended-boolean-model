@@ -1,0 +1,34 @@
+how to combine a template from other processed templates?
+django django-templates
+I have a django project pro1 with several apps: app1, app2, app3 and so on. I want to display some top level template that contains blocks from each and every app:
+example_base_template.html:
+[header /]
+[left nav bar]{{ app1 rendered template }}[/left nav bar]
+[right nav bar]{{ app2 rendered template }}[/right nav bar]
+[center section]{{ app1 main functionality template }}[/center section]
+[footer]{{ app3 rendered template }}{{ app4 rendered template }}[/footer]
+
+All those app templates are dynamic, that use DB. How to do that in the most proper and elegant way? Or maybe the question is how to connect 4 different views to one URL?
+
+
+You can use a {% include %} tag. But It doesn't help you a lot. The better solution is to write custom inclusion tag with needed template and functionality.
+You cannot (in simple way) mix several views into one. Try tags its pretty django solution.
+
+We had a problem similar to this and the key is getting the correct data into the Context. What we did was breakout the data creation/Context filling for each view into a separate build-the-context routine. The original views just call their respective routine and then render their template. The composite view calls each of the context-builders and then renders the master template, which then includes the sub-templates.
+This is where we ran into a bit of a problem with the Django templating system. We were caching template fragments and some of these fragments took data that was very expensive to generate. If the fragment was not stale, we definitely did not want to do the work. But delaying the work until we knew we needed it meant we were now in the template and:
+
+You can't pass parameters to methods from within a template.
+The django.template.__init__.Variable._resolve_lookup() method was broken in that if you passed a callable, it wouldn't call it! If you reference a method of an object in the context, that works just fine.
+
+The reason for needing callables to work is that it permits you to pass in a curried function -- i.e. a function that already has some (or all) of its parameters specified, but which has not yet been called. So the view (or the context build in the case) should be able to curry a full-specified function (remember, you can't pass params in the templates themselves) so that the template when it needed to could invoke the callable, get the data, and away we go.
+We took two separate approaches to this:
+
+We used the expr template tag from djangosnippets.org
+We hacked the django template code to make callables work (I used a submitted but not yet handled patch).
+
+Since we did this site I have learned that we might have been able to solve it by using generators as delayed data producers. The generators act sort of like a curried function (in that you can pass arbitrary params for the setup), but the template engine sees them as just another iterator. There is a great tutorial on this subject. Note: generators are not arrays and you can only consume them once, so some of your logic may need to be tweaked.
+Next time I think we'll just go with jinja2 templates and stop screwing with Django's templates.
+
+I did this by writing custom template tags for each application I wanted to include.  At first my template tags just passed back hard coded html.  Later I found that the tags could load their own template fragments.  There was also a snippet somewhere that was a generic latest content tag that worked pretty well.
+
+Many reusable apps (esp. those selected into the Pinax project) serve as great examples on how to use custom template tags to insert content. James Bennett's talk in DjangoCon 2008 may also help.

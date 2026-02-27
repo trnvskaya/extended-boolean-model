@@ -1,0 +1,82 @@
+Can anyone explain servlet mapping?
+java java-ee servlets spring-mvc web.xml
+
+I'm trying to write a web application using SpringMVC. Normally I'd just map some made-up file extension to Spring's front controller and live happily, but this time I'm going for REST-like URLs, with no file-name extensions.
+Mapping everything under my context path to the front controller (let's call it "app") means I should take care of static files also, something I'd rather not do (why reinvent yet another weel?), so some combination with tomcat's default servlet (let's call it "tomcat") appears to be the way to go.
+I got the thing to work doing something like 
+<servlet-mapping>
+  <servlet-name>app</servlet-name>
+  <url-pattern>/</url-pattern>
+</servlet-mapping>
+
+<servlet-mapping>
+  <servlet-name>tomcat</servlet-name>
+  <url-pattern>*.ext</url-pattern>
+</servlet-mapping>
+
+and repeating the latter for each one of the file extensions of my static content. I'm just wondering why the following setups, which to me are equivalent to the one above, don't work.
+<!-- failed attempt #1 -->
+<servlet-mapping>
+  <servlet-name>app</servlet-name>
+  <url-pattern>/*</url-pattern>
+</servlet-mapping>
+
+<servlet-mapping>
+  <servlet-name>tomcat</servlet-name>
+  <url-pattern>*.ext</url-pattern>
+</servlet-mapping>
+
+<!-- failed attempt #2 -->
+<servlet-mapping>
+  <servlet-name>app</servlet-name>
+  <url-pattern>/</url-pattern>
+</servlet-mapping>
+
+<servlet-mapping>
+  <servlet-name>tomcat</servlet-name>
+  <url-pattern>/some-static-content-folder/*</url-pattern>
+</servlet-mapping>
+
+Can anyone shed some light?
+
+
+I've never tried to map a servlet like this, but I would argue that /* does technically both start with / and end with /*, even though the same character is used for both matches.
+
+I think I may know what is going on.
+In your working web.xml you have set your servlet to be the default servlet (/ by itself is the default servlet called if there are no other matches), it will answer any request that doesn't match another mapping.
+In Failed 1 your /* mapping does appear to be a valid path mapping.  With the /* mapping in web.xml it answers all requests except other path mappings.  According to the specification extension mappings are implicit mappings that are overwritten by explicit mappings.  That's why the extension mapping failed.  Everything was explicitly mapped to app.
+In Failed 2,  App is responsible for everything, except content that matches the static content mapping.  To show what is happening in the quick test I set up.  Here is an example.  /some-static-content-folder/ contains test.png
+Trying to access test.png I tried:
+/some-static-content-folder/test.png
+
+and the file was not found.  However trying
+/some-static-content-folder/some-static-content-folder/test.png
+
+it comes up.  So it seems that the Tomcat default servlet (6.0.16 at least) drops the servlet mapping and will try to find the file by using the remaining path.  According to this post Servlet for serving static content Jetty gives the behavior you and I were expecting.
+Is there some reason you can't do something like map a root directory for your rest calls.  Something like app mapped to /rest_root/* than you are responsible for anything that goes on in the rest_root folder, but anywhere else should be handled by Tomcat, unless you make another explicit mapping.  I suggest setting your rest servlet to a path mapping, because it declares the intent better.  Using / or /* don't seem appropriate, since you have to map out the exceptions.  Using SO as an example, my rest mappings would be something like
+
+/users/* for the user servlet
+/posts/* for the posts servlet
+
+Mapping order
+
+Explicit (Path mappings)
+Implicit (Extension mappings)
+Default (/)
+
+Please correct anything that I got wrong.
+
+For reference, the "failed attempt #2" is perfectly correct in version of Tomcat >= to 6.0.29.
+It was the result of a Tomcat bug that get fixed in version 6.0.29:
+https://issues.apache.org/bugzilla/show_bug.cgi?id=50026 
+<!-- Correct for Tomcat >= 6.0.29 or other Servlet containers -->
+<servlet-mapping>
+  <servlet-name>app</servlet-name>
+  <url-pattern>/</url-pattern>
+</servlet-mapping>
+
+<servlet-mapping>
+  <servlet-name>default</servlet-name>
+  <url-pattern>/some-static-content-folder/*</url-pattern>
+</servlet-mapping>
+

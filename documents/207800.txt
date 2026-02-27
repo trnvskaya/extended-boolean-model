@@ -1,0 +1,146 @@
+What causes this integer pointer reassignment to crash?
+c pointers
+I am new to C and i have this question. why does the following code crash:
+int *a = 10;
+*a = 100;
+
+
+
+You need to assign the pointer to a memory location, not arbitrary value (10).
+int cell = 10;
+int *a = &cell; // a points to address of cell
+*a = 100;       // content of cell changed
+
+See my answer to another question, about being careful with C.
+
+Because you've never allocated any memory for a. You've just allocated some stack space for a pointer to a.
+
+int *a = NULL;
+
+a = malloc (sizeof (int));
+
+if (a != NULL)
+{
+*a =10;
+}
+
+Will work.
+Alternatively you could give a the address of some existing variable, which would work as well.
+i.e.
+
+int a* = NULL;
+int b = 10;
+
+a = &b
+
+This will now mean that doing something like
+
+*a = 100;
+
+will also set b to be == 100
+Check out this:
+http://home.netcom.com/~tjensen/ptr/pointers.pdf
+
+Because You declare a pointer to int, initialize the pointer to 10 (an address) and then try to assign a value to an int at this address. Since the memory at address 10 does not belong to your process, You get a crash. This should work:
+int *a;
+a = malloc(sizeof(int));
+*a = 10;
+printf("a=%i\n", *a);
+free(a);
+
+
+Does this code even compile? 10 isn't convertible to an int *, unless you cast it like so:
+int *a = (int *) 10;
+*a = 100;
+
+In that case, you're trying to write 100 into the memory address at 10. This isn't usually a valid memory address, hence your program crashes.
+
+The following line,
+int *a = 10;
+
+defines a pointer to an integer a. You then point the pointer a to the memory location 10.
+The next line,
+*a = 100;
+
+Puts the value 100 in the memory location pointed to by a. 
+The problem is:
+
+You don't know where a points to. (You don't know the value of memory location 10)
+Wherever a points to, you probably have no right changing that value. It's probably some other program/process's memory. You thief!
+
+
+Because you are trying to write 100 to the memory location 0x0000000A which is probably not allocated to your program. That is,
+int *a = 10;
+
+does not mean that the pointer 'a' will point to a location in memory having the value of 10. It means it is pointing to address 10 (0x0000000A) in the memory. Then, you want to write something into that address, but you don't have the "rights" to do so, since it is not allocated
+You can try the following:
+int *a = malloc(sizeof(int));
+*a = 100;
+
+This would work, although horribly inefficient. If you only need a single int, you should just put it into the stack, not the heap. On a 32-bit architecure, a pointer is 32 bits long, and an int is 32 bits long too, so your pointer-to-an-int structure takes up (at least) 8 bytes of memory space this way instead of 4. And we haven't even mentioned caching issues.
+
+It's probably crashing because you are assigning the pointer to some part of memory which you don't have access to and then you're assigning some value to that memory location (which you're not allowed to do!).
+
+I would like to propose a slight change in the use of malloc(), for all the answers that suggest using it to allocate memory for the int. Instead of:
+a = malloc(sizeof(int));
+
+I would suggest not repeating the type of the variable, since that is known by the compiler and repeating it manually both makes the code more dense, and introduces an error risk. If you later change the declaration to e.g.
+long *a;
+
+Without changing the allocation, you would end up allocating the wrong amount of memory ( in the general case, on 32-bit machines int and long are often the same size). It's, IMO, better to use:
+a = malloc(sizeof *a);
+
+This simply means "the size of the type pointed at by a", in this case int, which is of course exactly right. If you change the type in the declaration as above, this line is still correct. There is still a risk, if you change the name of the variable on the left hand side of the assignment, but at least you no longer repeat information needlessly.
+Also note that no parenthesis are needed with sizeof when using it on actual objects (i.e. variables), only with type names, which look like cast expressions. sizeof is not a function, it's an operator.
+
+Okay, trying to give the simplest explanation today, while trying to give you more detailed picture about it all. Lets add some parentheses shall we?
+(int*) a = 10;
+(*a) = 100;
+
+You attempt to write four bytes into the address-range [10-13]. The memory layout of your program starts usually higher, so your application does not accidentally overwrite anything from where it could and still function (from .data, .bss, and stack for instance). So it just ends up crashing instead, because the address-range has not been allocated.
+Pointer points to a memory location and C static typing defines a type for a pointer. Though you can override the pointer easily. Simply:
+(void*) v = NULL;
+
+Here we go further to things. What is a null pointer? It's simply pointer that points to address 0.
+You can also give a struct type for your pointer:
+struct Hello {
+    int id;
+    char* name;
+};
+
+...
+
+struct Hello* hello_ptr = malloc(sizeof Hello);
+hello_ptr->id = 5;
+hello_ptr->name = "Cheery";
+
+Ok, what is malloc? Malloc allocates memory and returns a pointer to the allocated memory. It has a following type signature:
+void* malloc(size_t size);
+
+If you do not have a conservative garbage collector, it is likely that your memory won't end up being freed automatically. Therefore, if you want to get the memory back into use from what you just allocated, you must do:
+free(hello_ptr);
+
+Each malloc you do has a size-tag in it, so you do not need to state the size of the chunk you pointed for free -routine.
+Ok, yet one thing, what does a character string look like in memory? The one similar to "Cheery" for instance. Simple answer. It's a zero-terminated array of bytes.
+0.1.2.3.4.5. 6
+C h e e r y \0
+
+
+You could also write it as:
+int* a = 10;
+*a = 100;
+
+Note the different spacing on the first line. It's not a popular style, but I personally think it's clearer. It has exactly the same meaning to the compiler.
+Then, read it out loud:
+"Pointer-to-int 'a' becomes 10"
+"Value-pointed-to-by 'a' becomes 100"
+
+Substituting the actual value:
+"Value-pointed-to-by 10 becomes 100"
+
+... at which you realise that 10 is unlikely to point to a piece of memory you can use.
+You would pretty much never assign to a pointer with a literal:
+int* ptr = (int*)10;  // You've guessed at a memory address, and probably got it wrong
+int* ptr = malloc(sizeof(int)); // OS gives you a memory address at runtime
+
+I guess there might be some very low level jobs where you directly specify absolute memory addresses. Kernel implementation for example?

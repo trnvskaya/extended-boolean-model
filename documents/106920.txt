@@ -1,0 +1,60 @@
+How can I get source and variable values in ruby tracebacks?
+ruby debugging exception traceback
+Here's the last few frames of a typical Ruby on Rails traceback:
+
+And here are the last few frames of a typical Nevow traceback in Python:
+
+It's not just the web environment either, you can make similar comparisons between ipython and irb.  How can I get more of these sorts of details in Ruby?
+
+
+AFAIK, once an exception has been caught it's too late to grab the context in which it was raised. If you trap the exception's new call, you could use evil.rb's Binding.of_caller to grab the calling scope, and do
+eval("local_variables.collect { |l| [l, eval(l)] }", Binding.of_caller)
+
+But that's quite a big hack. The right answer is probably to extend Ruby to allow some inspection of the call stack. I'm not sure if some of the new Ruby implementations will allow this, but I do remember a backlash against Binding.of_caller because it will make optimizations much harder.
+(To be honest, I don't understand this backlash: as long as the interpreter records enough information about the optimizations performed, Binding.of_caller should be able to work, although perhaps slowly.)
+Update
+Ok, I figured it out. Longish code follows:
+class Foo < Exception
+  attr_reader :call_binding
+
+  def initialize
+    # Find the calling location
+    expected_file, expected_line = caller(1).first.split(':')[0,2]
+    expected_line = expected_line.to_i
+    return_count = 5  # If we see more than 5 returns, stop tracing
+
+    # Start tracing until we see our caller.
+    set_trace_func(proc do |event, file, line, id, binding, kls|
+      if file == expected_file && line == expected_line
+        # Found it: Save the binding and stop tracing
+        @call_binding = binding
+        set_trace_func(nil)
+      end
+
+      if event == :return
+        # Seen too many returns, give up. :-(
+        set_trace_func(nil) if (return_count -= 1) <= 0
+      end
+    end)
+  end
+end
+
+class Hello
+  def a
+    x = 10
+    y = 20
+    raise Foo
+  end
+end
+class World
+  def b
+    Hello.new.a
+  end
+end
+
+begin World.new.b
+rescue Foo => e
+  b = e.call_binding
+  puts eval("local_variables.collect {|l| [l, eval(l)]}", b).inspect
+end
+

@@ -1,0 +1,191 @@
+How to put breakpoint in every function of .cpp file?
+debugging visual-c++ visual-studio-2005 macros envdte
+Is there a macro that does it? Which DTE objects to use?
+
+
+I don't know what DTE functions to use, but you could very simply record a macro that could pretty much do it:
+
+Go to the top of the file
+ctrl - shift - R (start recording)
+ctrl - I (incremental search)
+{ (search for the first { character).
+F9 (set breakpoint)
+ctrl - ] (go to matching } character)
+ctrl - shift - R (stop recording)
+
+Now just run this over and over (ctrl - shift P repeatedly) until you reach the end of the file.
+If you have namespaces, then change 4. to:
+
+( (search for "(" at the start of the function definition)
+esc (stop incremental search)
+ctrl - I (incremental search again)
+{ (start of function body)
+
+This kind of thing can be infinitely modified to suit your codebase  
+
+Put this at the top of the file:
+#define WANT_BREAK_IN_EVERY_FUNCTION
+
+#ifdef WANT_BREAK_IN_EVERY_FUNCTION
+#define DEBUG_BREAK DebugBreak();
+#else
+#define DEBUG_BREAK 
+#endif
+
+then insert DEBUG_BREAK in the beginning of every function, like this: 
+void function1()
+{
+    DEBUG_BREAK
+    // the rest of the function
+}
+
+void function2()
+{
+    DEBUG_BREAK
+    // the rest of the function
+}
+
+When you no longer want the debug breaks, comment the line 
+// #define WANT_BREAK_IN_EVERY_FUNCTION
+
+at the top of the file.
+
+Here's how something similar could be achieved in WinDbg:
+bm mymodule!CSpam::*
+
+This puts breakpoint in every method of class (or namespace) CSpam in module mymodule.
+I'm still looking for anything close to this functionality in Visual Studio.
+
+Here's a quick implementation of 1800 INFORMATION's idea:
+Sub TemporaryMacro()
+    DTE.ActiveDocument.Selection.StartOfDocument()
+    Dim returnValue As vsIncrementalSearchResult
+    While True
+        DTE.ActiveDocument.ActiveWindow.Object.ActivePane.IncrementalSearch.StartForward()
+        returnValue = DTE.ActiveDocument.ActiveWindow.Object.ActivePane.IncrementalSearch.AppendCharAndSearch(AscW("{"))
+        DTE.ActiveDocument.ActiveWindow.Object.ActivePane.IncrementalSearch.Exit()
+        If Not (returnValue = vsIncrementalSearchResult.vsIncrementalSearchResultFound) Then
+            Return
+        End If
+        DTE.ExecuteCommand("Debug.ToggleBreakpoint")
+        DTE.ExecuteCommand("Edit.GotoBrace")
+        DTE.ActiveDocument.Selection.CharRight()
+    End While
+End Sub
+
+
+Like Constantin's method... This seems like windbg territory.
+Since you have the cpp, (even if you didn't you could script something to get by), it should be no problem to use logger part of the debugging tools for windows... it's a very handy tool, shame so few people use it.
+logger debug's C/COM/C++ easily, with rich symbolic info, hooks/profiling/flexible instrumentation;
+One way to activate Logger is to start CDB or WinDbg and attach to a user-mode target application as usual. Then, use the !logexts.logi or !logexts.loge extension command.
+This will insert code at the current breakpoint that will jump off to a routine that loads and initializes Logexts.dll in the target application process. This is referred to as "injecting Logger into the target application."
+
+(This is not quite what you're asking for, but almost:)
+You can put a breakpoint on every member function of a class in Visual Studio by bringing up the New Breakpoint dialog and entering:
+CMyClass::*
+
+See http://blogs.msdn.com/b/habibh/archive/2009/09/10/class-breakpoint-how-to-set-a-breakpoint-on-a-c-class-in-the-visual-studio-debugger.aspx for more details.
+
+There is a macro, but I tested it only with c#.
+Sub BreakAtEveryFunction()
+For Each project In DTE.Solution.Projects
+    SetBreakpointOnEveryFunction(project)
+Next project
+End Sub
+
+
+Sub SetBreakpointOnEveryFunction(ByVal project As Project)
+Dim cm = project.CodeModel
+
+' Look for all the namespaces and classes in the 
+' project.
+Dim list As List(Of CodeFunction)
+list = New List(Of CodeFunction)
+Dim ce As CodeElement
+For Each ce In cm.CodeElements
+    If (TypeOf ce Is CodeNamespace) Or (TypeOf ce Is CodeClass) Then
+        ' Determine whether that namespace or class 
+        ' contains other classes.
+        GetClass(ce, list)
+    End If
+Next
+
+For Each cf As CodeFunction In list
+
+    DTE.Debugger.Breakpoints.Add(cf.FullName)
+Next
+
+End Sub
+
+Sub GetClass(ByVal ct As CodeElement, ByRef list As List(Of CodeFunction))
+
+' Determine whether there are nested namespaces or classes that 
+' might contain other classes.
+Dim aspace As CodeNamespace
+Dim ce As CodeElement
+Dim cn As CodeNamespace
+Dim cc As CodeClass
+Dim elements As CodeElements
+If (TypeOf ct Is CodeNamespace) Then
+    cn = CType(ct, CodeNamespace)
+    elements = cn.Members
+Else
+    cc = CType(ct, CodeClass)
+    elements = cc.Members
+End If
+Try
+    For Each ce In elements
+        If (TypeOf ce Is CodeNamespace) Or (TypeOf ce Is CodeClass) Then
+            GetClass(ce, list)
+        End If
+        If (TypeOf ce Is CodeFunction) Then
+            list.Add(ce)
+        End If
+    Next
+Catch
+End Try
+End Sub
+
+
+Here's one way to do it (I warn you it is hacky):
+EnvDTE.TextSelection textSelection = (EnvDTE.TextSelection)dte.ActiveWindow.Selection;
+// I'm sure there's a better way to get the line count than this...
+var lines = File.ReadAllLines(dte.ActiveDocument.FullName).Length;
+var methods = new List<CodeElement>();
+var oldLine = textSelection.AnchorPoint.Line;
+var oldLineOffset = textSelection.AnchorPoint.LineCharOffset;
+EnvDTE.CodeElement codeElement = null;
+for (var i = 0; i < lines; i++)
+{
+    try
+    {
+        textSelection.MoveToLineAndOffset(i, 1);
+        // I'm sure there's a better way to get a code element by point than this...
+        codeElement =  textSelection.ActivePoint.CodeElement[vsCMElement.vsCMElementFunction];
+        if (codeElement != null)
+        {
+            if (!methods.Contains(codeElement))
+            {
+                methods.Add(codeElement);
+            }
+        }
+    }
+    catch
+    {
+        //MessageBox.Show("Add error handling here.");
+    }
+}
+
+// Restore cursor position
+textSelection.MoveToLineAndOffset(oldLine, oldLineOffset);
+
+// This could be in the for-loop above, but it's here instead just for
+// clarity of the two separate jobs; find all methods, then add the
+// breakpoints
+foreach (var method in methods)
+{
+    dte.Debugger.Breakpoints.Add(
+        Line: method.StartPoint.Line,
+        File: dte.ActiveDocument.FullName);
+}
+

@@ -1,0 +1,77 @@
+Problem rolling out ADO.Net Data Service application to IIS
+.net web-services iis wcf-data-services
+I am adding a ADO.Net Data Service lookup feature to an existing web page.  Everything works great when running from visual studio, but when I roll it out to IIS, I get the following error:
+
+Request ErrorThe server encountered an error processing the request. See server logs for more details.
+
+I get this even when trying to display the default page, i.e.:
+
+http://server/FFLookup.svc
+
+I have 3.5 SP1 installed on the server.
+What am I missing, and which "Server Logs" is it refering to?  I can't find any further error messages.
+There is nothing in the Event Viewer logs (System or Application), and nothing in the IIS logs other than the GET:
+
+2008-09-10 15:20:19 10.7.131.71 GET /FFLookup.svc - 8082 - 10.7.131.86 Mozilla/5.0+(Windows;+U;+Windows+NT+5.1;+en-US)+AppleWebKit/525.13+(KHTML,+like+Gecko)+Chrome/0.2.149.29+Safari/525.13 401 2 2148074254
+
+There is no stack trace returned.  The only response I get is the "Request Error" as noted above.
+Thanks
+Patrick
+
+
+Well I found the "Server Logs" mentioned in the error above.
+You need to turn on tracing in the web.config file by adding the following tags:
+    <system.diagnostics>
+      <sources>
+		<source name="System.ServiceModel.MessageLogging" switchValue="Warning, ActivityTracing" >
+			<listeners>
+				<add name="ServiceModelTraceListener"/>
+			</listeners>
+		</source>
+
+		<source name="System.ServiceModel" switchValue="Verbose,ActivityTracing"		>
+			<listeners>
+				<add name="ServiceModelTraceListener"/>
+			</listeners>
+		</source>
+		<source name="System.Runtime.Serialization" switchValue="Verbose,ActivityTracing">
+			<listeners>
+				<add name="ServiceModelTraceListener"/>
+			</listeners>
+		</source>
+	</sources>
+	<sharedListeners>
+		<add initializeData="App_tracelog.svclog" 	
+						type="System.Diagnostics.XmlWriterTraceListener, System, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089"
+						name="ServiceModelTraceListener" traceOutputOptions="Timestamp"/>
+	</sharedListeners>
+</system.diagnostics>
+
+This will create a file called app_tracelog.svclog in your website directory.
+You then use the SvcTraceViewer.exe utility to view this file.  The viewer does a good job of highlighting the errors (along with lots of other information about the communications).
+Beware: The log file created with the above parameters grows very quickly.  Only turn it on during debuging!
+In this particular case, the problem ended up being the incorrect version of OraDirect.Net, our Oracle Data Provider.  The version we were using did not support 3.5 SP1.
+
+In order to verbosely display the errors resulting from your data service you can place the following tag above your dataservice definition:
+[System.ServiceModel.ServiceBehavior(IncludeExceptionDetailInFaults = true)]
+
+This will then display the error in your browser window as well as a stack trace.
+In addition to this dataservices throws all exceptions to the HandleException method so if you implement this method on your dataservice class you can put a break point on it and see the exception:
+protected override void HandleException(HandleExceptionArgs e)
+{
+  try
+  {
+    e.UseVerboseErrors = true;
+  }
+  catch (Exception ex)
+  {
+    Console.WriteLine(ex.Message);
+  }
+}
+
+
+For me the error was caused by two methods having the same name (unintended overloading).
+
+Overloading is not supported but type 'abc' has an overloaded method 'Void SubmitCart(System.String, Int32)'.
+
+I found out by running the service in debug mode.

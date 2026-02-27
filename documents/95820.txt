@@ -1,0 +1,154 @@
+In Perl, how do I create a hash whose keys come from a given array?
+arrays perl hash
+Let's say I have an array, and I know I'm going to be doing a lot of "Does the array contain X?" checks. The efficient way to do this is to turn that array into a hash, where the keys are the array's elements, and then you can just say if($hash{X}) { ... }
+Is there an easy way to do this array-to-hash conversion? Ideally, it should be versatile enough to take an anonymous array and return an anonymous hash.
+
+
+%hash = map { $_ => 1 } @array;
+
+It's not as short as the "@hash{@array} = ..." solutions, but those ones require the hash and array to already be defined somewhere else, whereas this one can take an anonymous array and return an anonymous hash.
+What this does is take each element in the array and pair it up with a "1". When this list of (key, 1, key, 1, key 1) pairs get assigned to a hash, the odd-numbered ones become the hash's keys, and the even-numbered ones become the respective values.
+
+@hash{@keys} = undef;
+
+The syntax here where you are referring to the hash with an @ is a hash slice.  We're basically saying $hash{$keys[0]} AND $hash{$keys[1]} AND $hash{$keys[2]} ... is a list on the left hand side of the =, an lvalue, and we're assigning to that list, which actually goes into the hash and sets the values for all the named keys.  In this case, I only specified one value, so that value goes into $hash{$keys[0]}, and the other hash entries all auto-vivify (come to life) with undefined values.  [My original suggestion here was set the expression = 1, which would've set that one key to 1 and the others to undef.  I changed it for consistency, but as we'll see below, the exact values do not matter.]
+When you realize that the lvalue, the expression on the left hand side of the =, is a list built out of the hash, then it'll start to make some sense why we're using that @.  [Except I think this will change in Perl 6.]
+The idea here is that you are using the hash as a set.  What matters is not the value I am assigning; it's just the existence of the keys.  So what you want to do is not something like:
+if ($hash{$key} == 1) # then key is in the hash
+
+instead:
+if (exists $hash{$key}) # then key is in the set
+
+It's actually more efficient to just run an exists check than to bother with the value in the hash, although to me the important thing here is just the concept that you are representing a set just with the keys of the hash.  Also, somebody pointed out that by using undef as the value here, we will consume less storage space than we would assigning a value.  (And also generate less confusion, as the value does not matter, and my solution would assign a value only to the first element in the hash and leave the others undef, and some other solutions are turning cartwheels to build an array of values to go into the hash; completely wasted effort).
+
+Raldi's solution can be tightened up to this (the '=>' from the original is not necessary):
+my %hash = map { $_,1 } @array;
+
+This technique can also be used for turning text lists into hashes:
+my %hash = map { $_,1 } split(",",$line)
+
+Additionally if you have a line of values like this: "foo=1,bar=2,baz=3" you can do this:
+my %hash = map { split("=",$_) } split(",",$line);
+
+[EDIT to include]
+
+Another solution offered (which takes two lines) is:
+my %hash;
+#The values in %hash can only be accessed by doing exists($hash{$key})
+#The assignment only works with '= undef;' and will not work properly with '= 1;'
+#if you do '= 1;' only the hash key of $array[0] will be set to 1;
+@hash{@array} = undef;
+
+
+ @hash{@array} = (1) x @array;
+
+It's a hash slice, a list of values from the hash, so it gets the list-y @ in front.
+From the docs:
+
+If you're confused about why you use
+  an '@' there on a hash slice instead
+  of a '%', think of it like this. The
+  type of bracket (square or curly)
+  governs whether it's an array or a
+  hash being looked at. On the other
+  hand, the leading symbol ('$' or '@')
+  on the array or hash indicates whether
+  you are getting back a singular value
+  (a scalar) or a plural one (a list).
+
+
+You could also use Perl6::Junction.
+use Perl6::Junction qw'any';
+
+my @arr = ( 1, 2, 3 );
+
+if( any(@arr) == 1 ){ ... }
+
+
+In perl 5.10, there's the close-to-magic ~~ operator:
+sub invite_in {
+    my $vampires = [ qw(Angel Darla Spike Drusilla) ];
+    return ($_[0] ~~ $vampires) ? 0 : 1 ;
+}
+
+See here: http://dev.perl.org/perl5/news/2007/perl-5.10.0.html
+
+Note that if typing if ( exists $hash{ key } ) isnât too much work for you (which I prefer to use since the matter of interest is really the presence of a key rather than the truthiness of its value), then you can use the short and sweet
+@hash{@key} = ();
+
+
+There is a presupposition here, that the most efficient way to do a lot of "Does the array contain X?" checks is to convert the array to a hash. Efficiency depends on the scarce resource, often time but sometimes space and sometimes programmer effort. You are at least doubling the memory consumed by keeping a list and a hash of the the list around simultaneously. Plus you're writing more original code that you'll need to test, document, etc.
+As an alternative, look at the List::MoreUtils module, specifically the functions any(), none(), true() and false(). They all take a block as the conditional and a list as the argument, similar to map() and grep():
+print "At least one value undefined" if any { !defined($_) } @list;
+I ran a quick test, loading in half of /usr/share/dict/words to an array (25000 words), then looking for eleven words selected from across the whole dictionary (every 5000th word) in the array, using both the array-to-hash method and the any() function from List::MoreUtils.
+On Perl 5.8.8 built from source, the array-to-hash method runs almost 1100x faster than the any() method (1300x faster under Ubuntu 6.06's packaged Perl 5.8.7.)
+That's not the full story however - the array-to-hash conversion takes about 0.04 seconds which in this case kills the time efficiency of array-to-hash method to 1.5x-2x faster than the any() method. Still good, but not nearly as stellar.
+My gut feeling is that the array-to-hash method is going to beat any() in most cases, but I'd feel a whole lot better if I had some more solid metrics (lots of test cases, decent statistical analyses, maybe some big-O algorithmic analysis of each method, etc.) Depending on your needs, List::MoreUtils may be a better solution; it's certainly more flexible and requires less coding. Remember, premature optimization is a sin... :)
+
+You might also want to check out Tie::IxHash, which implements ordered associative arrays. That would allow you to do both types of lookups (hash and index) on one copy of your data.
+
+If you do a lot of set theoretic operations - you can also use Set::Scalar or similar module.  Then $s = Set::Scalar->new( @array ) will build the Set for you - and you can query it with: $s->contains($m).
+
+I always thought that 
+foreach my $item (@array) { $hash{$item} = 1 }
+
+was at least nice and readable / maintainable.
+
+You can place the code into a subroutine, if you don't want pollute your namespace.
+my $hash_ref =
+  sub{
+    my %hash;
+    @hash{ @{[ qw'one two three' ]} } = undef;
+    return \%hash;
+  }->();
+
+Or even better:
+sub keylist(@){
+  my %hash;
+  @hash{@_} = undef;
+  return \%hash;
+}
+
+my $hash_ref = keylist qw'one two three';
+
+# or
+
+my @key_list = qw'one two three';
+my $hash_ref = keylist @key_list;
+
+If you really wanted to pass an array reference:
+sub keylist(\@){
+  my %hash;
+  @hash{ @{$_[0]} } = undef if @_;
+  return \%hash;
+}
+
+my @key_list = qw'one two three';
+my $hash_ref = keylist @key_list;
+
+
+#!/usr/bin/perl -w
+
+use strict;
+use Data::Dumper;
+
+my @a = qw(5 8 2 5 4 8 9);
+my @b = qw(7 6 5 4 3 2 1);
+my $h = {};
+
+@{$h}{@a} = @b;
+
+print Dumper($h);
+
+gives (note repeated keys get the value at the greatest position in the array - ie 8->2 and not 6)
+$VAR1 = {
+          '8' => '2',
+          '4' => '3',
+          '9' => '1',
+          '2' => '5',
+          '5' => '4'
+        };
+
+
+Also worth noting for completeness, my usual method for doing this with 2 same-length arrays @keys and @vals which you would prefer were a hash...
+my %hash = map { $keys[$_] => $vals[$_] } (0..@keys-1);

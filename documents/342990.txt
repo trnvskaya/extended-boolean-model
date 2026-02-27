@@ -1,0 +1,543 @@
+Create Java console inside a GUI panel
+java user-interface console output panel
+How can I create an instance of the Java console inside of a GUI panel?
+
+
+Here's a functioning class.  You can install an instance of this into the system out and err using:
+PrintStream con=new PrintStream(new TextAreaOutputStream(...));
+System.setOut(con);
+System.setErr(con);
+
+Updated 2014-02-19: To use EventQueue.invokeLater() to avoid GUI threading issues which can crop up very rarely with the original.
+Updated 2014-02-27: Better implementation
+Updated 2014-03-25: Correct recording & deletion of lines in text area to be within the run() method to avoid race-condition between appending and deleting which can happen if the console is flooded with output. The end result seems cleaner to me, as well.
+import java.awt.*;
+import java.io.*;
+import java.util.*;
+import java.util.List;
+import javax.swing.*;
+
+public class TextAreaOutputStream
+extends OutputStream
+{
+
+// *************************************************************************************************
+// INSTANCE MEMBERS
+// *************************************************************************************************
+
+private byte[]                          oneByte;                                                    // array for write(int val);
+private Appender                        appender;                                                   // most recent action
+
+public TextAreaOutputStream(JTextArea txtara) {
+    this(txtara,1000);
+    }
+
+public TextAreaOutputStream(JTextArea txtara, int maxlin) {
+    if(maxlin<1) { throw new IllegalArgumentException("TextAreaOutputStream maximum lines must be positive (value="+maxlin+")"); }
+    oneByte=new byte[1];
+    appender=new Appender(txtara,maxlin);
+    }
+
+/** Clear the current console text area. */
+public synchronized void clear() {
+    if(appender!=null) { appender.clear(); }
+    }
+
+public synchronized void close() {
+    appender=null;
+    }
+
+public synchronized void flush() {
+    }
+
+public synchronized void write(int val) {
+    oneByte[0]=(byte)val;
+    write(oneByte,0,1);
+    }
+
+public synchronized void write(byte[] ba) {
+    write(ba,0,ba.length);
+    }
+
+public synchronized void write(byte[] ba,int str,int len) {
+    if(appender!=null) { appender.append(bytesToString(ba,str,len)); }
+    }
+
+@edu.umd.cs.findbugs.annotations.SuppressWarnings("DM_DEFAULT_ENCODING")
+static private String bytesToString(byte[] ba, int str, int len) {
+    try { return new String(ba,str,len,"UTF-8"); } catch(UnsupportedEncodingException thr) { return new String(ba,str,len); } // all JVMs are required to support UTF-8
+    }
+
+// *************************************************************************************************
+// STATIC MEMBERS
+// *************************************************************************************************
+
+    static class Appender
+    implements Runnable
+    {
+    private final JTextArea             textArea;
+    private final int                   maxLines;                                                   // maximum lines allowed in text area
+    private final LinkedList<Integer>   lengths;                                                    // length of lines within text area
+    private final List<String>          values;                                                     // values waiting to be appended
+
+    private int                         curLength;                                                  // length of current line
+    private boolean                     clear;
+    private boolean                     queue;
+
+    Appender(JTextArea txtara, int maxlin) {
+        textArea =txtara;
+        maxLines =maxlin;
+        lengths  =new LinkedList<Integer>();
+        values   =new ArrayList<String>();
+
+        curLength=0;
+        clear    =false;
+        queue    =true;
+        }
+
+    synchronized void append(String val) {
+        values.add(val);
+        if(queue) { queue=false; EventQueue.invokeLater(this); }
+        }
+
+    synchronized void clear() {
+        clear=true;
+        curLength=0;
+        lengths.clear();
+        values.clear();
+        if(queue) { queue=false; EventQueue.invokeLater(this); }
+        }
+
+    // MUST BE THE ONLY METHOD THAT TOUCHES textArea!
+    public synchronized void run() {
+        if(clear) { textArea.setText(""); }
+        for(String val: values) {
+            curLength+=val.length();
+            if(val.endsWith(EOL1) || val.endsWith(EOL2)) {
+                if(lengths.size()>=maxLines) { textArea.replaceRange("",0,lengths.removeFirst()); }
+                lengths.addLast(curLength);
+                curLength=0;
+                }
+            textArea.append(val);
+            }
+        values.clear();
+        clear =false;
+        queue =true;
+        }
+
+    static private final String         EOL1="\n";
+    static private final String         EOL2=System.getProperty("line.separator",EOL1);
+    }
+
+} /* END PUBLIC CLASS */
+
+And here's a screen shot of it in action:
+
+
+@Sofware Monkey:
+It works!! :) 
+
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.io.*;
+
+public class Main{
+    public static void main( String [] args ) throws InterruptedException  {
+        JFrame frame = new JFrame();
+        frame.add( new JLabel(" Outout" ), BorderLayout.NORTH );
+
+        JTextArea ta = new JTextArea();
+        TextAreaOutputStream taos = new TextAreaOutputStream( ta, 60 );
+        PrintStream ps = new PrintStream( taos );
+        System.setOut( ps );
+        System.setErr( ps );
+
+
+        frame.add( new JScrollPane( ta )  );
+
+        frame.pack();
+        frame.setVisible( true );
+
+        for( int i = 0 ; i < 100 ; i++ ) {
+            System.out.println( i );
+            Thread.sleep( 500 );
+        }
+    }
+}
+
+
+I know that this is an old thread but the fact that I found it while trying to figure out a good way of doing this means others probably will too.
+Here's a (Probably) cleaner way of doing what software monkey posted:
+import java.io.IOException;
+import java.io.OutputStream;
+import java.util.ArrayList;
+
+import javax.swing.JTextArea;
+
+/**
+ * Represents a console viewable through a <code>JTextArea</code>.
+ * 
+ * <p>
+ *  Implementation:
+ *  <code>
+ *      System.setOut(new PrintStream(new Console( ... )));
+ *  </code>
+ *  </p>
+ * 
+ * @author Derive McNeill
+ *
+ */
+public class Console extends OutputStream {
+
+    /**
+     * Represents the data written to the stream.
+     */
+    ArrayList <Byte> data = new ArrayList <Byte> ();
+
+    /**
+     * Represents the text area that will be showing the written data.
+     */
+    private JTextArea output;
+
+    /**
+     * Creates a console context.
+     * @param output
+     *      The text area to output the consoles text.
+     */
+    public Console(JTextArea output) {
+        this.output = output;
+    }
+
+    /**
+     * Called when data has been written to the console.
+     */
+    private void fireDataWritten() {
+
+        // First we loop through our written data counting the lines.
+        int lines = 0;
+        for (int i = 0; i < data.size(); i++) {
+            byte b = data.get(i);
+
+            // Specifically we look for 10 which represents "\n".
+            if (b == 10) {
+                lines++;
+            }
+
+            // If the line count exceeds 250 we remove older lines.
+            if (lines >= 250) {
+                data = (ArrayList<Byte>) data.subList(i, data.size());
+            }
+        }
+
+        // We then create a string builder to append our text data.
+        StringBuilder bldr = new StringBuilder();
+
+        // We loop through the text data appending it to the string builder.
+        for (byte b : data) {
+            bldr.append((char) b);
+        }
+
+        // Finally we set the outputs text to our built string.
+        output.setText(bldr.toString());
+    }
+
+    @Override
+    public void write(int i) throws IOException {
+
+        // Append the piece of data to our array of data.
+        data.add((byte) i);
+
+        // Indicate that data has just been written.
+        fireDataWritten();
+    }
+
+}
+
+
+ByteArrayOutputStream can be used to omit buffering stuff.
+private void redirectConsoleTo(final JTextArea textarea) {
+    PrintStream out = new PrintStream(new ByteArrayOutputStream() {
+        public synchronized void flush() throws IOException {
+            textarea.setText(toString());
+        }
+    }, true);
+
+    System.setErr(out);
+    System.setOut(out);
+}
+
+Rather than limiting line number, you can bind ByteArrayOutputStream#reset() to some button.
+private void redirectConsoleWithClearButton(final JTextArea textarea, JButton clearButton) {
+    final ByteArrayOutputStream bytes = new ByteArrayOutputStream() {
+        public synchronized void flush() throws IOException {
+            textarea.setText(toString());
+        }
+    };
+
+    clearButton.addActionListener(new ActionListener() {
+        public void actionPerformed(ActionEvent e) {
+            bytes.reset();
+        }
+    });
+
+    PrintStream out = new PrintStream(bytes, true);
+
+    System.setErr(out);
+    System.setOut(out);
+}
+
+
+I recently use the excellent code provided by Lawrence Dol in one of my project.
+However, in my case the code consumed too many memory. I managed to reduce drastically the memory comsuption by replacing JTextarea by a JLabel.
+My memory saving searches showed that JTextarea internal code tends to hold the actual text sent too much time. Consequently, all this text could not be garbage collected.
+Here is the flexible version of initial code (with thread synchronization replaced by locks).
+JComponentOutputStream.java
+import java.awt.EventQueue;
+import java.io.OutputStream;
+import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+
+import javax.swing.JComponent;
+
+public class JComponentOutputStream extends OutputStream {
+
+    // *************************************************************************************************
+    // INSTANCE MEMBERS
+    // *************************************************************************************************
+
+    private byte[] oneByte; // array for write(int val);
+    private Appender appender; // most recent action
+
+    private Lock jcosLock = new ReentrantLock();
+
+    public JComponentOutputStream(JComponent txtara, JComponentHandler handler) {
+        this(txtara, 1000, handler);
+    }
+
+    public JComponentOutputStream(JComponent txtara, int maxlin, JComponentHandler handler) {
+        if (maxlin < 1) {
+            throw new IllegalArgumentException("JComponentOutputStream maximum lines must be positive (value=" + maxlin + ")");
+        }
+        oneByte = new byte[1];
+        appender = new Appender(txtara, maxlin, handler);
+    }
+
+    /** Clear the current console text area. */
+    public void clear() {
+        jcosLock.lock();
+        try {
+            if (appender != null) {
+                appender.clear();
+            }
+        } finally {
+            jcosLock.unlock();
+        }
+    }
+
+    public void close() {
+        jcosLock.lock();
+        try {
+            appender = null;
+        } finally {
+            jcosLock.unlock();
+        }
+    }
+
+    public void flush() {
+        // sstosLock.lock();
+        // try {
+        // // TODO: Add necessary code here...
+        // } finally {
+        // sstosLock.unlock();
+        // }
+    }
+
+    public void write(int val) {
+        jcosLock.lock();
+        try {
+            oneByte[0] = (byte) val;
+            write(oneByte, 0, 1);
+        } finally {
+            jcosLock.unlock();
+        }
+    }
+
+    public void write(byte[] ba) {
+        jcosLock.lock();
+        try {
+            write(ba, 0, ba.length);
+        } finally {
+            jcosLock.unlock();
+        }
+    }
+
+    public void write(byte[] ba, int str, int len) {
+        jcosLock.lock();
+        try {
+            if (appender != null) {
+                appender.append(bytesToString(ba, str, len));
+            }
+        } finally {
+            jcosLock.unlock();
+        }
+    }
+
+    static private String bytesToString(byte[] ba, int str, int len) {
+        try {
+            return new String(ba, str, len, "UTF-8");
+        } catch (UnsupportedEncodingException thr) {
+            return new String(ba, str, len);
+        } // all JVMs are required to support UTF-8
+    }
+
+    // *************************************************************************************************
+    // STATIC MEMBERS
+    // *************************************************************************************************
+
+    static class Appender implements Runnable {
+        private final JComponent swingComponent;
+        private final int maxLines; // maximum lines allowed in text area
+        private final LinkedList<Integer> lengths; // length of lines within
+                                                    // text area
+        private final List<String> values; // values waiting to be appended
+
+        private int curLength; // length of current line
+        private boolean clear;
+        private boolean queue;
+
+        private Lock appenderLock;
+
+        private JComponentHandler handler;
+
+        Appender(JComponent cpt, int maxlin, JComponentHandler hndlr) {
+            appenderLock = new ReentrantLock();
+
+            swingComponent = cpt;
+            maxLines = maxlin;
+            lengths = new LinkedList<Integer>();
+            values = new ArrayList<String>();
+
+            curLength = 0;
+            clear = false;
+            queue = true;
+
+            handler = hndlr;
+        }
+
+        void append(String val) {
+            appenderLock.lock();
+            try {
+                values.add(val);
+                if (queue) {
+                    queue = false;
+                    EventQueue.invokeLater(this);
+                }
+            } finally {
+                appenderLock.unlock();
+            }
+        }
+
+        void clear() {
+            appenderLock.lock();
+            try {
+
+                clear = true;
+                curLength = 0;
+                lengths.clear();
+                values.clear();
+                if (queue) {
+                    queue = false;
+                    EventQueue.invokeLater(this);
+                }
+            } finally {
+                appenderLock.unlock();
+            }
+        }
+
+        // MUST BE THE ONLY METHOD THAT TOUCHES the JComponent!
+        public void run() {
+            appenderLock.lock();
+            try {
+                if (clear) {
+                    handler.setText(swingComponent, "");
+                }
+                for (String val : values) {
+                    curLength += val.length();
+                    if (val.endsWith(EOL1) || val.endsWith(EOL2)) {
+                        if (lengths.size() >= maxLines) {
+                            handler.replaceRange(swingComponent, "", 0, lengths.removeFirst());
+                        }
+                        lengths.addLast(curLength);
+                        curLength = 0;
+                    }
+                    handler.append(swingComponent, val);
+                }
+
+                values.clear();
+                clear = false;
+                queue = true;
+            } finally {
+                appenderLock.unlock();
+            }
+        }
+
+        static private final String EOL1 = "\n";
+        static private final String EOL2 = System.getProperty("line.separator", EOL1);
+    }
+
+    public interface JComponentHandler {
+        void setText(JComponent swingComponent, String text);
+
+        void replaceRange(JComponent swingComponent, String text, int start, int end);
+
+        void append(JComponent swingComponent, String text);
+    }
+
+} /* END PUBLIC CLASS */
+
+
+Sample usage
+JLabel console = new JLabel();
+JComponentOutputStream consoleOutputStream = new JComponentOutputStream(console, new JComponentHandler() {
+    private StringBuilder sb = new StringBuilder();
+
+    @Override
+    public void setText(JComponent swingComponent, String text) {
+        sb.delete(0, sb.length());
+        append(swingComponent, text);
+    }
+
+    @Override
+    public void replaceRange(JComponent swingComponent, String text, int start, int end) {
+        sb.replace(start, end, text);
+        redrawTextOf(swingComponent);
+    }
+
+    @Override
+    public void append(JComponent swingComponent, String text) {
+        sb.append(text);
+        redrawTextOf(swingComponent);
+    }
+
+    private void redrawTextOf(JComponent swingComponent) {
+        ((JLabel)swingComponent).setText("<html><pre>" + sb.toString() + "</pre></html>");
+    }
+});
+
+PrintStream con = new PrintStream(consoleOutputStream);
+System.setOut(con);
+System.setErr(con);    
+
+// Optional: add a scrollpane around the console for having scrolling bars
+JScrollPane sp = new JScrollPane( //
+        console, //
+        ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED, //
+        ScrollPaneConstants.HORIZONTAL_SCROLLBAR_AS_NEEDED //
+);
+myPanel.add(sp);
+

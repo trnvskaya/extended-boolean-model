@@ -1,0 +1,58 @@
+How do you test a public/private DSA keypair?
+encryption ssl openssl key
+Is there an easy way to verify that a given private key matches a given public key?  I have a few *.pub, and a few *.key files, and I need to check which go with which.
+Again, these are pub/key files, DSA.
+I would really prefer a one-liner of some sort...
+
+
+Encrypt something with the public key, and see which private key decrypts it.
+This code project article by none other than Jeff Atwood implements a simplified wrapper around the .NET crypto classes. Assuming these keys were created for use with RSA, use the asymmetric class with your public key to encrypt, and the same with your private key to decrypt.
+
+Assuming you have the public keys inside x.509 certificates, and assuming they are RSA keys, then for each public key, do
+    openssl x509 -in certfile -modulus -noout
+
+For each private key, do
+    openssl rsa -in keyfile -modulus -noout
+
+Then match the keys by modulus.
+
+For DSA keys, use
+ openssl dsa -pubin -in dsa.pub -modulus -noout
+
+to print the public keys, then
+ openssl dsa -in dsa.key -modulus -noout
+
+to display the public keys corresponding to a private key, then compare them.
+
+I found a way that seems to work better for me:
+ssh-keygen -y -f <private key file>
+
+that command will output the public key for the given private key, so then just compare the output to each *.pub file.
+
+Delete the public keys and generate new ones from the private keys.  Keep them in separate directories, or use a naming convention to keep them straight.
+
+I always compare an MD5 hash of the modulus using these commands:
+Certificate: openssl x509 -noout -modulus -in server.crt | openssl md5
+Private Key: openssl rsa -noout -modulus -in server.key | openssl md5
+CSR: openssl req -noout -modulus -in server.csr | openssl md5
+
+If the hashes match, then those two files go together.
+
+Just use puttygen and load your private key into it. Offers different options, e.g. exporting the coressponding public key.
+
+The check can be made easier with diff:
+diff <(ssh-keygen -y -f <private_key_file>) <public key file>
+
+The only odd thing is that diff says nothing if the files are the same, so you'll only be told if the public and private don't match.
+
+All of the above answers assume that the given private key - that you know nothing about and want to find out if it matches the given public key - HAS NO PASSPHRASE.  If the private key has a passphrase, then both
+ssh-keygen -y -f PRIVATEKEY
+and
+openssl (rsa or dsa) -in PRIVATEKEY -modulus -noout
+ask for the passphrase.  If you have an UNKNOWN private key, you don't know
+whether it has a passphrase or not - let alone what the passphrase is if the key has one.
+So practically, it's worth trying the above commands, but if they then ask for a passphrase, you're stuck: you can't extract the public key and it's modulus to match with the second field on the public key file.  Does anyone know a way round this?
+
+If you are in Windows and want use a GUI, with puttygen you can import your private key into it:
+
+Once imported, you can save its public key and compare it to yours.

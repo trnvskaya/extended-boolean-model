@@ -1,0 +1,40 @@
+Help needed for extending Asp.Net
+asp.net
+As most of you would know, if I drop a file named app_offline.htm in the root of an asp.net application, it takes the application offline as detailed here.
+You would also know, that while this is great, IIS actually returns a 404 code when this is in process and Microsoft is not going to do anything about it as mentioned here.
+Now, since Asp.Net in general is so extensible, I am thinking that shouldn't there be a way to over ride this status code to return a 503 instead? The problem is, I don't know where to start looking to make this change.
+HELP!
+
+
+You can try turning it off in the web.config.
+<httpRuntime enable = "False"/>
+
+
+You could probably do it by writing your own HTTP Handler (a .NET component that implements the System.Web.IHttpHandler interface).
+There's a good primer article here:
+link text
+
+The handling of app_offline.htm is hardcoded in the ASP.NET pipeline, and can't be modified: see CheckApplicationEnabled() in HttpRuntime.cs, where it throws a very non-configurable 404 error if the application is deemed to be offline.
+However, creating your own HTTP module to do something similar is of course trivial -- the OnBeginRequest handler could look as follows in this case (implementation for a HttpHandler shown, but in a HttpModule the idea is exactly the same):
+Public Sub ProcessRequest(ByVal ctx As System.Web.HttpContext) Implements IHttpHandler.ProcessRequest
+    If IO.File.Exists(ctx.Server.MapPath("/app_unavailable.htm")) Then
+        ctx.Response.Status = "503 Unavailable (in Maintenance Mode)"
+        ctx.Response.Write(String.Format("<html><h1>{0}</h1></html>", ctx.Response.Status))
+        ctx.Response.End()
+    End If
+End Sub
+
+This is just a starting point, of course: by making the returned HTML a bit friendlier, you can display a nice "we'll be right back" page to your users as well.
+
+An advantage of app_offline.htm and httpRuntime enable = "False", highlighted in the 1st link in the original question, is that the app domain of the application is no longer loaded, which may be desirable for substantial site changes. A slight modification to leppie's answer (which still serves 404's) is to add a defaultRedirect to another website which would allow the source site to be in the shut down state, the target site would then serve a simple 503 generating page
+web.config source site
+<httpRuntime enable="false" />
+<customErrors mode="On" defaultRedirect="/maintainance.aspx"/>
+
+maintainance.aspx in dest site
+<%@Page Language="C#"%>
+<% 
+    Response.StatusCode = 503;
+    Response.Write("App offline for maintainance"); 
+%>
+

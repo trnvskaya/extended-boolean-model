@@ -1,0 +1,137 @@
+NSInvocation for Dummies?
+objective-c cocoa undo-redo
+How exactly does NSInvocation work? Is there a good introduction?
+Iâm specifically having issues understanding how the following code (from Cocoa Programming for Mac OS X, 3rd Edition) works, but then also be able to apply the concepts independently of the tutorial sample. The code:
+- (void)insertObject:(Person *)p inEmployeesAtIndex:(int)index
+{
+    NSLog(@"adding %@ to %@", p, employees);
+    // Add inverse of this operation to undo stack
+    NSUndoManager *undo = [self undoManager];
+    [[undo prepareWithInvocationTarget:self] removeObjectFromEmployeesAtIndex:index];
+    if (![undo isUndoing])
+        [undo setActionName:@"Insert Person"];
+
+    // Finally, add person to the array
+    [employees insertObject:p atIndex:index];
+}
+
+- (void)removeObjectFromEmployeesAtIndex:(int)index
+{
+    Person *p = [employees objectAtIndex:index];
+    NSLog(@"removing %@ from %@", p, employees);
+    // Add inverse of this operation to undo stack
+    NSUndoManager *undo = [self undoManager];
+    [[undo prepareWithInvocationTarget:self] insertObject:p
+                                       inEmployeesAtIndex:index];
+    if (![undo isUndoing])
+        [undo setActionName:@"Delete Person"];
+
+    // Finally, remove person from array
+    [employees removeObjectAtIndex:index];
+}
+
+I get what itâs trying to do. (BTW, employees is an NSArray of a custom Person class.)
+Being a .NET guy, I try to associate unfamiliar Obj-C and Cocoa concepts to roughly analogous .NET concepts. Is this similar to .NETâs delegate concept, but untyped? 
+This isnât 100% clear from the book, so Iâm looking for something supplemental from real Cocoa/Obj-C experts, again with the goal that I understand the fundamental concept beneath the simple(-ish) example. I'm really looking to be able to independently apply the knowledge -- up until chapter 9, I was having no difficulty doing that. But now ...  
+Thanks in advance!
+
+
+According to Apple's NSInvocation class reference:
+
+An NSInvocation is an Objective-C message rendered static, that is, it is an action turned into an object.
+
+And, in a little more detail:
+The concept of messages is central to the objective-c philosophy. Any time you call a method, or access a variable of some object, you are sending it a message. NSInvocation comes in handy when you want to send a message to an object at a different point in time, or send the same message several times. NSInvocation allows you to describe the message you are going to send, and then invoke it (actually send it to the target object) later on.
+
+For example, let's say you want to add a string to an array. You would normally send the addObject: message as follows:
+[myArray addObject:myString];
+
+
+Now, let's say you want to use NSInvocation to send this message at some other point in time:
+First, you would prepare an NSInvocation object for use with NSMutableArray's addObject: selector:
+NSMethodSignature * mySignature = [NSMutableArray
+    instanceMethodSignatureForSelector:@selector(addObject:)];
+NSInvocation * myInvocation = [NSInvocation
+    invocationWithMethodSignature:mySignature];
+
+Next, you would specify which object to send the message to:
+[myInvocation setTarget:myArray];
+
+Specify the message you wish to send to that object:
+[myInvocation setSelector:@selector(addObject:)];
+
+And fill in any arguments for that method:
+[myInvocation setArgument:&myString atIndex:2];
+
+Note that object arguments must be passed by pointer. Thank you to Ryan McCuaig for pointing that out, and please see Apple's documentation for more details.
+At this point, myInvocation is a complete object, describing a message that can be sent. To actually send the message, you would call:
+[myInvocation invoke];
+
+This final step will cause the message to be sent, essentially executing [myArray addObject:myString];.
+Think of it like sending an email. You open up a new email (NSInvocation object), fill in the address of the person (object) who you want to send it to, type in a message for the recipient (specify a selector and arguments), and then click "send" (call invoke).
+See Using NSInvocation for more information.
+
+NSUndoManager uses NSInvocation objects so that it can reverse commands. Essentially, what you are doing is creating an NSInvocation object to say: "Hey, if you want to undo what I just did, send this message to that object, with these arguments". You give the NSInvocation object to the NSUndoManager, and it adds that object to an array of undoable actions. If the user calls "Undo", NSUndoManager simply looks up the most recent action in the array, and invokes the stored NSInvocation object to perform the necessary action.
+See Registering Undo Operations for more details.
+
+You could try just using the library here which is much nicer: http://cocoawithlove.com/2008/03/construct-nsinvocation-for-any-message.html
+
+Here's a simple example of NSInvocation in action:
+- (void)hello:(NSString *)hello world:(NSString *)world
+{
+    NSLog(@"%@ %@!", hello, world);
+
+    NSMethodSignature *signature  = [self methodSignatureForSelector:_cmd];
+    NSInvocation      *invocation = [NSInvocation invocationWithMethodSignature:signature];
+
+    [invocation setTarget:self];                    // index 0 (hidden)
+    [invocation setSelector:_cmd];                  // index 1 (hidden)
+    [invocation setArgument:&hello atIndex:2];      // index 2
+    [invocation setArgument:&world atIndex:3];      // index 3
+
+    // NSTimer's always retain invocation arguments due to their firing delay. Release will occur when the timer invalidates itself.
+    [NSTimer scheduledTimerWithTimeInterval:1 invocation:invocation repeats:NO];
+}
+
+When called - [self hello:@"Hello" world:@"world"]; - the method will:
+
+Print "Hello world!"
+Create an NSMethodSignature for itself.
+Create and populate an NSInvocation, calling itself.
+Pass the NSInvocation to an NSTimer
+The timer will fire in (approximately) 1 second, causing the method to be called again with its original arguments.
+Repeat.
+
+In the end, you'll get a printout like so:
+2010-07-11 17:48:45.262 Your App[2523:a0f] Hello world!
+2010-07-11 17:48:46.266 Your App[2523:a0f] Hello world!
+2010-07-11 17:48:47.266 Your App[2523:a0f] Hello world!
+2010-07-11 17:48:48.267 Your App[2523:a0f] Hello world!
+2010-07-11 17:48:49.268 Your App[2523:a0f] Hello world!
+2010-07-11 17:48:50.268 Your App[2523:a0f] Hello world!
+2010-07-11 17:48:51.269 Your App[2523:a0f] Hello world!
+...
+
+Of course, the target object self must continue to exist for the NSTimer to send the NSInvocation to it. For example, a Singleton object, or an AppDelegate which exists for the duration of the application.
+
+UPDATE:
+As noted above, when you pass an NSInvocation as an argument to an NSTimer, the NSTimer automatically retains all of the NSInvocation's arguments.
+If you are not passing an NSInvocation as an argument to an NSTimer, and plan on having it stick around for a while, you must call its -retainArguments method. Otherwise its arguments may be deallocated before the invocation is invoked, eventually causing your code to crash. Here's how to do it:
+NSMethodSignature *signature  = ...;
+NSInvocation      *invocation = [NSInvocation invocationWithMethodSignature:signature];
+id                arg1        = ...;
+id                arg2        = ...;
+
+[invocation setTarget:...];
+[invocation setSelector:...];
+[invocation setArgument:&arg1 atIndex:2];
+[invocation setArgument:&arg2 atIndex:3];
+
+[invocation retainArguments];  // If you do not call this, arg1 and arg2 might be deallocated.
+
+[self someMethodThatInvokesYourInvocationEventually:invocation];
+
+
+I build a simple example of calling various method types with NSInvocation.
+I had problems calling multiple params using obj_msgSend
+https://github.com/clearbrian/NSInvocation_Runtime

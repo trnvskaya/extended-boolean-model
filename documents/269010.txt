@@ -1,0 +1,53 @@
+BCP out Error in SQL2000: SQLState = 37000, NativeError = 4060
+sql-server stored-procedures jdbc sql-server-2000 bcp
+I have created a proc that grabs all the user tables in a local DB on my machine. I want to be able to create a flat file of all my tables using BCP and SQL. Its a dummy database in SQL 2000 connecting through windows authentication. I have set my enviroment path variable in WinXP SP2. I have created new users to access the db, switched off my firewall, using trusted connection. I have tried dozens of forums, no luck. 
+In dos command prompt I get the same error. 
+SQLState = 37000, NativeError = 4060
+Error = [Microsoft][ODBC SQL Server Driver][SQL Server]Cannot open database requested in login '[HelpDesk-EasyPay'. Login fails.
+Here is my SP: 
+@Path VARCHAR(100),
+    @UserName VARCHAR(15),
+    @PassWord VARCHAR(15),
+    @ServerName VARCHAR(15)
+AS 
+
+set quoted_identifier off
+set nocount on
+
+declare @n int
+declare @db varchar(40)
+set @db=DB_NAME()
+declare @TableName varchar(15) 
+declare @bcp varchar(200)
+select identity(int,1,1) as tblNo,name tblname into #T from Sysobjects where xtype='u'
+select @n=COUNT(*) from #T
+
+WHILE (@n>0)
+BEGIN
+    SELECT @TableName=tblname FROM #T WHERE tblno=@n
+    PRINT 'Now BCP out for table: ' + @TableName
+    SET @bcp = "master..xp_cmdshell 'BCP " + "[" + @db + ".." + @TableName + "]" + " OUT" + @Path + "" + @TableName+".txt -c -U" + @UserName + " -P" + @PassWord + " -S" + @ServerName + " -T" + "'" 
+    EXEC(@bcp)
+    SET @n=@n-1
+END
+
+DROP TABLE #T
+
+Can anyone advise. This seems to be a connection problem or BCP ? Not sure. 
+edit: I am running this from query analyzer because I have 118 tables to output to flat file. I seem to agree that its an authentication issue because I tried connecting to master db with username sa password root. which is what its set to and I get the same error: SQLState = 37000, NativeError = 4060
+Thanking you in advance. 
+EJ
+
+
+Your brackets are extending over the entire qualified table name - only the individual components should be bracketed:
+bcp [HelpDesk-EasyPay].dbo.[customer] out d:\MSSQL\Data\customer.bcp -N -Utest -Ptest -T
+
+should work, so you want:
+SET @bcp = "master..xp_cmdshell 'BCP " + "[" + @db + "]..[" + @TableName + "]" + " OUT" + @Path + "" + @TableName+".txt -c -U" + @UserName + " -P" + @PassWord + " -S" + @ServerName + " -T" + "'"
+
+in your code.  It looks like the error message you gave was truncated, otherwise you would have been able to see that it was attempting to open database "[HelpDesk-EasyPay.dbo.customer]" which, of course, does not exist, and even if it did, you would then get an error that no table was specified.
+
+I have the same issue for the OUT (the minus character kills everything event the ^ don't work)
+I avoid it with the QUERYOUT. Like this :
+SET  @s = 'BCP "SELECT * FROM [HelpDesk-EasyPay].dbo.customers" QUERYOUT myfile.txt ...'
+

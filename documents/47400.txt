@@ -1,0 +1,353 @@
+Best way to test a MS Access application?
+database unit-testing ms-access vba
+With the code, forms and data inside the same database I am wondering what are the best practices to design a suite of tests for a Microsoft Access application (say for Access 2007).
+One of the main issues with testing forms is that only a few controls have a hwnd handle and other controls only get one they have focus, which makes automation quite opaque since you cant get a list of controls on a form to act on.
+Any experience to share?
+
+
+I would design the application to have as much work as possible done in queries and in vba subroutines so that your testing could be made up of populating test databases, running sets of the production queries and vba against those databases and then looking at the output and comparing to make sure the output is good.  This approach doesn't test the GUI obviously, so you could augment the testing with a series of test scripts (here I mean like a word document that says open form 1, and click control 1) that are manually executed.
+It depends on the scope of the project as the level of automation necessary for the testing aspect.
+
+I have not tried this, but you could attempt to publish your access forms as data access web pages to something like sharepoint or just as web pages and then use an tool such as selenium to drive the browser with a suite of tests.
+Obviously this is not as ideal as driving the code directly through unit tests, but it may get you part of the way. good luck
+
+Data Access Pages have been deprecated by MS for quite some time, and never really worked in the first place (they were dependent on the Office Widgets being installed, and worked only in IE, and only badly then).
+It is true that Access controls that can get focus only have a window handle when they have the focus (and those that can't get focus, such as labels, never have a window handle at all). This makes Access singularly inappropriate to window handle-driven testing regimes.
+Indeed, I question why you want to do this kind of testing in Access. It sounds to me like your basic Extreme Programming dogma, and not all of the principles and practices of XP can be adapted to work with Access applications -- square peg, round hole.
+So, step back and ask yourself what you're trying to accomplish and consider that you may need to utilize completely different methods than those that are based on the approaches that just can't work in Access.
+Or whether that kind of automated testing is valid at all or even useful with an Access application.
+
+Access is a COM application. Use COM, not Windows API. to test things in Access.
+The best Test environment for an Access Application is Access. All of your Forms/Reports/Tables/Code/Queries are available, there is a scripting language similar to MS Test (Ok, you probably don't remember MS Test), there is database environment for holding your test scripts and test results, and the skills you build here are transferable to your application.
+
+I appreciated knox's and david's answers. My answer will be somewhere between theirs: just make forms that do not need to be debugged!
+I think that forms should be exclusively used as what they are basically, meaning graphic interface only, meaning here that they do not have to be debugged! The debugging job is then limited to your VBA modules and objects, which is a lot easier to handle. 
+There is of course a natural tendency to add VBA code to forms and/or controls, specially when Access offers you these great "after Update" and "on change" events, but I definitely advise you not to put any form or control specific code in the form's module. This makes further maintenance and upgrade very costy, where your code is split between VBA modules and forms/controls modules.
+This does not mean you cannot use anymore this AfterUpdate event! Just put standard code in the event, like this:
+Private Sub myControl_AfterUpdate()  
+    CTLAfterUpdate myControl
+    On Error Resume Next
+    Eval ("CTLAfterUpdate_MyForm()")
+    On Error GoTo 0  
+End sub
+
+Where:
+
+CTLAfterUpdate is a standard procedure run each time a control is updated in a form
+CTLAfterUpdateMyForm is a specific procedure run each time a control is updated on MyForm
+
+I have then 2 modules. The first one is 
+
+utilityFormEvents
+ where I will have my CTLAfterUpdate generic event
+
+The second one is 
+
+MyAppFormEvents
+ containing the specific code of all specific forms of the MyApp application
+ and including the CTLAfterUpdateMyForm procedure. Of course, CTLAfterUpdateMyForm
+ might not exist if there are no specific code to run. This is why we turn the 
+ "On error" to "resume next" ...
+
+Choosing such a generic solution means a lot. It means you are reaching a high level of code normalization (meaning painless maintenance of code). And when you say that you do not have any form-specific code,  it also means that form modules are fully standardized, and their production can be automated: just say which events you want to manage at the form/control level, and define your generic/specific procedures terminology.
+Write your automation code, once for all.
+It takes a few  days of work but it give exciting results. I have been using this solution for the last 2 years and it is clearly the right one: my forms are fully and automatically created from scratch with a "Forms Table", linked to a "Controls Table".
+I can then spend my time working on the specific procedures of the form, if any.
+Code normalization, even with MS Access, is a long process. But it is really worth the pain!
+
+Another advantage of Access being a COM application is that you can create an .NET application to run and test an Access application via Automation. The advantage of this is that then you can use a more powerful testing framework such as NUnit to write automated assert tests against an Access app. 
+Therefore, if you are proficient in either C# or VB.NET combined with something like NUnit then you can more easily create greater test coverage for your Access app.
+
+If your interested in testing your Access application at a more granular level specifically the VBA code itself then VB Lite Unit is a great unit testing framework for that purpose.
+
+There are good suggestions here, but I'm surprised no one mentioned centralized error processing. You can get addins that allow for quick function/sub templating and for adding line numbers (I use MZ-tools). Then send all errors to a single function where you can log them. You can also then break on all errors by setting a single break point.
+
+I've taken a page out of Python's doctest concept and implemented a DocTests procedure in Access VBA.  This is obviously not a full-blown unit-testing solution.  It's still relatively young, so I doubt I've worked out all the bugs, but I think it's mature enough to release into the wild.
+Just copy the following code into a standard code module and press F5 inside the Sub to see it in action:
+'>>> 1 + 1
+'2
+'>>> 3 - 1
+'0
+Sub DocTests()
+Dim Comp As Object, i As Long, CM As Object
+Dim Expr As String, ExpectedResult As Variant, TestsPassed As Long, TestsFailed As Long
+Dim Evaluation As Variant
+    For Each Comp In Application.VBE.ActiveVBProject.VBComponents
+        Set CM = Comp.CodeModule
+        For i = 1 To CM.CountOfLines
+            If Left(Trim(CM.Lines(i, 1)), 4) = "'>>>" Then
+                Expr = Trim(Mid(CM.Lines(i, 1), 5))
+                On Error Resume Next
+                Evaluation = Eval(Expr)
+                If Err.Number = 2425 And Comp.Type <> 1 Then
+                    'The expression you entered has a function name that ''  can't find.
+                    'This is not surprising because we are not in a standard code module (Comp.Type <> 1).
+                    'So we will just ignore it.
+                    GoTo NextLine
+                ElseIf Err.Number <> 0 Then
+                    Debug.Print Err.Number, Err.Description, Expr
+                    GoTo NextLine
+                End If
+                On Error GoTo 0
+                ExpectedResult = Trim(Mid(CM.Lines(i + 1, 1), InStr(CM.Lines(i + 1, 1), "'") + 1))
+                Select Case ExpectedResult
+                Case "True": ExpectedResult = True
+                Case "False": ExpectedResult = False
+                Case "Null": ExpectedResult = Null
+                End Select
+                Select Case TypeName(Evaluation)
+                Case "Long", "Integer", "Short", "Byte", "Single", "Double", "Decimal", "Currency"
+                    ExpectedResult = Eval(ExpectedResult)
+                Case "Date"
+                    If IsDate(ExpectedResult) Then ExpectedResult = CDate(ExpectedResult)
+                End Select
+                If (Evaluation = ExpectedResult) Then
+                    TestsPassed = TestsPassed + 1
+                ElseIf (IsNull(Evaluation) And IsNull(ExpectedResult)) Then
+                    TestsPassed = TestsPassed + 1
+                Else
+                    Debug.Print Comp.Name; ": "; Expr; " evaluates to: "; Evaluation; " Expected: "; ExpectedResult
+                    TestsFailed = TestsFailed + 1
+                End If
+            End If
+NextLine:
+        Next i
+    Next Comp
+    Debug.Print "Tests passed: "; TestsPassed; " of "; TestsPassed + TestsFailed
+End Sub
+
+Copying, pasting, and running the above code from a module named Module1 yields:
+Module: 3 - 1 evaluates to:  2  Expected:  0 
+Tests passed:  1  of  2
+
+A few quick notes:
+
+It has no dependencies (when used from within Access)
+It makes use of Eval which is a function in the Access.Application object model; this means you could use it outside of Access but it would require creating an Access.Application object and fully qualifying the Eval calls
+There are some idiosyncrasies associated with Eval to be aware of
+It can only be used on functions that return a result that fits on a single line
+
+Despite its limitations, I still think it provides quite a bit of bang for your buck.  
+Edit:  Here is a simple function with "doctest rules" the function must satisfy.
+Public Function AddTwoValues(ByVal p1 As Variant, _
+        ByVal p2 As Variant) As Variant
+'>>> AddTwoValues(1,1)
+'2
+'>>> AddTwoValues(1,1) = 1
+'False
+'>>> AddTwoValues(1,Null)
+'Null
+'>>> IsError(AddTwoValues(1,"foo"))
+'True
+
+On Error GoTo ErrorHandler
+
+    AddTwoValues = p1 + p2
+
+ExitHere:
+    On Error GoTo 0
+    Exit Function
+
+ErrorHandler:
+    AddTwoValues = CVErr(Err.Number)
+    GoTo ExitHere
+End Function
+
+
+Although that being a very old answer:
+There is AccUnit, a specialized Unit-Test framework for Microsoft Access.
+
+1. Write Testable Code
+First, stop writing business logic into your Form's code behind. That's not the place for it. It can't be properly tested there. In fact, you really shouldn't have to test your form itself at all. It should be a dead dumb simple view that responds to User Interaction and then delegates responsibility for responding to those actions to another class that is testable.
+How do you do that? Familiarizing yourself with the Model-View-Controller pattern is a good start. 
+
+It can't be done perfectly in VBA due to the fact that we get either events or interfaces, never both, but you can get pretty close. Consider this simple form that has a text box and a button.
+
+In the form's code behind, we'll wrap the TextBox's value in a public property and re-raise any events we're interested in.
+Public Event OnSayHello()
+Public Event AfterTextUpdate()
+
+Public Property Let Text(value As String)
+    Me.TextBox1.value = value
+End Property
+
+Public Property Get Text() As String
+    Text = Me.TextBox1.value
+End Property
+
+Private Sub SayHello_Click()
+    RaiseEvent OnSayHello
+End Sub
+
+Private Sub TextBox1_AfterUpdate()
+    RaiseEvent AfterTextUpdate
+End Sub
+
+Now we need a model to work with. Here I've created a new class module named MyModel. Here lies the code we'll put under test. Note that it naturally shares a similar structure as our view.
+Private mText As String
+Public Property Let Text(value As String)
+    mText = value
+End Property
+
+Public Property Get Text() As String
+    Text = mText
+End Property
+
+Public Function Reversed() As String
+    Dim result As String
+    Dim length As Long
+
+    length = Len(mText)
+
+    Dim i As Long
+    For i = 0 To length - 1
+        result = result + Mid(mText, (length - i), 1)
+    Next i
+
+    Reversed = result
+End Function
+
+Public Sub SayHello()
+    MsgBox Reversed()
+End Sub
+
+Finally, our controller wires it all together. The controller listens for form events and communicates changes to the model and triggers the model's routines.
+Private WithEvents view As Form_Form1
+Private model As MyModel
+
+Public Sub Run()
+    Set model = New MyModel
+    Set view = New Form_Form1
+    view.Visible = True
+End Sub
+
+Private Sub view_AfterTextUpdate()
+    model.Text = view.Text
+End Sub
+
+Private Sub view_OnSayHello()
+    model.SayHello
+    view.Text = model.Reversed()
+End Sub
+
+Now this code can be run from any other module. For the purposes of this example, I've used a standard module. I highly encourage you to build this yourself using the code I've provided and see it function.
+Private controller As FormController
+
+Public Sub Run()
+    Set controller = New FormController
+    controller.Run
+End Sub
+
+
+So, that's great and all but what does it have to do with testing?! Friend, it has everything to do with testing. What we've done is make our code testable. In the example I've provided, there is no reason what-so-ever to even try to test the GUI. The only thing we really need to test is the model. That's where all of the real logic is. 
+So, on to step two.
+2. Choose a Unit Testing Framework
+There aren't a lot of options here. Most frameworks require installing COM Add-ins, lots of boiler plate, weird syntax, writing tests as comments, etc. That's why I got involved in building one myself, so this part of my answer isn't impartial, but I'll try to give a fair summary of what's available.
+
+AccUnit
+
+Works only in Access.
+Requires you to write tests as a strange hybrid of comments and code. (no intellisense for the comment part.
+There is a graphical interface to help you write those strange looking tests though.
+The project has not seen any updates since 2013.
+
+VB Lite Unit
+I can't say I've personally used it. It's out there, but hasn't seen an update since 2005.
+xlUnit
+xlUnit isn't awful, but it's not good either. It's clunky and there's lots of boiler plate code. It's the best of the worst, but it doesn't work in Access. So, that's out.
+Build your own framework
+I've been there and done that. It's probably more than most people want to get into, but it is completely possible to build a Unit Testing framework in Native VBA code.
+Rubberduck VBE Add-In's Unit Testing Framework
+Disclaimer: I'm one of the co-devs.
+I'm biased, but this is by far my favorite of the bunch.
+
+Little to no boiler plate code.
+Intellisense is available.
+The project is active.
+More documentation than most of these projects.
+It works in most of the major office applications, not just Access.
+It is, unfortunately, a COM Add-In, so it has to be installed onto your machine.
+
+
+3. Start writing tests
+So, back to our code from section 1. The only code that we really needed to test was the MyModel.Reversed() function. So, let's take a look at what that test could look like. (Example given uses Rubberduck, but it's a simple test and could translate into the framework of your choice.)
+'@TestModule
+Private Assert As New Rubberduck.AssertClass
+
+'@TestMethod
+Public Sub ReversedReversesCorrectly()
+
+Arrange:
+    Dim model As New MyModel
+    Const original As String = "Hello"
+    Const expected As String = "olleH"
+    Dim actual As String
+
+    model.Text = original
+
+Act:
+    actual = model.Reversed
+
+Assert:
+    Assert.AreEqual expected, actual
+
+End Sub
+
+Guidelines for Writing Good Tests
+
+Only test one thing at a time.
+Good tests only fail when there is a bug introduced into the system or the requirements have changed.
+Don't include external dependencies such as databases and file systems. These external dependencies can make tests fail for reasons outside of your control. Secondly, they slow your tests down. If your tests are slow, you won't run them.
+Use test names that describe what the test is testing. Don't worry if it gets long. It's most important that it is descriptive.
+
+
+I know that answer was a little long, and late, but hopefully it helps some people get started in writing unit tests for their VBA code.
+
+I find that there are relatively few opportunities for unit testing in my applications.  Most of the code that I write interacts with table data or the filing system so is fundamentally hard to unit test.  Early on, I tried an approach that may be similar to mocking (spoofing) where I created code that had an optional parameter.  If the parameter was used, then the procedure would use the parameter instead of fetching data from the database.  It is quite easy to set up a user defined type that has the same field types as a row of data and to pass that to a function.  I now have a way of getting test data into the procedure that I want to test.  Inside each procedure there was some code that swapped out the real data source for the test data source.  This allowed me to use unit testing on a wider variety of function, using my own unit testing functions.  Writing unit test is easy, it is just repetitive and boring.  In the end, I gave up with unit tests and started using a different approach.
+I write in-house applications for myself mainly so I can afford wait till issues find me rather than having to have perfect code.  If I do write applications for customers, generally the customer is not fully aware of how much software development costs so I need a low cost way of getting results.   Writing unit tests is all about writing a test that pushes bad data at a procedure to see if the procedure can handle it appropriately.  Unit tests also confirm that good data is handled appropriately.  My current approach is based on writing input validation into every procedure within an application and raising a success flag when the code has completed successfully.  Each calling procedure checks for the success flag before using the result.  If an issue occurs, it is reported by way of an error message.  Each function has a success flag, a return value, an error message, a comment and an origin.  A user defined type (fr for function return) contains the data members.  Any given function many populate only some of the data members in the user defined type.  When a function is run, it  usually returns success = true and a return value and sometimes a comment.  If a function fails, it returns success = false and an error message.  If a chain of functions fails, the error messages are daisy changed but the result is actually a lot more readable that a normal stack trace.  The origins are also chained so I know where the issue occurred.   The application rarely crashes and accurately reports any issues.  The result is a hell of a lot better than standard error handling.  
+Public Function GetOutputFolder(OutputFolder As eOutputFolder) As  FunctRet
+
+        '///Returns a full path when provided with a target folder alias. e.g. 'temp' folder
+
+            Dim fr As FunctRet
+
+            Select Case OutputFolder
+            Case 1
+                fr.Rtn = "C:\Temp\"
+                fr.Success = True
+            Case 2
+                fr.Rtn = TrailingSlash(Application.CurrentProject.path)
+                fr.Success = True
+            Case 3
+                fr.EM = "Can't set custom paths â not yet implemented"
+            Case Else
+                fr.EM = "Unrecognised output destination requested"
+            End Select
+
+    exitproc:
+        GetOutputFolder = fr
+
+    End Function
+
+Code explained.
+eOutputFolder is a user defined Enum as below
+Public Enum eOutputFolder
+    eDefaultDirectory = 1
+    eAppPath = 2
+    eCustomPath = 3
+End Enum
+
+I am using Enum for passing parameters to functions as this creates a limited set of known choices that a function can accept.  Enums also provide intellisense when entering parameters into functions.  I suppose they provide a rudimentary interface for a function.
+'Type FunctRet is used as a generic means of reporting function returns
+Public Type  FunctRet
+    Success As Long     'Boolean flag for success, boolean not used to avoid nulls
+    Rtn As Variant      'Return Value
+    EM As String        'Error message
+    Cmt As String       'Comments
+    Origin As String    'Originating procedure/function
+End Type
+
+A user defined type such as a FunctRet also provides code completion which helps.  Within the procedure, I usually store internal results to an anonymous internal variable (fr) before assigning the results to the return variable (GetOutputFolder).  This makes renaming procedures very easy as only the top and bottom have be changed.  
+So in summary, I have developed a framework with ms-access that covers all operations that involve VBA.  The testing is permanently written into the procedures, rather than a development time unit test.  In practice, the code still runs very fast.  I am very careful to optimise lower level functions that can be called ten thousand times a minute.  Furthermore, I can use the code in production as it is being developed.  If an error occurs, it is user friendly and the source and reason for the error are usually obvious.  Errors are reported from the calling form, not from some module in the business layer, which is an important principal of application design. Furthermore, I don't have the burden of maintaining unit testing code, which is really important when I am evolving a design rather than coding a clearly conceptualised design.  
+There are some potential issues.  The testing is not automated and new bad code is only detected when the application is run.  The code does not look like standard VBA code (it is usually shorter).  Still, the approach has some advantages.  It is far better that using an error handler just to log an error as the users will usually contact me and give me a meaningful error message.  It can also handle procedures that work with external data.  JavaScript reminds me of VBA, I wonder why JavaScript is the land of frameworks and VBA in ms-access is not.
+A few days after writing this post, I found an article on The CodeProject that comes close to what I have written above.  The article compares and contrasts exception handling and error handling.  What I have suggested above is akin to exception handling.

@@ -1,0 +1,366 @@
+How to handle checkboxes in ASP.NET MVC forms?
+asp.net-mvc forms checkbox
+Caution:  This question is over five years old!
+Your best option is to search for newer questions, or to search the answers below looking for your specific version of MVC, as many answers here are obsolete now.  
+If you do find an answer that works for your version, please make sure the answer contains the version of MVC you are using.
+(The original question starts below)
+
+This seems a bit bizarre to me, but as far as I can tell, this is how you do it.
+I have a collection of objects, and I want users to select one or more of them.  This says to me "form with checkboxes."  My objects don't have any concept of "selected" (they're rudimentary POCO's formed by deserializing a wcf call).  So, I do the following:
+public class SampleObject{
+  public Guid Id {get;set;}
+  public string Name {get;set;}
+}
+
+In the view:
+<%
+    using (Html.BeginForm())
+    {
+%>
+  <%foreach (var o in ViewData.Model) {%>
+    <%=Html.CheckBox(o.Id)%>&nbsp;<%= o.Name %>
+  <%}%>
+  <input type="submit" value="Submit" />
+<%}%>
+
+And, in the controller, this is the only way I can see to figure out what objects the user checked:
+public ActionResult ThisLooksWeird(FormCollection result)
+{
+  var winnars = from x in result.AllKeys
+          where result[x] != "false"
+          select x;
+  // yadda
+}
+
+Its freaky in the first place, and secondly, for those items the user checked, the FormCollection lists its value as "true false" rather than just true.  
+Obviously, I'm missing something.  I think this is built with the idea in mind that the objects in the collection that are acted upon within the html form are updated using UpdateModel() or through a ModelBinder.  
+But my objects aren't set up for this; does that mean that this is the only way?  Is there another way to do it?
+
+
+Here's what I've been doing.
+View:
+
+
+<input type="checkbox" name="applyChanges" />
+
+
+Controller:
+
+
+var checkBox = Request.Form["applyChanges"];
+
+if (checkBox == "on")
+{
+...
+}
+
+
+I found the Html.* helper methods not so useful in some cases, and that I was better off doing it in plain old HTML. This being one of them, the other one that comes to mind is radio buttons.
+Edit: this is on Preview 5, obviously YMMV between versions.
+
+Html.CheckBox is doing something weird - if you view source on the resulting page, you'll see there's an <input type="hidden" /> being generated alongside each checkbox, which explains the "true false" values you're seeing for each form element.
+Try this, which definitely works on ASP.NET MVC Beta because I've just tried it.
+Put this in the view instead of using Html.CheckBox():
+<% using (Html.BeginForm("ShowData", "Home")) {  %>
+  <% foreach (var o in ViewData.Model) { %>
+    <input type="checkbox" name="selectedObjects" value="<%=o.Id%>">
+    <%= o.Name %>
+  <%}%>
+  <input type="submit" value="Submit" />
+<%}%>
+
+Your checkboxes are all called selectedObjects, and the value of each checkbox is the GUID of the corresponding object.
+Then post to the following controller action (or something similar that does something useful instead of Response.Write())
+public ActionResult ShowData(Guid[] selectedObjects) {
+    foreach (Guid guid in selectedObjects) {
+        Response.Write(guid.ToString());
+    }
+    Response.End();
+    return (new EmptyResult());
+}
+
+This example will just write the GUIDs of the boxes you checked; ASP.NET MVC maps the GUID values of the selected checkboxes into the Guid[] selectedObjects parameter for you, and even parses the strings from the Request.Form collection into instantied GUID objects, which I think is rather nice.
+
+HtmlHelper adds an hidden input to notify the controller about Unchecked status.
+So to have the correct checked status:
+bool bChecked = form[key].Contains("true");
+
+
+You should also use <label for="checkbox1">Checkbox 1</label> because then people can click on the label text as well as the checkbox itself. Its also easier to style and at least in IE it will be highlighted when you tab through the page's controls.
+<%= Html.CheckBox("cbNewColors", true) %><label for="cbNewColors">New colors</label>
+
+This is not just a 'oh I could do it' thing. Its a significant user experience enhancement. Even if not all users know they can click on the label many will. 
+
+In case you're wondering WHY they put a hidden field in with the same name as the checkbox the reason is as follows :
+Comment from the sourcecode MVCBetaSource\MVC\src\MvcFutures\Mvc\ButtonsAndLinkExtensions.cs
+
+Render an additional <input
+  type="hidden".../> for checkboxes.
+  This addresses scenarios where
+  unchecked checkboxes are not sent in
+  the request. Sending a hidden input
+  makes it possible to know that the
+  checkbox was present on the page when
+  the request was submitted.
+
+I guess behind the scenes they need to know this for binding to parameters on the controller action methods. You could then have a tri-state boolean I suppose (bound to a nullable bool parameter). I've not tried it but I'm hoping thats what they did.
+
+This issue is happening in the release 1.0 as well. Html.Checkbox() causes another hidden field to be added with the same name/id as of your original checkbox. And as I was trying loading up a checkbox array using document.GetElemtentsByName(), you can guess how things were getting messed up. It's a bizarre.
+
+They appear to be opting to read the first value only, so this is "true" when the checkbox is checked, and "false" when only the hidden value is included.  This is easily fetched with code like this:
+model.Property = collection["ElementId"].ToLower().StartsWith("true");
+
+
+I'd also like to point out that you can name each checkbox a different name, and have that name part of the actionresults parameters.
+Example,
+View: 
+ <%= Html.CheckBox("Rs232CheckBox", false, new { @id = "rs232" })%>RS-232
+
+ <%= Html.CheckBox("Rs422CheckBox", false, new { @id = "rs422" })%>RS-422
+
+Controller:
+public ActionResults MyAction(bool Rs232CheckBox, bool Rs422CheckBox) {
+    ...
+}
+
+The values from the view are passed to the action since the names are the same.
+I know this solution isn't ideal for your project, but I thought I'd throw the idea out there.
+
+@Dylan Beattie Great Find!!! I Thank you much. To expand even further, this technique also works perfect with the View Model approach. MVC is so cool, it's smart enough to bind an array of Guids to a property by the same name of the Model object bound to the View. Example:
+ViewModel:
+public class SampleViewModel
+{
+    public IList<SampleObject> SampleObjectList { get; set; }
+    public Guid[] SelectedObjectIds { get; set; }
+
+    public class SampleObject
+    {
+        public Guid Id { get; set; }
+        public string Name { get; set; }
+    }
+}
+
+View:
+<asp:Content ID="Content2" ContentPlaceHolderID="MainContent" runat="server">
+<h2>Sample View</h2>
+<table>
+    <thead> 
+        <tr>
+            <th>Checked</th>
+            <th>Object Name</th>
+        </tr>
+    </thead> 
+<% using (Html.BeginForm()) %>
+<%{%>                    
+    <tbody>
+        <% foreach (var item in Model.SampleObjectList)
+           { %>
+            <tr>
+                <td><input type="checkbox" name="SelectedObjectIds" value="<%= item.Id%>" /></td>
+                <td><%= Html.Encode(item.Name)%></td>
+            </tr>
+        <% } %>
+    </tbody>
+</table>
+<input type="submit" value="Submit" />
+<%}%>                    
+
+
+Controller:
+    [AcceptVerbs(HttpVerbs.Get)]
+    public ActionResult SampleView(Guid id)
+    {
+        //Object to pass any input objects to the View Model Builder 
+        BuilderIO viewModelBuilderInput = new BuilderIO();
+
+        //The View Model Builder is a conglomerate of repositories and methods used to Construct a View Model out of Business Objects
+        SampleViewModel viewModel = sampleViewModelBuilder.Build(viewModelBuilderInput);
+
+        return View("SampleView", viewModel);
+    }
+
+    [AcceptVerbs(HttpVerbs.Post)]
+    public ActionResult SampleView(SampleViewModel viewModel)
+    {
+        // The array of Guids successfully bound to the SelectedObjectIds property of the View Model!
+        return View();
+    }
+
+Anyone familiar with the View Model philosophy will rejoice, this works like a Champ!
+
+<input type = "checkbox" name = "checkbox1" /> <label> Check to say hi.</label>
+
+From the Controller:
+    [AcceptVerbs(HttpVerbs.Post)]
+    public ActionResult Index(FormCollection fc)
+    {
+
+         var s = fc["checkbox1"];
+
+         if (s == "on")
+         {
+             string x = "Hi";
+         }
+    }
+
+
+this is what i did to loose the double values when using the Html.CheckBox(...
+Replace("true,false","true").Split(',')
+
+with 4 boxes checked, unchecked, unchecked, checked it turns
+true,false,false,false,true,false
+into 
+true,false,false,true. 
+just what i needed
+
+How about something like this?
+bool isChecked = false;
+if (Boolean.TryParse(Request.Form.GetValues(âchkHumanâ)[0], out isChecked) == false)
+    ModelState.AddModelError(âchkHumanâ, âNice try.â);
+
+
+My solution is:
+<input type="checkbox"  id="IsNew-checkbox"  checked="checked" />     
+<input type="hidden"  id="IsNew" name="IsNew" value="true"  />      
+<script language="javascript" type="text/javascript" >     
+  $('#IsNew-checkbox').click(function () {    
+      if ($('#IsNew-checkbox').is(':checked')) {    
+          $('#IsNew').val('true');    
+      } else {    
+          $('#IsNew').val('false');    
+       }    
+  });   
+</script>  
+
+More you can find here:
+http://www.blog.mieten.pl/2010/12/asp-net-mvc-custom-checkbox-as-solution-of-string-was-not-recognized-as-a-valid-boolean/
+
+When using the checkbox HtmlHelper, I much prefer to work with the posted checkbox form data as an array. I don't really know why, I know the other methods work, but I think I just prefer to treat comma separated strings as an array as much as possible.
+So doing a 'checked' or true test would be:
+//looking for [true],[false]
+bool isChecked = form.GetValues(key).Contains("true"); 
+
+Doing a false check would be:
+//looking for [false],[false] or [false]
+bool isNotChecked = !form.GetValues(key).Contains("true"); 
+
+The main difference is to use GetValues as this returns as an array.
+
+Just do this on $(document).ready : 
+$('input:hidden').each(function(el) {
+    var that = $(this)[0];
+    if(that.id.length < 1 ) {
+
+        console.log(that.id);
+        that.parentElement.removeChild(that);
+
+    }
+});
+
+
+I'm surprised none of these answers used the built in MVC features for this.
+I wrote a blog post about this here, which even actually links the labels to the checkbox. I used the EditorTemplate folder to accomplish this in a clean and modular way.
+You will simply end up with a new file in the EditorTemplate folder that looks like this:
+@model SampleObject
+
+@Html.CheckBoxFor(m => m.IsChecked)
+@Html.HiddenFor(m => m.Id)
+@Html.LabelFor(m => m.IsChecked, Model.Id)
+
+in your actual view, there will be no need to loop this, simply 1 line of code:
+@Html.EditorFor(x => ViewData.Model)
+
+Visit my blog post for more details.
+
+The easiest way to do is so...
+You set the name and value.
+<input type="checkbox" name="selectedProducts" value="@item.ProductId" />@item.Name
+Then on submitting grab the values of checkboxes and save in an int array.
+then the appropriate LinQ Function. That's it..
+[HttpPost]
+        public ActionResult Checkbox(int[] selectedObjects)
+        {
+            var selected = from x in selectedObjects
+                           from y in db
+                           where y.ObjectId == x
+                           select y;                   
+
+            return View(selected);
+        }
+
+
+From what I can gather, the model doesn't want to guess whether checked = true or false, I got around this by setting a value attribute on the checkbox element with jQuery before submitting the form like this:
+ $('input[type="checkbox"]').each(function () {
+       $(this).attr('value', $(this).is(':checked'));
+ }); 
+
+This way, you don't need a hidden element just to store the value of the checkbox.
+
+I know that this question was written when MVC3 wasn't out, but for anyone who comes to this question and are using MVC3, you may want the "correct" way to do this.
+While I think that doing the whole
+Contains("true");
+
+thing is great and clean, and works on all MVC versions, the problem is that it doesn't take culture into account (as if it really matters in the case of a bool).
+The "correct" way to figure out the value of a bool, at least in MVC3, is to use the ValueProvider.
+var value = (bool)ValueProvider.GetValue("key").ConvertTo(typeof(bool));
+
+I do this in one of my client's sites when I edit permissions:
+var allPermissionsBase = Request.Params.AllKeys.Where(x => x.Contains("permission_")).ToList();
+var allPermissions = new List<KeyValuePair<int, bool>>();
+
+foreach (var key in allPermissionsBase)
+{
+     // Try to parse the key as int
+     int keyAsInt;
+     int.TryParse(key.Replace("permission_", ""), out keyAsInt);
+
+     // Try to get the value as bool
+     var value = (bool)ValueProvider.GetValue(key).ConvertTo(typeof(bool));
+}
+
+Now, the beauty of this is you can use this with just about any simple type, and it will even be correct based on the Culture (think money, decimals, etc).
+The ValueProvider is what is used when you form your Actions like this:
+public ActionResult UpdatePermissions(bool permission_1, bool permission_2)
+
+but when you are trying to dynamically build these lists and check the values, you will never know the Id at compile time, so you have to process them on the fly.
+
+I had nearly the same Problem but the return Value of my Controller was blocked with other Values.
+Found a simple Solution but it seems a bit rough.
+Try to type Viewbag. in your Controller and now you give it a name like Viewbag.Checkbool
+Now switch to the View and try this @Viewbag.Checkbool with this you will get the value out of the Controller.
+My Controller Parameters look like this:
+public ActionResult Anzeigen(int productid = 90, bool islive = true)
+
+and my Checkbox will update like this:
+<input id="isLive" type="checkbox" checked="@ViewBag.Value" ONCLICK="window.location.href = '/MixCategory/Anzeigen?isLive=' + isLive.checked.toString()" />
+
+
+Using @mmacaulay , I came up with this for bool:
+// MVC Work around for checkboxes.
+bool active = (Request.Form["active"] == "on");
+
+If checked
+active = true
+If unchecked
+active = false
+
+Same as nautic20's answer, just simply use MVC default model binding checkbox list with same name as a collection property of string/int/enum in ViewModel. That is it.
+But one issue need to point out. In each checkbox component, you should not put "Id" in it which will affect MVC model binding.
+Following code will work for model binding:
+ <% foreach (var item in Model.SampleObjectList)
+       { %>
+        <tr>
+            <td><input type="checkbox" name="SelectedObjectIds" value="<%= item.Id%>" /></td>
+            <td><%= Html.Encode(item.Name)%></td>
+        </tr>
+ <% } %>
+
+Following codes will not binding to model (difference here is it assigned id for each checkbox)
+<% foreach (var item in Model.SampleObjectList)
+       { %>
+        <tr>
+            <td><input type="checkbox" name="SelectedObjectIds" id="[some unique key]" value="<%= item.Id%>" /></td>
+            <td><%= Html.Encode(item.Name)%></td>
+        </tr>
+<% } %>
+

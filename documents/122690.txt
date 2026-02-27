@@ -1,0 +1,109 @@
+What is a simple command line program or script to backup SQL server databases?
+sql-server command-line scripting backup
+I've been too lax with performing DB backups on our internal servers. 
+Is there a simple command line program that I can use to backup certain databases in SQL Server 2005? Or is there a simple VBScript? 
+
+
+Schedule the following to backup all Databases:
+Use Master
+
+Declare @ToExecute VarChar(8000)
+
+Select @ToExecute = Coalesce(@ToExecute + 'Backup Database ' + [Name] + ' To Disk =     ''D:\Backups\Databases\' + [Name]   + '.bak'' With Format;' + char(13),'')
+From
+Master..Sysdatabases
+Where
+[Name] Not In ('tempdb')
+and databasepropertyex ([Name],'Status') = 'online'
+
+Execute(@ToExecute)
+
+There are also more details on my blog: how to Automate SQL Server Express Backups.
+
+If you can find the DB files... "cp DBFiles backup/"
+Almost for sure not advisable in most cases, but it's simple as all getup.
+
+To backup a single database from the command line, use osql or sqlcmd.
+"C:\Program Files\Microsoft SQL Server\90\Tools\Binn\osql.exe" 
+    -E -Q "BACKUP DATABASE mydatabase TO DISK='C:\tmp\db.bak' WITH FORMAT"
+
+You'll also want to read the documentation on BACKUP and RESTORE and general procedures.
+
+I use ExpressMaint.
+To backup all user databases I do for example:
+C:>ExpressMaint.exe -S (local)\sqlexpress -D ALL_USER -T DB -BU HOURS -BV 1 -B c:\backupdir\ -DS
+
+I'm using tsql on a Linux/UNIX infrastructure to access MSSQL databases. Here's a simple shell script to dump a table to a file:
+#!/usr/bin/ksh
+#
+#.....
+(
+tsql -S {database} -U {user} -P {password} <<EOF
+select * from {table}
+go
+quit
+EOF
+) >{output_file.dump}
+
+
+I found this on a Microsoft Support page http://support.microsoft.com/kb/2019698.  
+It works great!  And since it came from Microsoft, I feel like it's pretty legit.
+Basically there are two steps.
+
+Create a stored procedure in your master db. See msft link or if it's broken try here: http://pastebin.com/svRLkqnq
+Schedule the backup from your task scheduler.  You might want to put into a .bat or .cmd file first and then schedule that file.
+sqlcmd -S YOUR_SERVER_NAME\SQLEXPRESS -E -Q "EXEC sp_BackupDatabases @backupLocation='C:\SQL_Backup\', @backupType='F'"  1>c:\SQL_Backup\backup.log            
+
+
+Obviously replace YOUR_SERVER_NAME with your computer name or optionally try .\SQLEXPRESS and make sure the backup folder exists.  In this case it's trying to put it into c:\SQL_Backup
+
+Eventual if you don't have a trusted connection as the âE switch declares 
+Use following command line
+"[program dir]\[sql server version]\Tools\Binn\osql.exe" -Q "BACKUP DATABASE mydatabase TO DISK='C:\tmp\db.bak'" -S [server] âU [login id] -P [password]
+Where
+[program dir] is the directory where the osql.exe exists
+On 32bit OS c:\Program Files\Microsoft SQL Server\
+On 64bit OS c:\Program Files (x86)\Microsoft SQL Server\
+[sql server version] your sql server version 110 or 100 or 90 or 80 begin with the largest number
+[server] your servername or server ip
+[login id] your ms-sql server user login name
+[password] the required login password
+
+Below is the simple script to make database backup.
+DECLARE @name VARCHAR(50) -- database name  
+DECLARE @path VARCHAR(256) -- path for backup files  
+DECLARE @fileName VARCHAR(256) -- filename for backup  
+DECLARE @fileDate VARCHAR(20) -- used for file name
+
+
+-- specify database backup directory
+SET @path = 'C:\Backup\'  
+
+
+-- specify filename format
+SELECT @fileDate = CONVERT(VARCHAR(20),GETDATE(),112) 
+
+
+DECLARE db_cursor CURSOR FOR  
+SELECT name 
+FROM master.dbo.sysdatabases 
+WHERE name NOT IN ('master','model','msdb','tempdb')  -- exclude these databases
+
+
+OPEN db_cursor   
+FETCH NEXT FROM db_cursor INTO @name   
+
+
+WHILE @@FETCH_STATUS = 0   
+BEGIN   
+       SET @fileName = @path + @name + '_' + @fileDate + '.BAK'  
+       BACKUP DATABASE @name TO DISK = @fileName  
+
+
+       FETCH NEXT FROM db_cursor INTO @name   
+END   
+
+
+CLOSE db_cursor   
+DEALLOCATE db_cursor
+

@@ -1,0 +1,66 @@
+SELECT with ORs including table joins
+sql
+I've got a database with three tables: Books (with book details, PK is CopyID), Keywords (list of keywords, PK is ID) and KeywordsLink which is the many-many link table between Books and Keywords with the fields ID, BookID and KeywordID.
+I'm trying to make an advanced search form in my app where you can search on various criteria. At the moment I have it working with Title, Author and Publisher (all from the Book table). It produces SQL like:
+SELECT * FROM Books WHERE Title Like '%Software%' OR Author LIKE '%Spolsky%';
+
+I want to extend this search to also search using tags - basically to add another OR clause to search the tags. I've tried to do this by doing the following
+SELECT *
+    FROM Books, Keywords, Keywordslink
+    WHERE Title LIKE '%Joel%'
+       OR (Name LIKE '%good%' AND BookID=Books.CopyID AND KeywordID=Keywords.ID)
+
+I thought using the brackets might separate the 2nd part into its own kinda clause, so the join was only evaluated in that part - but it doesn't seem to be so. All it gives me is a long list of multiple copies of the one book that satisfies the Title LIKE '%Joel%' bit.
+Is there a way of doing this using pure SQL, or would I have to use two SQL statements and combine them in my app (removing duplicates in the process).
+I'm using MySQL at the moment if that matters, but the app uses ODBC and I'm hoping to make it DB agnostic (might even use SQLite eventually or have it so the user can choose what DB to use).
+
+
+SELECT * FROM books WHERE title LIKE'%Joel%' OR bookid IN 
+         (SELECT bookid FROM keywordslink WHERE keywordid IN
+         (SELECT id FROM keywords WHERE name LIKE '%good%'))
+
+Beware that older versions of MySQL didn't like subselects.  I think they've fixed that.
+
+You need to join the 3 tables together, which gives you a tablular resultset.  You can then check any columns you like, and make sure you get distinct results (i.e. no duplicates).
+Like this:
+select distinct b.*
+from books b
+left join keywordslink kl on kl.bookid = b.bookid
+left join keywords k on kl.keywordid = k.keywordid
+where b.title like '%assd%'
+or k.keyword like '%asdsad%'
+
+You should also try to avoid starting your LIKE values with a percent sign (%), as this means SQL Server can't use an index on that column and has to perform a full (and slow) table scan.  This starts to make your query into a "starts with" query.
+Maybe consider the full-text search options in SQL Server, also.
+
+What you've done here is made a cartesian result set by having the tables joined with the commas but not having any join criteria.  Switch your statements to use outer join statements and that should allow you to reference the keywords.  I don't know your schema, but maybe something like this would work:
+SELECT 
+  * 
+FROM 
+  Books 
+  LEFT OUTER JOIN KeywordsLink ON KeywordsLink.BookID = Books.CopyID 
+  LEFT OUTER JOIN Keywords ON Keywords.ID = KeywordsLink.KeywordID 
+WHERE Books.Title LIKE '%JOEL%' 
+      OR Keywords.Name LIKE '%GOOD%'
+
+
+You must also limit the product of the join by specifying something like
+
+Books.FK1 = Keywords.FK1 and
+Books.FK2 = Keywordslink.FK2 and
+Keywords.FK3 = Keywordslink.FK3
+
+But i don't know your exact data model so your solution may be slightly different.
+
+Use UNION.
+(SELECT Books.* FROM <first kind of search>)
+UNION
+(SELECT Books.* FROM <second kind of search>)
+
+The point is that you could write two (or more) simple and efficient queries instead of one complicated query that tries to do everything at once.
+If number of resulting rows is low, then UNION will have very little overhead (and you can use faster UNION ALL if you don't have duplicates or don't care about them).
+
+I'm not aware of any way to accomplish a "conditional join" in SQL.  I think you'll be best served with executing the two statements separately and combining them in the application.  This approach is also more likely to stay DB-agnostic.
+
+It looks like Neil Barnwell has covered the answer that I would have given, but I'll add one thing...
+Books can have more than one author. If your data model is really designed as your query implies you might want to consider changing it to accommodate that fact.

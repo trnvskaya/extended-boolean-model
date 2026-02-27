@@ -1,0 +1,138 @@
+C++ Parent class calling a child virtual function
+c++ design inheritance virtual
+I want a pure virtual parent class to call a child implementation of a function like so:
+class parent
+{
+  public:
+    void Read() { //read stuff }
+    virtual void Process() = 0;
+    parent() 
+    {
+        Read();
+        Process();
+    }
+}
+class child : public parent
+{
+  public:
+    virtual void Process() { //process stuff }
+    child() : parent() { }
+}
+
+int main()
+{
+   child c;
+}
+
+This should work, but I get an unlinked error :/ This is using VC++ 2k3
+Or shouldn't it work, am I wrong?
+
+
+Will work in general, but not for calls within the constructor of the pure virtual base class. At the time the base class in constructed, the sub-class override doesn't exist, so you can't call it. As long as you call it once the entire object is constructed, it should work.
+
+It's because your call is in the constructor. The derived class will not be valid until the constructor has completed so you compiler is right in dinging you for this.
+There are two solutions:
+
+Make the call to Process() in the derived class's constructor
+define a blank function body for Process as in the following example:
+
+class parent
+{
+  public:
+    void Read() { //read stuff }
+    virtual void Process() { }
+    parent() 
+    {
+        Read();
+        Process();
+    }
+}
+
+
+Title of the following article says it all: Never Call Virtual Functions during Construction or Destruction.
+
+Alternatively,  make a factory method for creating the objects and make the constructors private,  the factory method can then Initialize the object after construction.
+
+You need to wrap in inside an object that calls the virtual method after the object is fully constructed:
+class parent
+{
+  public:
+    void Read() { /*read stuff*/ }
+    virtual void Process() = 0;
+    parent()
+    {
+        Read();
+    }
+};
+
+class child: public parent
+{
+  public:
+    virtual void Process() { /*process stuff*/ }
+    child() : parent() { }
+};
+
+template<typename T>
+class Processor
+{
+    public:
+        Processor()
+            :processorObj() // Pass on any args here
+        {
+            processorObj.Process();
+        }
+    private:
+        T   processorObj;
+
+};
+
+
+
+
+int main()
+{
+   Processor<child> c;
+}
+
+
+With one step more you could just introduce some kind of a function like
+class parent
+{
+    public:
+        void initialize() {
+            read();
+            process();
+        }
+}
+
+
+The superficial problem is that you call a virtual function that's not known yet (Objects are constructed from Parent to Child, thus so are the vtables).  Your compiler warned you about that.
+The essential problem, as far as I can see, is that you try to reuse functionality by inheritance.  This is almost always a bad idea.  A design issue, so to speak :)
+Essentially, you try instantiating a Template Method pattern, to separate the what from the when: first read some data (in some way), then process it (in some way).
+This will probably much better work with aggregation: give the Processing function to the Template method to be called at the right time.  Maybe you can even do the same for the Read functionality.
+The aggregation can be done in two ways:
+
+Using virtual functions (i.e. Runtime Binding)
+Using templates (i.e. Compile Time Binding)
+
+Example 1: runtime binding
+class Data {};
+class IReader    { public: virtual Data read()            = 0; };
+class IProcessor { public: virtual void process( Data& d) = 0; };
+
+class ReadNProcess {
+public:
+    ReadNProcess( IReader& reader, IProcessor processor ){
+       processor.process( reader.read() );
+    }
+};
+
+Example 2: compiletime binding
+template< typename Reader, typename Writer > // definitely could use concepts here :)
+class ReadNProcess {
+public:
+     ReadNProcess( Reader& r, Processor& p ) {
+         p.process( r.read() );
+     }
+};
+

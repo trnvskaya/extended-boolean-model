@@ -1,0 +1,77 @@
+How do I use a variable in a grep with groovy?
+groovy grep
+I need to grep for lines with bunch of names, say "clientLogin=a@yahoo.com", "clientLogin=b@gmail.com" from a file.txt
+file.txt has junk which is email=a@yahoo.com email=b@gmail.com. I need to filter these out
+Once I get these lines I need to grep for gmail and yahoo and get their counts
+List l = new ArrayList{a@yahoo.com, b@gmail.com}
+def gmail = ['sh','-c','grep "clientLogin="$l.get(0) file.txt' | grep gmail | wc -l ]
+def yahoo = ['sh','-c','grep "clientLogin="$l.get(1) file.txt' | grep yahoo| wc -l ]
+
+This doesn't work. How can I substitute the $l.get(1) value dynamically?
+
+the problem is that ${l.get(0)} has to be inside the  " ", 
+i.e. def gmail = ['sh','-c','grep "clientLogin=${l.get(0)}" file.txt' | grep gmail | wc -l ]
+so that it will look like
+def gmail = ['sh','-c','grep "clientLogin=a@yahoo.com" file.txt' | grep gmail | wc -l ]
+but "clientLogin=${l.get(0)}" doesn't produce the result. I am not sure where I am going wrong. 
+Thanks for your suggestion but it doesn't produce the result, at least when I tried it.
+
+file.txt has lot of junk and a pattern something like 
+"Into the domain clientLogin=a@yahoo.com exit on 12/01/2008 etc.."
+hence I do 
+def ex = ['sh','-c','grep "domain clientLogin=$client" file.txt'| grep "something more" | wc -l]
+that way I can chain the grep as I want and eventually land at the count I need.
+I am not sure if I can chain the greps if I use 
+def ex = ['grep', "$client", 'file.txt']
+thanks for your input.
+
+
+I'm not sure you need the 'sh' and '-c'. I was able to get this to work:
+def client = 'foo@bar.com'
+def ex = ['grep', "$client", 'file.txt']
+
+def proc = ex.execute()
+proc.waitFor()
+
+println "return: ${proc.exitValue()}"
+println "stderr: ${proc.err.text}"
+println "stdout: ${proc.in.text}"
+
+Groovy's documentation may also assist you with this.
+
+You need {}'s around the variable expression.  That is:
+ "${l.get(0)}"
+
+See Groovy String documentation for more information.  
+Full example:
+List l = new ArrayList{a@yahoo.com, b@gmail.com}
+def gmail = ['sh','-c','grep "clientLogin="${l.get(0)} file.txt' | grep gmail | wc -l ]
+def yahoo = ['sh','-c','grep "clientLogin="${l.get(1)} file.txt' | grep yahoo| wc -l ]
+
+
+You're already using groovy, does using a regular expression that gives you your answer work?
+def file = new File("file.txt")    
+file.delete() // clear out old version for multiple runs
+file <<  """
+foobar clientLogin=a@yahoo.com baz quux   # should match a@yahoo.com
+foobar email=a@yahoo.com baz quux
+foobar email=b@gmail.com bal zoom
+foobar clientLogin=a@yahoo.com baz quux   # should match a@yahoo.com
+foobar clientLogin=b@gmail.com bal zoom   # should match b@gmail.com
+foobar email=b@gmail.com bal zoom
+"""
+
+def emailList = ["a@yahoo.com", "b@gmail.com"]
+def emailListGroup = emailList.join('|')
+def pattern = /(?m)^.*clientLogin=($emailListGroup).*$/
+
+def resultMap = [:]
+
+(file.text =~ pattern).each { fullLine, email ->
+    resultMap[email] = resultMap[email] ? resultMap[email] + 1 : 1
+}
+
+assert resultMap["a@yahoo.com"] == 2
+assert resultMap["b@gmail.com"] == 1
+
+That feels cleaner to me than trying to shell out to a process and working with that, plus it only will pick out the exact lines with "clientLogin=(email)" that you're looking for.

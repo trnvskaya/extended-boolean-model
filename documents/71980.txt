@@ -1,0 +1,44 @@
+How do you efficiently copy BSTR to wchar_t[]?
+c++ com wchar-t bstr
+I have a BSTR object that I would like to convert to copy to a wchar__t object. The tricky thing is the length of the BSTR object could be anywhere from a few kilobytes to a few hundred kilobytes. Is there an efficient way of copying the data across? I know I could just declare a wchar_t array and alway allocate the maximum possible data it would ever need to hold. However, this would mean allocating hundreds of kilobytes of data for something that potentially might only require a few kilobytes. Any suggestions?
+
+
+BSTR objects contain a length prefix, so finding out the length is cheap. Find out the length, allocate a new array big enough to hold the result, process into that, and remember to free it when you're done.
+
+Use ATL, and CStringT then you can just use the assignment operator. Or you can use the USES_CONVERSION macros, these use heap alloc, so you will be sure that you won't leak memory.
+
+There is never any need for conversion. A BSTR pointer points to the first character of the string and it is null-terminated. The length is stored before the first character in memory. BSTRs are always Unicode (UTF-16/UCS-2). There was at one stage something called an 'ANSI BSTR' - there are some references in legacy APIs - but you can ignore these in current development.
+This means you can pass a BSTR safely to any function expecting a wchar_t.
+In Visual Studio 2008 you may get a compiler error, because BSTR is defined as a pointer to unsigned short, while wchar_t is a native type. You can either cast or turn off wchar_t compliance with /Zc:wchar_t.
+
+One thing to keep in mind is that BSTR strings can, and often do, contain embedded nulls. A null does not mean the end of the string.
+
+First, you might not actually have to do anything at all, if all you need to do is read the contents. A BSTR type is a pointer to a null-terminated wchar_t array already. In fact, if you check the headers, you will find that BSTR is essentially defined as:
+typedef BSTR wchar_t*;
+
+So, the compiler can't distinguish between them, even though they have different semantics.
+There is are two important caveat.
+
+BSTRs are supposed to be immutable. You should never change the contents of a BSTR after it has been initialized. If you "change it", you have to create a new one assign the new pointer and release the old one (if you own it).
+[UPDATE: this is not true; sorry! You can modify BSTRs in place; I very rarely have had the need.]
+BSTRs are allowed to contain embedded null characters, whereas traditional C/C++ strings are not.
+
+If you have a fair amount of control of the source of the BSTR, and can guarantee that the BSTR does not have embedded NULLs, you can read from the BSTR as if it was a wchar_t and use conventional string methods (wcscpy, etc) to access it. If not, your life gets harder. You will have to always manipulate your data as either more BSTRs, or as a dynamically-allocated array of wchar_t. Most string-related functions will not work correctly.
+Let's assume you control your data, or don't worry about NULLs. Let's assume also that you really need to make a copy and can't just read the existing BSTR directly. In that case, you can do something like this:
+UINT length = SysStringLen(myBstr);        // Ask COM for the size of the BSTR
+wchar_t *myString = new wchar_t[lenght+1]; // Note: SysStringLen doesn't 
+                                           // include the space needed for the NULL
+
+wcscpy(myString, myBstr);                  // Or your favorite safer string function
+
+// ...
+
+delete myString; // Done
+
+If you are using class wrappers for your BSTR, the wrapper should have a way to call SysStringLen() for you. For example:
+CComBString    use .Length();
+_bstr_t        use .length();
+
+UPDATE: This is a good article on the subject by someone far more knowledgeable than me:
+"Eric [Lippert]'s Complete Guide To BSTR Semantics"
+UPDATE: Replaced strcpy() with wcscpy() in example

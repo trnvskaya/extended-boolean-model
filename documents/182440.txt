@@ -1,0 +1,149 @@
+"TryParse / Parse like" pattern: what is the best way to implement it
+design-patterns return-value try-catch
+This question is a follow-up from How to indicate that a method was unsuccessful. The xxx() Tryxxx() pattern is something that can be very useful in many libraries. I am wondering what is the best way to offer both implementations without duplicating my code.
+What is best:
+public int DoSomething(string a)
+{
+     // might throw an exception
+}
+public bool TrySomething(string a, out result)
+{
+    try
+    {
+        result = DoSomething(a)
+        return true;
+    }
+    catch (Exception)
+    {
+        return false;
+    }
+
+or
+public int DoSomething(string a)
+{
+     int result;
+     if (TrySomething(a, out result))
+     {
+         return result;
+     }
+     else
+     {
+         throw Exception(); // which exception?
+     }
+}
+public bool TrySomething(string a, out result)
+{
+    //...
+}
+
+I'd instinctively assume that the first example is more correct (you know exactly which exception happened), but couldn't the try/catch be too expensive? Is there a way to catch the exception in the second example?
+
+
+The first example is correct if you are just going to catch the exception and not do anything but return false with it.  
+You could change TrySomething to look like below.
+public bool TrySomething(string a, out result, bool throwException)
+{
+  try
+  {
+    // Whatever
+  }
+  catch
+  {
+    if(throwException)
+    {
+      throw;
+    }
+    else
+    {
+      return false;
+    }
+  }
+
+}
+
+public bool TrySomething(string a, out result)
+{
+  return TrySomething(a, out result, false);
+}
+
+So DoSomething would look like
+public int DoSomething(string a)
+{
+  int result;
+
+  // This will throw the execption or 
+  // change to false to not, or don't use the overloaded one.
+  TrySomething(a, out result, true) 
+
+  return result;      
+}
+
+If you did not want TrySomething with throwException exposed to the public you can make it a private member.
+Exceptions could get expensive and you could do some RegEx checking on the string to prevent one from being thrown.  It depends on what you are trying to do.
+
+Assuming this is C#, I would say the second example 
+public bool TrySomething(string a, out result)
+{
+    try
+    {
+        result = DoSomething(a)
+        return true;
+    }
+    catch (Exception)
+    {
+        return false;
+    }
+}
+
+It mimics the built in int.TryParse(string s, out int result), and in my opinion its best to stay consistent with the language/environment.
+
+I usually use this pattern.  Depends on how the Internal method is implemented as to whether or not this makes any sense.  If you have to use conditional catch blocks it can get a bit nasty...
+public object DoSomething(object input){
+  return DoSomethingInternal(input, true);
+}
+
+public bool TryDoSomething(object input, out object result){
+  result = DoSomethingInternal(input, false);
+  return result != null;
+}
+
+private object DoSomethingInternal(object input, bool throwOnError){
+  /* do your work here; only throw if you cannot proceed and throwOnError is true */
+}
+
+
+Making TrySomething just catch and swallow the exception is a really bad idea. Half the point of the TryXXX pattern is to avoid the performance hit of exceptions.
+If you don't need much information in the exception, you could make the DoSomething method just call TrySomething and throw an exception if it fails. If you need details in the exception, you may need something more elaborate. I haven't timed where the bulk of the performance hit of exceptions is - if it's the throwing rather than the creating, you could write a private method which had a similar signature to TrySomething, but which returned an exception or null:
+public int DoSomething(string input)
+{
+    int ret;
+    Exception exception = DoSomethingImpl(input, out ret);
+    if (exception != null)
+    {
+        // Note that you'll lose stack trace accuracy here
+        throw exception;
+    }
+    return ret;
+}
+
+public bool TrySomething(string input, out int ret)
+{
+    Exception exception = DoSomethingImpl(input, out ret);
+    return exception == null;
+}
+
+private Exception DoSomethingImpl(string input, out int ret)
+{
+    ret = 0;
+    if (input != "bad")
+    {
+        ret = 5;
+        return null;
+    }
+    else
+    {
+        return new ArgumentException("Some details");
+    }
+}
+
+Time this before you commit to it though!

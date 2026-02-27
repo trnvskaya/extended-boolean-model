@@ -1,0 +1,35 @@
+NHibernate, auditing and computed column values
+c# .net nhibernate
+How is possible to set some special column values when update/insert entities via NHibernate without extending domain classes with special properties?
+E.g. every table contains audit columns like CreatedBy, CreatedDate, UpdatedBy, UpdatedDate. But I dont want to add these poperties to the domain classes. I want to keep domain modedl Percistence Ignorance factor as high as possible.
+
+
+It's not the same as "not adding these properties", but the last time I saw this, the engineer addressed it by implementing concrete NHibernate classes and deriving them from a common abstract base class (e.g. MyAuditable) that implemented the properties you dislike. This way you only have to solve the problem once.
+
+You might want to try looking into NHibernate's IUserType.
+At the bottom of the following page is an example where ayende removes some encryption logic out of the entity and allows NHibernate to just take care of it.
+http://ayende.com/Blog/archive/2008/07/31/Entities-dependencies-best-practices.aspx
+
+After a few hours of hacking NHibernate I found the compromised solution of how to keep domain layer classes isolated from infrastructure layer. Only one 'victim' here is the point #1 in the  list below:
+1) I have introduced the base class DomainObject for all persistable entities in domain with only one private field:
+private IDictionary _infrastructureProperties = new Dictionary<object, object>();
+
+2) Added the following section in the class mapping:
+<dynamic-component name='_infrastructureProperties' access='field'>
+  <property name='CreateBy' column='CreatedBy' />
+  <property name='CreateDate' column='CreatedDate' />
+</dynamic-component>
+
+3)  Implemented a Interceptor which sets these properties values.
+4) Optional. Also we could implement a kind settings with configuration of what 'role' every class is playing in the application and then to work with role specific properties in the Interceptor. E.g. this config may state that Product is TenantScopeObject and the interceptor will set the property named TenantID in value of current tenant identity is logged in the system.
+
+Mapping Timestamp Data Using NHibernate's ICompositeUserType and 
+Creating a Timestamp Interceptor in NHibernate
+I found these articles useful. Obviously it's not PI because you're tied to NH / SQL. 
+Most IoC containers come with interceptors now, so you could intercept your changes and queue them. If the UoW flushes your changes then you could persist your audit trail too.
+
+Note for search engine wayfarers that, with NH v2.0 and greater, it is now quite elegant to do this with event listeners:
+Example:
+http://ayende.com/Blog/archive/2009/04/29/nhibernate-ipreupdateeventlistener-amp-ipreinserteventlistener.aspx
+Manual:
+http://knol.google.com/k/fabio-maulo/nhibernate-chapter-11-interceptors-and/1nr4enxv3dpeq/14

@@ -1,0 +1,104 @@
+Singleton Destructors
+c++ memory-management singleton
+Should Singleton objects that don't use instance/reference counters be considered memory leaks in C++?
+Without a counter that calls for explicit deletion of the singleton instance when the count is zero, how does the object get deleted?  Is it cleaned up by the OS when the application is terminated?  What if that Singleton had allocated memory on the heap?
+In a nutshell, do I have to call a Singelton's destructor or can I rely on it getting cleaned up when the application terminates?
+
+
+Any heap memory allocated by your process and not freed (deleted) will be reclaimed by the OS. If you're using the most common implementation of the singleton, which uses static variables, this would be cleaned up upon your application's termination as well.
+*This does not mean that you should go around new-ing pointers and never cleaning them up though.
+
+A singleton would be one instance of your object. This is why it does not require a counter.  If it's going to exist for the length of your application then the default destructor will be fine.  The memory will be, in any case, reclaimed by the operating system when the process ends.  
+
+You can rely on it being cleaned up by the operating system. 
+That said, if you are in a garbage collected language with finalizers rather than destructors you may want to have a graceful shutdown procedure that can cleanly  shutdown your singletons directly so they can free any critical resources in case there are using system resources that won't be correctly cleaned up by merely ending the application. 
+This is because finalizers run on a sort of 'best effort' basis in most languages. On the other hand there a very very few resources that need this sort of reliability. file handles, memory, etc. all go back to the OS cleanly regardless.
+If you are using a singleton that is lazily allocated (i.e. with a triple-check lock idiom) in a language like c++ with real destructors rather than finalizers, then you cannot rely on its destructor being invoked during program shutdown. If you are using a single static instance then the destructor will run after main completes at some point.
+Regardless, when the process ends, all memory returns to the operating system.
+
+Any kind of allocation, except those in shared memories, are automatically cleaned up by the operating system when the process terminates. Therefore you should not have to explicitly call the singleton destructor. In other words no leaks...
+Furthermore a typical singleton implementation like the Meyers' Singleton is not only thread safe during the initialization on the first call but also guaranteed to graceful terminate when the application exits (the destructor is invoked). 
+Anyway if the application is sent a unix signal (ie: SIGTERM or SIGHUP) the default behavior is to terminate the process without calling the destructors of static allocated objects (singletons). To overcome this issue for these signals it is possible to dispose a handler calling exit, or dispose exit be such handler -- signal(SIGTERM,exit); 
+
+Depends on your definition of a leak.  Unbound memory increase is a leak in my book, a singleton isn't unbound.  If you don't provide reference counting, you intentionally keep the instance alive.  Not an accident, not a leak.
+Your singleton wrapper's destructor should delete the instance, it is not automatic.  If it just allocates memory and no OS resources, there's no point.
+
+You should explicitly clean up all your objects.  Never rely on the OS to clean up for you.
+Where I usually use a singleton is to encapsulate control of something like a file, hardware resource, etc.  If I don't properly clean up that connection- I can easily leak system resources.  The next time the application runs, it might fail if the resource is still locked by the previous operation.  Another issue could be that any finalization- such as writing a buffer to disk- might not occur if it still exists in a buffer owned by a singleton instance.  
+This is not a memory leaking issue- the issue is more that you may be leaking resources like other than memory which may not be as easily recovered. 
+
+Each language and environment will differ, though I agree with @Aaron Fisher that a singleton tends to exist for the duration of the process.
+In the example of C++, using a typical singleton idiom:
+Singleton &get_singleton()
+{
+   static Singleton singleton;
+   return singleton;
+}
+
+the Singleton instance will be constructed the first time the function is called, and the same instance will have it's destructor called during the global static destructor phase at program shutdown.
+
+As so often, "it depends". In any operating system worthy of the name, when your process exits, all memory and other resources used locally within the process WILL be released. You simply don't need to worry about that.
+However, if your singleton is allocating resources with a lifetime outside it's own process (maybe a file, a named mutex, or something similar) then you do need to consider the appropriate cleanup.
+RAII will help you here. If you have a scenario like this:
+class Tempfile
+{
+Tempfile() {}; // creates a temporary file 
+virtual ~Tempfile(); // close AND DELETE the temporary file 
+};
+
+Tempfile &singleton()
+{
+  static Tempfile t;
+  return t;
+}
+
+...then you can be reassured that your temporary file WILL be closed and deleted however your application exits. However, this is NOT thread-safe, and the order of object deletion may not be what you expect or require.
+however, if your singleton is implemented like THIS
+Tempfile &singleton()
+{
+  static Tempfile *t = NULL;
+  if (t == NULL)
+    t = new Tempfile(); 
+  return *t;
+}
+
+... then you have a different situation. The memory used by your tempfile will be reclaimed, but the file will NOT be deleted because the destructor will not be invoked.
+
+How are you creating the object?
+If you're using a global variable or static variable, the destructor will be called, assuming the program exits normally.
+For example, the program
+#include <iostream>
+
+class Test
+{
+    const char *msg;
+
+public:
+
+    Test(const char *msg)
+    : msg(msg)
+    {}
+
+    ~Test()
+    {
+        std::cout << "In destructor: " << msg << std::endl;
+    }
+};
+
+Test globalTest("GlobalTest");
+
+int main(int, char *argv[])
+{
+    static Test staticTest("StaticTest");
+
+    return 0;
+}
+
+Prints out
+In destructor: StaticTest 
+In destructor: GlobalTest
+
+
+It's folklore to free global memory allocations explicitly before the application terminates. I suppose most of us do it out of habit and because we feel it's sort of bad to "forget" about a structure. In the C world it's a law of symmetry that any allocation must have a deallocation somewhere. C++ programmers think differently if they know and practice RAII.
+In the good old days of e.g. AmigaOS there were REAL memory leaks. When you forgot to deallocate memory, it would NEVER become accessible again until the system was reset. 
+I don't know of any self-respecting desktop operating system these days that would allow memory leaks to creep out of an application's virtual address space. Your mileage may vary on embedded devices when there is no extensive memory bookkeeping.

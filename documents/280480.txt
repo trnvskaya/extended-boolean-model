@@ -1,0 +1,70 @@
+Enabling/Disabling Aero from a Windows Service
+windows-services aero
+I have some code to enable/disable the Windows Aero service in Vista, and I would like to run it in a Windows Service. The code works in a standalone application, but when I run it from a Service, nothing happens. No errors or exceptions are thrown.
+I realise that running code in a service is a different scope than running code in an application, but in this case, how would I enable/disable Aero from the service? Is this even possible? 
+Here is the code I am working with:
+public static readonly uint DWM_EC_DISABLECOMPOSITION = 0;
+public static readonly uint DWM_EC_ENABLECOMPOSITION = 1;
+
+[DllImport("dwmapi.dll", EntryPoint="DwmEnableComposition")]
+protected static extern uint Win32DwmEnableComposition(uint uCompositionAction);
+
+public static bool EnableAero() 
+{
+    Win32DwmEnableComposition(DWM_EC_ENABLECOMPOSITION);
+}
+
+Edit: 
+It turns out that the DwmEnableComposition call is returning HRESULT 0x80070018, or ERROR_BAD_LENGTH. Seems like a strange error, since the code works when not running as a service.
+I also tried changing the entire thing to the following code, but got the same result. It sets the window station and desktop, and it seems to be correct, but the call to DwmEnableComposition results in the same error. I've not included the PInvoke declarations for brevity.
+    protected override void OnStop()
+    {
+        IntPtr winStation = OpenWindowStation("winsta0", true, 0x10000000 /* GENERIC_ALL */);
+        if (winStation == null || winStation.ToInt32() == 0)
+        {
+            String err = new Win32Exception(Marshal.GetLastWin32Error()).Message;
+        }
+
+        if (!SetProcessWindowStation(winStation))
+        {
+            String err = new Win32Exception(Marshal.GetLastWin32Error()).Message;
+        }
+
+        uint thread = GetCurrentThreadId();
+
+        IntPtr hdesk = OpenInputDesktop(0, false, 0x10000000 /* GENERIC_ALL */);
+        if (hdesk == null || hdesk.ToInt32() == 0)
+        {
+            String err = new Win32Exception(Marshal.GetLastWin32Error()).Message;
+        }
+
+        if (!SetThreadDesktop(hdesk))
+        {
+            String err = new Win32Exception(Marshal.GetLastWin32Error()).Message;
+        }
+
+        uint result = Win32DwmEnableComposition(DWM_EC_DISABLECOMPOSITION);
+        if (result != 0)
+        {
+            String err = new Win32Exception(Marshal.GetLastWin32Error()).Message;
+        }
+    }
+
+
+
+I dont know for certain, but perhaps you need to associate your service's process with the current desktop before that will work?
+Make sure that your service can interact with the desktop. Then use SetThreadDesktop() to set the desktop for the service thread passing in a handle to the desktop called "Default".
+I haven't tried it, and I can't guarantee it'll work. But it might be something to try?
+Good luck :)
+
+I had the same error code, when creating WPF FlowDocuments through a service running under 64-bit Vista. After digging around I can accross this post on Microsoft Connect, which points out that 
+
+"... The problem is caused by an interop problem with the DWM ..."
+
+and
+
+"... it will fix the WPF crash in all
+  services including IIS7 ..."
+
+Here is the direct link to the hot-fix downloads; KB 959209 
+This fixed our problems with running unit tests through CruiseControl.Net (CCNet) running 64-bit Vista. The tests where fine when not running through a service.

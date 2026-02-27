@@ -1,0 +1,106 @@
+Are tuples more efficient than lists in Python?
+python performance python-internals
+Is there any performance difference between tuples and lists when it comes to instantiation and retrieval of elements? 
+
+
+Tuples should be slightly more efficient and because of that, faster, than lists because they are immutable.
+
+In general, you might expect tuples to be slightly faster. However you should definitely test your specific case (if the difference might impact the performance of your program --  remember "premature optimization is the root of all evil").
+Python makes this very easy: timeit is your friend.
+$ python -m timeit "x=(1,2,3,4,5,6,7,8)"
+10000000 loops, best of 3: 0.0388 usec per loop
+
+$ python -m timeit "x=[1,2,3,4,5,6,7,8]"
+1000000 loops, best of 3: 0.363 usec per loop
+
+and...
+$ python -m timeit -s "x=(1,2,3,4,5,6,7,8)" "y=x[3]"
+10000000 loops, best of 3: 0.0938 usec per loop
+
+$ python -m timeit -s "x=[1,2,3,4,5,6,7,8]" "y=x[3]"
+10000000 loops, best of 3: 0.0649 usec per loop
+
+So in this case, instantiation is almost an order of magnitude faster for the tuple, but item access is actually somewhat faster for the list! So if you're creating a few tuples and accessing them many many times, it may actually be faster to use lists instead.
+Of course if you want to change an item, the list will definitely be faster since you'd need to create an entire new tuple to change one item of it (since tuples are immutable).
+
+The dis module disassembles the byte code for a function and is useful to see the difference between tuples and lists.
+In this case, you can see that accessing an element generates identical code, but that assigning a tuple is much faster than assigning a list.
+>>> def a():
+...     x=[1,2,3,4,5]
+...     y=x[2]
+...
+>>> def b():
+...     x=(1,2,3,4,5)
+...     y=x[2]
+...
+>>> import dis
+>>> dis.dis(a)
+  2           0 LOAD_CONST               1 (1)
+              3 LOAD_CONST               2 (2)
+              6 LOAD_CONST               3 (3)
+              9 LOAD_CONST               4 (4)
+             12 LOAD_CONST               5 (5)
+             15 BUILD_LIST               5
+             18 STORE_FAST               0 (x)
+
+  3          21 LOAD_FAST                0 (x)
+             24 LOAD_CONST               2 (2)
+             27 BINARY_SUBSCR
+             28 STORE_FAST               1 (y)
+             31 LOAD_CONST               0 (None)
+             34 RETURN_VALUE
+>>> dis.dis(b)
+  2           0 LOAD_CONST               6 ((1, 2, 3, 4, 5))
+              3 STORE_FAST               0 (x)
+
+  3           6 LOAD_FAST                0 (x)
+              9 LOAD_CONST               2 (2)
+             12 BINARY_SUBSCR
+             13 STORE_FAST               1 (y)
+             16 LOAD_CONST               0 (None)
+             19 RETURN_VALUE
+
+
+Tuples, being immutable, are more memory efficient; lists, for efficiency, overallocate memory in order to allow appends without constant reallocs. So, if you want to iterate through a constant sequence of values in your code (eg for direction in 'up', 'right', 'down', 'left':), tuples are preferred, since such tuples are pre-calculated in compile time.
+Access speeds should be the same (they are both stored as contiguous arrays in the memory).
+But, alist.append(item) is much preferred to atuple+= (item,) when you deal with mutable data. Remember, tuples are intended to be treated as records without field names.
+
+You should also consider the array module in the standard library if all the items in your list or tuple are of the same type.  It can be faster and take less memory.
+
+There are several performance differences between tuples and lists when it comes to instantiation and retrieval of elements:
+
+Tuples containing immutable entries can be optimized into constants by Python's peephole optimizer.  Lists, on the other hand, get build-up from scratch:
+>>> from dis import dis
+
+>>> dis(compile("(10, 'abc')", '', 'eval'))
+  1           0 LOAD_CONST               2 ((10, 'abc'))
+              3 RETURN_VALUE   
+
+>>> dis(compile("[10, 'abc']", '', 'eval'))
+  1           0 LOAD_CONST               0 (10)
+              3 LOAD_CONST               1 ('abc')
+              6 BUILD_LIST               2
+              9 RETURN_VALUE 
+
+Internally, tuples are stored a little more efficiently than lists, and also tuples can be accessed slightly faster.  
+Here is how the tuple (10, 20) is stored:
+typedef struct {
+    Py_ssize_t ob_refcnt;
+    struct _typeobject *ob_type;
+    Py_ssize_t ob_size;
+    PyObject *ob_item[2];     /* store a pointer to 10 and a pointer to 20 */
+} PyTupleObject;
+
+Here is how the list [10, 20] is stored:
+PyObject arr[2];              /* store a pointer to 10 and a pointer to 20 */
+
+typedef struct {
+    Py_ssize_t ob_refcnt;
+    struct _typeobject *ob_type;
+    Py_ssize_t ob_size;
+    PyObject **ob_item = arr; /* store a pointer to the two-pointer array */
+    Py_ssize_t allocated;
+} PyListObject;
+
+Note that the tuple object incorporates the two data pointers directly while the list object has an additional layer of indirection to an external array holding the two data pointers.
+

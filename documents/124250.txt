@@ -1,0 +1,22 @@
+How to do a rolling restart of a cluster of mongrels
+ruby-on-rails deployment capistrano mongrel
+Anybody know a nice way to restart a mongrel cluster via capistrano in a "rolling" style, eg, one mongrel at a time. Would be great to have a bit of wait time in there as well for each, to let the mongrel load the rails app up as well. 
+I've done some searching, and haven't found too much, so looking for help before I dive into the mongrel_cluster gem myself.
+Thanks!
+
+
+Seesaw is a gem found in the Rails Oceania Rubyforge Project that provides this kind of functionality to mongrel clusters.  However, the project may be suffering from some bit-rot not havain had a release since 2007.  Still worth a look even just to pinch the ideas :)
+
+#!/bin/bash
+for PIDFILE in /tmp/mongrel.*; do
+  PID=$(cat ${PIDFILE})
+  kill ${PID}
+  ${RUN_MONGREL_CMD} ${PID}
+  sleep 2
+done
+
+
+I agree with the seesaw approach more than the rolling approach you are seeking. The problem is that you end up in situations where load balancing can throw users back and forth between different versions of the application while you are transitioning.
+The solutions we came up with (before finding SeeSaw, which we don't use) was to take half of the mongrels off line from the load balancer. Shut them down. Update them. Start them up. Put those mongrels back online in the load balancer and take the other half off. Shut the second half down. Update the second half. Start them up. This greatly minimizes the time where you have two different versions of the application running simultaneously. 
+I wrote a windows bat file to do this. (Deploying on Windows is not recommended, btw)
+It is very important to note that having database migrations can make the whole approach a little dangerous. If you have only additive migrations, you can run those at any time before the deployment.  If you are removing columns, you need to do it after the deployment. If you are renaming columns, it is better to split it into a create a new column and copy data into it migration to run before deployment and a separate script to remove the old column after deployment.  In fact, it may be dangerous to use your regular migrations on a production database in general if you don't make a specific effort to organize them.  All of this points to making more frequent deliveries so each update is lower risk and less complex, but that's a subject for another response. 

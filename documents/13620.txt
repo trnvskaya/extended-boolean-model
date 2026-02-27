@@ -1,0 +1,155 @@
+Speed difference in using inline strings vs concatenation in php5?
+php optimization performance
+(assume php5) consider
+<?php
+
+    $foo = 'some words';
+
+    //case 1
+    print "these are $foo";
+
+    //case 2
+    print "these are {$foo}";
+
+    //case 3
+    print 'these are ' . $foo;
+?>
+
+Is there much of a difference between 1 and 2?
+If not, what about between 1/2 and 3?
+
+
+Well, as with all "What might be faster in real life" questions, you can't beat a real life test.
+function timeFunc($function, $runs)
+{
+  $times = array();
+
+  for ($i = 0; $i < $runs; $i++)
+  {
+    $time = microtime();
+    call_user_func($function);
+    $times[$i] = microtime() - $time;
+  }
+
+  return array_sum($times) / $runs;
+}
+
+function Method1()
+{ 
+  $foo = 'some words';
+  for ($i = 0; $i < 10000; $i++)
+    $t = "these are $foo";
+}
+
+function Method2()
+{
+  $foo = 'some words';
+  for ($i = 0; $i < 10000; $i++)
+    $t = "these are {$foo}";
+}
+
+function Method3()
+ {
+  $foo = 'some words';
+  for ($i = 0; $i < 10000; $i++)
+    $t = "these are " . $foo;
+}
+
+print timeFunc('Method1', 10) . "\n";
+print timeFunc('Method2', 10) . "\n";
+print timeFunc('Method3', 10) . "\n";
+
+Give it a few runs to page everything in, then...
+0.0035568
+0.0035388
+0.0025394
+So, as expected, the interpolation are virtually identical (noise level differences, probably due to the extra characters the interpolation engine needs to handle). Straight up concatenation is about 66% of the speed, which is no great shock. The interpolation parser will look, find nothing to do, then finish with a simple internal string concat. Even if the concat were expensive, the interpolator will still have to do it, after all the work to parse out the variable and trim/copy up the original string.
+Updates By Somnath:
+I added Method4() to above real time logic.
+function Method4()
+ {
+  $foo = 'some words';
+  for ($i = 0; $i < 10000; $i++)
+    $t = 'these are ' . $foo;
+}
+
+print timeFunc('Method4', 10) . "\n";
+
+Results were:
+
+0.0014739
+0.0015574
+0.0011955
+0.001169
+
+When you are just declaring a string only and no need to parse that string too, then why to confuse PHP debugger to parse. I hope you got my point.
+
+@Adam's test used
+"these are " . $foo
+
+note that the following is even faster:
+'these are ' . $foo;
+
+this is due to the fact, that a double quoted "string" gets evaluated, where a single quoted 'string' is just taken as is...
+
+Don't get too caught up on trying to optimize string operations in PHP. Concatenation vs. interpolation is meaningless (in real world performance) if your database queries are poorly written or you aren't using any kind of caching scheme. Write your string operations in such a way that debugging your code later will be easy, the performance differences are negligible.
+@uberfuzzy Assuming this is just a question about language minutia, I suppose it's fine. I'm just trying to add to the conversation that comparing performance between single-quote, double-quote and heredoc in real world applications in meaningless when compared to the real performance sinks, such as poor database queries.
+
+The performance difference has been irrelevant since at least January 2012, and likely earlier:
+Single quotes: 0.061846971511841 seconds
+Double quotes: 0.061599016189575 seconds
+
+Earlier versions of PHP may have had a difference - I personally prefer single quotes to double quotes, so it was a convenient difference. The conclusion of the article makes an excellent point:
+
+Never trust a statistic you didnât forge yourself.
+
+(Although the article quotes the phrase, the original quip was likely falsely attributed to Winston Churchill, invented by Joseph Goebbels' propaganda ministry to portray Churchill as a liar:
+
+Ich traue keiner Statistik, die ich nicht selbst gefÃ¤lscht habe.
+
+This loosely translates to, "I do not trust a statistic that I did not fake myself.")
+
+I seem to remember that the developer of the forum software, Vanilla replaced all the double quotes in his code with single quotes and noticed a reasonable amount of performance increase. 
+I can't seem to track down a link to the discussion at the moment though.
+
+Live benchmarks:
+http://phpbench.com/
+There is actually a subtle difference when concatenating variables with single vs double quotes.  
+
+Double quotes can be much slower. I read from several places that that it is better to do this
+'parse me '.$i.' times'
+
+than
+"parse me $i times"
+
+Although I'd say the second one gave you more readable code.
+
+there is a difference when concatenating variables... and what you are doing with the result... and if what you are doing is dumping it to output, is or isn't output buffering on.
+also, what is the memory situation of the server?  typically memory management on a higher level platform is worse than that at lower platforms... 
+$a = 'parse' . $this; 
+
+is managing memory at the user code platform level...
+$a = "parse $this";
+
+is managing memory at the php system code platform level...
+so these benchmarks as related to CPU don't tell the full story.  
+running the benchmark 1000 times vs running the benchmark 1000 times on a server that is attempting to run that same simulation 1000 times concurrently... you might get drastically different results depending on the scope of the application.
+
+Practically there is no difference at all! See the timings: http://micro-optimization.com/single-vs-double-quotes 
+
+Any differences in execution time are completely negligible.
+Please see
+
+NikiC's Blog: Disproving the Single Quotes Performance Myth for a technical explanation how interpolation and concatenation works in PHP and why it is absolutely pointless to care about their speed.
+
+Don't waste time on micro-optimizations like this. Use a profiler to measure the performance of your application in a real world scenario and then optimize where it is really needed. Optimising a single sloppy DB query is likely to make a bigger performance improvement than applying micro-optimisations all over your code.
+
+Just to add something else to the mix, if you are using a variable inside a double quoted string syntax:
+$foo = "hello {$bar}";
+
+is faster than
+$foo = "hello $bar";
+
+and both of these are faster than
+$foo = 'hello' . $bar; 
+

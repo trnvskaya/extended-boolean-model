@@ -1,0 +1,101 @@
+linker woes - undefined reference
+gcc linker
+I'm having a problem with my compiler telling me there is an 'undefined reference to' a function I want to use in a library. Let me share some info on the problem:
+
+I'm cross compiling with gcc for C.
+I am calling a library function which is accessed through an included header which includes another header, which contains the prototype.
+I have included the headers directory using -I and i'm sure it's being found.
+I'm first creating the .o files then linking them in a separate command.
+
+So my thought is it might be the order in which I include the library files, but i'm not sure what is the correct way to order them. I tried with including the headers folder both before and after the .o file.
+Some suggests would be great, and maybe and explanation of how the linker does its thing.
+Thanks!
+
+Response to answers
+
+there is no .a library file, just .h and .c in the library, so -l isn't appropriate
+my understanding of a library file is that it is just a collection of header and source files, but maybe it's a collection of .o files created from the source?!
+there is no library object file being created, maybe there should be?? Yes seems I don't understand the difference between includes and libraries...i'll work on that :-)
+
+Thanks for all the responses! I learned a lot about libraries. I'd like to put all the responses as the accepted answer :-)
+
+
+I guess you have to add the path where the linker can find the libraray. In gcc/ld you can do this with -L and libraray with -l.
+
+-Ldir, --library-path=dir 
+Search directory dir before standard
+  search directories (this option must
+  precede the -l option that searches
+  that directory).
+-larch, --library=archive 
+Include the archive file arch in the
+  list of files to link.
+
+
+
+Response to answers - there is no .a library file, just .h and .c in the library, so -l isn't approriate
+
+Then you may have to create the libraray first?
+gcc -c mylib.c -o mylib.o
+ar  rcs libmylib.a      mylib.o
+
+
+Headers provide function declarations and function definitions.  To allow the linker find the function's implementation (and get rid of the undefined reference) you need to ask the compiler driver (gcc) to link the specific library where the function resides using the -l flag.  For instance, -lm will link the math library.  A function's manual page typically specifies what library, if any, must be specified to find the function.
+If the linker can't find a specified library you can add a library search path using the -L switch (for example, -L/usr/local/lib).  You can also permanently affect the library path through the LIBRARY_PATH environment variable.  
+Here are some additional details to help you debug your problem.  By convention the names of library files are prefixed with lib and (in their static form) have a .a extension.  Thus, the statically linked version of the system's default math library (the one you link with -lm) typically resides in /usr/lib/libm.a.  To see what symbols a given library defines you can run nm --defined-only on the library file.  On my system, running the command on libm.a gives me output like the following.
+e_atan2.o:
+00000000 T atan2
+
+e_asinf.o:
+00000000 T asinf
+
+e_asin.o:
+00000000 T asin
+
+To see the library path that your compiler uses and which libraries it loads by default you can invoke gcc with the -v option.  Again on my system this gives the following output.
+GNU assembler version 2.15 [FreeBSD] 2004-05-23 (i386-obrien-freebsd) 
+using BFD version 2.15 [FreeBSD] 2004-05-23
+/usr/bin/ld -V -dynamic-linker /libexec/ld-elf.so.1 /usr/lib/crt1.o 
+/usr/lib/crti.o /usr/lib/crtbegin.o -L/usr/lib /var/tmp//ccIxJczl.o -lgcc -lc 
+-lgcc /usr/lib/crtend.o /usr/lib/crtn.o
+
+
+I fear you mixed the library and header concepts.
+Let's say you have a library libmylib.a that contains the function myfunc() and a corresponding header mylib.h that defines its prototype. In your source file myapp.c you include the header, either directly or including another header that includes it. For example:
+/* myapp.h
+** Here I will include and define my stuff
+*/
+...
+#include "mylib.h"
+...
+
+your source file looks like:
+/* myapp.c
+** Here is my real code
+*/
+...
+#include "myapp.h"
+...
+/* Here I can use the function */
+myfunc(3,"XYZ");
+
+Now you can compile it to obtain myapp.o:
+gcc -c -I../mylib/includes myapp.c
+
+Note that the -I just tells gcc where the headers files are, they have nothing to do with the library itself!
+Now you can link your application with the real library:
+gcc -o myapp -L../mylib/libs myapp.o -lmylib
+
+Note that the -L switch tells gcc where the library is, and the -l tells it to link your code to the library.
+If you don't do this last step, you may encounter the problem you described.
+There might be other more complex cases but from your question, I hope this would be enough to solve your problem.
+
+It sounds like you are not compiling the .c file in the library to produce a .o file. The linker would look for the prototype's implementation in the .o file produced by compiling the library  
+Does your build process compile the library .c file?
+Why do you call it a "library" if it's actually just source code?
+
+Post your makefile, and the library function you are trying to call. Even simple gcc makefiles usually have a line like this:
+LIBFLAGS =-lc -lpthread -lrt -lstdc++ -lShared -L../shared
+In this case, it means link the standard C library, among others
+
+I have encountered this problem when building a program with a new version of gcc. The problem was fixed by calling gcc with the -std=gnu89 option. Apparently this was due to inline function declarations. I have found this solution at https://gcc.gnu.org/gcc-5/porting_to.html

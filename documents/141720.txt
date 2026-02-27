@@ -1,0 +1,89 @@
+How do you compare structs for equality in C?
+c struct equality
+How do you compare two instances of structs for equality in standard C?
+
+
+C provides no language facilities to do this - you have to do it yourself and compare each structure member by member.
+
+If you do it a lot I would suggest writing a function that compares the two structures.  That way, if you ever change the structure you only need to change the compare in one place.  
+As for how to do it.... You need to compare every element individually
+
+You may be tempted to use memcmp(&a, &b, sizeof(struct foo)), but it may not work in all situations. The compiler may add alignment buffer space to a structure, and the values found at memory locations lying in the buffer space are not guaranteed to be any particular value.
+But, if you use calloc or memset the full size of the structures before using them, you can do a shallow comparison with memcmp (if your structure contains pointers, it will match only if the address the pointers are pointing to are the same).
+
+You can't use memcmp to compare structs for equality due to potential random padding characters between field in structs.
+  // bad
+  memcmp(&struct1, &struct2, sizeof(struct1));
+
+The above would fail for a struct like this:
+typedef struct Foo {
+  char a;
+  /* padding */
+  double d;
+  /* padding */
+  char e;
+  /* padding */
+  int f;
+} Foo ;
+
+You have to use member-wise comparison to be safe.
+
+If the structs only contain primitives or if you are interested in strict equality then you can do something like this:
+
+int my_struct_cmp(const struct my_struct * lhs, const struct my_struct * rhs)
+{
+    return memcmp(lhs, rsh, sizeof(struct my_struct));
+}
+
+However, if your structs contain pointers to other structs or unions then you will need to write a function that compares the primitives properly and make comparison calls against the other structures as appropriate.
+Be aware, however, that you should have used memset(&a, sizeof(struct my_struct), 1) to zero out the memory range of the structures as part of your ADT initialization.
+
+Note you can use memcmp() on non static stuctures without
+worrying about padding, as long as you don't initialise
+all members (at once). This is defined by C90:
+http://www.pixelbeat.org/programming/gcc/auto_init.html
+
+It depends on whether the question you are asking is:
+
+Are these two structs the same object?
+Do they have the same value?
+
+To find out if they are the same object, compare pointers to the two structs for equality.
+If you want to find out in general if they have the same value you have to do a deep comparison. This involves comparing all the members. If the members are pointers to other structs you need to recurse into those structs too.
+In the special case where the structs do not contain pointers you can do a memcmp to perform a bitwise comparison of the data contained in each without having to know what the data means.
+Make sure you know what 'equals' means for each member - it is obvious for ints but more subtle when it comes to floating-point values or user-defined types.
+
+memcmp does not compare structure, memcmp compares the binary, and there is always garbage in the struct, therefore it always comes out False in comparison.
+Compare element by element its safe and doesn't fail.
+
+if the 2 structures variable are initialied with calloc or they are set with 0 by memset so you can compare your 2 structures with memcmp and there is no worry about structure garbage and this will allow you to earn time 
+
+This compliant example uses the #pragma pack compiler extension from Microsoft Visual Studio to ensure the structure members are packed as tightly as possible:
+#include <string.h>
+
+#pragma pack(push, 1)
+struct s {
+  char c;
+  int i;
+  char buffer[13];
+};
+#pragma pack(pop)
+
+void compare(const struct s *left, const struct s *right) { 
+  if (0 == memcmp(left, right, sizeof(struct s))) {
+    /* ... */
+  }
+}
+
+
+@Greg is correct that one must write explicit comparison functions in the general case.
+It is possible to use memcmp if:
+
+the structs contain no floating-point fields that are possibly NaN.
+the structs contain no padding (use -Wpadded with clang to check this) OR the structs are explicitly initialized with memset at initialization.
+there are no member types (such as Windows BOOL) that have distinct but equivalent values.
+
+Unless you are programming for embedded systems (or writing a library that might be used on them), I would not worry about some of the corner cases in the C standard.  The near vs. far pointer distinction does not exist on any 32- or 64- bit device.  No non-embedded system that I know of has multiple NULL pointers.
+Another option is to auto-generate the equality functions.  If you lay your struct definitions out in a simple way, it is possible to use simple text processing to handle simple struct definitions.  You can use libclang for the general case – since it uses the same frontend as Clang, it handles all corner cases correctly (barring bugs).
+I have not seen such a code generation library.  However, it appears relatively simple.
+However, it is also the case that such generated equality functions would often do the wrong thing at application level.

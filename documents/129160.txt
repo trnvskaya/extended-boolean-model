@@ -1,0 +1,156 @@
+How to avoid storing passwords in the clear for tomcat's server.xml Resource definition of a DataSource?
+tomcat jdbc configuration
+The resource definition in tomcat's server.xml looks something like this...
+<Resource
+    name="jdbc/tox"
+    scope="Shareable"
+    type="javax.sql.DataSource"
+    url="jdbc:oracle:thin:@yourDBserver.yourCompany.com:1521:yourDBsid"
+    driverClassName="oracle.jdbc.pool.OracleDataSource"
+    username="tox"
+    password="toxbaby"
+    maxIdle="3"
+    maxActive="10"
+    removeAbandoned="true"
+    removeAbandonedTimeout="60"
+    testOnBorrow="true"
+    validationQuery="select * from dual"
+    logAbandoned="true"
+    debug="99"/>
+
+The password is in the clear.  How to avoid this?
+
+
+We use C#'s    SHA1CryptoServiceProvider 
+print(SHA1CryptoServiceProvider sHA1Hasher = new SHA1CryptoServiceProvider();
+        ASCIIEncoding enc = new ASCIIEncoding();
+
+        byte[] arrbytHashValue = sHA1Hasher.ComputeHash(enc.GetBytes(clearTextPW));
+        string HashData = System.BitConverter.ToString(arrbytHashValue);
+        HashData = HashData.Replace("-", "");
+        if (HashData == databaseHashedPassWO)
+        {
+            return true;
+        }
+        else
+        {
+            return false;
+        });
+
+)
+
+Tomcat needs to know how to connect to the database, so it needs access to the plain text password. If the password in encrypted, Tomcat needs to know how to decrypt it, so you are only moving the problem somewhere else.
+The real problem is: who can access server.xml except for Tomcat? A solution is to give read access to server.xml only to root user, requiring that Tomcat is started with root privileges: if a malicious user gains root privileges on the system, losing a database password is probably a minor concern.
+Otherwise you should type the password manually at every startup, but this is seldom a viable option.
+
+As said before encrypting passwords is just moving the problem somewhere else.
+Anyway, it's quite simple.
+Just write a class with static fields for your secret key and so on, and static methods to encrypt, decrypt your passwords.
+Encrypt your password in Tomcat's configuration file (server.xml or yourapp.xml...) using this class.
+And to decrypt the password "on the fly" in Tomcat, extend the DBCP's BasicDataSourceFactory and use this factory in your resource.
+It will look like:
+    <Resource
+        name="jdbc/myDataSource"
+        auth="Container"
+        type="javax.sql.DataSource"
+        username="user"
+        password="encryptedpassword"
+        driverClassName="driverClass"
+        factory="mypackage.MyCustomBasicDataSourceFactory"
+        url="jdbc:blabla://..."/>
+
+And for the custom factory:
+package mypackage;
+
+....
+
+public class MyCustomBasicDataSourceFactory extends org.apache.tomcat.dbcp.dbcp.BasicDataSourceFactory {
+
+@Override
+public Object getObjectInstance(Object obj, Name name, Context nameCtx, Hashtable environment) throws Exception {
+    Object o = super.getObjectInstance(obj, name, nameCtx, environment);
+    if (o != null) {
+        BasicDataSource ds = (BasicDataSource) o;
+        if (ds.getPassword() != null && ds.getPassword().length() > 0) {
+            String pwd = MyPasswordUtilClass.unscramblePassword(ds.getPassword());
+            ds.setPassword(pwd);
+        }
+        return ds;
+    } else {
+        return null;
+    }
+}
+
+Hope this helps.
+
+Tomcat has a Password FAQ that specifically addresses your question. In short: Keep the password in the clear and properly lock-down your server.
+That page also offers some suggestions of how security-by-obscurity might be used to pass an auditor's checklist.
+
+As @Ryan mentioned, please read Tomcat's Tomcat Password FAQ before implementing this solution.  You are only adding obscurity not security.
+@Jerome Delattre's answer will work for simple JDBC data sources, but not for more complicated ones that connect as part of the datasource construction (e.g. oracle.jdbc.xa.client.OracleXADataSource).
+This is alternative approach that modifies the password prior to calling the existing factory.  Below is an example of a factory for a basic datasource and one for an Atomikos JTA compatible XA datasource.
+Basic Example:
+public class MyEncryptedPasswordFactory extends BasicDataSourceFactory {
+
+    @Override
+    public Object getObjectInstance(Object obj, Name name, Context context, Hashtable<?, ?> environment)
+            throws Exception {
+        if (obj instanceof Reference) {
+            Reference ref = (Reference) obj;
+            DecryptPasswordUtil.replacePasswordWithDecrypted(ref, "password");
+            return super.getObjectInstance(obj, name, context, environment);
+        } else {
+            throw new IllegalArgumentException(
+                    "Expecting javax.naming.Reference as object type not " + obj.getClass().getName());
+        }
+    }
+}
+
+Atomikos Example:
+public class MyEncryptedAtomikosPasswordFactory extends EnhancedTomcatAtomikosBeanFactory {
+    @Override
+    public Object getObjectInstance(Object obj, Name name, Context context, Hashtable<?, ?> environment)
+            throws NamingException {
+        if (obj instanceof Reference) {
+            Reference ref = (Reference) obj;
+            DecryptPasswordUtil.replacePasswordWithDecrypted(ref, "xaProperties.password");
+            return super.getObjectInstance(obj, name, context, environment);
+        } else {
+            throw new IllegalArgumentException(
+                    "Expecting javax.naming.Reference as object type not " + obj.getClass().getName());
+        }
+    }
+}
+
+Updating password value in Reference:
+public class DecryptPasswordUtil {
+
+    public static void replacePasswordWithDecrypted(Reference reference, String passwordKey) {
+        if(reference == null) {
+            throw new IllegalArgumentException("Reference object must not be null");
+        }
+
+        // Search for password addr and replace with decrypted
+        for (int i = 0; i < reference.size(); i++) {
+            RefAddr addr = reference.get(i);
+            if (passwordKey.equals(addr.getType())) {
+                if (addr.getContent() == null) {
+                    throw new IllegalArgumentException("Password must not be null for key " + passwordKey);
+                }
+                String decrypted = yourDecryptionMethod(addr.getContent().toString());
+                reference.remove(i);
+                reference.add(i, new StringRefAddr(passwordKey, decrypted));
+                break;
+            }
+        }
+    }
+}
+
+Once the .jar file containing these classes are in Tomcat's classpath  you can update your server.xml to use them.
+<Resource factory="com.mycompany.MyEncryptedPasswordFactory" username="user" password="encryptedPassword" ...other options... />
+
+<Resource factory="com.mycompany.MyEncryptedAtomikosPasswordFactory" type="com.atomikos.jdbc.AtomikosDataSourceBean" xaProperties.user="user" xaProperties.password="encryptedPassword" ...other options... />
+
+
+All of the foregoing having been said, if you still want to avoid plain text passwords you can use a hashing algorithm such as SHA-256 or (preferably) SHA-512. When a password is created, obtain the hashed value and store it rather than the password. When a user logs in, hash the password and see of it matches the stored hashed password.
+Hashing algorithms take a character string (or number) from a small string (or number) space into a much larger one in a way that is expensive to reverse.

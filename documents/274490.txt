@@ -1,0 +1,39 @@
+Parallel quicksort: recursion using Boost Bind?
+c++ multithreading boost
+I am working on making quicksort parallel, threads being the first attempt.  The non threaded version sorts correctly but the threaded doesn't (no surprise there).  What I found interesting was when I removed the threads but kept the boost::bind calls it still doesn't work.  If boost::bind isn't what I want please offer a suggestion.  Bind seemed to be the easiest (or only) way to make my function work with boost threads.
+void Quicksort( fVec &Array, const int Left, const int Right )
+{
+    if( Right <= Left )
+        return;
+
+    int pivot = Left;
+    const int pivotNewIndex = Partition( Array, Left, Right, pivot );
+
+    // These function calls make it work fine
+    //Quicksort( Array, Left, pivotNewIndex - 1 );
+    //Quicksort( Array, pivotNewIndex + 1, Right );
+
+    // boost::bind calls only swaps one element, doesn't actually sort
+    boost::bind( &Quicksort, Array, Left, pivotNewIndex - 1 )();
+    boost::bind( &Quicksort, Array, pivotNewIndex + 1, Right )();
+
+    // threaded version that doesn't work, same as above
+    //boost::thread threadA( boost::bind( &Quicksort, Array, Left, pivotNewIndex - 1 ) );
+    //threadA.join();
+    //boost::thread threadB( boost::bind( &Quicksort, Array, pivotNewIndex + 1, Right ) );
+    //threadB.join();
+}
+
+
+
+Boost bind more or less creates a functor that when called, will call the function you want with the arguments you want. In this case you are creating the functor but never calling it. Try:
+boost::bind( &Quicksort, Array, Left, pivotNewIndex - 1 )();
+boost::bind( &Quicksort, Array, pivotNewIndex + 1, Right )();
+
+Im guessing the first argument is what is messing it up. I think bind requires arguments to be copyable, and references aren't really, it is probably creating a copy and passing the reference to that, which is why nothing is changing. Try:
+boost::bind( &Quicksort, boost::ref(Array), Left, pivotNewIndex - 1 )();
+boost::bind( &Quicksort, boost::ref(Array), pivotNewIndex + 1, Right )();
+
+It would help to know what fVec is and why you aren't passing a pointer to the array of whatever you are sorting.
+Also note that this method of threading is likely to not give very much speedup because as you get to very small sorts the overhead of starting and scheduling a new thread is much larger than the benefit (plus you will be creating massive numbers of threads which is bad). What you really want is a threadpool that operates on some optimum size chunk or larger and has a fixed number of threads. When sizes smaller than the limit are reached, it does everything serially (and for smaller still you would obviously want to change from quicksort to insertion sort).
+Also note that the order you are joining leads to serial execution anyways... you want to join both threads after you start both threads.

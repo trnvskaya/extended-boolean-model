@@ -1,0 +1,140 @@
+Best way to know if a user has administrative privileges from a VBScript
+vbscript privileges
+I need to check whether the user executing the script has administrative privileges on the machine.
+I have specified the user executing the script because the script could have been executed with a user other than the logged on using something similar to "Runas".
+@Javier: Both solutions work in a PC with an English version of Windows installed but not if the installed is in different language. This is because the Administrators group doesn't exist, the name is different for instance in Spanish. I need the solution to work in all configurations. 
+
+
+You can use script if you want to see if the logged on user is an administrator
+Set objNetwork = CreateObject("Wscript.Network")
+strComputer = objNetwork.ComputerName
+strUser = objNetwork.UserName
+
+isAdministrator = false
+
+Set objGroup = GetObject("WinNT://" & strComputer & "/Administrators")
+For Each objUser in objGroup.Members
+    If objUser.Name = strUser Then
+        isAdministrator = true        
+    End If
+Next
+
+If isAdministrator Then
+    Wscript.Echo strUser & " is a local administrator."
+Else
+    Wscript.Echo strUser & " is not a local administrator."
+End If
+
+I am not sure how to handle it when the script is run with "Runas" I am afraid.
+
+This article has a nice chunk of code on how to enumerate the members of a group (copied here for convenience and edited to not use email address):
+Function RetrieveUsers(domainName,grpName)
+
+dim GrpObj
+dim mbrlist
+dim mbr
+
+'-------------------------------------------------------------------------------
+' *** Enumerate Group Members ***
+'-------------------------------------------------------------------------------
+
+' Build the ADSI query and retrieve the group object
+Set GrpObj = GetObject("WinNT://" & domainName & "/" & grpName & ",group")
+
+' Loop through the group membership and build a string containing the names
+for each mbr in GrpObj.Members
+   mbrlist = mbrlist & vbTab & mbr.name & vbCrLf
+Next
+
+RetrieveUsers=mbrlist
+
+End Function
+
+You can then write a function to see if a user is in the list...
+Function IsAdmin(user)
+    IsAdmin = InStr(RetrieveUsers("MachineName", "Administrators"), user) > 0
+End Function
+
+...and call it like this:
+If IsAdmin("LocalAccount") Then
+    Wscript.Echo "LocalAccount is an admin"
+Else
+    Wscript.Echo "LocalAccount is not an admin"
+End If
+
+
+By doing this you break scenarios where the user has the required privs for your script but does not belong to Administrators.  Instead of checking for group membership, check for the specific abilities you require.
+
+Ive tried Tim C's solution on a Windows 7 box on my company network where I do actually have admin rights. But it shows my user as not having admin rights.
+Instead I used a hackier method, as calling "defrag" in the cmd prompt requires admin access. While it works, be wary that XP and 7 (and possibly future versions of Windows) differ in the return code. There may be more consistent choices than defrag, but it works for now.
+Function isAdmin
+    Dim shell
+    set shell = CreateObject("WScript.Shell")
+    isAdmin = false
+    errlvl = shell.Run("%comspec% /c defrag /?>nul 2>nul", 0, True)
+    if errlvl = 0 OR errlvl = 2 Then '0 on Win 7, 2 on XP
+        isAdmin = true
+    End If
+End Function
+
+
+What about checking for "\\computername\Admin$\system32"?
+function IsLoggedInAsAdmin()
+    isAdmin = false
+    set shell = CreateObject("WScript.Shell")
+    computername = WshShell.ExpandEnvironmentStrings("%computername%")
+    strAdmin = "\\" & computername & "\Admin$\System32"
+
+    isAdmin = false
+
+    set fso = CreateObject("Scripting.FileSystemObject")
+
+    if fso.FolderExists(strAdmin) then
+        isAdmin = true
+    end if
+
+    IsLoggedInAsAdmin = isAdmin
+end function
+
+
+Yet another quick n dirty method.  Returns <> 0 If IsNotAdmin
+Function IsNotAdmin()
+    With CreateObject("Wscript.Shell")
+        IsNotAdmin = .Run("%comspec% /c OPENFILES > nul", 0, True)
+    End With
+End Function
+
+
+Function isAdmin
+    Dim shell
+    Set shell = CreateObject("WScript.Shell")
+    isAdmin = false
+    errorLevel = shell.Run("%comspec% /c net session >nul 2>&1", 0, True)
+    if errorLevel = 0
+        isAdmin = true
+    End If
+End Function
+
+
+Using "localhost" instead of the real hostname increases the script runtime about 10x!My final code is:
+' get_admin_status.vbs
+Option Explicit
+
+Dim oGroup:   Set oGroup   = GetObject("WinNT://localhost/Administrators,group")
+Dim oNetwork: Set oNetwork = CreateObject("Wscript.Network")
+
+Dim sSearchPattern: sSearchPattern = "WinNT://" & oNetwork.UserDomain & "/" & oNetwork.UserName
+
+Dim sMember
+For Each sMember In oGroup.Members
+  If sMember.adsPath = sSearchPattern Then
+    ' Found...
+    Call WScript.Quit(0)
+  End If
+Next
+
+' Not found...
+Call WScript.Quit(1)
+
+This script returns exit code 0 if the current user is a local admin.
+Usage: cscript.exe get_admin_status.vbs

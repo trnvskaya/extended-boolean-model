@@ -1,0 +1,134 @@
+Problem using SQLite :memory: with NHibernate
+c# nhibernate sqlite orm integration-testing
+I use NHibernate for my dataacess, and for awhile not I've been using SQLite for local integration tests.  I've been using a file, but I thought I would out the :memory: option.  When I fire up any of the integration tests, the database seems to be created (NHibernate spits out the table creation sql) but interfacting with the database causes an error.
+Has anyone every gotten NHibernate working with an in memory database?  Is it even possible?  The connection string I'm using is this:
+Data Source=:memory:;Version=3;New=True
+
+
+
+Just a wild guess, but is the sql output by NHibernate using a command unsupported by sqlite?
+Also, What happens if you use a file instead of memory? (System.IO.Path.GetTempFileName() would work i think...)
+
+A SQLite memory database only exists as long as the connection to it remains open.  To use it in unit tests with NHibernate:
+1. Open an ISession at the beginning of your test (maybe in a [SetUp] method).
+2. Use the connection from that session in your SchemaExport call.
+3. Use that same session in your tests.
+4. Close the session at the end of your test (maybe in a [TearDown] method).
+
+We are using SQLite in memory for all our database tests. We are using a single ADO connection for the tests that is reused for all NH sessions opened by the same test. 
+
+Before every test: create connection
+Create schema on this connection
+Run test. The same connection is used for all sessions
+After test: close connection
+
+This allows also running tests with several sessions included. The SessionFactory is also created once for all tests, because the reading of the mapping files takes quite some time.
+
+Edit
+Use of the Shared Cache
+Since System.Data.Sqlite 1.0.82 (or Sqlite 3.7.13), there is a Shared Cache, which allows several connections to share the same data, also for In-Memory databases. This allows creation of the in-memory-database in one connection, and use it in another. (I didn't try it yet, but in theory, this should work):
+
+Change the connection string to file::memory:?cache=shared
+Open a connection and create the schema
+Keep this connection open until the end of the test
+Let NH create other connections (normal behavior) during the test.
+
+
+I am doing it with Rhino Commons.  If you don't want to use Rhino Commons you can study the source do see how it does it.  The only problem I have had is that SQLite does not support nested transactions.  This forced me to change my code to support integration testing.  Integration testing with in memory database is so awesome, I decided it was a fair compromise.
+
+I hade alot off problems with SQLite memory database.
+So now we are using SQLite working with files on a ramdrive disk.
+
+I had similar problems that lasted even after opening the ISession as stated above, and adding "Pooling=True;Max Pool Size=1" to my connection string. It helped, but I still had some cases where the connection would close during a test (usually right after committing a transaction).
+What finally worked for me was setting the property "connection.release_mode" to "on_close" in my SessionFactory configuration.
+My configuration in the app.config file now look likes this:
+  <hibernate-configuration xmlns="urn:nhibernate-configuration-2.2">
+    <reflection-optimizer use="true" />
+    <session-factory>
+      <property name="connection.connection_string_name">testSqlLiteDB</property>
+      <property name="connection.driver_class">NHibernate.Driver.SQLite20Driver</property>
+      <property name="connection.provider">NHibernate.Connection.DriverConnectionProvider</property>
+      <property name="connection.release_mode">on_close</property>
+      <property name="dialect">NHibernate.Dialect.SQLiteDialect</property>
+      <property name="proxyfactory.factory_class">NHibernate.ByteCode.Castle.ProxyFactoryFactory, NHibernate.ByteCode.Castle</property>
+      <property name="query.substitutions">true=1;false=0</property>
+    </session-factory>
+  </hibernate-configuration>
+
+Hope it helps!
+
+I was able to use a SQLite in-memory database and avoid having to rebuild the schema for each test by using SQLite's support for 'Shared Cache', which allows an in-memory database to be shared across connections.
+I did the following in AssemblyInitialize (I'm using MSTest):
+
+Configure NHibernate (Fluently) to use SQLite with the following connection string:
+FullUri=file:memorydb.db?mode=memory&cache=shared
+
+Use that configuration to create a hbm2ddl.SchemaExport object, and execute it on a separate connection (but with that same connection string again).
+Leave that connection open, and referenced by a static field, until AssemblyCleanup, at which point it is closed and disposed of. This is because SQLite needs at least one active connection to be held on the in-memory database to know it's still required and avoid tidying up.
+
+Before each test runs, a new session is created, and the test runs in a transaction which is rolled back at the end. 
+Here is an example of the test assembly-level code:
+[TestClass]
+public static class SampleAssemblySetup
+{
+    private const string ConnectionString = "FullUri=file:memorydb.db?mode=memory&cache=shared";
+    private static SQLiteConnection _connection;
+
+    [AssemblyInitialize]
+    public static void AssemblyInit(TestContext context)
+    {
+        var configuration = Fluently.Configure()
+                                       .Database(SQLiteConfiguration.Standard.ConnectionString(ConnectionString))
+                                       .Mappings(m => m.FluentMappings.AddFromAssembly(Assembly.Load("MyMappingsAssembly")))
+                                       .ExposeConfiguration(x => x.SetProperty("current_session_context_class", "call"))
+                                       .BuildConfiguration();
+
+        // Create the schema in the database
+        // Because it's an in-memory database, we hold this connection open until all the tests are finished
+        var schemaExport = new SchemaExport(configuration);
+        _connection = new SQLiteConnection(ConnectionString);
+        _connection.Open();
+        schemaExport.Execute(false, true, false, _connection, null);
+    }
+
+    [AssemblyCleanup]
+    public static void AssemblyTearDown()
+    {
+        if (_connection != null)
+        {
+            _connection.Dispose();
+            _connection = null;
+        }
+    }
+}
+
+And a base class for each unit test class/fixture:
+public class TestBase
+{
+    [TestInitialize]
+    public virtual void Initialize()
+    {
+        NHibernateBootstrapper.InitializeSession();
+        var transaction = SessionFactory.Current.GetCurrentSession().BeginTransaction();
+    }
+
+    [TestCleanup]
+    public virtual void Cleanup()
+    {
+        var currentSession = SessionFactory.Current.GetCurrentSession();
+        if (currentSession.Transaction != null)
+        {
+            currentSession.Transaction.Rollback();
+            currentSession.Close();
+        }
+
+        NHibernateBootstrapper.CleanupSession();
+    }
+}
+
+Resource management could improve, I admit, but these are unit tests after all (suggested improvements welcome!).
+
+Just want to thank decates. Been trying to solve this for a couple of months now and all I had to do was add  
+FullUri=file:memorydb.db?mode=memory&cache=shared
+
+to the connection string in my nhibernate config file.  Also using just NHibernate with *.hbm.xml and not FNH and didn't really have to modify my code at all!

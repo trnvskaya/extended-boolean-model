@@ -1,0 +1,100 @@
+Advantages to Using Private Static Methods
+c# performance
+When creating a class that has internal private methods, usually to reduce code duplication, that don't require the use of any instance fields, are there performance or memory advantages to declaring the method as static?
+Example:
+foreach (XmlElement element in xmlDoc.DocumentElement.SelectNodes("sample"))
+{
+    string first = GetInnerXml(element, ".//first");
+    string second = GetInnerXml(element, ".//second");
+    string third = GetInnerXml(element, ".//third");
+}
+
+...
+private static string GetInnerXml(XmlElement element, string nodeName)
+{
+    return GetInnerXml(element, nodeName, null);
+}
+
+private static string GetInnerXml(XmlElement element, string nodeName, string defaultValue)
+{
+    XmlNode node = element.SelectSingleNode(nodeName);
+    return node == null ? defaultValue : node.InnerXml;
+}
+
+Is there any advantage to declaring the GetInnerXml() methods as static?  No opinion responses please, I have an opinion.
+
+
+Yes, the compiler does not need to pass the implicit this pointer to static methods. Even if you don't use it in your instance method, it is still being passed.
+
+This forces you to remember to also declare any class-scoped members the function uses as static as well, which should save the memory of creating those items for each instance.
+
+It'll be slightly quicker as there is no this parameter passed (although the performance cost of calling the method is probably considerably more than this saving).
+I'd say the best reason I can think of for private static methods is that it means you can't accidentally change the object (as there's no this pointer).
+
+From the FxCop rule page on this:
+
+After you mark the methods as static, the compiler will emit non-virtual call sites to these members. Emitting non-virtual call sites will prevent a check at runtime for each call that ensures that the current object pointer is non-null. This can result in a measurable performance gain for performance-sensitive code. In some cases, the failure to access the current object instance represents a correctness issue.
+
+
+When I'm writing a class, most methods fall into two categories:
+
+Methods that use/change the current instance's state.
+Helper methods that don't use/change the current object's state, but help me compute values I need elsewhere.
+
+Static methods are useful, because just by looking at its signature, you know that the calling it doesn't use or modify the current instance's state.
+Take this example:
+public class Library
+{
+    private static Book findBook(List<Book> books, string title)
+    {
+        // code goes here
+    }
+}
+If an instance of library's state ever gets screwed up, and I'm trying to figure out why, I can rule out findBook as the culprit, just from its signature.
+I try to communicate as much as I can with a method or function's signature, and this is an excellent way to do that.
+
+A call to a static method generates a call instruction in Microsoft intermediate language (MSIL), whereas a call to an instance method generates a callvirt instruction, which also checks for a null object references. However, most of the time the performance difference between the two is not significant.
+src: MSDN - http://msdn.microsoft.com/en-us/library/79b3xss3(v=vs.110).aspx
+
+I very much prefer all private methods to be static unless they really can't be. I would much prefer the following:
+public class MyClass
+{
+    private readonly MyDependency _dependency;
+
+    public MyClass(MyDependency dependency)
+    {
+        _dependency = dependency;
+    }
+
+    public int CalculateHardStuff()
+    {
+        var intermediate = StepOne(_dependency);
+        return StepTwo(intermediate);
+    }
+
+    private static int StepOne(MyDependency dependency)
+    {
+        return dependency.GetFirst3Primes().Sum();
+    }
+
+    private static int StepTwo(int intermediate)
+    {
+        return (intermediate + 5)/4;
+    }
+}
+
+public class MyDependency
+{
+    public IEnumerable<int> GetFirst3Primes()
+    {
+        yield return 2;
+        yield return 3;
+        yield return 5;
+    }
+}
+
+over every method accessing the instance field. Why is this? Because as this process of calculating becomes more complex and the class ends up with 15 private helper methods, then I REALLY want to be able to pull them out into a new class that encapsulates a subset of the steps in a semantically meaningful way.
+When MyClass gets more dependencies because we need logging and also need to notify a web service (please excuse the cliche examples), then it's really helpful to easily see what methods have which dependencies.
+Tools like R# lets you extract a class from a set of private static methods in a few keystrokes. Try doing it when all private helper methods are tightly coupled to the instance field and you'll see it can be quite a headache.
+
+As has already been stated, there are many advantages to static methods.  However; keep in mind that they will live on the heap for the life of the application.  I recently spent a day tracking down a memory leak in a Windows Service... the leak was caused by private static methods inside a class that implemented IDisposable and was consistently called from a using statement.  Each time this class was created, memory was reserved on the heap for the static methods within the class, unfortunately, when the class was disposed of, the memory for the static methods was not released. This caused the memory footprint of this service to consume the available memory of the server within a couple of days with predictable results.

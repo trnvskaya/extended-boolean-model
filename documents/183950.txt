@@ -1,0 +1,118 @@
+Add ScriptManager to Page Programmatically?
+c# sharepoint-2007 web-parts scriptmanager
+I am developing a WebPart (it will be used in a SharePoint environment, although it does not use the Object Model) that I want to expose AJAX functionality in.  Because of the nature of the environment, Adding the Script Manager directly to the page is not an option, and so must be added programmatically.  I have attempted to add the ScriptManager control to the page in my webpart code.
+protected override void CreateChildControls()
+{
+    if (ScriptManager.GetCurrent(Page) == null)
+    {
+        ScriptManager sMgr = new ScriptManager();
+        // Ensure the ScriptManager is the first control.
+        Page.Form.Controls.AddAt(0, sMgr); 
+    }
+}
+
+However, when this code is executed, I get the following error message:
+
+"The control collection cannot be modified during DataBind, Init, Load, PreRender or Unload phases."
+
+Is there another way to add the ScriptManager to the page from a WebPart, or am I going to have to just add the ScriptManager to each page (or master page) that will use the WebPart?
+
+
+I was able to get this to work by using the Page's Init event:
+protected override void OnInit(EventArgs e)
+{
+    Page.Init += delegate(object sender, EventArgs e_Init)
+                 {
+                     if (ScriptManager.GetCurrent(Page) == null)
+                     {
+                         ScriptManager sMgr = new ScriptManager();
+                         Page.Form.Controls.AddAt(0, sMgr);
+                     }
+                 };
+    base.OnInit(e);
+}
+
+
+I've done this and it works.  Create a placeholder for the controls:
+<asp:PlaceHolder ID="WebGridPlaceholder" runat="server" >
+</asp:PlaceHolder>
+
+Then you can do this in CreateChildControls:
+ScriptManager aSM = new ScriptManager();
+aSM.ID = "GridScriptManager";
+WebGridPlaceholder.Controls.Add(aSM);
+
+
+I had this similar problem and found the best way was to add a global ScriptManager to the masterpage then in the code behind you can add to it by:
+ScriptManager.GetCurrent(Page).Services.Add(new ServiceReference(virtualPath));
+
+
+I ran into this problem with a custom ascx server control. I tried many solutions involving adding script to the OnInit events of the control (which doesn't get executed until after it checks for the ScriptManager control), adding logic inside of server tags on the control, and adding things to about every other event. No good. I finally built a control that inherits from ScriptManagerProxy and then uses ktrauberman's piece of code, slightly modified, to add a ScriptManager if needed:
+  public class ProxiedScriptManager : ScriptManagerProxy
+  {
+    protected override void OnInit(EventArgs e)
+    {
+      //double check for script-manager, if one doesn't exist, 
+      //then create one and add it to the page
+      if (ScriptManager.GetCurrent(this.Page) == null)
+      {
+        ScriptManager sManager = new ScriptManager();
+        sManager.ID = "sManager_" + DateTime.Now.Ticks;
+        Controls.AddAt(0, sManager);
+      }
+
+      base.OnInit(e);
+    }
+  }
+
+That did it for me.
+
+I had the same basic issue the rest of you had.  I was creating a custom ascx control and wanted to be able to not worry about whether or not the calling page had the scriptmanager declared.  I got around the issues by adding the following to the ascx contorl itself. 
+to the ascx page -
+<asp:PlaceHolder runat="server" ID="phScriptManager"></asp:PlaceHolder>
+in the update panel itself - oninit="updatePanel1_Init"
+to the ascx.cs file - 
+protected void updatePanel1_Init(object sender, EventArgs e)
+{
+     if (ScriptManager.GetCurrent(this.Page) == null)
+     {
+         ScriptManager sManager = new ScriptManager();
+         sManager.ID = "sManager_" + DateTime.Now.Ticks;
+         phScriptManager.Controls.AddAt(0, sManager);
+     }
+}
+
+Thank you to everyone else in this thread who got me started.
+
+This is the only way I could get my update panel to work in a sharepoint 2007 / 2010 compatible webpart.  We use a 2010 master page with an scriptmanager but a 2007 master page without one.
+.ascx
+<asp:PlaceHolder ID="sMgr_place" runat="server" />
+<asp:UpdatePanel runat="server" OnInit="updatePanel_Init"><ContentTemplate>
+...
+</ContentTemplate></asp:UpdatePanel>
+
+.ascx.cs
+public void updatePanel_Init(object sender, EventArgs e)
+{
+    if (ScriptManager.GetCurrent(Page) == null)
+    {
+        ScriptManager sMgr = new ScriptManager();
+        sMgr.EnablePartialRendering = true;
+        sMgr_place.Controls.Add(sMgr);
+    }
+}
+
+
+I used this code in custom web controls (.cs) that contain update panels.
+protected override void OnInit(EventArgs e)
+{
+    //...
+    if (ScriptManager.GetCurrent(this.Page) == null)
+    {
+        ScriptManager scriptManager = new ScriptManager();
+        scriptManager.ID = "scriptManager_" + DateTime.Now.Ticks;
+        Controls.AddAt(0, scriptManager);
+    }
+    //...
+}
+

@@ -1,0 +1,614 @@
+How to design a simple C++ object factory?
+c++ design factory
+In my application, there are 10-20 classes that are instantiated once[*]. Here's an example:
+class SomeOtherManager;
+
+class SomeManagerClass {
+public:
+    SomeManagerClass(SomeOtherManager*);
+    virtual void someMethod1();
+    virtual void someMethod2();
+};
+
+Instances of the classes are contained in one object:
+class TheManager {
+public:
+    virtual SomeManagerClass* someManagerClass() const;
+    virtual SomeOtherManager* someOtherManager() const;
+    /** More objects... up to 10-20 */
+};
+
+Currently TheManager uses the new operator in order to create objects. 
+My intention is to be able to replace, using plugins, the SomeManagerClass (or any other class) implementation with another one. In order to replace the implementation, 2 steps are needed:
+
+Define a class DerivedSomeManagerClass, which inherits SomeManagerClass [plugin]
+Create the new class (DerivedSomeManagerClass) instead of the default (SomeManagerClass) [application]
+
+I guess I need some kind of object factory, but it should be fairly simple since there's always only one type to create (the default implementation or the user implementation).
+Any idea about how to design a simple factory like I just described? Consider the fact that there might be more classes in the future, so it should be easy to extend.
+[*] I don't care if it happens more than once.
+Edit: Please note that there are more than two objects that are contained in TheManager.
+
+
+You could implement an object factory with static methods that return an instance of a Manager-Class. In the factory you could create a method for the default type of manager and a method for any type of manager which you give an argument representing the type of the Manager-Class (say with an enum). This last method should return an Interface rather than a Class.
+Edit: I'll try to give some code, but mind that my C++ times are quite a while back and I'm doing only Java and some scripting for the time being.
+class Manager { // aka Interface
+    public: virtual void someMethod() = 0;
+};
+
+class Manager1 : public Manager {
+    void someMethod() { return null; }
+};
+
+class Manager2 : public Manager {
+    void someMethod() { return null; }
+};
+
+enum ManagerTypes {
+    Manager1, Manager2
+};
+
+class ManagerFactory {
+    public static Manager* createManager(ManagerTypes type) {
+        Manager* result = null;
+        switch (type) {
+        case Manager1:
+             result = new Manager1();
+             break;
+        case Manager2:
+             result = new Manager2();
+             break;
+        default:
+             // Do whatever error logging you want
+             break;
+        }
+        return result;
+     }
+ };
+
+Now you should be able to call the Factory via (if you've been able to make the code sample work):
+Manager* manager = ManagerFactory.createManager(ManagerTypes.Manager1);
+
+
+Here's the solution I thought of, it's not the best one but maybe it will help to think of better solutions:
+For each class there would be a creator class:
+class SomeManagerClassCreator {
+public:
+    virtual SomeManagerClass* create(SomeOtherManager* someOtherManager) { 
+        return new SomeManagerClass(someOtherManager); 
+    }
+};
+
+Then, the creators will be gathered in one class:
+class SomeManagerClassCreator;
+class SomeOtherManagerCreator;
+
+class TheCreator {
+public:
+    void setSomeManagerClassCreator(SomeManagerClassCreator*);
+    SomeManagerClassCreator* someManagerClassCreator() const;
+
+    void setSomeOtherManagerCreator(SomeOtherManagerCreator*);
+    SomeOtherManagerCreator* someOtherManagerCreator() const;
+private:
+    SomeManagerClassCreator* m_someManagerClassCreator;
+    SomeOtherManagerCreator* m_someOtherManagerCreator;
+};
+
+And TheManager will be created with TheCreator for internal creation:
+class TheManager {
+public:
+    TheManager(TheCreator*);
+    /* Rest of code from above */
+};
+
+The problem with this solution is that it violates DRY - for each class creator I would have to write setter/getter in TheCreator.
+
+Mh I don't understand a hundred percent, and I am not really into factory stuff from books and articles.
+
+If all your managers share a similar interface you could derive from a base class, and use this base class in your program.
+Depending on where the decision which class will be created will be made, you have to use an identifier for creation (as stated above) or handle the decision which manager to instantiate internally.
+
+Another way would be to implement it "policy" like by using templates. So that You ManagerClass::create() returns a specific SomeOtherManagerWhatever instance. This would lay the decision which manager to make in the code which uses your Manager - Maye this is not intended.
+Or that way:
+
+template<class MemoryManagment>
+class MyAwesomeClass
+{
+    MemoryManagment m_memoryManager;
+};
+
+(or something like that)
+With this construct you can easily use other managers by only changing the instantiation of MyAwesomeClass.
+
+Also A class for this purpose might be a little over the top. In your case a factory function would do I guess. Well it's more a question of personal preference.
+
+I'd create a "base" factory that has virtual methods for creation of all the basic managers, and let the "meta manager" (TheManager in your question) take a pointer to the base factory as a constructor parameter.
+I'm assuming that the "factory" can customize the instances of CXYZWManager by deriving from them, but alternatively the constructor of CXYZWManager could take different arguments in the "custom" factory.
+A lengthy code example that outputs "CSomeManager" and "CDerivedFromSomeManager":
+#include <iostream>
+//--------------------------------------------------------------------------------
+class CSomeManager
+  {
+  public:
+    virtual const char * ShoutOut() { return "CSomeManager";}
+  };
+
+//--------------------------------------------------------------------------------
+class COtherManager
+  {
+  };
+
+//--------------------------------------------------------------------------------
+class TheManagerFactory
+  {
+  public:
+    // Non-static, non-const to allow polymorphism-abuse
+    virtual CSomeManager   *CreateSomeManager() { return new CSomeManager(); }
+    virtual COtherManager  *CreateOtherManager() { return new COtherManager(); }
+  };
+
+//--------------------------------------------------------------------------------
+class CDerivedFromSomeManager : public CSomeManager
+  {
+  public:
+    virtual const char * ShoutOut() { return "CDerivedFromSomeManager";}
+  };
+
+//--------------------------------------------------------------------------------
+class TheCustomManagerFactory : public TheManagerFactory
+  {
+  public:
+    virtual CDerivedFromSomeManager        *CreateSomeManager() { return new CDerivedFromSomeManager(); }
+
+  };
+
+//--------------------------------------------------------------------------------
+class CMetaManager
+  {
+  public:
+    CMetaManager(TheManagerFactory *ip_factory)
+      : mp_some_manager(ip_factory->CreateSomeManager()),
+        mp_other_manager(ip_factory->CreateOtherManager())
+      {}
+
+    CSomeManager  *GetSomeManager()  { return mp_some_manager; }
+    COtherManager *GetOtherManager() { return mp_other_manager; }
+
+  private:
+    CSomeManager  *mp_some_manager;
+    COtherManager *mp_other_manager;
+  };
+
+//--------------------------------------------------------------------------------
+int _tmain(int argc, _TCHAR* argv[])
+  {
+  TheManagerFactory standard_factory;
+  TheCustomManagerFactory custom_factory;
+
+  CMetaManager meta_manager_1(&standard_factory);
+  CMetaManager meta_manager_2(&custom_factory);
+
+  std::cout << meta_manager_1.GetSomeManager()->ShoutOut() << "\n";
+  std::cout << meta_manager_2.GetSomeManager()->ShoutOut() << "\n";
+  return 0;
+  }
+
+
+I would use templates like this as I can't see the point of factories classes:
+class SomeOtherManager;
+
+class SomeManagerClass {
+public:
+    SomeManagerClass(SomeOtherManager*);
+    virtual void someMethod1();
+    virtual void someMethod2();
+};
+
+
+class TheBaseManager {
+public:
+      // 
+};
+
+template <class ManagerClassOne, class ManagerClassOther> 
+class SpecialManager : public TheBaseManager {
+    public:
+        virtual ManagerClassOne* someManagerClass() const;
+        virtual ManagerClassOther* someOtherManager() const;
+};
+
+TheBaseManager* ourManager = new SpecialManager<SomeManagerClass,SomeOtherManager>;
+
+
+If you plan on supporting plugins that are dynamically linked, your program will need to provide a stable ABI (Application Binary Interface), that means that you cannot use C++ as your main interface as C++ has no standard ABI.
+If you want plugins to implement an interface you define yourself, you will have to provide the header file of the interface to plugin programmer and standardize on a very simple C interface in order to create and delete the object.
+You cannot provide a dynamic library that will allow you to "new" the plugin class as-is. That is why you need to standardize on a C interface in order to create the object. Using the C++ object is then possible as long as none of your arguments use possibly incompatible types, like STL containers. You will not be able to use a vector returned by another library, because you cannot ensure that their STL implementation is the same as yours.
+Manager.h
+class Manager
+{
+public:
+  virtual void doSomething() = 0;
+  virtual int doSomethingElse() = 0;
+}
+
+extern "C" {
+Manager* newManager();
+void deleteManager(Manager*);
+}
+
+PluginManager.h
+#include "Manager.h"
+
+class PluginManager : public Manager
+{
+public:
+  PluginManager();
+  virtual ~PluginManager();
+
+public:
+  virtual void doSomething();
+  virtual int doSomethingElse();
+}
+
+PluginManager.cpp
+#include "PluginManager.h"
+
+Manager* newManager()
+{
+  return new PluginManager();
+}
+void deleteManager(Manager* pManager)
+{
+  delete pManager;
+}
+
+PluginManager::PluginManager()
+{
+  // ...
+}
+
+PluginManager::~PluginManager()
+{
+  // ...
+}
+
+void PluginManager::doSomething()
+{
+  // ...
+}
+
+int PluginManager::doSomethingElse()
+{
+  // ...
+}
+
+
+I have answered in another SO question about C++ factories. Please see there if a flexible factory is of interest. I try to describe an old way from ET++ to use macros which has worked great for me.
+ET++ was a project to port old MacApp to C++ and X11. In the effort of it Eric Gamma etc started to think about Design Patterns
+
+You didnt talk about TheManager. It looks like you want that to control which class is being used? or maybe you trying to chain them together?
+It sounds like you need a abstract base class and a pointer to the currently used class. If you wish to chain you can do it in both abstract class and themanager class. If abstract class, add a member to the next class in chain, if themanager then sort it in order you which to use in a list. You'll need a way to add classes so you'll need an addMe() in themanager. It sounds like you know what your doing so w/e you choose should be right. A list with an addMe func is my recommendation and if you want only 1 active class then a function in TheManager deciding it would be good.
+
+Assuming a class (plugin1) which inherits from SomeManagerClass, you need a class hierarchy to build your types:
+class factory
+{
+public:
+    virtual SomeManagerClass* create() = 0;
+};
+
+class plugin1_factory : public factory
+{
+public:
+    SomeManagerClass* create() { return new plugin1(); }
+};
+
+Then you can assign those factories to a std::map, where they are bound to strings
+std::map<string, factory*>  factory_map;
+...
+factory_map["plugin1"] = new plugin1_factory();
+
+Finally your TheManager just needs to know the name of the plugin (as string) and can return an object of type SomeManagerClass with just one line of code:
+SomeManagerClass* obj = factory_map[plugin_name]->create();
+
+EDIT: If you don't like to have one plugin factory class for each plugin, you could modify the previous pattern with this: 
+template <class plugin_type>
+class plugin_factory : public factory
+{
+public:
+   SomeManagerClass* create() { return new plugin_type(); }
+};
+
+factory_map["plugin1"] = new plugin_factory<plugin1>();
+
+I think this is a much better solution. Moreover the 'plugin_factory' class could add itself to the 'factory_map' if you pass costructor the string.
+
+I think there are two separate problems here.
+One problem is: how does TheManager name the class that it has to create? It must keep some kind of pointer to "a way to create the class". Possible solutions are:
+
+keeping a separate pointer for each kind of class, with a way to set it, but you already said that you don't like this as it violates the DRY principle
+keeping some sort of table where the key is an enum or a string; in this case the setter is a single function with parameters (of course if the key is an enum you can use a vector instead of a map)
+
+The other problem is: what is this "way to create a class"? Unfortunately we can't store pointers to constructors directly, but we can:
+
+create, as others have pointed out, a factory for each class
+just add a static "create" function for each class; if they keep a consistent signature, you can just use their pointers to functions
+
+Templates can help in avoiding unnecessary code duplication in both cases.
+
+This maybe heavier than you need, but it sounds like you are trying to make a frame work class that supports plugins.
+I would break it up into to 3 sections.
+1) The FrameWork class would own the plugins.
+This class is responsable for publishing interfaces supplied by the plugins.
+2) A PlugIn class would own the componets that do the work.
+This class is responsable for registering the exported interfaces, and binding the imported interfaces to the components.
+3) The third section, the componets are the suppliers and consumers of the interfaces.
+To make things extensible, getting things up and running might be broke up into stages.
+
+Create everything.
+Wire everything up.
+Start everything.
+
+To break things down.
+
+Stop everything.
+Destroy everything.
+
+
+class IFrameWork {
+public:
+    virtual ~IFrameWork() {}
+    virtual void RegisterInterface( const char*, void* ) = 0;
+    virtual void* GetInterface( const char* name ) = 0;
+};
+
+class IPlugIn {
+public:
+    virtual ~IPlugIn() {}
+    virtual void BindInterfaces( IFrameWork* frameWork ) {};
+    virtual void Start() {};
+    virtual void Stop() {};
+};
+
+struct SamplePlugin :public IPlugIn {
+    ILogger* logger;
+
+    Component1 component1;
+    WebServer  webServer;
+
+public:
+    SamplePlugin( IFrameWork* frameWork ) 
+    	:logger( (ILogger*)frameWork->GetInterface( "ILogger" ) ),  //assumes the 'System' plugin exposes this
+    	component1(),
+    	webServer( component1 )
+    {
+    	logger->Log( "MyPlugin Ctor()" );
+
+    	frameWork->RegisterInterface( "ICustomerManager", dynamic_cast( &component1 ) ); 
+    	frameWork->RegisterInterface( "IVendorManager", dynamic_cast( &component1 ) ); 
+    	frameWork->RegisterInterface( "IAccountingManager", dynamic_cast( &webServer ) ); 
+    }
+
+    virtual void BindInterfaces( IFrameWork* frameWork ) {
+    	logger->Log( "MyPlugin BindInterfaces()" );
+
+    	IProductManager* productManager( static_cast( frameWork->GetInterface( "IProductManager" ) ) );
+    	IShippingManager* shippingManager( static_cast( frameWork->GetInterface( "IShippingManager" ) ) );
+
+    	component1.BindInterfaces( logger, productManager );
+    	webServer.BindInterfaces( logger, productManager, shippingManager );
+    }
+
+    virtual void Start() {
+    	logger->Log( "MyPlugin Start()" );
+
+    	webServer.Start();
+    }
+
+    virtual void Stop() {
+    	logger->Log( "MyPlugin Stop()" );
+
+    	webServer.Stop();
+    }
+};
+
+class FrameWork :public IFrameWork {
+    vector plugIns;
+    map interfaces;
+public:
+    virtual void RegisterInterface( const char* name, void* itfc ) {
+    	interfaces[ name ] = itfc;
+    }
+    virtual void* GetInterface( const char* name )  {
+    	return interfaces[ name ];
+    }
+
+    FrameWork() {
+    	//Only interfaces in 'SystemPlugin' can be used by all methods of the other plugins
+    	plugIns.push_back( new SystemPlugin( this ) );
+
+    	plugIns.push_back( new SamplePlugin( this ) ); 
+        //add other plugIns here
+
+    	for_each( plugIns.begin(), plugIns.end(), bind2nd( mem_fun( &IPlugIn::BindInterfaces ), this ) );
+    	for_each( plugIns.begin(), plugIns.end(), mem_fun( &IPlugIn::Start ) );
+    }
+
+    ~FrameWork() {
+    	for_each( plugIns.rbegin(), plugIns.rend(), mem_fun( &IPlugIn::Stop ) );
+    	for_each( plugIns.rbegin(), plugIns.rend(), Delete() );
+    }
+};
+
+
+
+Here's a minimal factory pattern implementation that I came up with in about 15 minutes. We use a similar one that uses more advanced base classes.
+#include "stdafx.h"
+#include <map>
+#include <string>
+
+class BaseClass
+{
+public:
+    virtual ~BaseClass() { }
+    virtual void Test() = 0;
+};
+
+class DerivedClass1 : public BaseClass 
+{ 
+public:
+    virtual void Test() { } // You can put a breakpoint here to test.
+};
+
+class DerivedClass2 : public BaseClass 
+{ 
+public:
+    virtual void Test() { } // You can put a breakpoint here to test.
+};
+
+class IFactory
+{
+public:
+    virtual BaseClass* CreateNew() const = 0;
+};
+
+template <typename T>
+class Factory : public IFactory
+{
+public:
+    T* CreateNew() const { return new T(); }
+};
+
+class FactorySystem
+{
+private:
+    typedef std::map<std::wstring, IFactory*> FactoryMap;
+    FactoryMap m_factories;
+
+public:
+    ~FactorySystem()
+    {
+        FactoryMap::const_iterator map_item = m_factories.begin();
+        for (; map_item != m_factories.end(); ++map_item) delete map_item->second;
+        m_factories.clear();
+    }
+
+    template <typename T>
+    void AddFactory(const std::wstring& name)
+    {
+        delete m_factories[name]; // Delete previous one, if it exists.
+        m_factories[name] = new Factory<T>();
+    }
+
+    BaseClass* CreateNew(const std::wstring& name) const
+    {
+        FactoryMap::const_iterator found = m_factories.find(name);
+        if (found != m_factories.end())
+            return found->second->CreateNew();
+        else
+            return NULL; // or throw an exception, depending on how you want to handle it.
+    }
+};
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    FactorySystem system;
+    system.AddFactory<DerivedClass1>(L"derived1");
+    system.AddFactory<DerivedClass2>(L"derived2");
+
+    BaseClass* b1 = system.CreateNew(L"derived1");
+    b1->Test();
+    delete b1;
+    BaseClass* b2 = system.CreateNew(L"derived2");
+    b2->Test();
+    delete b2;
+
+    return 0;
+}
+
+Just copy & paste over an initial Win32 console app in VS2005/2008. I like to point out something:
+
+You don't need to create a concrete factory for every class. A template will do that for you.
+I like to place the entire factory pattern in its own class, so that you don't need to worry about creating factory objects and deleting them. You simply register your classes, a factory class gets created by the compiler and a factory object gets created by the pattern. At the end of its lifetime, all factories are cleanly destroyed. I like this form of encapsulation, as there is no confusion over who governs the lifetime of the factories.
+
+
+This seems like it would be a lot simpler with function templating as opposed to an Abstract Factory pattern
+class ManagerFactory
+{
+public:
+    template <typename T> static BaseManager * getManager() { return new T();}
+};
+
+BaseManager * manager1 = ManagerFactory::template getManager<DerivedManager1>();
+
+If you want to get them via a string, you can create a standard map from strings to function pointers.  Here is an implementation that works:
+#include <map>
+#include <string>
+
+class BaseManager
+{
+public:
+    virtual void doSomething() = 0;
+};
+
+class DerivedManager1 : public BaseManager
+{
+public:
+    virtual void doSomething() {};
+};
+
+class DerivedManager2 : public BaseManager
+{
+public:
+    virtual void doSomething() {};
+};
+
+class ManagerFactory
+{
+public:
+    typedef BaseManager * (*GetFunction)();
+    typedef std::map<std::wstring, GetFunction> ManagerFunctionMap;
+private:
+    static ManagerFunctionMap _managers;
+
+public:
+    template <typename T> static BaseManager * getManager() { return new T();}
+    template <typename T> static void registerManager(const std::wstring& name)
+    {
+        _managers[name] = ManagerFactory::template getManager<T>;
+    }
+    static BaseManager * getManagerByName(const std::wstring& name)
+    {
+        if(_managers.count(name))
+        {
+            return _managers[name]();
+        }
+        return NULL;
+    }
+};
+// the static map needs to be initialized outside the class
+ManagerFactory::ManagerFunctionMap ManagerFactory::_managers;
+
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    // you can get with the templated function
+    BaseManager * manager1 = ManagerFactory::template getManager<DerivedManager1>();
+    manager1->doSomething();
+    // or by registering with a string
+    ManagerFactory::template registerManager<DerivedManager1>(L"Derived1");
+    ManagerFactory::template registerManager<DerivedManager2>(L"Derived2");
+    // and getting them
+    BaseManager * manager2 = ManagerFactory::getManagerByName(L"Derived2");
+    manager2->doSomething();
+    BaseManager * manager3 = ManagerFactory::getManagerByName(L"Derived1");
+    manager3->doSomething();
+    return 0;
+}
+
+EDIT:  In reading the other answers I realized that this is very similar to Dave Van den Eynde's FactorySystem solution, but I'm using a function template pointer instead of instantiating templated factory classes.  I think my solution is a little more lightweight.  Due to static functions, the only object that gets instantiated is the map itself. If you need the factory to perform other functions (DestroyManager, etc.), I think his solution is more extensible.
+
+You should take a look at the tutorial at
+http://downloads.sourceforge.net/papafactory/PapaFactory20080622.pdf?use_mirror=fastbull
+It contains a great tutorial on implementing an Abstract factory in C++ and the source code that comes with it is also very robust
+Chris

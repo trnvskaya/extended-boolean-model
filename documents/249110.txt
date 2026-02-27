@@ -1,0 +1,71 @@
+Django: Arbitrary number of unnamed urls.py parameters
+python django django-urls
+I have a Django model with a large number of fields and 20000+ table rows.  To facilitate human readable URLs and the ability to break down the large list into arbitrary sublists, I would like to have a URL that looks like this:
+/browse/<name1>/<value1>/<name2>/<value2>/ .... etc ....
+
+where 'name' maps to a model attribute and 'value' is the search criteria for that attribute.  Each "name" will be treated like a category to return subsets of the model instances where the categories match.
+Now, this could be handled with GET parameters, but I prefer more readable URLs for both the user's sake and the search engines.  These URLs subsets will be embedded on each page that displays this model, so it seems worth the effort to make pretty URLs.
+Ideally each name/value pair will be passed to the view function as a parameter named name1, name2, etc.  However, I don't believe it's possible to defined named patterns via a regex's matched text.  Am I wrong there?
+So, it seems I need to do something like this:
+urlpatterns = patterns('',
+    url(r'^browse/(?:([\w]+)/([\w]+)/)+$', 'app.views.view', name="model_browse"),
+)
+
+It seems this should match any sets of two name/value pairs.  While it matches it successfully, it only passes the last name/value pair as parameters to the view function.  My guess is that each match is overwriting the previous match.  Under the guess that the containing (?:...)+ is causing it, I tried a simple repeating pattern instead:
+urlpatterns = patterns('',
+    url(r'^browse/([\w]+/)+$', 'app.views.view', name="model_browse"),
+)
+
+... and got the same problem, but this time *args only includes the last matched pattern.
+Is this a limitation of Django's url dispatcher, and/or Python's regex support?  It seems either of these methods should work.  Is there a way to achieve this without hardcoding each possible model attribute in the URL as an optional (.*) pattern?
+
+
+A possibility that you might consider is matching the entire string of possible values within the url pattern portion and pull out the specific pieces within your view.  As an example:
+urlpatterns = patterns('',
+    url(r'^browse/(?P<match>.+)/$', 'app.views.view', name='model_browse'),
+)
+
+def view(request, match):
+    pieces = match.split('/')
+    # even indexed pieces are the names, odd are values
+    ...
+
+No promises about the regexp I used, but I think you understand what I mean.
+(Edited to try and fix the regexp.)
+
+I agree with Adam, but I think the pattern in urls.py should be:
+... r'^browse/(?P<match>.+)/$' ...
+
+The '\w' will only match 'word' characters, but the '.' will match anything.
+
+Same answer came to me while reading the question.
+I believe model_browse view is the best way to sort the query parameters and use it as a generic router.
+
+I think the answer of Adam is more generic than my solution, but if you like to use a fixed number of arguments in the url, you could also do something like this:
+The following example shows how to get all sales of a day for a location by entering the name of the store and the year, month and day.
+urls.py:
+urlpatterns = patterns('',
+    url(r'^baseurl/location/(?P<store>.+)/sales/(?P<year>[0-9][0-9][0-9][0-9])-(?P<month>[0-9][0-9])-(?P<day>[0-9][0-9])/$', views.DailySalesAtLocationListAPIView.as_view(), name='daily-sales-at-location'),
+)
+
+Alternativly, you could also use the id of the store by changing (?P<store>.+) to (?P<store>[0-9]+). Note that location and sales are no keywords, they just improve readability of the url.
+views.py
+class DailySalesAtLocationListAPIView(generics.ListAPIView):
+    def get(self, request, store, year, month, day):
+        # here you can start using the values from the url
+        print store
+        print year
+        print month
+        print date
+
+        # now start filtering your model
+
+Hope it helps anybody!
+Best regards,
+Michael
+
+I've an alternative solution, which isn't quite different from the previous but it's more refined:
+url(r'^my_app/(((list\/)((\w{1,})\/(\w{1,})\/(\w{1,3})\/){1,10})+)$'
+I've used unnamed url parameters and a repetitive regexp. Not to get the "is not a valid regular expression: multiple repeat" i place a word at the beginning of the list.
+I'm still working at the view receiving the list. But i think ill' go through the args or kwargs.. Cannot still say it exactly.
+My 2 cents

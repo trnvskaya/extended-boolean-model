@@ -1,0 +1,393 @@
+How do I create a Java string from the contents of a file?
+java file file-io io
+I've been using the idiom below for some time now. And it seems to be the most wide-spread, at least on the sites I've visited.
+Is there a better/different way to read a file into a string in Java?
+private String readFile(String file) throws IOException {
+    BufferedReader reader = new BufferedReader(new FileReader (file));
+    String         line = null;
+    StringBuilder  stringBuilder = new StringBuilder();
+    String         ls = System.getProperty("line.separator");
+
+    try {
+        while((line = reader.readLine()) != null) {
+            stringBuilder.append(line);
+            stringBuilder.append(ls);
+        }
+
+        return stringBuilder.toString();
+    } finally {
+        reader.close();
+    }
+}
+
+
+
+Commons FileUtils.readFileToString:
+
+public static String readFileToString(File file)
+                       throws IOException
+
+Reads the contents of a file into a String using the default encoding
+  for the VM. The file is always closed.
+Parameters:
+
+file - the file to read, must not be null
+
+Returns:
+  the file contents, never null
+Throws:
+   - IOException - in case of an I/O error
+Since:
+  Commons IO 1.3.1
+
+The code used (indirectly) by that class is:
+IOUtils.java under Apache Licence 2.0.
+public static long copyLarge(InputStream input, OutputStream output)
+       throws IOException {
+   byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
+   long count = 0;
+   int n = 0;
+   while (-1 != (n = input.read(buffer))) {
+       output.write(buffer, 0, n);
+       count += n;
+   }
+   return count;
+}
+
+It is very similar to the one used by Ritche_W.
+
+Java attempts to be extremely general and flexible in all it does. As a result, something which is relatively simple in a scripting language (your code would be replaced with "open(file).read()" in python) is a lot more complicated. There doesn't seem to be any shorter way of doing it, except using an external library (like Willi aus Rohr mentioned). Your options:
+
+Use an external library.
+Copy this code into all your projects.
+Create your own mini-library which contains functions you use often.
+
+Your best bet is probably the 2nd one, as it has the least dependencies.
+
+Read all text from a file
+Here's a compact, robust idiom for Java 7, wrapped up in a utility method:
+static String readFile(String path, Charset encoding) 
+  throws IOException 
+{
+  byte[] encoded = Files.readAllBytes(Paths.get(path));
+  return new String(encoded, encoding);
+}
+
+Read lines of text from a file
+Java 7 added a convenience method to read a file as lines of text, represented as a List<String>. This approach is "lossy" because the line separators are stripped from the end of each line.
+List<String> lines = Files.readAllLines(Paths.get(path), encoding);
+
+Memory utilization
+The first method, that preserves line breaks, can temporarily require memory several times the size of the file, because for a short time the raw file contents (a byte array), and the decoded characters (each of which is 16 bits even if encoded as 8 bits in the file) reside in memory at once. It is safest to apply to files that you know to be small relative to the available memory.
+The second method, reading lines, is usually more memory efficient, because the input byte buffer for decoding doesn't need to contain the entire file. However, it's still not suitable for files that are very large relative to available memory.
+For reading large files, you need a different design for your program, one that reads a chunk of text from a stream, processes it, and then moves on to the next, reusing the same fixed-sized memory block. Here, "large" depends on the computer specs. Nowadays, this threshold might be many gigabytes of RAM.
+Character encoding
+One thing that is missing from the sample in the original post is the character encoding. There are some special cases where the platform default is what you want, but they are rare, and you should be able justify your choice.
+The StandardCharsets class define some constants for the encodings required of all Java runtimes:
+String content = readFile("test.txt", StandardCharsets.UTF_8);
+
+The platform default is available from the Charset class itself:
+String content = readFile("test.txt", Charset.defaultCharset());
+
+
+Note: This answer largely replaces my Java 6 version. The utility of Java 7 safely simplifies the code, and the old answer, which used a mapped byte buffer, prevented the file that was read from being deleted until the mapped buffer was garbage collected. You can view the old version via the "edited" link on this answer.
+
+If you're looking for an alternative that doesn't involve a third-party library (e.g. Commons I/O), you can use the Scanner class:
+private String readFile(String pathname) throws IOException {
+
+    File file = new File(pathname);
+    StringBuilder fileContents = new StringBuilder((int)file.length());
+    Scanner scanner = new Scanner(file);
+    String lineSeparator = System.getProperty("line.separator");
+
+    try {
+        while(scanner.hasNextLine()) {
+            fileContents.append(scanner.nextLine() + lineSeparator);
+        }
+        return fileContents.toString();
+    } finally {
+        scanner.close();
+    }
+}
+
+
+That code will normalize line breaks, which may or may not be what you really want to do.
+Here's an alternative which doesn't do that, and which is (IMO) simpler to understand than the NIO code (although it still uses java.nio.charset.Charset):
+public static String readFile(String file, String csName)
+            throws IOException {
+    Charset cs = Charset.forName(csName);
+    return readFile(file, cs);
+}
+
+public static String readFile(String file, Charset cs)
+            throws IOException {
+    // No real need to close the BufferedReader/InputStreamReader
+    // as they're only wrapping the stream
+    FileInputStream stream = new FileInputStream(file);
+    try {
+        Reader reader = new BufferedReader(new InputStreamReader(stream, cs));
+        StringBuilder builder = new StringBuilder();
+        char[] buffer = new char[8192];
+        int read;
+        while ((read = reader.read(buffer, 0, buffer.length)) > 0) {
+            builder.append(buffer, 0, read);
+        }
+        return builder.toString();
+    } finally {
+        // Potential issue here: if this throws an IOException,
+        // it will mask any others. Normally I'd use a utility
+        // method which would log exceptions and swallow them
+        stream.close();
+    }        
+}
+
+
+There is a variation on the same theme that uses a for loop, instead of a while loop, to limit the scope of the line variable.  Whether it's "better" is a matter of personal taste.
+for(String line = reader.readLine(); line != null; line = reader.readLine()) {
+    stringBuilder.append(line);
+    stringBuilder.append(ls);
+}
+
+
+public static String slurp (final File file)
+throws IOException {
+    StringBuilder result = new StringBuilder();
+
+    try {
+        BufferedReader reader = new BufferedReader(new FileReader(file));
+
+        char[] buf = new char[1024];
+
+        int r = 0;
+
+        while ((r = reader.read(buf)) != -1) {
+            result.append(buf, 0, r);
+        }
+    }
+    finally {
+        reader.close();
+    }
+
+    return result.toString();
+}
+
+
+Guava has a method similar to the one from Commons IOUtils that Willi aus Rohr mentioned:
+import com.google.common.base.Charsets;
+import com.google.common.io.Files;
+
+// ...
+
+String text = Files.toString(new File(path), Charsets.UTF_8);
+
+EDIT by Oscar Reyes
+This is the (simplified) underlying code on the cited library:
+InputStream in = new FileInputStream(file);
+byte[] b  = new byte[file.length()];
+int len = b.length;
+int total = 0;
+
+while (total < len) {
+  int result = in.read(b, total, len - total);
+  if (result == -1) {
+    break;
+  }
+  total += result;
+}
+
+return new String( b , Charsets.UTF_8 );
+
+Edit (by Jonik): The above doesn't match the source code of recent Guava versions. For the current source, see the classes Files, CharStreams, ByteSource and CharSource in com.google.common.io package.
+
+To read a File as binary and convert at the end
+public static String readFileAsString(String filePath) throws IOException {
+    DataInputStream dis = new DataInputStream(new FileInputStream(filePath));
+    try {
+        long len = new File(filePath).length();
+        if (len > Integer.MAX_VALUE) throw new IOException("File "+filePath+" too large, was "+len+" bytes.");
+        byte[] bytes = new byte[(int) len];
+        dis.readFully(bytes);
+        return new String(bytes, "UTF-8");
+    } finally {
+        dis.close();
+    }
+}
+
+
+From this page a very lean solution:
+Scanner scanner = new Scanner( new File("poem.txt") );
+String text = scanner.useDelimiter("\\A").next();
+scanner.close(); // Put this call in a finally block
+
+or 
+Scanner scanner = new Scanner( new File("poem.txt"), "UTF-8" );
+String text = scanner.useDelimiter("\\A").next();
+scanner.close(); // Put this call in a finally block
+
+If you want to set the charset
+
+If it's a text file why not use apache commons-io?  http://commons.apache.org/io/apidocs/org/apache/commons/io/FileUtils.html
+It has the following method
+public static String readFileToString(File file) throws IOException
+
+If you want the lines as a list use
+public static List<String> readLines(File file) throws IOException
+
+
+This one uses the method RandomAccessFile.readFully, it seems to be available from JDK 1.0 !
+public static String readFileContent(String filename, Charset charset) throws IOException {
+    RandomAccessFile raf = null;
+    try {
+        raf = new RandomAccessFile(filename, "r");
+        byte[] buffer = new byte[(int)raf.length()];
+        raf.readFully(buffer);
+        return new String(buffer, charset);
+    } finally {
+        closeStream(raf);
+    }
+} 
+
+
+private static void closeStream(Closeable c) {
+    if (c != null) {
+        try {
+            c.close();
+        } catch (IOException ex) {
+            // do nothing
+        }
+    }
+}
+
+
+A flexible solution using IOUtils from Apache commons-io in combination with StringWriter:
+Reader input = new FileReader();
+StringWriter output = new StringWriter();
+try {
+  IOUtils.copy(input, output);
+} finally {
+  input.close();
+}
+String fileContents = output.toString();
+
+It works with any reader or input stream (not just with files), for example when reading from a URL.
+
+import java.nio.file.Files;
+
+.......   
+ String readFile(String filename) {
+            File f = new File(filename);
+            try {
+                byte[] bytes = Files.readAllBytes(f.toPath());
+                return new String(bytes,"UTF-8");
+            } catch (FileNotFoundException e) {
+                e.printStackTrace();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return "";
+    }
+
+
+Be aware when using fileInputStream.available() the returned integer does not have to represent the actual file size, but rather the guessed amount of bytes the system should be able to read from the stream without blocking IO. A safe and simple way could look like this
+public String readStringFromInputStream(FileInputStream fileInputStream) {
+    StringBuffer stringBuffer = new StringBuffer();
+    try {
+        byte[] buffer;
+        while (fileInputStream.available() > 0) {
+            buffer = new byte[fileInputStream.available()];
+            fileInputStream.read(buffer);
+            stringBuffer.append(new String(buffer, "ISO-8859-1"));
+        }
+    } catch (FileNotFoundException e) {
+    } catch (IOException e) { }
+    return stringBuffer.toString();
+}
+
+It should be considered that this approach is not suitable for multi-byte character encodings like UTF-8.
+
+One Line Solution 
+List<String> list = Files.readAllLines(new File("d://test.txt").toPath(), Charset.defaultCharset() );
+
+
+I cannot comment other entries yet, so I'll just leave it here.
+One of best answers here (http://stackoverflow.com/a/326448/1521167):
+private String readFile(String pathname) throws IOException {
+
+File file = new File(pathname);
+StringBuilder fileContents = new StringBuilder((int)file.length());
+Scanner scanner = new Scanner(file);
+String lineSeparator = System.getProperty("line.separator");
+
+try {
+    while(scanner.hasNextLine()) {        
+        fileContents.append(scanner.nextLine() + lineSeparator);
+    }
+    return fileContents.toString();
+} finally {
+    scanner.close();
+}
+}
+
+still has one flaw. It always puts new line char in the end of string, which may cause some weirds bugs. My suggestion is to change it to:
+    private String readFile(String pathname) throws IOException {
+    File file = new File(pathname);
+    StringBuilder fileContents = new StringBuilder((int) file.length());
+    Scanner scanner = new Scanner(new BufferedReader(new FileReader(file)));
+    String lineSeparator = System.getProperty("line.separator");
+
+    try {
+        if (scanner.hasNextLine()) {
+            fileContents.append(scanner.nextLine());
+        }
+        while (scanner.hasNextLine()) {
+            fileContents.append(lineSeparator + scanner.nextLine());
+        }
+        return fileContents.toString();
+    } finally {
+        scanner.close();
+    }
+}
+
+
+If you need a string processing (parallel processing) Java 8 has the great Stream API.
+String result = Files.lines(Paths.get("file.txt"))
+                    .parallel() // for parallel processing 
+                    .map(String::trim) // to change line   
+                    .filter(line -> line.length() > 2) // to filter some lines by a predicate                        
+                    .collect(Collectors.joining()); // to join lines
+
+More examples are available in JDK samples sample/lambda/BulkDataOperations that can be downloaded from Oracle Java SE 8 download page 
+Another one liner example
+String out = String.join("\n", Files.readAllLines(Paths.get("file.txt")));
+
+
+If you do not have access to Files, you do the next:
+static String readFile(File file, String charset)
+        throws IOException
+{
+    FileInputStream fileInputStream = new FileInputStream(file);
+    byte[] buffer = new byte[fileInputStream.available()];
+    int length = fileInputStream.read(buffer);
+    fileInputStream.close();
+    return new String(buffer, 0, length, charset);
+}
+
+
+After Ctrl+F'ing after Scanner, I think that the Scanner solution should be listed too. In the easiest to read fashion it goes like this:
+public String fileToString(File file, Charset charset) {
+  Scanner fileReader = new Scanner(file, charset);
+  fileReader.useDelimiter("\\Z"); // \Z means EOF.
+  String out = fileReader.next();
+  fileReader.close();
+  return out;
+}
+
+If you use Java 7 or newer (and you really should) consider using try-with-resources to make the code easier to read. No more dot-close stuff littering everything. But that's mostly a stylistic choice methinks.
+I'm posting this mostly for completionism, since if you need to do this a lot, there should be things in java.nio.file.Files that should do the job better.
+My suggestion would be to use Files#readAllBytes(Path) to grab all the bytes, and feed it to new String(byte[] Charset) to get a String out of it that you can trust. Charsets will be mean to you during your lifetime, so beware of this stuff now.
+Others have given code and stuff, and I don't want to steal their glory. ;)
+
+With Java 7, this is my preferred option to read a UTF-8 file:
+String content = new String(Files.readAllBytes(Paths.get(filename)), "UTF-8");
+
+Since Java 7, the JDK has the new java.nio.file API, which provides many shortcuts, so 3rd party libraries are not always required for simple file operations.

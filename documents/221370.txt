@@ -1,0 +1,96 @@
+Easy way to flatten XML file with LINQ
+xml linq
+Is there an easy way with LINQ to flatten an XML file?
+I can see a number of ways with XSLT but wondered what the best option with LINQ would be?
+I cant put the xml structure up exactly as stackoverflow seems to filter chevron chars. But its something like this 
+nodeA 
+--nodeA1 
+--nodeA2 
+NodeB 
+I want to end up with 
+nodeA 
+nodeA1
+nodeA2 
+NodeB
+
+
+OK; it depends on the output you want - with XElement you'd need to do a bit of work to remove all the descendent nodes etc. However, it is actually quite simple with XmlDocument:
+string xml = @"<xml><nodeA><nodeA1/><nodeA2/></nodeA><NodeB/></xml>";
+
+XmlDocument doc = new XmlDocument();
+doc.LoadXml(xml);
+
+XmlDocument clone = new XmlDocument();
+XmlElement root = (XmlElement) clone.AppendChild(clone.CreateElement("xml"));
+foreach(XmlElement el in doc.SelectNodes("//*")) {
+    root.AppendChild(clone.ImportNode(el, false));
+}
+Console.WriteLine(clone.OuterXml);
+
+Outputs:
+<xml><xml /><nodeA /><nodeA1 /><nodeA2 /><NodeB /></xml>
+
+
+[was]
+Care to define "flatten" in this context? i.e. "before" and "after"?
+XDocument has Descendants() and DescendantNodes() which might do the job...
+
+The last part of what Marc said is what I think you're looking for. Here is an example that you can drop into LINQPad and see the results of the "flatten."
+string xml = @"<xml><nodeA><nodeA1><inner1/><inner2/></nodeA1><nodeA2/></nodeA><NodeB/></xml>";
+
+XDocument doc = XDocument.Parse(xml);
+
+doc.Dump();
+doc.Root.Descendants().Dump();
+doc.Descendants().Dump();
+doc.Root.Descendants().Count().Dump();
+doc.Descendants().Count().Dump();
+
+
+using an extension method this is really easy to do : 
+public static class XElementExtensions
+{
+    public static string Path(this XElement xElement)
+    {
+        return PathInternal(xElement);
+    }
+
+    private static string PathInternal(XElement xElement)
+    {
+        if (xElement.Parent != null)
+            return string.Concat(PathInternal(xElement.Parent), ".", xElement.Name.LocalName);
+
+        return xElement.Name.LocalName;
+    }
+}
+
+then : 
+private static void Main()
+{
+    string sb =@"<xml>
+                <nodeA>
+                    <nodeA1>
+                        <inner1/><inner2/>
+                    </nodeA1>
+                    <nodeA2/>
+                </nodeA>
+                <NodeB/>
+                </xml>";
+
+    XDocument xDoc = XDocument.Parse(sb);
+
+    var result = xDoc.Root.Descendants()
+        .Select(r => new {Path = r.Path()});
+
+    foreach (var p in result)
+        Console.WriteLine(p.Path);
+}
+
+results in : 
+xml.nodeA
+xml.nodeA.nodeA1
+xml.nodeA.nodeA1.inner1
+xml.nodeA.nodeA1.inner2
+xml.nodeA.nodeA2
+xml.NodeB
+

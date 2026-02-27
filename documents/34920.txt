@@ -1,0 +1,221 @@
+How do I lock a file in Perl?
+perl file locking
+What is the best way to create a lock on a file in Perl?
+Is it best to flock on the file or to create a lock file to place a lock on and check for a lock on the lock file?
+
+
+Use the flock Luke. 
+Edit: This is a good explanation.
+
+flock creates Unix-style file locks, and is available on most OS's Perl runs on.  However flock's locks are advisory only.
+edit: emphasized that flock is portable
+
+If you end up using flock, here's some code to do it:
+use Fcntl ':flock'; # Import LOCK_* constants
+
+# We will use this file path in error messages and function calls.
+# Don't type it out more than once in your code.  Use a variable.
+my $file = '/path/to/some/file';
+
+# Open the file for appending.  Note the file path is quoted
+# in the error message.  This helps debug situations where you
+# have a stray space at the start or end of the path.
+open(my $fh, '>>', $file) or die "Could not open '$file' - $!";
+
+# Get exclusive lock (will block until it does)
+flock($fh, LOCK_EX) or die "Could not lock '$file' - $!";
+
+# Do something with the file here...
+
+# Do NOT use flock() to unlock the file if you wrote to the
+# file in the "do something" section above.  This could create
+# a race condition.  The close() call below will unlock the
+# file for you, but only after writing any buffered data.
+
+# In a world of buffered i/o, some or all of your data may not 
+# be written until close() completes.  Always, always, ALWAYS 
+# check the return value of close() if you wrote to the file!
+close($fh) or die "Could not write '$file' - $!";
+
+Some useful links:
+
+PerlMonks file locking tutorial (somewhat old)
+flock() documentation
+
+In response to your added question, I'd say either place the lock on the file or create a file that you call 'lock' whenever the file is locked and delete it when it is no longer locked (and then make sure your programs obey those semantics).
+
+CPAN to the rescue: IO::LockedFile. 
+
+My goal in this question was to lock a file being used as a data store for several scripts. In the end I used similar code to the following (from Chris):
+open (FILE, '>>', test.dat') ; # open the file 
+flock FILE, 2; # try to lock the file 
+# do something with the file here 
+close(FILE); # close the file
+
+In his example I removed the flock FILE, 8 as the close(FILE) performs this action as well. The real problem was when the script starts it has to hold the current counter, and when it ends it has to update the counter. This is where Perl has a problem, to read the file you:
+ open (FILE, '<', test.dat');
+ flock FILE, 2;
+
+Now I want to write out the results and since i want to overwrite the file I need to reopen and truncate which results in the following:
+ open (FILE, '>', test.dat'); #single arrow truncates double appends
+ flock FILE, 2;
+
+In this case the file is actually unlocked for a short period of time while the file is reopened. This demonstrates the case for the external lock file. If you are going to be changing contexts of the file, use a lock file. The modified code:
+open (LOCK_FILE, '<', test.dat.lock') or die "Could not obtain lock";
+flock LOCK_FILE, 2;
+open (FILE, '<', test.dat') or die "Could not open file";
+# read file
+# ...
+open (FILE, '>', test.dat') or die "Could not reopen file";
+#write file
+close (FILE);
+close (LOCK_FILE);
+
+
+Have you considered using the LockFile::Simple  module? It does most of the work for you already.
+In my past experience, I have found it very easy to use and sturdy.
+
+I think it would be much better to show this with lexical variables as file handlers
+and error handling.
+It is also better to use the constants from the Fcntl module than hard code the magic number 2 which might not be the right number on all operating systems.
+
+    use Fcntl ':flock'; # import LOCK_* constants
+
+    # open the file for appending
+    open (my $fh, '>>', 'test.dat') or die $!;
+
+    # try to lock the file exclusively, will wait till you get the lock
+    flock($fh, LOCK_EX);
+
+    # do something with the file here (print to it in our case)
+
+    # actually you should not unlock the file
+    # close the file will unlock it
+    close($fh) or warn "Could not close file $!";
+
+Check out the full documentation of flock and the File locking tutorial on PerlMonks even though that also uses the old style of file handle usage.
+Actually I usually skip the error handling on close() as there is not
+much I can do if it fails anyway.
+Regarding what to lock, if you are working in a single file then lock that file. If you need to lock several files at once then - in order to avoid dead locks - it is better to pick one file that you are locking. Does not really matter if that is one of the several files you really need to lock or a separate file you create just for the locking purpose.
+
+Ryan P wrote:
+
+In this case the file is actually unlocked for a short period of time while the file is reopened.
+
+So donât do that. Instead, open the file for read/write:
+open my $fh, '+<', 'test.dat'
+    or die "Couldnât open test.dat: $!\n";
+
+When you are ready to write the counter, just seek back to the start of the file. Note that if you do that, you should truncate just before close, so that the file isnât left with trailing garbage if its new contents are shorter than its previous ones. (Usually, the current position in the file is at its end, so you can just write truncate $fh, tell $fh.)
+Also, note that I used three-argument open and a lexical file handle, and I also checked the success of the operation. Please avoid global file handles (global variables are bad, mmkay?) and magic two-argument open (which has been a source of many a(n exploitable) bug in Perl code), and always test whether your opens succeed.
+
+use strict;
+
+use Fcntl ':flock'; # Import LOCK_* constants
+
+# We will use this file path in error messages and function calls.
+# Don't type it out more than once in your code.  Use a variable.
+my $file = '/path/to/some/file';
+
+# Open the file for appending.  Note the file path is in quoted
+# in the error message.  This helps debug situations where you
+# have a stray space at the start or end of the path.
+open(my $fh, '>>', $file) or die "Could not open '$file' - $!";
+
+# Get exclusive lock (will block until it does)
+flock($fh, LOCK_EX);
+
+
+# Do something with the file here...
+
+
+# Do NOT use flock() to unlock the file if you wrote to the
+# file in the "do something" section above.  This could create
+# a race condition.  The close() call below will unlock it
+# for you, but only after writing any buffered data.
+
+# In a world of buffered i/o, some or all of your data will not 
+# be written until close() completes.  Always, always, ALWAYS 
+# check the return value on close()!
+close($fh) or die "Could not write '$file' - $!";
+
+
+Here's my solution to reading and writing in one lock...
+open (TST,"+< readwrite_test.txt") or die "Cannot open file\n$!";
+flock(TST, LOCK_EX);
+# Read the file:
+@LINES=<TST>;
+# Wipe the file:
+seek(TST, 0, 0); truncate(TST, 0);
+# Do something with the contents here:
+push @LINES,"grappig, he!\n";
+$LINES[3]="Gekke henkie!\n";
+# Write the file:
+foreach $l (@LINES)
+{
+   print TST $l;
+}
+close(TST) or die "Cannot close file\n$!";
+
+
+The other answers cover Perl flock locking pretty well, but on many Unix/Linux systems there are actually two independent locking systems: BSD flock() and POSIX fcntl()-based locks.
+Unless you provide special options to configure when building Perl, its flock will use flock() if available.  This is generally fine and probably what you want if you just need locking within your application (running on a single system).  However, sometimes you need to interact with another application that uses fcntl() locks (like Sendmail, on many systems) or perhaps you need to do file locking across NFS-mounted filesystems.
+In those cases, you might want to look at File::FcntlLock or File::lockf.  It is also possible to do fcntl()-based locking in pure Perl (with some hairy and non-portable bits of pack()).
+Quick overview of flock/fcntl/lockf differences:
+lockf is almost always implemented on top of fcntl, has file-level locking only.  If implemented using fcntl, limitations below also apply to lockf.
+fcntl provides range-level locking (within a file) and network locking over NFS, but locks are not inherited by child processes after a fork().  On many systems, you must have the filehandle open read-only to request a shared lock, and read-write to request an exclusive lock.
+flock has file-level locking only, locking is only within a single machine (you can lock an NFS-mounted file, but only local processes will see the lock).  Locks are inherited by children (assuming that the file descriptor is not closed).
+Sometimes (SYSV systems) flock is emulated using lockf, or fcntl; on some BSD systems lockf is emulated using flock.  Generally these sorts of emulation work poorly and you are well advised to avoid them.
+
+Developed off of http://metacpan.org/pod/File::FcntlLock
+use Fcntl qw(:DEFAULT :flock :seek :Fcompat);
+use File::FcntlLock;
+sub acquire_lock {
+  my $fn = shift;
+  my $justPrint = shift || 0;
+  confess "Too many args" if defined shift;
+  confess "Not enough args" if !defined $justPrint;
+
+  my $rv = TRUE;
+  my $fh;
+  sysopen($fh, $fn, O_RDWR | O_CREAT) or LOGDIE "failed to open: $fn: $!";
+  $fh->autoflush(1);
+  ALWAYS "acquiring lock: $fn";
+  my $fs = new File::FcntlLock;
+  $fs->l_type( F_WRLCK );
+  $fs->l_whence( SEEK_SET );
+  $fs->l_start( 0 );
+  $fs->lock( $fh, F_SETLKW ) or LOGDIE  "failed to get write lock: $fn:" . $fs->error;
+  my $num = <$fh> || 0;
+  return ($fh, $num);
+}
+
+sub release_lock {
+  my $fn = shift;
+  my $fh = shift;
+  my $num = shift;
+  my $justPrint = shift || 0;
+
+  seek($fh, 0, SEEK_SET) or LOGDIE "seek failed: $fn: $!";
+  print $fh "$num\n" or LOGDIE "write failed: $fn: $!";
+  truncate($fh, tell($fh)) or LOGDIE "truncate failed: $fn: $!";
+  my $fs = new File::FcntlLock;
+  $fs->l_type(F_UNLCK);
+  ALWAYS "releasing lock: $fn";
+  $fs->lock( $fh, F_SETLK ) or LOGDIE "unlock failed: $fn: " . $fs->error;
+  close($fh) or LOGDIE "close failed: $fn: $!";
+}
+
+
+One alternative to the lock file approach is to use a lock socket. See Lock::Socket on CPAN for such an implementation. Usage is as simple as the following:
+use Lock::Socket qw/lock_socket/;
+my $lock = lock_socket(5197); # raises exception if lock already taken
+
+There are a couple of advantages to using a socket:
+
+guaranteed (through the operating system) that no two applications will hold the same lock: there is no race condition.
+guaranteed (again through the operating system) to clean up neatly when your process exits, so there are no stale locks to deal with.
+relies on functionality that is well supported by anything that Perl runs on: no issues with flock(2) support on Win32 for example.
+
+The obvious disadvantage is of course that the lock namespace is global. It is possible for a kind of denial-of-service if another process decides to lock the port you need.
+[disclosure: I am the author of the afor-mentioned module]

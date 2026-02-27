@@ -1,0 +1,76 @@
+What techniques are available for memory optimizing in 8051 assembly language?
+optimization assembly embedded intel 8051
+I need to optimize code to get room for some new code. I do not have the space for all the changes. I can not use code bank switching (80c31 with 64k). 
+
+
+With assembly language, you'll have to optimize by hand. Here are a few techniques:
+Note: IANA8051P (I am not an 8501 programmer but I have done lots of assembly on other 8 bit chips).
+Go through the code looking for any duplicated bits, no matter how small and make them functions.
+Learn some of the more unusual instructions and see if you can use them to optimize, eg. A nice trick is to use XOR A to clear the accumulator instead of MOV A,0 - it saves a byte.
+Another neat trick is if you call a function before returning, just jump to it eg, instead of:
+CALL otherfunc
+RET
+
+Just do:
+JMP otherfunc
+
+Always make sure you are doing relative jumps and branches wherever possible, they use less memory than absolute jumps.
+That's all I can think of off the top of my head for the moment.
+
+You haven't really given a lot to go on here, but there are two main levels of optimizations you can consider:
+Micro-Optimizations:
+  eg. XOR A instead of MOV A,0
+  Adam has covered some of these nicely earlier.
+Macro-Optimizations:
+  Look at the structure of your program, the data structures and algorithms used, the tasks performed, and think VERY hard about how these could be rearranged or even removed. Are there whole chunks of code that actually aren't used? Is your code full of debug output statements that the user never sees? Are there functions specific to a single customer that you could leave out of a general release? 
+To get a good handle on that, you'll need to work out WHERE your memory is being used up. The Linker map is a good place to start with this. Macro-optimizations are where the BIG wins can be made.
+As an aside, you could - seriously- try rewriting parts of your code with a good optimizing C compiler. You may be amazed at how tight the code can be. A true assembler hotshot may be able to improve on it, but it can easily be better than most coders. I used the IAR one about 20 years ago, and it blew my socks off.
+
+1)  Where possible save your variables in Idata not in xdata
+2)  Look at your Jmp statements â make use of SJmp and AJmp
+
+I assume you know it won't fit because you wrote/complied and got the "out of memory" error. :)  It appears the answers address your question pretty accurately; short of getting code examples.
+I would, however, recommend a few additional thoughts;
+
+Make sure all the code is really
+being used -- code coverage test? An
+unused sub is a big win -- this is a
+tough step -- if you're the original
+author, it may be easier -- (well, maybe) :)
+Ensure the level of "verification"
+and initialization -- sometimes we
+have a tendency to be over zealous
+in insuring we have initialized
+variables/memory and sure enough
+rightly so, how many times have we
+been bitten by it.  Not saying don't
+initialize (duh), but if we're doing
+a memory move, the destination
+doesn't need to be zero'd first --
+this dovetails with
+#1 --
+Eval the new features -- can an
+existing sub be be enhanced to cover
+both functions or perhaps an
+existing feature replaced?
+Break up big code if a piece of the
+big code can save creating a new
+little code.
+
+or perhaps there's an argument for hardware version 2.0 on the table now ... :)
+regards
+
+Besides the already mentioned (more or less) obvious optimizations, here is a really weird (and almost impossible to achieve) one: Code reuse. And with Code reuse I dont mean the normal reuse, but to a) reuse your code as data or b) to reuse your code as other code. Maybe you can create a lut (or whatever static data) that it can represented by the asm hex opcodes (here you have to look harvard vs von neumann architecture). 
+The other would reuse code by giving code a different meaning when you address it different. Here an example to make clear what I mean. If the bytes for your code look like this: AABCCCDDEEFFGGHH at address X where each letter stands for one opcode, imagine you would now jump to X+1. Maybe you get a complete different functionality where the now by space seperated bytes form the new opcodes: ABC CCD DE EF GH. 
+But beware: This is not only tricky to achieve (maybe its impossible), but its a horror to maintain. So if you are not a demo code (or something similiar exotic), I would recommend to use the already other mentioned ways to save mem.
+
+In the whacked-out department, you could also consider compressing part of your code and only keeping some part that is actively used decompressed at any particular point in time. I have a hard time believing that the code required for the compress/decompress system would be small enough a portion of the tiny memory of the 8051 to make this worthwhile, but has worked wonders on slightly larger systems. 
+Yet another approach is to turn to a byte-code format or the kind of table-driven code that some state machine tools output -- having a machine understand what your app is doing and generating a completely incomprehensible implementation can be a great way to save room :)
+Finally, if the code is indeed compiled in C, I would suggest compiling with a range of different options to see what happens. Also, I wrote a piece on compact C coding for the ESC back in 2001 that is still pretty current. See that text for other tricks for small machines.
+
+Sorry I am coming to this late, but I once had exactly the same problem, and it became a repeated problem that kept coming back to me. In my case the project was a telephone, on an 8051 family processor, and I had totally maxed out the ROM (code) memory. It kept coming back to me because management kept requesting new features, so each new feature became a two step process. 1) Optimize old stuff to make room 2) Implement the new feature, using up the room I just made.
+There are two approaches to optimization. Tactical and Strategical. Tactical optimizations save a few bytes at a time with a micro optimization idea. I think you need strategic optimizations which involve a more radical rethinking about how you are doing things.
+Something I remember worked for me and could work for you;
+Look at the essence of what your code has to do and try to distill out some really strong flexible primitive operations. Then rebuild your top level code so that it does nothing low level at all except call on the primitives. Ideally use a table based approach, your table contains stuff like; Input state, event, output state, primitives.... In other words when an event happens, look up a cell in the table for that event in the current state. That cell tells you what new state to change to (optionally) and what primitive(s) (if any) to execute. You might need multiple sets of states/events/tables/primitives for different layers/subsystems.
+One of the many benefits of this approach is that you can think of it as building a custom language for your particular problem, in which you can very efficiently (i.e. with minimal extra code) create new functionality simply by modifying the table.
+Sorry I am months late and you probably didn't have time to do something this radical anyway. For all I know you were already using a similar approach! But my answer might help someone else someday who knows.

@@ -1,0 +1,64 @@
+Which SQL Read TRANSACTION ISOLATION LEVEL do I want for long running insert?
+sql-server-2005 performance transactions
+I have a long running insert transaction that inserts data into several related tables.  
+When this insert is running, I cannot perform a select * from MainTable.  The select just spins its wheels until the insert is done.  
+I will be performing several of these inserts at the same/overlapping time.  To check that the information is not inserted twice, I query the MainTable first to see if an entry is there and that its processed bit is not set.  
+During the insert transaction, it flips the MainTable processed bit for that row.
+So I need to be able to read the table and also be able to tell if the specific row is currently being updated.
+Any ideas on how to set this up in Microsoft SQL 2005?  I am looking through the SET TRANSACTION ISOLATION LEVEL documentation.
+Thank you,
+Keith
+EDIT:  I do not think that the same insert batch will happen at the same time.  These are binary files that are being processed and their data inserted into the database.  I check that the file has not been processed before I parse and insert the data.  When I do the check, if the file has not been seen before I do a quick insert into the MainTable with the processed bit set false.  
+Is there a way to lock the row being updated instead of the entire table?  
+
+
+The only isolation level that allows one transaction to read changes executed by another transaction in progress (before it commits) is:
+SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED
+
+
+You may want to rethink your process before you use READ UNCOMMITTED. There are many good reasons for isolated transactions. If you use READ UNCOMMITTED you may still get duplicates because there is a chance both of the inserts will check for updates at the same time and both not finding them creating duplicates. Try breaking it up into smaller batches or issue periodic COMMITS
+EDIT
+You can wrap the MainTable update in a transaction that will free up that table quicker but you still may get conflicts with the other tables.
+ie
+BEGIN TRANSACTION
+
+SELECT @ProcessedBit = ProcessedBit FROM MainTable WHERE ID = XXX
+
+IF  @ProcessedBit = False
+    UPDATE MainTable SET ProcessedBit = True WHERE ID = XXX
+
+COMMIT TRANSACTION
+
+IF  @ProcessedBit = False
+BEGIN
+    BEGIN TRANSACTION
+    -- start long running process
+    ...
+    COMMIT TRANSACTION
+END
+
+EDIT to enable error recovery
+BEGIN TRANSACTION
+
+SELECT @ProcessedStatus = ProcessedStatus FROM MainTable WHERE ID = XXX
+
+IF  @ProcessedStatus = 'Not Processed'
+    UPDATE MainTable SET ProcessedBit = 'Processing' WHERE ID = XXX
+
+COMMIT TRANSACTION
+
+IF  @ProcessedStatus = 'Not Processed'
+BEGIN
+    BEGIN TRANSACTION
+    -- start long running process
+    ...
+
+   IF No Errors
+   BEGIN
+       UPDATE MainTable SET ProcessedStatus = 'Processed' WHERE ID = XXX
+       COMMIT TRANSACTION
+   ELSE
+       ROLLBACK TRANSACTION
+
+END
+

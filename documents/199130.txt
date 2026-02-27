@@ -1,0 +1,63 @@
+How do I increase the /proc/pid/cmdline 4096 byte limit?
+linux process classpath pid limits
+For my Java apps with very long classpaths, I cannot see the main class specified near the end of the arg list when using ps.  I think this stems from my Ubuntu system's size limit on /proc/pid/cmdline.  How can I increase this limit?
+
+
+Perhaps the 'w' parameter to ps is what you want.  Add two 'w' for greater output.  It tells ps to ignore the line width of the terminal.
+
+I'm pretty sure that if you're actually seeing the arguments truncated in /proc/$pid/cmdline then you're actually exceeding the maximum argument length supported by the OS. As far as I can tell, in Linux, the size is limited to the memory page size. See "ps ww" length restriction  for reference.
+The only way to get around that would be to recompile the kernel. If you're interested in going that far to resolve this then you may find this post useful: "Argument list too long": Beyond Arguments and Limitations 
+Additional reference:
+ARG_MAX, maximum length of arguments for a new process
+
+You can't change this dynamically, the limit is hard-coded in the kernel to PAGE_SIZE in fs/proc/base.c:
+ 274        int res = 0;
+ 275        unsigned int len;
+ 276        struct mm_struct *mm = get_task_mm(task);
+ 277        if (!mm)
+ 278                goto out;
+ 279        if (!mm->arg_end)
+ 280                goto out_mm;    /* Shh! No looking before we're done */
+ 281
+ 282        len = mm->arg_end - mm->arg_start;
+ 283 
+ 284        if (len > PAGE_SIZE)
+ 285                len = PAGE_SIZE;
+ 286 
+ 287        res = access_process_vm(task, mm->arg_start, buffer, len, 0);
+
+
+I temporarily get around the 4096 character command line argument limitation of ps (or rather /proc/PID/cmdline) is by using a small script to replace the java command.
+During development, I always use an unpacked JDK version from SUN and never use the installed JRE or JDK of the OS no matter if Linux or Windows (eg. download the bin versus the rpm.bin).
+I do not recommend changing the script for your default Java installation (e.g. because it might break updates or get overwritten or create problems or ...)
+So assuming the java command is in /x/jdks/jdk1.6.0_16_x32/bin/java
+first move the actual binary away:
+mv /x/jdks/jdk1.6.0_16_x32/bin/java /x/jdks/jdk1.6.0_16_x32/bin/java.orig
+
+then create a script /x/jdks/jdk1.6.0_16_x32/bin/java  like e.g.:
+    #!/bin/bash
+
+    echo "$@" > /tmp/java.$$.cmdline
+   /x/jdks/jdk1.6.0_16_x32/bin/java.orig $@
+
+and then make the script runnable
+chmod a+x /x/jdks/jdk1.6.0_16_x32/bin/java
+
+in case of copy and pasting the above, you should  make sure that there are not extra spaces in  /x/jdks/jdk1.6.0_16_x32/bin/java and #!/bin/bash is the first line
+The complete command line ends up in e.g. /tmp/java.26835.cmdline where 26835 is the PID of the shell script.
+I think there is also some shell limit on the number of command line arguments, cannot remember but it was possibly 64K characters.
+you can change the script to remove the command line text from /tmp/java.PROCESS_ID.cmdline
+at the end 
+After I got the commandline, I always move the script to something like "java.script" and copy  (cp -a) the actual binary java.orig back to java. I only use the script when I hit the 4K limit.
+There might be problems with escaped characters and maybe even spaces in paths or such, but it works fine for me.
+
+You can use jconsole to get access to the original command line without all the length limits.
+
+For looking at Java processes jps is very useful.
+This will give you the main class and jvm args:
+jps -vl | grep <pid>
+
+
+For Java based programs where you are just interested in inspecting the command line args your main class got, you can run:
+jps -m
+

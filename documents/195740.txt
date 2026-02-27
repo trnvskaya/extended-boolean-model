@@ -1,0 +1,103 @@
+How do you do relative time in Rails?
+ruby-on-rails ruby
+I'm writing a Rails application, but can't seem to find how to do relative time, i.e. if given a certain Time class, it can calculate "30 seconds ago" or "2 days ago" or if it's longer than a month "9/1/2008", etc.
+
+
+You can use the arithmetic operators to do relative time.
+Time.now - 2.days
+
+Will give you 2 days ago.
+
+Something like this would work.
+def relative_time(start_time)
+  diff_seconds = Time.now - start_time
+  case diff_seconds
+    when 0 .. 59
+      puts "#{diff_seconds} seconds ago"
+    when 60 .. (3600-1)
+      puts "#{diff_seconds/60} minutes ago"
+    when 3600 .. (3600*24-1)
+      puts "#{diff_seconds/3600} hours ago"
+    when (3600*24) .. (3600*24*30) 
+      puts "#{diff_seconds/(3600*24)} days ago"
+    else
+      puts start_time.strftime("%m/%d/%Y")
+  end
+end
+
+
+What about
+30.seconds.ago
+2.days.ago
+
+Or something else you were shooting for?
+
+Sounds like you're looking for the time_ago_in_words method (or distance_of_time_in_words), from ActiveSupport. Call it like this:
+<%= time_ago_in_words(timestamp) %>
+
+
+I've written this, but have to check the existing methods mentioned to see if they are better.
+module PrettyDate
+  def to_pretty
+    a = (Time.now-self).to_i
+
+    case a
+      when 0 then 'just now'
+      when 1 then 'a second ago'
+      when 2..59 then a.to_s+' seconds ago' 
+      when 60..119 then 'a minute ago' #120 = 2 minutes
+      when 120..3540 then (a/60).to_i.to_s+' minutes ago'
+      when 3541..7100 then 'an hour ago' # 3600 = 1 hour
+      when 7101..82800 then ((a+99)/3600).to_i.to_s+' hours ago' 
+      when 82801..172000 then 'a day ago' # 86400 = 1 day
+      when 172001..518400 then ((a+800)/(60*60*24)).to_i.to_s+' days ago'
+      when 518400..1036800 then 'a week ago'
+      else ((a+180000)/(60*60*24*7)).to_i.to_s+' weeks ago'
+    end
+  end
+end
+
+Time.send :include, PrettyDate
+
+
+Take a look at the instance methods here:
+http://apidock.com/rails/Time
+This has useful methods such as yesterday, tomorrow, beginning_of_week, ago, etc.
+Examples:
+Time.now.yesterday
+Time.now.ago(2.days).end_of_day
+Time.now.next_month.beginning_of_month
+
+
+I've written a gem that does this for Rails ActiveRecord objects. The example uses created_at, but it will also work on updated_at or anything with the class ActiveSupport::TimeWithZone.
+Just gem install and call the 'pretty' method on your TimeWithZone instance. 
+https://github.com/brettshollenberger/hublot
+
+Just to clarify Andrew Marshall's solution for using time_ago_in_words
+(For Rails 3.0 and Rails 4.0)
+If you are in a view
+<%= time_ago_in_words(Date.today - 1) %>
+
+If you are in a controller
+include ActionView::Helpers::DateHelper
+def index
+  @sexy_date = time_ago_in_words(Date.today - 1)
+end
+
+Controllers do not have the module ActionView::Helpers::DateHelper imported by default.
+N.B. It is not "the rails way" to import helpers into your controllers.  Helpers are for helping views.  The time_ago_in_words method was decided to be a view entity in the MVC triad.  (I don't agree but when in rome...)
+
+Since the most answer here suggests time_ago_in_words.
+Instead of using :
+<%= times_ago_in_words(comment.created_at) %>
+
+In Rails, Prefer:
+<abbr class="timeago" title="<%= comment.created_at.getutc.iso8601 %>">
+  <%= comment.created_at.to_s %>
+</abbr>
+
+alongwith a jquery library http://timeago.yarp.com/, with code:
+$("abbr.timeago").timeago();
+
+Main Advantage : Caching
+http://rails-bestpractices.com/posts/2012/02/10/not-use-time_ago_in_words/

@@ -1,0 +1,103 @@
+How can you concatenate two huge files with very little spare disk space?
+filesystems concatenation large-files
+Suppose that you have two huge files (several GB) that you want to concatenate together, but that you have very little spare disk space (let's say a couple hundred MB).  That is, given file1 and file2, you want to end up with a single file which is the result of concatenating file1 and file2 together byte-for-byte, and delete the original files.
+You can't do the obvious cat file2 >> file1; rm file2, since in between the two operations, you'd run out of disk space.
+Solutions on any and all platforms with free or non-free tools are welcome; this is a hypothetical problem I thought up while I was downloading a Linux ISO the other day, and the download got interrupted partway through due to a wireless hiccup.
+
+
+With those constraints I expect you'd need to tamper with the file system; directly edit the file size and allocation blocks.
+In other words, forget about shuffling any blocks of file content around, just edit the information about those files.
+
+I think the difficulty is determining how the space can be recovered from the original files.
+I think the following might work:
+
+Allocate a sparse file of the
+combined size.
+Copy 100Mb from the end of the second file to the end of the new file.
+Truncate 100Mb of the end of the second file
+Loop 2&3 till you finish the second file (With 2. modified to the correct place in the destination file).
+Do 2&3&4 but with the first file.
+
+This all relies on sparse file support, and file truncation freeing space immediately.
+If you actually wanted to do this then you should investigate the dd command. which can do the copying step
+Someone in another answer gave a neat solution that doesn't require sparse files, but does copy file2 twice:
+
+Copy 100Mb chunks from the end of file 2 to a new file 3, ending up in reverse order. Truncating file 2 as you go.
+Copy 100Mb chunks from the end of file 3 into file 1, ending up with the chunks in their original order, at the end of file 1. Truncating file 3 as you go.
+
+
+At the risk of sounding flippant, have you considered the option of just getting a bigger disk? It would probably be quicker...
+
+Two thoughts:
+If you have enough physical RAM, you could actually read the second file entirely into memory, delete it, then write it in append mode to the first file.  Of course if you lose power after deleting but before completing the write, you've lost part of the second file for good.
+Temporarily reduce disk space used by OS functionality (e.g. virtual memory, "recycle bin" or similar).  Probably only of use on Windows.
+
+I doubt this is a direct answer to the question. You can consider this as an alternative way to solve the problem.
+I think it is possible to consider 2nd file as the part 2 of the first file. Usually in zip application, we would see a huge file is split into multiple parts. If you open the first part, the application would automatically consider the other parts in further processing.
+We can simulate the same thing here. As @edg pointed out, tinkering file system would be one way.
+
+time spent figuring out clever solution involving disk-sector shuffling and file-chain manipulation: 2-4 hours
+time spent acquiring/writing software to do in-place copy and truncate: 2-20 hours
+times median $50/hr programmer rate: $400-$1200
+cost of 1TB USB drive: $100-$200
+ability to understand the phrase "opportunity cost": priceless
+
+Not very efficient, but I think it can be done.
+Open the first file in append mode, and copy blocks from the second file to it until the disk is almost full.  For the remainder of the second file, copy blocks from the point where you stopped back to the beginning of the file via random access I/O.  Truncate the file after you've copied the last block.  Repeat until finished.
+
+ok, for theoretical entertainment, and only if you promise not to waste your time actually doing it:
+
+files are stored on disk in pieces
+the pieces are linked in a chain
+
+So you can concatenate the files by:
+
+linking the last piece of the first file to the first piece of the last file
+altering the directory entry for the first file to change the last piece and file size
+removing the directory entry for the last file
+cleaning up the first file's end-of-file marker, if any
+note that if the last segment of the first file is only partially filled, you will have to copy data "up" the segments of the last file to avoid having garbage in the middle of the file [thanks @Wedge!]
+
+This would be optimally efficient: minimal alterations, minimal copying, no spare disk space required.
+now go buy a usb drive ;-)
+
+Obviously, the economic answer is buy more storage assuming that's a possible answer.  It might not be, though--embedded system with no way to attach more storage, or even no access to the equipment itself--say, space probe in flight.
+The previously presented answer based on the sparse file system is good (other than the destructive nature of it if something goes wrong!) if you have a sparse file system.  What if you don't, though?
+Starting from the end of file 2 copy blocks to the start of the target file reversing them as you go.  After each block you truncate the source file to the uncopied length.  Repeat for file #1.
+At this point the target file contains all the data backwards, the source files are gone.
+Read a block from the tart and from the end of the target file, reverse them and write them to the spot the other came from.  Work your way inwards flipping blocks.
+When you are done the target file is the concatenation of the source files.  No sparse file system needed, no messing with the file system needed.  This can be carried out at zero bytes free as the data can be held in memory.
+
+Here's a slight improvement over my first answer.
+If you have 100MB free, copy the last 100MB from the second file and create a third file.  Truncate the second file so it is now 100MB smaller.  Repeat this process until the second file has been completely decomposed into individual 100MB chunks.
+Now each of those 100MB files can be appended to the first file, one at a time.
+
+you could do this:
+head file2 --bytes=1024 >> file1 && tail --bytes=+1024 file2 >file2
+
+you can increase 1024 according to how much extra disk space you have, then just repeat this until all the bytes have been moved.
+This is probably the fastest way to do it (in terms of development time)
+
+You may be able to gain space by compressing the entire file system. I believe NTFS supports this, and I am sure there are flavors of *nix file systems that would support it. It would also have the benefit of after copying the files you would still have more disk space left over than when you started.
+
+OK, changing the problem a little bit. Chances are there's other stuff on the disk that you don't need, but you don't know what it is or where it is. If you could find it, you could delete it, and then maybe you'd have enough extra space.
+To find these "tumors", whether a few big ones, or lots of little ones, I use a little sampling program. Starting from the top of a directory (or the root) it makes two passes. In pass 1, it walks the directory tree, adding up the sizes of all the files to get a total of N bytes. In pass 2, it again walks the directory tree, pretending it is reading every file. Every time it passes N/20 bytes, it prints out the directory path and name of the file it is "reading". So the end result is 20 deep samples of path names uniformly spread over all the bytes under the directory.
+Then just look at that list for stuff that shows up a lot that you don't need, and go blow it away.
+(It's the space-equivalent of the sampling method I use for performance optimization.)
+
+if the file is highly compressible (ie. logs):
+gzip file1
+
+gzip file2
+
+zcat file1 file2 | gzip > file3
+
+rm file1
+
+rm file2
+
+gunzip file3
+
+
+"fiemap"
+http://www.mjmwired.net/kernel/Documentation/filesystems/fiemap.txt

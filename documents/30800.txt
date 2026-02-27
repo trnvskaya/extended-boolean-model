@@ -1,0 +1,45 @@
+How can I authenticate using client credentials in WCF just once?
+wcf security authentication ws-security
+What is the best approach to make sure you only need to authenticate once when using an API built on WCF?
+My current bindings and behaviors are listed below
+	<bindings>
+		<wsHttpBinding>
+			<binding name="wsHttp">
+				<security mode="TransportWithMessageCredential">
+					<transport/>
+					<message clientCredentialType="UserName" negotiateServiceCredential="false" establishSecurityContext="true"/>
+				</security>
+			</binding>
+		</wsHttpBinding>
+	</bindings>
+	<behaviors>
+		<serviceBehaviors>
+			<behavior name="NorthwindBehavior">
+				<serviceMetadata httpGetEnabled="true"/>
+				<serviceAuthorization principalPermissionMode="UseAspNetRoles"/>
+				<serviceCredentials>
+					<userNameAuthentication userNamePasswordValidationMode="MembershipProvider"/>
+				</serviceCredentials>
+			</behavior>
+		</serviceBehaviors>
+	</behaviors>
+
+Next is what I am using in my client app to authenticate (currently I must do this everytime I want to make a call into WCF)
+Dim client As ProductServiceClient = New ProductServiceClient("wsHttpProductService")
+client.ClientCredentials.UserName.UserName = "foo"
+client.ClientCredentials.UserName.Password = "bar"
+Dim ProductList As List(Of Product) = client.GetProducts()
+
+What I would like to do is auth w/ the API once using these credentials, then get some type of token for the period of time my client application is using the web service project.  I thought establishsecuritycontext=true did this for me?
+
+
+While I hate to give an answer I'm not 100% certain of, the lack of responses so far makes me think a potentially correct answer might be okay in this case.
+As far as I'm aware there isn't the kind of session token mechanism you're looking for out-of-the-box with WCF which means you're going to have to do some heavy lifting to get things working in the way you want. I should make it clear there is a session mechanism in WCF but it's focused on guaranteeing message orders and is not the ideal tool for creating an authentication session.
+I just finished working on a project where we implemented our own session mechanism to handle all manner of legacy SOAP stacks, but I believe the recommended way to implement authenticated sessions is to use a Secure Token Service (STS) like Pablo Cibraro's.
+If you want more details please shout, but I suspect Pablo's blog will have more than enough info for you to steam ahead.
+
+If you're on an intranet, Windows authentication can be handled for "free" by configuration alone. 
+If this isn't appropriate, token services work just fine, but for some situations they may be just too much.
+The application I'm working on needed bare-bones authentication. Our server and client run inside a (very secure) intranet, so we didn't care too much for the requirement to use an X.509 certificate to encrypt the communication, which is required if you're using username authentication.
+So we added a custom behavior to the client that adds the username and (encrypted) password to the message headers, and another custom behavior on the server that verifies them.
+All very simple, required no changes to the client side service access layer or the service contract implementation. And as it's all done by configuration, if and when we need to move to something a little stronger it'll be easy to migrate.

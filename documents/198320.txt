@@ -1,0 +1,290 @@
+Linq to SQL class lifespan
+c# linq-to-sql oop c#-3.0
+As far as I can understand, when I new up a Linq to SQL class, it is the equivalent of new'ing up a SqlConnection object.
+Suppose I have an object with two methods: Delete() and SubmitChanges(). Would it be wise of me to new up the Linq to SQL class in each of the methods, or would a private variable holding the Linq to SQL class - new'ed up by the constructor - be the way to go?
+What I'm trying to avoid is a time-out.
+UPDATE:
+namespace Madtastic
+{
+    public class Comment
+    {
+        private Boolean _isDirty = false;
+        private Int32 _id = 0;
+        private Int32 _recipeID = 0;
+        private String _value = "";
+        private Madtastic.User _user = null;
+
+        public Int32 ID
+        {
+            get
+            {
+                return this._id;
+            }
+        }
+
+        public String Value
+        {
+            get
+            {
+                return this._value;
+            }
+
+            set
+            {
+                this._isDirty = true;
+
+                this._value = value;
+            }
+        }
+
+        public Madtastic.User Owner
+        {
+            get
+            {
+                return this._user;
+            }
+        }
+
+
+        public Comment()
+        {
+        }
+
+
+        public Comment(Int32 commentID)
+        {            
+            Madtastic.DataContext mdc = new Madtastic.DataContext();
+
+            var comment = (from c in mdc.Comments
+                           where c.CommentsID == commentID
+                           select c).FirstOrDefault();
+
+            if (comment != null)
+            {
+                this._id = comment.CommentsID;
+                this._recipeID = comment.RecipesID;
+                this._value = comment.CommentsValue;
+                this._user = new User(comment.UsersID);
+            }
+
+            mdc.Dispose();
+        }
+
+
+        public void SubmitChanges()
+        {
+            Madtastic.DataContext mdc = new Madtastic.DataContext();
+
+
+            var comment = (from c in mdc.Comments
+                           where c.CommentsID == this._id
+                           select c).FirstOrDefault();
+
+            if (comment != null && this._isDirty)
+            {
+                comment.CommentsValue = this._value;
+            }
+            else
+            {
+                Madtastic.Entities.Comment c = new Madtastic.Entities.Comment();
+
+                c.RecipesID = this._recipeID;
+                c.UsersID = this._user.ID;
+                c.CommentsValue = this._value;
+
+                mdc.Comments.InsertOnSubmit(c);
+            }
+
+
+            mdc.SubmitChanges();
+
+
+            mdc.Dispose();
+        }
+
+
+        public void Delete()
+        {
+            Madtastic.DataContext mdc = new Madtastic.DataContext();
+
+            var comment = (from c in mdc.Comments
+                           where c.CommentsID == this._id
+                           select c).FirstOrDefault();
+
+            if (comment != null)
+            {
+                mdc.Comments.DeleteOnSubmit(comment);
+
+                mdc.SubmitChanges();
+
+                this._isDirty = false;
+                this._id = 0;
+                this._recipeID = 0;
+                this._value = "";
+                this._user = null;
+            }
+
+            mdc.Dispose();
+        }
+    }
+}
+
+REFACTORED CODE (according to Grank's spec):
+namespace Madtastic
+{
+    public sealed class CommentNew : IDisposable
+    {
+        private Madtastic.DataContext _mdc;
+        private Madtastic.Entities.Comment _comment;
+        private Madtastic.User _user;
+
+
+        public Int32 ID
+        {
+            get
+            {
+                return this._comment.CommentsID;
+            }
+        }
+
+        public String Value
+        {
+            get
+            {
+                return this._comment.CommentsValue;
+            }
+
+            set
+            {
+                this._comment.CommentsValue = value;
+            }
+        }
+
+        public Madtastic.User Owner
+        {
+            get
+            {
+                return this._user;
+            }
+        }
+
+
+        public void Comment(Int32 commentID)
+        {
+            this._mdc = new Madtastic.DataContext();
+
+            this._comment = (from c in _mdc.Comments
+                             where c.CommentsID == commentID
+                             select c).FirstOrDefault();
+
+            if (this._comment == null)
+            {
+                this._comment = new Madtastic.Entities.Comment();
+
+                this._mdc.Comments.InsertOnSubmit(this._comment);
+            }
+            else
+            {
+                this._user = new Madtastic.User(this._comment.User.UsersID);
+            }
+        }
+
+
+        public void SubmitChanges()
+        {
+            this._mdc.SubmitChanges();
+        }
+
+
+        public void Delete()
+        {
+            this._mdc.Comments.DeleteOnSubmit(this._comment);
+
+            this.SubmitChanges();
+        }
+
+
+        void IDisposable.Dispose()
+        {
+            this._mdc.Dispose();
+        }
+    }
+}
+
+
+
+I assume that you mean holding a value for the DataContext class? Personally, my preference is to default to a "using" clause for anything that is IDisposable (which the DataContext classes are). Instantiating in the constructor and holding a DataContext in a private variable would make that impossible. So to me, I'd put the instantiation in the methods, but more specifically, I'd put instantiation in a using clause so that proper disposal is insured.
+
+Depends on to what you refer by a "LINQ-to-SQL class", and what the code in question looks like.
+If you're talking about the DataContext object, and your code is a class with a long lifetime or your program itself, I believe it would be best to initialize it in the constructor.  It's not really like creating and/or opening a new SqlConnection, it's actually very smart about managing its database connection pool and concurrency and integrity so that you don't need to think about it, that's part of the joy in my experience so far with LINQ-to-SQL.  I've never seen a time-out problem occur.
+One thing you should know is that it's very difficult to share table objects across DataContext scope, and it's really not recommended if you can avoid it.  Detach() and Attach() can be bitchy.  So if you need to pass around a LINQ-to-SQL object that represents a row in a table on your SQL database, you should try to design the life cycle of the DataContext object to encompass all the work you need to do on any object that comes out of it.  
+Furthermore, there's a lot of overhead that goes into instantiating a DataContext object, and a lot of overhead that is managed by it... If you're hitting the same few tables over and over it would be best to use the same DataContext instance, as it will manage its connection pool, and in some cases cache some things for efficiency.  However, it's recommended to not have every table in your database loaded into your DataContext, only the ones you need, and if the tables being accessed are very separate in very separate circumstances, you can consider splitting them into multiple DataContexts, which gives you some options on when you initialize each one if the circumstances surrounding them are different. 
+
+One of my current projects uses Linq to SQL where we're holding the datacontext as a private field inside of the object.  Doing so hasn't been troublesome for the most part, allows for future mocking if I pass in a datacontext in the constructor, and just seems cleaner than opening up multiple datacontexts.  Similar to what Jacob mentioned above, we're implementing IDisposable to make sure that the datacontext can reliably be closed down when the object is no longer needed.
+
+SqlConnections are pooled by default.  You should new them up a bunch to justify that pooling cost!
+DataContexts are cheap to make (after the first).  You should new them up a bunch to justify that first new-up cost!
+
+Having now reviewed the code sample you edited to post, I would definitely refactor your class to take advantage of LINQ-to-SQL's built in functionality. (I won't edit my previous comment because it's a better answer to the general question)
+Your class's fields appear to be a pretty direct mapping of the columns on the Comments table in the database.  Therefore you don't need to do most of what you're doing manually in this class.  Most of the functionality could be handled by just having a private member of type Madtastic.Entities.Comment (and just mapping your properties to its properties if you have to maintain how this class interacts with the rest of the project).  Then your constructor can just initialize a private member Madtastic.DataContext and set your private member Madtastic.Entities.Comment to the result of the LINQ query on it.  If the comment is null, create a new one and call InsertOnSubmit on the DataContext.  (but it doesn't make sense to submit changes yet because you haven't set any values for this new object anyway)
+In your SubmitChanges, all you should have to do is call SubmitChanges on the DataContext.  It keeps its own track of whether or not the data needs to be updated, it won't hit the database if it doesn't, so you don't need _isDirty.
+In your Delete(), all you should have to do is call DeleteOnSubmit on the DataContext.
+You may in fact find with a little review that you don't need the Madtastic.Comment class at all, and the Madtastic.Entities.Comment LINQ-to-SQL class can act directly as your data access layer.  It seems like the only practical differences are the constructor that takes a commentID, and the fact that the Entities.Comment has a UsersID property where your Madtastic.Comment class has a whole User.  (However, if User is also a table in the database, and UsersID is a foreign key to its primary key, you'll find that LINQ-to-SQL has created a User object on the Entities.Comment object that you can access directly with comment.User)
+If you find you can eliminate this class entirely, it might mean that you can further optimize your DataContext's life cycle by bubbling it up to the methods in your project that make use of Comment.
+Edited to post the following example refactored code (apologies for any errors, as I typed it in notepad in a couple seconds rather than opening visual studio, and I wouldn't get intellisense for your project anyway):
+namespace Madtastic
+{
+    public class Comment
+    {
+        private Madtastic.DataContext mdc;
+        private Madtastic.Entities.Comment comment;
+
+        public Int32 ID
+        {
+            get
+            {
+                return comment.CommentsID;
+            }
+        }
+
+        public Madtastic.User Owner
+        {
+            get
+            {
+                return comment.User;
+            }
+        }
+
+        public Comment(Int32 commentID)
+        {            
+            mdc = new Madtastic.DataContext();
+
+            comment = (from c in mdc.Comments
+                           where c.CommentsID == commentID
+                           select c).FirstOrDefault();
+
+            if (comment == null)
+            {
+                comment = new Madtastic.Entities.Comment();
+    	    mdc.Comments.InsertOnSubmit(comment);
+            }
+
+        }
+
+        public void SubmitChanges()
+        {
+
+            mdc.SubmitChanges();
+
+        }
+
+
+        public void Delete()
+        {
+            mdc.Comments.DeleteOnSubmit(comment);
+            SubmitChanges();
+        }
+    }
+}
+
+You will probably also want to implement IDisposable/using as a number of people have suggested.

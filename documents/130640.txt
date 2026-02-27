@@ -1,0 +1,317 @@
+Is there a reasonable way to implement a cd command on VMS?
+vms
+I would like to be able to say things like
+cd [.fred] and have my default directory go there, 
+and my prompt change to indicate the full path to my current location.
+
+
+My DCL is really rusty, but can't you create an alias for SET DEFAULT named CD?
+
+Just type
+cd:==set default 
+at the command prompt. You can also put this in your LOGIN.COM file, but be sure to put a $ in front, i.e.
+$ cd:==set default
+To change your prompt to show your default, something like this may work up to a point
+$ set prompt='f$env("default")'
+There is a problem though with the fact that VMS prompt has maximum 32 characters, and your default might be longer than that. Have a look at this page for a way around that problem.
+
+Here's my setup:
+You need 2 files (typed below) : godir.com and prompt.com in your sys$login
+You may define a symbole
+CD == "@sys$login:godir.com"
+
+But I suggest you to use something else... (ie SD == "@sys$login:godir.com")
+I modify the help text. It was in french...
+You will have to retype the escape caracters into godir.com 
+Replace ESC by the real escape into GRAPH_BOUCLE: (see bottom of godir.com)
+Then to use it:
+SD ?
+SD a_directory
+...
+
+Hope it helps.
+
+Here's prompt.com
+$       noeud   = f$trnlnm("SYS$NODE") - "::"
+$       if noeud .eqs. "HQSVYC" then noeud = "Â¥"
+$!
+$       noeud = noeud - "MQO"
+$       def_dir = f$directory()
+$       def_dir = f$extract(1,f$length(def_dir)-2,def_dir)
+$boucle:
+$       i = f$locate(".",def_dir)
+$       if i .eq. f$length(def_dir) then goto fin_boucle
+$       def_dir = f$extract(i+1,f$length(def_dir)-1,def_dir)
+$       goto boucle
+$!
+$fin_boucle:
+$!      temp = "''noeud' ''def_dir' " + "''car_prompt'"
+$       temp = "''noeud'" -
+             + " ''def_dir' " -
+             + "''f$logical(""environnement"")'" -
+             + "''car_prompt'"
+$!      temp = "''noeud'" -
+$!           + "''def_dir'" -
+$!           + "''f$logical(""environnement"")'" -
+$!           + "''car_prompt'"
+$       set prompt="''temp' "
+$!
+$! PROMPT.COM
+$!
+
+Here's godir.com
+$!
+$! GODIR.COM
+$!
+$       set noon
+$       set_prompt = "@sys$login:prompt.com"
+$       if f$type(TAB_DIR_N) .nes. "" then goto 10$
+$       goto 20$
+$ INIT:
+$       temp2 = "INIT"
+$ CLEAR:
+$       temp = 0
+$
+$ INIT2:
+$       temp = temp +1
+$       if temp .gt. TAB_DIR_N then goto INIT3
+$       delete/symb/glo TAB_DIR_'temp'
+$       goto INIT2
+$
+$ INIT3:
+$       P1 = ""
+$       if temp2 .eqs. "INIT" then goto 20$
+$       delete/symb/glo TAB_DIR_N
+$       delete/symb/glo TAB_DIR_P
+$       delete/symb/glo TAB_DIR_I
+$       exit
+$
+$ 20$:
+$       TAB_DIR_N == 1
+$       TAB_DIR_P == 1
+$       TAB_DIR_I == 1
+$       if "''car_prompt'" .eqs. "" then car_prompt == ">"
+$       TAB_DIR_1 == f$parse(f$dir(),,,"device")+f$dir()
+$ 10$:
+$       if P1 .eqs. ""  then goto LIST
+$       if P1 .eqs. "?" then goto SHOW
+$       if P1 .eqs. "." then P1 = "[]"
+$       if P1 .eqs. "^" then goto SET_CUR
+$       if (P1 .eqs. "<") .or. (P1 .eqs. ">") .or. -
+           (P1 .eqs. "..") then P1 = "[-]"
+$       if (P1 .eqs. "*") .or. (P1 .eqs. "0") then goto HOME
+$       if (P1 .eqs. "P") .or. (P1 .eqs. "p") then goto PREVIOUS
+$       if (P1 .eqs. "H") .or. (P1 .eqs. "h") then goto HELP
+$       if (P1 .eqs. "S") .or. (P1 .eqs. "s") then goto SET_PROMPT
+$       if (P1 .eqs. "G") .or. (P1 .eqs. "g") then goto SET_PROMPT_GRAPHIC
+$       temp2 = ""
+$       if (P1 .eqs. "~INIT")  .or. (P1 .eqs. "~init")  then goto INIT
+$       if (P1 .eqs. "~CLEAR") .or. (P1 .eqs. "~clear") then goto CLEAR
+$
+$!      *** Specification par un numero
+$       temp = f$extract(0,1,P1)
+$       if temp .eqs. "-" then goto DELETE
+$       temp2 = ""
+$boucle_reculer:
+$       if temp .nes. "\" then goto fin_reculer
+$       temp2 = temp2 + "-."
+$       P1 = P1 - "\"
+$       temp = f$extract(0,1,P1)
+$       goto boucle_reculer
+$!
+$fin_reculer:
+$       P1 = temp2 + P1
+$       if (P1 .lts. "0") .or. (P1 .gts. "9") then goto SPEC
+$       temp = f$integer("''P1'")
+$       if temp .eq. 0 then goto HOME
+$       if (temp .lt. 1) .or. (temp .gt. TAB_DIR_N) then goto ERR
+$       TAB_DIR_P == TAB_DIR_I
+$       TAB_DIR_I == temp
+$       goto SET2
+$
+$ SPEC:
+$!      *** Specification relative de directory
+$
+$       temp = f$parse("[.''P1']","missing.mis")
+$       DD = f$extract(0,f$locate("]",temp)+1,temp)
+$       if DD .nes. "" then goto SET1
+$
+$!      *** Specification de directory principal
+$
+$       temp = f$parse("[''P1']","missing.mis")
+$       DD = f$extract(0,f$locate("]",temp)+1,temp)
+$       if DD .nes. "" then goto SET1
+$
+$       temp = f$parse("[''P1']","sys$login:missing.mis")
+$       DD = f$extract(0,f$locate("]",temp)+1,temp)
+$       if DD .nes. "" then goto SET1
+$
+$!      *** Specification exacte de directory
+$
+$       temp = f$parse(P1,"missing.mis")
+$       if f$locate("]"+P1,temp) .ne. f$length(temp) then goto ERR
+$       if f$locate(".][",temp) .ne. f$length(temp) then temp = temp - "]["
+$       DD = f$extract(0,f$locate("]",temp)+1,temp)
+$!      if DD .eqs. TAB_DIR_'TAB_DIR_I' then goto SHOW
+$       if DD .eqs. TAB_DIR_'TAB_DIR_I' then goto SET2
+$       if DD .nes. "" then goto SET1
+$
+$       temp = f$parse(P1,"sys$login:missing.mis")
+$       if f$locate("]"+P1,temp) .ne. f$length(temp) then goto ERR
+$       if f$locate(".][",temp) .ne. f$length(temp) then temp = temp - "]["
+$       DD = f$extract(0,f$locate("]",temp)+1,temp)
+$!      if DD .eqs. TAB_DIR_'TAB_DIR_I' then goto SHOW
+$       if DD .eqs. TAB_DIR_'TAB_DIR_I' then goto SET2
+$       if DD .nes. "" then goto SET1
+$
+$       goto ERR
+$
+$ HOME:
+$       DD = "SYS$LOGIN"
+$
+$ SET1:
+$       Set On
+$       On error then goto ERR1
+$       set message/nofac/noid/nosever/notext
+$       Set def 'DD'
+$       dir/output=nl:
+$       set message/fac/id/sever/text
+$       temp = f$parse(f$dir()) - ".;"
+$       if temp .nes. "" then goto SET1F
+$ ERR1:
+$       set message/fac/id/sever/text
+$       temp = TAB_DIR_'TAB_DIR_I'
+$       Set def 'temp'
+$       goto ERR
+$ SET1F:
+$       I = 0
+$ LOOP1:
+$       I = I + 1
+$       if temp .eqs. TAB_DIR_'I' then goto FOUND
+$       if I .lt. TAB_DIR_N then goto LOOP1
+$
+$       TAB_DIR_N == TAB_DIR_N + 1
+$       TAB_DIR_P == TAB_DIR_I
+$       TAB_DIR_I == TAB_DIR_N
+$       TAB_DIR_'TAB_DIR_I' == temp
+$       goto SHOW
+$
+$ FOUND:
+$       TAB_DIR_P == TAB_DIR_I
+$       TAB_DIR_I == I
+$       goto SET2
+$
+$ SET_PROMPT:
+$       car_prompt == "''P2'"
+$       set_prompt
+$       exit
+$
+$ PREVIOUS:
+$       temp = TAB_DIR_P
+$       TAB_DIR_P == TAB_DIR_I
+$       TAB_DIR_I == temp
+$
+$ SET_CUR:
+$ SET2:
+$       DD = TAB_DIR_'TAB_DIR_I'
+$       set def 'DD'
+$
+$ SHOW:
+$       temp = TAB_DIR_'TAB_DIR_I'
+$       ws "  ''TAB_DIR_I' * ''temp'"
+$       set_prompt
+$       exit
+$
+$ LIST:
+$       I = 0
+$ LOOP2:
+$       I = I + 1
+$       temp = TAB_DIR_'I'
+$       if I .eq. TAB_DIR_I then goto L_CUR
+$       if I .eq. TAB_DIR_P then GOTO L_PRE
+$       ws "  ''I' = ''temp'"
+$       goto F_LOOP2
+$ L_CUR:
+$       ws "  ''I' * ''temp'"
+$       goto F_LOOP2
+$ L_PRE:
+$       ws "  ''I' + ''temp'"
+$
+$ F_LOOP2:
+$       if I .lt. TAB_DIR_N then goto LOOP2
+$       set_prompt
+$
+$       exit
+$
+$ DELETE:
+$       P1 = P1 - "-"
+$       temp2 = f$integer("''P1'")
+$ DEL_1:
+$       temp = f$integer("''P1'")
+$       if (temp .lt. 1) .or. (temp .gt. TAB_DIR_N) then goto ERR
+$       if temp .eq. TAB_DIR_I then goto ERR
+$       if temp .lt. TAB_DIR_I then TAB_DIR_I == TAB_DIR_I - 1
+$       if temp .eq. TAB_DIR_P then TAB_DIR_P == TAB_DIR_I
+$       if temp .lt. TAB_DIR_P then TAB_DIR_P == TAB_DIR_P - 1
+$ LOOP3:
+$       if temp .eq. TAB_DIR_N then goto F_LOOP3
+$       temp3 = temp + 1
+$       TAB_DIR_'temp' == TAB_DIR_'temp3'
+$       temp = temp + 1
+$       goto LOOP3
+$ F_LOOP3:
+$       delete/symb/glo tab_dir_'tab_dir_n'
+$       TAB_DIR_N == TAB_DIR_N - 1
+$       if P2 .eqs. "" then goto FIN_DEL
+$       temp2 = temp2 + 1
+$       if temp2 .le. f$integer("''P2'") then goto DEL_1
+$ FIN_DEL:
+$       goto LIST
+$
+$ ERR:
+$       ws "*** ERREUR ***"
+$       exit
+$
+$ HELP:
+$       ws "    H       Show this menu"
+$       ws "    null    Show a list of directories"
+$       ws "    ?       Show current directory"
+$       ws "    < or [-] or"
+$       ws "    > or .. Remonte d'un niveau de directory"
+$       ws "    * ou 0  Return to SYS$LOGIN"
+$       ws "    P       Last directory "
+$       ws "    . ou [] Set cureent directory"
+$       ws "    ^       Return to next directory"
+$       ws "    x       Set def to number x"
+$       ws "    -x      Remove the number x"
+$       ws "    -x y    Remove from x to y"
+$       ws "    ddd     Set def to [ddd] or [.ddd] or ddd:"
+$       ws "    \ddd    Set def to [-.ddd]"
+$       ws "    S "">>""  Modify prompt for >>"
+$       ws "    ~INIT   Initialize to current directory "
+$       ws "            (and delete all others references)"
+$       ws "    ~CLEAR  Remove all references
+$       ws ""
+$
+$       exit
+$
+$ SET_PROMPT_GRAPHIC:
+$       temp = "''P2'"
+$       i=0
+$       car_prompt == ""
+$ GRAPH_BOUCLE:
+$       t=f$extract(i,1,temp)
+$       if (t .eqs. "e") .or. (t .eqs. "E") then t="ESC"
+$       if (t .eqs. "g") .or. (t .eqs. "G") then t="ESC(0"
+$       VÂ° (} .L-_. "N") .-_. (} .L-_. "H") }NL+ }="ESC(B"
+$       car_prompt == car_prompt + t
+$       i = i+1
+$       if i .lts. f$length(temp) then goto GRAPH_BOUCLE
+$
+$       set_prompt
+$       exit
+
+
+Use HGSD which implements an SD (short for SET DEFAULT) command. Just google it. It is an improved version by Hunter Goatley of an older implementation.
+The only thing it cannot handle (yet), are logicals with multiple translations. Other than that, It works like a charm, and you do not need to type in complete directory names. You can even move to the next directory on the same level. 
+It can also set the prompt if you have the right privileges in one go, so your prompt will reflect your default directory, just like in the old days on DOS.

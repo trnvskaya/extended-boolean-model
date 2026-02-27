@@ -1,0 +1,54 @@
+Autotools : how to set global compilation flag
+c++ autotools autoconf flags automake
+I have a project with several sources directories : 
+src/A
+   /B
+   /C
+
+In each, the Makefile.am contains 
+AM_CXXFLAGS = -fPIC -Wall -Wextra
+
+How can avoid repeating this in each source folder ? 
+I tried to modifiy src/Makefile.am and the configure.in, but without success. I thought I could use AC_PROG_CXX to set the compilation flags globally but can't find much documentation on how to use those macro (do you have any pointer to such a documentation ?).
+Thanks in advance
+
+
+You have to put something like this in your configure.ac file:
+CXXFLAGS="-fPIC -Wall -Wextra $CXXFLAGS"
+...    
+AC_CONFIG_FILES([src])
+AC_CONFIG_FILES([src/A])
+...    
+AC_OUTPUT
+
+The best source of information for the autotools are the autotools manuals themselves; to begin, I would suggest this tutorial, which I personally appreciated very much:
+http://www.lrde.epita.fr/~adl/autotools.html
+
+You can do several things:
+(1) One solution is to include a common makefile fragment on all your Makefile.ams:
+include $(top_srcdir)/common.mk
+...
+bin_PROGRAMS = foo
+foo_SOURCES = ...
+
+in that case you would write
+AM_CXXFLAGS = -fpic -Wall -Wextra
+
+to common.mk and in the future it will be easier to add more macros or rules to all Makefile.ams by just editing this file.
+(2) Another solution would be to set these variables globally in your configure.ac (the name configure.in has been deprecated long ago), as in :
+...
+AC_SUBST([AM_CXXFLAGS], [-fpic -Wall -Wextra])
+...
+
+Then you don't even have to say anything in your Makefile.ams, they automatically inherit this global definition.  The drawback is that you can't opt-out easily (with the first solution it's easy to decide not to include common.mk) and the dependency is not really explicit to third-party people (when they read the Makefile.am they have no hint about where the flags may come from).
+(3) A third solution would be to do as orsogufo suggested: overwriting the user variable CXXFLAGS in configure.ac.  I would advise against it, because it defeats one of the features of the GNU Build System: users are allowed to override this variable at make-time.   For instance you may want to type
+make CXXFLAGS='-O0 -ggdb' 
+
+when debugging a piece of code, and this will overwrite any definition of CXXFLAGS (but
+not those in AM_CXXFLAGS).  To be honest, most projects fails to support this correctly because they play tricks with CXXFLAGS.
+Finally, I should mention that -fpic, -Wall, and -Werror are not portable options.
+Depending on the scope of your project you may want to add configure check for these (gnulib recently acquired new macros to tests for warnings flags, and libtool can be used to build shared libraries).
+
+Use EXTRA_CFLAGS in configure.ac
+For example for your case it would be this:
+EXTRA_CFLAGS=-fPIC -Wall -Wextra

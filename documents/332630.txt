@@ -1,0 +1,134 @@
+"Atomically" changing a System.Threading.Timer
+c# .net
+Let's say I have an existing System.Threading.Timer instance and I'd like to call Change on it to push it's firing time back:
+var timer = new Timer(DelayCallback, null, 10000, Timeout.Infinite);
+// ... (sometime later but before DelayCallback has executed)
+timer.Change(20000, Timeout.Infinite);
+
+I'm using this timer to perform an "idle callback" after a period of no activity. ("Idle" and "no activity" are application-defined conditions in this case...the specifics aren't terribly important.) Every time I perform an "action", I want to reset the timer so that it is always set to fire 10 seconds after that.
+However, there is an inherent race condition because when I call Change, I can't tell if the Timer has already fired based on its old settings. (I can, of course, tell if my callback has happened but I can't tell if the CLR's internal timer thread has queued my callback to the threadpool and its execution is imminent.)
+Now I know I can call Dispose on the timer instance and re-create it each time I need to "push it back".  but this seems less efficient than just changing the existing timer. Of course it may not be...I'll run some micro-benchmarks in a bit and let you all know.
+Alternatively, I can always keep track of the expected firing time (via DateTime.Now.AddSeconds(10)) and, if the original Timer fires, ignore it by checking DateTime.Now in the callback. (I have a nagging concern that this may not be 100% reliable on account of the Timer using TimeSpan and my check using DateTime...this may not be an issue but I'm not completely comfortable with it for some reason...)
+My questions are:
+
+Is there a good way for me to call Timer.Change and be able to know whether I managed to change it before the callback was queued to the threadpool? (I don't think so, but it doesn't hurt to ask...)
+Has anyone else implemented (what I term) a "pushback timer" like this? If so, I'd love to hear how you tackled the problem.
+
+This question is somewhat hypothetical in nature since I already have a couple of working solutions (based on Dispose and based on DateTime.Now)...I'm mainly interested in hearing performance-related suggestions (as I'll be "pushing back" the Timer VERY frequently).
+Thanks!
+
+
+I've actually had to build my own "Timing" class for an MMORPG I've made. It could keep track of over 100,000 "entities" that had timers for processing AI, and other tasks. Based on different actions that could be taken, I would have to momentarily delay an event.
+Now, my timing class was completely hand written, so it won't be exactly what you're looking for. But something that you could do that would be similar to the solution I came up with is to do a sort of:
+while (sleepyTime > 0)
+{
+    int temp = sleepyTime;
+    sleepyTime = 0;
+    Thread.Sleep(temp);
+}
+
+// here's where your actual code is.
+
+Then, you can make a "Delay" method that basically just ads to sleepyTime.
+
+it sounds like what you really want is the application-idle event
+System.Windows.Forms.Application.Idle
+
+
+Im interpreting your questions as a request for an implementatation of the IdleNotifier interface specified below. Also you state that ActionOccured() needs to be fast. 
+public delegate void IdleCallback();
+public interface IdleNotifier
+{
+    // Called by threadpool when more than IdleTimeSpanBeforeCallback 
+    // has passed since last call on ActionOccured.
+    IdleCallback Callback { set; }
+    TimeSpan IdleTimeSpanBeforeCallback { set; }
+    void ActionOccured();
+}
+
+I provide an implementation with System.Threading.Timer below. 
+Important points about the implementation:
+
+We accept that the timer can wake up at any time and make sure this is ok.
+Since we assume the timer wakes relatively seldom we can do expensive work at these times.
+Since we can do all logic in the timer callback all we need to do to "push the timer" is to remeber when last we pushed it.
+
+Implementation:
+public class IdleNotifierTimerImplementation : IdleNotifier
+{
+    private readonly object SyncRoot = new object();
+    private readonly Timer m_Timer;
+
+    private IdleCallback m_IdleCallback = null;
+    private TimeSpan m_IdleTimeSpanBeforeEvent = TimeSpan.Zero;
+
+    // Null means there has been no action since last idle notification.
+    private DateTime? m_LastActionTime = null;
+
+    public IdleNotifierTimerImplementation()
+    {
+        m_Timer = new Timer(OnTimer);
+    }
+
+    private void OnTimer(object unusedState)
+    {
+        lock (SyncRoot)
+        {
+            if (m_LastActionTime == null)
+            {
+                m_Timer.Change(m_IdleTimeSpanBeforeEvent, TimeSpan.Zero);
+                return;
+            }
+            TimeSpan timeSinceLastUpdate = DateTime.UtcNow - m_LastActionTime.Value;
+            if (timeSinceLastUpdate > TimeSpan.Zero)
+            {
+                // We are no idle yet.
+                m_Timer.Change(timeSinceLastUpdate, TimeSpan.Zero);
+                return;
+            }
+            m_LastActionTime = null;
+            m_Timer.Change(m_IdleTimeSpanBeforeEvent, TimeSpan.Zero);
+        }
+        if (m_IdleCallback != null)
+        {
+            m_IdleCallback();
+        }
+    }
+
+    // IdleNotifier implementation below
+
+    public void ActionOccured()
+    {
+        lock (SyncRoot)
+        {
+            m_LastActionTime = DateTime.UtcNow;
+        }
+    }
+
+    public IdleCallback Callback
+    {
+        set
+        {
+            lock (SyncRoot)
+            {
+                m_IdleCallback = value;
+            }
+        }
+    }
+
+    public TimeSpan IdleTimeSpanBeforeCallback
+    {
+        set
+        {
+            lock (SyncRoot)
+            {
+                m_IdleTimeSpanBeforeEvent = value;
+                // Run OnTimer immediately
+                m_Timer.Change(TimeSpan.Zero, TimeSpan.Zero);
+            }
+        }
+    }
+}
+
+There are many straight-forward performance improvements on this code.
+If anyone would be intrested in my first thoughts on this just ask me.

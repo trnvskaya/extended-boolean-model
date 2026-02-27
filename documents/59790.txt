@@ -1,0 +1,73 @@
+Best way to transfer an xml to SQL Server?
+sql-server xml
+I have been hearing the podcast blog for a while, I hope I dont break this. 
+The question is this: I have to insert an xml to a database. This will be for already defined tables and fields. So what is the best way to accomplish this? So far I am leaning toward programatic. I have been seeing varios options, one is Data Transfer Objects (DTO), in the SQL Server there is the sp_xml_preparedocument that is used to get transfer XMLs to an object and throught code. 
+I am using CSharp and SQL Server 2005. The fields are not XML fields, they are the usual SQL datatypes. 
+
+
+If your XML conforms to a particular XSD schema, you can look into using the "xsd.exe" command line tool to generate C# object classes that you can bind the XML to, and then form your insert statements using the properties of those objects: MSDN XSD Doc
+
+Peruse this document and it will give you the options:
+MSDN: XML Options in Microsoft SQL Server 2005
+
+In an attempt to try and help, we may need some clarification. Maybe by restating the problem you can let us know if this is what you're asking:
+How can one import existing xml into a SQL 2005 database, without relying on the built-in xml type?
+A fairly straight forward solution that you already mentioned is the sp_xml_preparedocument, combined with openxml. 
+Hopefully the following example illustrates the correct usage. For a more complete example checkout the MSDN docs on Using OPENXML.
+declare @XmlDocumentHandle int
+declare @XmlDocument nvarchar(1000)
+set @XmlDocument = N'<ROOT>
+<Customer>
+   <FirstName>Will</FirstName>
+   <LastName>Smith</LastName>
+</Customer>
+</ROOT>'
+
+-- Create temp table to insert data into
+create table #Customer 
+( 
+    FirstName varchar(20),
+    LastName varchar(20) 
+)
+-- Create an internal representation of the XML document.
+exec sp_xml_preparedocument @XmlDocumentHandle output, @XmlDocument
+
+-- Insert using openxml allows us to read the structure
+insert into #Customer
+select 
+    FirstName = XmlFirstName,
+    LastName = XmlLastName
+from openxml ( @XmlDocumentHandle, '/ROOT/Customer',2 )
+with 
+(
+    XmlFirstName  varchar(20) 'FirstName',
+    XmlLastName varchar(20) 'LastName'
+)
+where ( XmlFirstName = 'Will' and XmlLastName = 'Smith' )
+
+-- Cleanup xml document
+exec sp_xml_removedocument @XmlDocumentHandle
+
+-- Show the data
+select * 
+from #Customer
+
+-- Drop tmp table
+drop table #Customer
+
+If you have an xml file and are using C#, then defining a stored procedure that does something like the above and then passing the entire xml file contents to the stored procedure as a string should give you a fairly straight forward way of importing xml into your existing table(s).
+
+You may want to use XSLT to transfer your XML into SQL statements... ie
+<xml type="user">
+    <data>1</data>
+    <data>2</data>
+<xml>
+
+Then the XSLT would look like
+<xsl:template match="xml">
+    INSERT INTO <xsl:value-of select="@type" /> (data1, data2) VALUES (
+       '<xsl:value-of select="data[1]" />',
+       '<xsl:value-of select="data[2]" />');
+</xsl:template>
+
+The match statement most likely won't be the root node, but hopefully you get the idea. You may also need to wrap the non xsl:value-of parts in xsl:text to prevent extra characters from being dumped into the query. And you'd have to make sure the output of the XSLT was text. That said you could get a list of SQL statements that you could run through the DB. or you could use XSLT to output a T-SQL statement that you could load as a stored procedure.

@@ -1,0 +1,46 @@
+Advantages of Antlr (versus say, lex/yacc/bison)
+c++ antlr yacc bison
+I've used lex and yacc (more usually bison) in the past for various projects, usually translators (such as a subset of EDIF streamed into an EDA app). Additionally, I've had to support code based on lex/yacc grammars dating back decades. So I know my way around the tools, though I'm no expert.
+I've seen positive comments about Antlr in various fora in the past, and I'm curious as to what I may be missing. So if you've used both, please tell me what's better or more advanced in Antlr. My current constraints are that I work in a C++ shop, and any product we ship will not include Java, so the resulting parsers would have to follow that rule.
+
+
+One major difference is that ANTLR generates an LL(*) parser, whereas YACC and Bison both generate parsers that are LALR.  This is an important distinction for a number of applications, the most obvious being operators:
+expr ::= expr '+' expr
+       | expr '-' expr
+       | '(' expr ')'
+       | NUM ;
+
+ANTLR is entirely incapable of handling this grammar as-is.  To use ANTLR (or any other LL parser generator), you would need to convert this grammar to something that is not left-recursive.  However, Bison has no problem with grammars of this form.  You would need to declare '+' and '-' as left-associative operators, but that is not strictly required for left recursion.  A better example might be dispatch:
+expr ::= expr '.' ID '(' actuals ')' ;
+
+actuals ::= actuals ',' expr | expr ;
+
+Notice that both the expr and the actuals rules are left-recursive.  This produces a much more efficient AST when it comes time for code generation because it avoids the need for multiple registers and unnecessary spilling (a left-leaning tree can be collapsed whereas a right-leaning tree cannot).  
+In terms of personal taste, I think that LALR grammars are a lot easier to construct and debug.  The downside is you have to deal with somewhat cryptic errors like shift-reduce and (the dreaded) reduce-reduce.  These are errors that Bison catches when generating the parser, so it doesn't affect the end-user experience, but it can make the development process a bit more interesting.  ANTLR is generally considered to be easier to use than YACC/Bison for precisely this reason.
+
+Another advantage of ANTRL is that you can use ANTLRWORKS, although I can't say that this is a strict advantage, as there may be similar tools for other generators as well.
+
+A couple advantages for ANTLR:
+
+can output parsers in various languages - Java not required for running the generated parser.
+Awesome GUI makes grammar debugging easy (e.g. you can see the generated AST's right in the GUI, no extra tools required)
+Generated code is actually human-readable (it's one of the goals of ANTLR) and the fact that it generates LL parsers surely helps in this regard. 
+definition of terminals is context-free as well (as opposed to regex in (f)lex) - thus permitting, for instance, the definition of terminals containing properly-closed parentheses
+
+My .02$
+
+The most significant difference between YACC/Bison and ANTLR is the type of grammars these tools can process. YACC/Bison handle LALR grammars, ANTLR handles LL grammars.
+Often, people who have worked with LALR grammars for a long time, will find working with LL grammars more difficult and vice versa. That does not mean that the grammars or tools are inherently more difficult to work with. Which tool you find easier to use will mostly come down to familiarity with the type of grammar.
+As far as advantages go, there are aspects where LALR grammars have advantages over LL grammars and there are other aspects where LL grammars have advantages over LALR grammars. 
+YACC/Bison generate table driven parsers, which means the "processing logic" is contained in the parser program's data, not so much in the parser's code. The pay off is that even a parser for a very complex language has a relatively small code footprint. This was more important in the 1960s and 1970s when hardware was very limited. Table driven parser generators go back to this era and small code footprint was a main requirement back then.
+ANTLR generates recursive descent parsers, which means the "processing logic" is contained in the parser's code, as each production rule of the grammar is represented by a function in the parser's code. The pay off is that it is easier to understand what the parser is doing by reading its code. Also, recursive descent parsers are typically faster than table driven ones. However, for very complex languages, the code footprint will be larger. This was a problem in the 1960s and 1970s. Back then, only relatively small languages like Pascal for instance were implemented this way due to hardware limitations.
+ANTLR generated parsers are typically in the vicinity of 10.000 lines of code and more. Handwritten recursive descent parsers are often in the same ballpark. Wirth's Oberon compiler is perhaps the most compact one with about 4000 lines of code including code generation, but Oberon is a very compact language with only about 40 production rules.
+As somebody has pointed out already, a big plus for ANTLR is the graphical IDE tool, called ANTLRworks. It is a complete grammar and language design laboratory. It visualises your grammar rules as you type them and if it finds any conflicts it will show you graphically what the conflict is and what causes it. It can even automatically refactor and resolve conflicts such as left-recursion. Once you have a conflict free grammar, you can let ANTLRworks parse an input file of your language and build a parse tree and AST for you and show the tree graphically in the IDE. This is a very big advantage because it can save you many hours of work: You will find conceptual errors in your language design before you start coding! I have not found any such tool for LALR grammars, it seems there isn't any such tool.
+Even to people who do not wish to generate their parsers but hand code them, ANTLRworks is a great tool for language design/prototyping. Quite possibly the best such tool available. Unfortunately, that doesn't help you if you want to build LALR parsers. Switching from LALR to LL simply to take advantage of ANTLRworks may well be worthwhile, but for some people, switching grammar types can be a very painful experience. In other words: YMMV.
+
+
+Bison and Flex result in a smaller memory footprint, but you have no graphical IDE.
+antlr uses more memory, but you have antlrworks, a graphical IDE.
+
+Bison/Flex memory usage is typically a mbyte or so. Contrast that with antlr - assuming it uses 512 bytes of memory for every token in the file you want to parse. 4 million tokens and you are out of virtual memory on a 32-bit system.
+If the file which you wish to parse is large, antlr may run out of memory, so if you just want to parse a configuration file, it would be a viable solution. Otherwise, if you want to parse a file with lots of data, try Bison.

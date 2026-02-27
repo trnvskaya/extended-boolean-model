@@ -1,0 +1,76 @@
+Tool for translation of Oracle PL/SQL into Postgresql PL/pgSQL
+oracle postgresql plsql translation plpgsql
+Is there a tool (preferably free) which will translate Oracle's PL/SQL stored procedure language into Postgresql's PL/pgSQL stored procedure language?
+
+
+There is a tool available at http://ora2pg.darold.net/ which can be used to transalate Oracle Schemas to Postgres schemas, but I'm not sure if it will also translate the stored procedures.
+But it might provide a place to start.
+
+There's also EnterpriseDB which has a quite a bit of Oracle compatibility to help migration from Oracle. The version with Oracle compatibility is not free but worth a look if you are doing more than just one procedure translation.
+
+Having been working on an Oracle to Postgres conversion for quite some time. The only way to do it is by hand. There are subtle differences between the two languages that can trip you up. We tried using an automated tool but it only made the problem worse and we ended up trashing the output.
+
+Use ora2pg to translate your schema.  
+For stored procedures:  
+
+Manually convert all DECODE() to CASE statements and all old-style Oracle WHERE (+) outer joins to explicit LEFT OUTER JOIN statements.  I haven't found a tool to do this.
+Translate PL/SQL functions in PL/PGSQL (see below).    
+
+It would be very nice if someone started a sourceforge project to do this.
+Hint hint...  
+Here's what I mean for (2) above:  
+CREATE OR REPLACE FUNCTION trunc(
+  parmDate   DATE    ,
+  parmFormat VARCHAR ) 
+RETURNS date 
+AS $$
+DECLARE
+  varPlSqlFormat VARCHAR;
+  varPgSqlFormat VARCHAR;
+BEGIN
+  varPgSqlFormat := lower(parmFormat);
+
+  IF varPgSqlFormat IN (
+    'syyyy' ,
+    'yyyy'  ,
+    'year'  ,
+    'syear' ,
+    'yyy'   ,
+    'yy'    ,
+    'y'     ) THEN
+    varPgSqlFormat := 'year';
+  ELSEIF varPgSqlFormat IN (
+    'month' ,
+    'mon'   ,
+    'mm'    ,
+    'rm'    ) THEN 
+    varPgSqlFormat := 'month';
+  ELSEIF varPgSqlFormat IN (
+    'ddd' ,
+    'dd'  ,
+    'j'   ) THEN 
+    varPgSqlFormat := 'day';
+  END IF;
+
+  RETURN DATE_TRUNC(varPgSqlFormat,parmDate);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION trunc(
+  parmDate   DATE) 
+RETURNS date 
+AS $$
+DECLARE
+BEGIN
+  RETURN DATE_TRUNC('day',parmDate);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION last_day(in_date date) RETURNS date 
+AS $$
+DECLARE
+BEGIN
+  RETURN CAST(DATE_TRUNC('month', in_date) + '1 month'::INTERVAL AS DATE) - 1;
+END;
+$$ LANGUAGE plpgsql;
+

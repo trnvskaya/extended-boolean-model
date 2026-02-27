@@ -1,0 +1,86 @@
+How can I cache a calculated column in rails?
+ruby-on-rails ruby calculated-columns caching
+I have a tree of active record objects, something like:
+class Part < ActiveRecord::Base
+  has_many :sub_parts, :class_name => "Part"
+
+  def complicated_calculation
+    if sub_parts.size > 0
+      return self.sub_parts.inject(0){ |sum, current| sum + current.complicated_calculation }
+    else
+      sleep(1)
+      return rand(10000)
+    end
+  end
+
+end
+
+It is too costly to recalculate the complicated_calculation each time. So, I need a way to cache the value. However, if any part is changed, it needs to invalidate its cache and the cache of its parent, and grandparent, etc.
+As a rough draft, I created a column to hold the cached calculation in the "parts" table, but this smells a little rotten. It seems like there should be a cleaner way to cache the calculated values without stuffing them along side the "real" columns.
+
+
+Have a field similar to a counter cache. For example: order_items_amount and have that be a cached calculated field. 
+Use a after_save filter to recalculate the field on anything that can modify that value. (Including the record itself)
+Edit: This is basically what you have now. I don't know of any cleaner solution unless you wanted to store cached calculated fields in another table.
+
+Either using a before_save or an ActiveRecord Observer is the way to go to make sure the cached value is up-to-date.  I would use a before_save and then check to see if the value you use in the calculation actually changed.  That way you don't have to update the cache if you don't need to.
+Storing the value in the db will allow you to cache the calculations over multiple requests.  Another option for this is to store the value in memcache.  You can make a special accessor and setter for that value that can check the memcache and update it if needed.
+Another thought:  Will there be cases where you will change a value in one of the models and need the calculation to be updated before you do the save?  In that case you will need to dirty the cache value whenever you update any of the calculation values in the model, not with a before_save.
+
+
+You can stuff the actually cached values in the Rails cache (use memcached if you require that it be distributed).
+The tough bit is cache expiry, but cache expiry is uncommon, right?  In that case, we can just loop over each of the parent objects in turn and zap its cache, too.  I added some ActiveRecord magic to your class to make getting the parent objects simplicity itself -- and you don't even need to touch your database.  Remember to call Part.sweep_complicated_cache(some_part) as appropriate in your code -- you can put this in callbacks, etc, but I can't add it for you because I don't understand when complicated_calculation is changing.
+class Part < ActiveRecord::Base
+  has_many :sub_parts, :class_name => "Part"
+  belongs_to :parent_part, :class_name => "Part", :foreign_key => :part_id
+
+  @@MAX_PART_NESTING = 25 #pick any sanity-saving value
+
+  def complicated_calculation (...)
+    if cache.contains? [id, :complicated_calculation]
+      cache[ [id, :complicated_calculation] ]
+    else
+      cache[ [id, :complicated_calculation] ] = complicated_calculation_helper (...)
+    end
+  end
+
+  def complicated_calculation_helper
+    #your implementation goes here
+  end
+
+  def Part.sweep_complicated_cache(start_part)
+    level = 1  # keep track to prevent infinite loop in event there is a cycle in parts
+    current_part = self
+
+    cache[ [current_part.id, :complicated_calculation] ].delete
+    while ( (level <= 1 < @@MAX_PART_NESTING) && (current_part.parent_part)) {
+     current_part = current_part.parent_part)
+     cache[ [current_part.id, :complicated_calculation] ].delete
+    end
+  end
+end
+
+
+
+I suggest using association callbacks.
+class Part < ActiveRecord::Base
+  has_many :sub_parts,
+    :class_name => "Part",
+    :after_add => :count_sub_parts,
+    :after_remove => :count_sub_parts
+
+  private
+
+  def count_sub_parts
+    update_attribute(:sub_part_count, calculate_sub_part_count)
+  end
+
+  def calculate_sub_part_count
+    # perform the actual calculation here
+  end
+end
+
+Nice and easy =)
+
+I've found that sometimes there is good reason to de-normalize information in your database. I have something similar in an app that I am working on and I just re-calculate that field anytime the collection changes. 
+It doesn't use a cache and it stores the most up to date figure in the database. 

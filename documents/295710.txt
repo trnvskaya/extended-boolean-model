@@ -1,0 +1,400 @@
+Logging every data change with Entity Framework
+entity-framework logging data-change
+There is a need from a customer to log every data change to a logging table with the actual user who made the modification. The application is using one SQL user to access the database, but we need to log the "real" user id.
+We can do this in t-sql by writing triggers for every table insert and update, and using context_info to store the user id. We passed the user id to a stored procedure, stored the user id in the contextinfo, and the trigger could use this info to write log rows to the log table.
+I can not find the place or way where or how can I do something similar using EF. So the    main goal is: if I make a change in the data via EF, I would like to log the exact data change to a table in a semi-automatic way (so I don't want to check for every field for  change before saving the object). We are using EntitySQL.
+Unfortunately we have to stick on SQL 2000 so the data change capture introduced in SQL2008 is not an  option (but maybe that's also not the right way for us).
+Any ideas, links or starting points?
+[Edit]
+Some notes: by using ObjectContext.SavingChanges eventhandler, I can get the point where I can inject the SQL statement to initialize the contextinfo. However I cannot mix the EF and the standard SQL. So I can get the EntityConnection but I cannot execute a T-SQL statement using it. Or I can get the connection string of the EntityConnection and create an SqlConnection based on it, but it will be a different connection, so the contextinfo will not affect the save made by the EF.
+I tried the following in the SavingChanges handler:
+testEntities te = (testEntities)sender;
+DbConnection dc = te.Connection;
+DbCommand dcc = dc.CreateCommand();
+dcc.CommandType = CommandType.StoredProcedure;
+DbParameter dp = new EntityParameter();
+dp.ParameterName = "userid";
+dp.Value = textBox1.Text;
+dcc.CommandText = "userinit";
+dcc.Parameters.Add(dp);
+dcc.ExecuteNonQuery();
+
+Error: The value of EntityCommand.CommandText is not valid for a StoredProcedure command. 
+The same with SqlParameter instead of EntityParameter: SqlParameter cannot be used.
+StringBuilder cStr = new StringBuilder("declare @tx char(50); set @tx='");
+cStr.Append(textBox1.Text);
+cStr.Append("'; declare @m binary(128); set @m = cast(@tx as binary(128)); set context_info @m;");
+
+testEntities te = (testEntities)sender;
+DbConnection dc = te.Connection;
+DbCommand dcc = dc.CreateCommand();
+dcc.CommandType = CommandType.Text;
+dcc.CommandText = cStr.ToString();
+dcc.ExecuteNonQuery();
+
+Error: The query syntax is not valid.
+So here I am, stuck to create a bridge between Entity Framework and ADO.NET.
+If I can get it working, I will post a proof of concept.
+
+
+How about handling Context.SavingChanges?
+
+Have you tried adding the stored procedure to your entity model?
+
+Finally with Craig's help, here is a proof of concept. It needs more testing, but for first look it is working.
+First: I created two tables, one for data one for logging.
+-- This is for the data
+create table datastuff (
+    id int not null identity(1, 1),
+    userid nvarchar(64) not null default(''),
+    primary key(id)
+)
+go
+
+-- This is for the log
+create table naplo (
+    id int not null identity(1, 1),
+    userid nvarchar(64) not null default(''),
+    datum datetime not null default('2099-12-31'),
+    primary key(id)
+)
+go
+
+Second: create a trigger for insert.
+create trigger myTrigger on datastuff for insert as
+
+    declare @User_id int,
+    	@User_context varbinary(128),
+    	@User_id_temp varchar(64)
+
+    select @User_context = context_info
+    	from master.dbo.sysprocesses
+    	where spid=@@spid
+
+    set @User_id_temp = cast(@User_context as varchar(64))
+
+    declare @insuserid nvarchar(64)
+
+    select @insuserid=userid from inserted
+
+    insert into naplo(userid, datum)
+    	values(@User_id_temp, getdate())
+
+go
+
+You should also create a trigger for update, which will be a little bit more sophisticated, because it needs to check every field for changed content.
+The log table and the trigger should be extended to store the table and field which is created/changed, but I hope you got the idea.
+Third: create a stored procedure which fills in the user id to the SQL context info.
+create procedure userinit(@userid varchar(64))
+as
+begin
+    declare @m binary(128)
+    set @m = cast(@userid as binary(128))
+    set context_info @m
+end
+go
+
+We are ready with the SQL side. Here comes the C# part.
+Create a project and add an EDM to the project. The EDM should contain the datastuff table (or the tables you need to watch for changes) and the SP.
+Now do something with the entity object (for example add a new datastuff object) and hook to the SavingChanges event.
+using (testEntities te = new testEntities())
+{
+    // Hook to the event
+    te.SavingChanges += new EventHandler(te_SavingChanges);
+
+    // This is important, because the context info is set inside a connection
+    te.Connection.Open();
+
+    // Add a new datastuff
+    datastuff ds = new datastuff();
+
+    // This is coming from a text box of my test form
+    ds.userid = textBox1.Text;
+    te.AddTodatastuff(ds);
+
+    // Save the changes
+    te.SaveChanges(true);
+
+    // This is not needed, only to make sure
+    te.Connection.Close();
+}
+
+Inside the SavingChanges we inject our code to set the context info of the connection.
+// Take my entity
+testEntities te = (testEntities)sender;
+
+// Get it's connection
+EntityConnection dc = (EntityConnection )te.Connection;
+
+// This is important!
+DbConnection storeConnection = dc.StoreConnection;
+
+// Create our command, which will call the userinit SP
+DbCommand command = storeConnection.CreateCommand();
+command.CommandText = "userinit";
+command.CommandType = CommandType.StoredProcedure;
+
+// Put the user id as the parameter
+command.Parameters.Add(new SqlParameter("userid", textBox1.Text));
+
+// Execute the command
+command.ExecuteNonQuery();
+
+So before saving the changes, we open the object's connection, inject our code (don't close the connection in this part!) and save our changes.
+And don't forget! This needs to be extended for your logging needs, and needs to be well tested, because this show only the possibility!
+
+We had solve this problem in a different way.
+
+Inherit a class from your generated entity container class
+Make the base entity class abstract. You can do it by a partial class definition in a separate file
+In the inherited class hide the SavingChanges method with your own, using the new keyword in the method definition
+In your SavingChanges method: a, open an entity connection b, execute the user context stored procedure with ebtityclient c, call base.SaveChanges() d, close the entityconnection
+
+In your code you have to use the inherited class then.
+
+Thanks for pointing me in the right direction.  However, in my case, I also need to set the context info when doing select statements, because I am querying views that use the context info to control row-level security by user.
+I found it easiest to attach to the StateChanged event of the connection and just watch for the change from not-open to open.  Then I call the proc that sets context and it works every time, even if EF decides to reset the connection.
+private int _contextUserId;
+
+public void SomeMethod()
+{
+    var db = new MyEntities();
+    db.Connection.StateChange += this.Connection_StateChange;
+    this._contextUserId = theCurrentUserId;
+
+    // whatever else you want to do
+}
+
+private void Connection_StateChange(object sender, StateChangeEventArgs e)
+{
+    // only do this when we first open the connection
+    if (e.OriginalState == ConnectionState.Open ||
+        e.CurrentState != ConnectionState.Open)
+        return;
+
+    // use the existing open connection to set the context info
+    var connection = ((EntityConnection) sender).StoreConnection;
+    var command = connection.CreateCommand();
+    command.CommandText = "proc_ContextInfoSet";
+    command.CommandType = CommandType.StoredProcedure;
+    command.Parameters.Add(new SqlParameter("ContextUserID", this._contextUserId));
+    command.ExecuteNonQuery();
+}
+
+
+Simply force an execution of the SET CONTEXT_INFO by using your DbContext or ObjectContext:
+...
+FileMoverContext context = new FileMoverContext();
+context.SetSessionContextInfo(Environment.UserName);
+...
+context.SaveChanges();
+
+FileMoverContext inherits from DbContext and has a SetSessionContextInfo method.
+Here is what my SetSessionContextInfo(...) looks like:
+public bool SetSessionContextInfo(string infoValue)
+{
+   try
+   {
+      if (infoValue == null)
+         throw new ArgumentNullException("infoValue");
+
+      string rawQuery =
+                   @"DECLARE @temp varbinary(128)
+                     SET @temp = CONVERT(varbinary(128), '";
+
+      rawQuery = rawQuery + infoValue + @"');
+                    SET CONTEXT_INFO @temp";
+      this.Database.ExecuteSqlCommand(rawQuery);
+
+      return true;
+   }
+   catch (Exception e)
+   {
+      return false;
+   }
+}
+
+Now you just set up a database trigger which can access the CONTEXT_INFO() and set a database field using it.
+
+I had somewhat similar scenario, which I resolved through following steps:
+
+First create a generic repository for all CRUD operations like following, which is always a good approach.
+public class GenericRepository : IGenericRepository where T : class
+Now write your actions like "public virtual void Update(T entityToUpdate)".
+Wherever you required logging / Auditing; just call a user defined function as follows "LogEntity(entityToUpdate, "U");".
+Refer below pasted file/class to define "LogEntity" function. In this function, in case of update and delete we would get the old entity through primary key to insert in audit table. To identify primary key and get its value I used reflection.
+
+Find reference of complete class below:
+ public class GenericRepository<T> : IGenericRepository<T> where T : class
+{
+    internal SampleDBContext Context;
+    internal DbSet<T> DbSet;
+
+    /// <summary>
+    /// Constructor to initialize type collection
+    /// </summary>
+    /// <param name="context"></param>
+    public GenericRepository(SampleDBContext context)
+    {
+        Context = context;
+        DbSet = context.Set<T>();
+    }
+
+    /// <summary>
+    /// Get query on current entity
+    /// </summary>
+    /// <returns></returns>
+    public virtual IQueryable<T> GetQuery()
+    {
+        return DbSet;
+    }
+
+    /// <summary>
+    /// Performs read operation on database using db entity
+    /// </summary>
+    /// <param name="filter"></param>
+    /// <param name="orderBy"></param>
+    /// <param name="includeProperties"></param>
+    /// <returns></returns>
+    public virtual IEnumerable<T> Get(Expression<Func<T, bool>> filter = null, Func<IQueryable<T>,
+                                            IOrderedQueryable<T>> orderBy = null, string includeProperties = "")
+    {
+        IQueryable<T> query = DbSet;
+
+        if (filter != null)
+        {
+            query = query.Where(filter);
+        }
+
+        query = includeProperties.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries).Aggregate(query, (current, includeProperty) => current.Include(includeProperty));
+
+        if (orderBy == null)
+            return query.ToList();
+        else
+            return orderBy(query).ToList();
+    }
+
+    /// <summary>
+    /// Performs read by id operation on database using db entity
+    /// </summary>
+    /// <param name="id"></param>
+    /// <returns></returns>
+    public virtual T GetById(object id)
+    {
+        return DbSet.Find(id);
+    }
+
+    /// <summary>
+    /// Performs add operation on database using db entity
+    /// </summary>
+    /// <param name="entity"></param>
+    public virtual void Insert(T entity)
+    {
+        //if (!entity.GetType().Name.Contains("AuditLog"))
+        //{
+        //    LogEntity(entity, "I");
+        //}
+        DbSet.Add(entity);
+    }
+
+    /// <summary>
+    /// Performs delete by id operation on database using db entity
+    /// </summary>
+    /// <param name="id"></param>
+    public virtual void Delete(object id)
+    {
+        T entityToDelete = DbSet.Find(id);
+        Delete(entityToDelete);
+    }
+
+    /// <summary>
+    /// Performs delete operation on database using db entity
+    /// </summary>
+    /// <param name="entityToDelete"></param>
+    public virtual void Delete(T entityToDelete)
+    {
+        if (!entityToDelete.GetType().Name.Contains("AuditLog"))
+        {
+            LogEntity(entityToDelete, "D");
+        }
+
+        if (Context.Entry(entityToDelete).State == EntityState.Detached)
+        {
+            DbSet.Attach(entityToDelete);
+        }
+        DbSet.Remove(entityToDelete);
+    }
+
+    /// <summary>
+    /// Performs update operation on database using db entity
+    /// </summary>
+    /// <param name="entityToUpdate"></param>
+    public virtual void Update(T entityToUpdate)
+    {
+        if (!entityToUpdate.GetType().Name.Contains("AuditLog"))
+        {
+            LogEntity(entityToUpdate, "U");
+        }
+        DbSet.Attach(entityToUpdate);
+        Context.Entry(entityToUpdate).State = EntityState.Modified;
+    }
+
+    public void LogEntity(T entity, string action = "")
+    {
+        try
+        {
+            //*********Populate the audit log entity.**********
+            var auditLog = new AuditLog();
+            auditLog.TableName = entity.GetType().Name;
+            auditLog.Actions = action;
+            auditLog.NewData = Newtonsoft.Json.JsonConvert.SerializeObject(entity);
+            auditLog.UpdateDate = DateTime.Now;
+            foreach (var property in entity.GetType().GetProperties())
+            {
+                foreach (var attribute in property.GetCustomAttributes(false))
+                {
+                    if (attribute.GetType().Name == "KeyAttribute")
+                    {
+                        auditLog.TableIdValue = Convert.ToInt32(property.GetValue(entity));
+
+                        var entityRepositry = new GenericRepository<T>(Context);
+                        var tempOldData = entityRepositry.GetById(auditLog.TableIdValue);
+                        auditLog.OldData = tempOldData != null ? Newtonsoft.Json.JsonConvert.SerializeObject(tempOldData) : null;
+                    }
+
+                    if (attribute.GetType().Name == "CustomTrackAttribute")
+                    {
+                        if (property.Name == "BaseLicensingUserId")
+                        {
+                            auditLog.UserId = ValueConversion.ConvertValue(property.GetValue(entity).ToString(), 0);
+                        }
+                    }
+                }
+            }
+
+            //********Save the log in db.*********
+            new UnitOfWork(Context, null, false).AuditLogRepository.Insert(auditLog);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(string.Format("Error occured in [{0}] method of [{1}]", Logger.GetCurrentMethod(), this.GetType().Name), ex);
+        }
+    }
+}
+
+CREATE TABLE [dbo].[AuditLog](
+[AuditId] [BIGINT] IDENTITY(1,1) NOT NULL,
+[TableName] [nvarchar](250) NULL,
+[UserId] [int] NULL,
+[Actions] [nvarchar](1) NULL,
+[OldData] [text] NULL,
+[NewData] [text] NULL,
+[TableIdValue] [BIGINT] NULL,
+[UpdateDate] [datetime] NULL,
+ CONSTRAINT [PK_DBAudit] PRIMARY KEY CLUSTERED 
+(
+[AuditId] ASC
+)WITH (PAD_INDEX  = OFF, STATISTICS_NORECOMPUTE  = OFF, IGNORE_DUP_KEY = 
+OFF, ALLOW_ROW_LOCKS  = ON, ALLOW_PAGE_LOCKS  = ON) ON [PRIMARY]
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+

@@ -1,0 +1,89 @@
+Is there a way to make Crystal Reports include a constant in a join condition, without using a SQL command object?
+crystal-reports
+What I want to do is an outer join to a table, where I exclude records from the joined table based on matching a constant, however keep records from the main table. For example:
+SELECT a.id, a.other, b.baz
+FROM a
+LEFT OUTER JOIN b
+  ON a.id  = b.id
+  AND b.bar = 'foo'
+
+Expected results:
+
+    id  other       baz      
+    --  ----------  -------  
+    1   Has foo     Include  
+    2   Has none    (null)   
+    3   Has foobar  (null)   
+
+I can't get the same results by putting it in the filter condition. If I use the following:
+SELECT a.id, a.other, b.baz
+FROM a
+LEFT OUTER JOIN b
+  ON a.id  = b.id
+WHERE (b.bar IS NULL OR b.bar = 'foo')
+
+I get these incorrect results:
+
+    id  other     baz      
+    --  --------  -------  
+    1   Has foo   Include  
+    2   Has none  (null)   
+
+Where it excluded records of A that happen to match a record of B where bar = 'foobar'. I don't want that, I want A to be present, but B to be nulls in that case.
+Table B will have multiple records that need excluding, so I don't think I can filter this on the Crystal side without doing a lot of messing around to avoid problems from duplicate records from table A.
+I cannot use a SQL command object, as the third party application that we are running the reports from seems to choke on SQL command objects.
+I cannot use views, as our support contract does not permit database modifications, and our vendor considers adding views a database modification.
+I am working with Crystal Reports XI, specifically version 11.0.0.895. In case it makes a difference, I am running against a Progress 9.1E04 database using the SQL-92 ODBC driver.
+The sample tables and data used in the examples can be created with the following:
+CREATE TABLE a (id INTEGER, other VARCHAR(32));
+CREATE TABLE b (id INTEGER, bar VARCHAR(32), baz VARCHAR(32));
+insert into A (id, other) values ('1', 'Has foo');
+insert into A (id, other) values ('2', 'Has none');
+insert into A (id, other) values ('3', 'Has foobar');
+insert into B (id, bar, baz) values ('1', 'foo', 'Include');
+insert into B (id, bar, baz) values ('1', 'foobar', 'Exclude');
+insert into B (id, bar, baz) values ('1', 'another', 'Exclude');
+insert into B (id, bar, baz) values ('1', 'More', 'Exclude');
+insert into B (id, bar, baz) values ('3', 'foobar', 'Exclude');
+
+
+
+Not sure if you can do this in Crystal but how about joining to a Select?
+SELECT a.id, x.baz
+FROM a
+LEFT OUTER JOIN 
+ (SELECT id, baz FROM b WHERE bar = 'foo') As x ON a.id  = x.id
+
+
+Can't you create appropriate views in database and base your report on these views? I'm using Crystal Reports on MSSQL and often I just create views to avoid similar problems.
+
+I can see two solutions:
+a) accept presence of multiple (unneeded) rows in B (and repeated values in A), calculate totals using runnign total fields and/or formulas - not easy way, but almost always possible;
+b) move B into subreport (where you can set filter easily) and communicate needed values between main and subreport using shared variables.
+Subreports are powerful tool for solving this kind of problems, unless you need to nest them (not possible) or export reports into excel (adds empty lines, at least in CR 9).
+
+Crystal reports can't generate that commonly used SQL statement based on its links and report selection criteria.  You have to use a "command" or build a view.
+In short, Crystal sucks.  
+
+Adding 
+(Isnull({b.bar}) OR {b.bar} = "foo")
+
+to the record-selection formula should act as you expect.
+** edit **
+A couple of other things to try:
+
+Use a different database driver--the native driver (that avoids ODBC) may act differently.  I first noticed this using the WITH syntax--the SQL Server ODBC driver didn't work, but the SQL Server native driver did.
+While it sacrifices some flexibility, embed the query in a Command, assuming you can get the 3rd-party's product to comply.  Added for completeness.
+
+
+Is a stored procedure an option for you? If so you could pre-select the data sets that way without having to resort to the command option, and one can import a stored procedure as one would a table.
+I would propose stored procedure which does select * from b where bar= 'foo' and join to that, such that the b table is pre-filtered so all you have to do is join on the other join field.
+Hope that helps.
+
+Seems to me you don't want to accept anyone's suggestions but here's one last-ditch shot at it anyway. The solution I've used recently where the db has to remain intact is as follows:
+
+Set up Tomcat server so I can run some JSP and Hibernate goodness.
+Grab Crystal reports for eclipse
+Build report in crystal reports designer with faked data on a local db conforming to how I'd have the data in an ideal world
+Using java servlet pass List to each of the table aliases such that the report has the data replaced directly from POJOs. The POJOs can of course be entirely composed in the java by pulling in content from various db tables and mashing them up as you see fit, often enabling one to provide a thoroughly flattened dataset that Crystal reports is only too happy to work with.
+

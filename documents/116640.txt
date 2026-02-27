@@ -1,0 +1,88 @@
+Low Java single process thread limit in Red Hat Linux
+java linux redhat
+I'm experiencing an issue on a test machine running Red Hat Linux (kernel version is 2.4.21-37.ELsmp) using Java 1.6 (1.6.0_02 or 1.6.0_04). The problem is, once a certain number of threads are created in a single thread group, the operating system is unwilling or unable to create any more.
+This seems to be specific to Java creating threads, as the C thread-limit program was able to create about 1.5k threads. Additionally, this doesn't happen with a Java 1.4 JVM... it can create over 1.4k threads, though they are obviously being handled differently with respect to the OS.
+In this case, the number of threads it's cutting off at is a mere 29 threads. This is testable with a simple Java program that just creates threads until it gets an error and then prints the number of threads it created. The error is a java.lang.OutOfMemoryError: unable to create new native thread
+This seems to be unaffected by things such as the number of threads in use by other processes or users or the total amount of memory the system is using at the time. JVM settings like Xms, Xmx, and Xss don't seem to change anything either (which is expected, considering the issue seems to be with native OS thread creation).
+The output of "ulimit -a" is as follows:
+
+core file size        (blocks, -c) 0
+data seg size         (kbytes, -d) unlimited
+file size             (blocks, -f) unlimited
+max locked memory     (kbytes, -l) 4
+max memory size       (kbytes, -m) unlimited
+open files                    (-n) 1024
+pipe size          (512 bytes, -p) 8
+stack size            (kbytes, -s) 10240
+cpu time             (seconds, -t) unlimited
+max user processes            (-u) 7168
+virtual memory        (kbytes, -v) unlimited
+
+The user process limit does not seem to be the issue. Searching for information on what could be wrong has not turned up much, but this post seems to indicate that at least some Red Hat kernels limit a process to 300 MB of memory allocated for stack, and at 10 MB per thread for stack, it seems like the issue could be there (though it seems strange and unlikely as well).
+I've tried changing the stack size with "ulimit -s" to test this, but any value other than 10240 and the JVM does not start with an error of:
+Error occurred during initialization of VM
+Cannot create VM thread. Out of system resources.
+I can generally get around Linux, but I really don't know much about system configuration, and I haven't been able to find anything specifically addressing this kind of situation. Any ideas on what system or JVM settings could be causing this would be appreciated.
+Edits: Running the thread-limit program mentioned by plinth, there was no failure until it tried to create the 1529th thread.
+The issue also did not occur using a 1.4 JVM (does occur with 1.6.0_02 and 1.6.0_04 JVMs, can't test with a 1.5 JVM at the moment).
+The code for the thread test I'm using is as follows:
+public class ThreadTest {
+
+   public static void main(String[] pArgs) throws Exception {
+
+      try {
+         // keep spawning new threads forever
+         while (true) {
+            new TestThread().start();
+         }
+      }
+      // when out of memory error is reached, print out the number of
+      // successful threads spawned and exit
+      catch ( OutOfMemoryError e ) {
+         System.out.println(TestThread.CREATE_COUNT);
+         System.exit(-1);
+      }
+   }
+
+   static class TestThread extends Thread {
+      private static int CREATE_COUNT = 0;
+      public TestThread() {
+         CREATE_COUNT++;
+      }
+      // make the thread wait for eternity after being spawned
+      public void run() {
+         try {
+            sleep(Integer.MAX_VALUE);
+         }
+         // even if there is an interruption, dont do anything
+         catch (InterruptedException e) {
+         }
+      }
+   }
+}
+
+If you run this with a 1.4 JVM it will hang when it can't create any more threads and require a kill -9 (at least it did for me).
+More Edit:
+It turns out that the system that is having the problem is using the LinuxThreads threading model while another system that works fine is using the NPTL model. 
+
+
+Have you looked at this resource?
+It states that you should be able run thread-limit to find the maximum number of threads and can tweak it by compiling glibc.
+
+This is with Ubuntu Linux (1GB RAM)
+dsm@localhost:~$ javac ThreadTest.java 
+dsm@localhost:~$ java ThreadTest 
+8113
+dsm@localhost:~$ java -version
+java version "1.6.0_07"
+Java(TM) SE Runtime Environment (build 1.6.0_07-b06)
+Java HotSpot(TM) Client VM (build 10.0-b23, mixed mode, sharing)
+dsm@localhost:~$
+
+
+Can you try it with the JRockit JVM? IIRC, it had a different threading model than the stock Sun JVM.
+
+Updating the kernel to a newer version (2.6.something) with NPTL threading fixed this.
+
+The settings in /etc/security/limits.d/90-nproc.conf may be overriding your /etc/security/limits.conf settings. That may cause the system act in a different way shown in ulimit -u.
+https://bugzilla.redhat.com/show_bug.cgi?id=823030

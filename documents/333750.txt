@@ -1,0 +1,48 @@
+Fetching only rows that match all entries in a joined table (SQL)
+sql join
+I have the following five tables:
+
+ISP
+Product
+Connection
+AddOn
+AddOn/Product (pivot table for many-to-many relationship).
+
+Each Product is linked to an ISP, each Connection is listed to a Product. Each product can have a number of add-ons, through the use of the pivot table (which simply has 2 fields, one for the product ID and one for the AddOn ID).
+The result I am interested in is each connection with the addons listed (I am making use of MySQL's GROUP_CONCAT for this, to make a comma-separated list of the addon's name field). This works fine as is, the query looks something like this:
+SELECT i.name AS ispname, i.img_link, c.download, c.upload, c.monthly_price, c.link, 
+GROUP_CONCAT(a.name) AS addons, SUM(pa.monthly_fee) AS addon_price
+FROM isp i JOIN product p ON i.id = p.isp_id
+JOIN `connection` c ON p.id = c.product_id LEFT JOIN product_addon pa ON pa.product_id = p.id AND pa.forced = 0
+LEFT JOIN addon a ON pa.addon_id = a.id GROUP BY c.id
+
+I am using LEFT JOINS as it is possible for products to have no addons at all.
+My problem is that it is possible to select some addons that listed connections MUST have, presented as a list of addon IDs, like (1,14,237). If I put it in as an additional condition in the JOIN statements (*AND pa.addon_id IN (...)*), it will return all connections that have just one of the listed addons, but not necessarily all of them.
+Is there some way to return all connections that as a minimum have all the addons (they can have additional as well) via SQL?
+
+
+You could add to the WHERE clause:
+AND NOT EXISTS (SELECT NULL FROM addon a2
+                WHERE  a2.addon_id IN (1,14,237)
+                AND NOT EXISTS
+                ( SELECT NULL
+                  FROM   product_addon pa2
+                  WHERE  pa2.addon_id = a2.addon_id
+                  AND    pa2.product_id = p.product_id
+                )
+               )
+
+Or equivalently:
+AND NOT EXISTS (SELECT NULL FROM addon a2
+                LEFT JOIN product_addon pa2
+                  ON pa2.addon_id = a2.addon_id
+                 AND pa2.product_id = p.product_id
+                WHERE a2.addon_id IN (1,14,237)
+                AND   pa2.product_id IS NULL
+                )
+               )
+
+
+GROUP BY set-of-column
+HAVING SUM(CASE WHEN ISNULL(pa.addon_id, 0) IN (1,14,237) THEN 1 ELSE 0 END) = 3
+

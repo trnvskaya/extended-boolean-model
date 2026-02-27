@@ -1,0 +1,43 @@
+HTTP headers encoding/decoding in Java
+java http servlets utf-8 header
+A custom HTTP header is being passed to a Servlet application for authentication purposes. The header value must be able to contain accents and other non-ASCII characters, so must be in a certain encoding (ideally UTF-8).
+I am provided with this piece of Java code by the developers who control the authentication environment:
+String firstName = request.getHeader("my-custom-header"); 
+String decodedFirstName = new String(firstName.getBytes(),"UTF-8");
+
+But this code doesn't look right to me: it presupposes the encoding of the header value, when it seemed to me that there was a proper way of specifying an encoding for header values (from MIME I believe).
+Here is my question: what is the right way (tm) of dealing with custom header values that need to support a UTF-8 encoding:
+
+on the wire (how the header looks like over the wire)
+from the decoding point of view (how to decode it using the Java Servlet API, and can we assume that request.getHeader() already properly does the decoding)
+
+Here is an environment independent code sample to treat headers as UTF-8 in case you can't change your service:
+String valueAsISO = request.getHeader("my-custom-header"); 
+String valueAsUTF8 = new String(firstName.getBytes("ISO8859-1"),"UTF-8");
+
+
+
+See the HTTP spec for the rules, which says in section 2.2 
+
+The TEXT rule is only used for descriptive field contents and values that are not intended to be interpreted by the message parser. Words of *TEXT MAY contain characters from character sets other than ISO- 8859-1 [22] only when encoded according to the rules of RFC 2047 [14].
+
+The above code will not correctly decode an RFC2047 encoding string, leading me to believe that the service doesn't correctly follow the spec, and they just embeding raw utf-8 data in the header.
+
+As mentioned already the first look should always go to the HTTP 1.1 spec (RFC 2616). It says that text in header values must use the MIME encoding as defined RFC 2047 if it contains characters from character sets other than ISO-8859-1. 
+So here's a plus for you. If your requirements are covered by the ISO-8859-1 charset then you just put your characters into your request/response messages. Otherwise MIME encoding is the only alternative.
+As long as the user agent sends the values to your custom headers according to these rules you wont have to worry about decoding them. That's what the Servlet API should do. 
+
+However, there's a more basic reason why your code sniplet doesn't do what it's supposed to. The first line fetches the header value as a Java string. As we know it's represented as UTF8 internally so at this point the HTTP request message parsing is already done and finished. 
+The next line fetches the byte array of this string. Since no encoding was specified (IMHO this method with no argument should have been deprecated long ago), the current system default encoding is used, which is usually not UTF8 and then the array is again converted as being UTF8 encoded. Outch.
+
+Thanks for the answers. It seems that the ideal would be to follow the proper HTTP header encoding as per RFC 2047. Header values in UTF-8 on the wire would look something like this:
+=?UTF-8?Q?...?=
+
+Now here is the funny thing: it seems that neither Tomcat 5.5 or 6 properly decodes HTTP headers as per RFC 2047! The Tomcat code assumes everywhere that header values use ISO-8859-1.
+So for Tomcat, specifically, I will work around this by writing a filter which handles the proper decoding of the header values.
+
+The HTTPbis working group is aware of the issue, and the latest drafts get rid of all the language with respect to TEXT and RFC 2047 encoding -- it is not used in practice over HTTP.
+See http://trac.tools.ietf.org/wg/httpbis/trac/ticket/74 for the whole story.
+
+Again: RFC 2047 is not implemented in practice. The next revision of HTTP/1.1 is going to remove any mention of it.
+So, if you need to transport non-ASCII characters, the safest way is to encode them into a sequence of ASCII, such as the "Slug" header in the Atom Publishing Protocol.

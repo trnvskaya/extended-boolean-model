@@ -1,0 +1,71 @@
+GZipStream And DeflateStream will not decompress all bytes
+c# image compression zip bitmap
+I was in need of a way to compress images in .net so i looked into using the .net GZipStream class (or DeflateStream). However i found that decompression was not always successful, sometimes the images would decompress fine and other times i would get a GDI+ error that something is corrupted.
+After investigating the issue i found that the decompression was not giving back all the bytes it compressed. So if i compressed 2257974 bytes i would sometimes get back only 2257870 bytes (real numbers).
+The most funny thing is that sometimes it would work. So i created this little test method that compresses only 10 bytes and now i don't get back anything at all.
+I tried it with both compression classes GZipStream and DeflateStream and i double checked my code for possible errors. I even tried positioning the stream to 0 and flushing all the streams but with no luck.
+Here is my code:
+    public static void TestCompression()
+    {
+        byte[] test = new byte[] { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+
+        byte[] result = Decompress(Compress(test));
+
+        // This will fail, result.Length is 0
+        Debug.Assert(result.Length == test.Length);
+    }
+
+    public static byte[] Compress(byte[] data)
+    {
+        var compressedStream = new MemoryStream();
+        var zipStream = new GZipStream(compressedStream, CompressionMode.Compress);
+        zipStream.Write(data, 0, data.Length);
+        return compressedStream.ToArray();
+    }
+
+    public static byte[] Decompress(byte[] data)
+    {
+        var compressedStream = new MemoryStream(data);
+        var zipStream = new GZipStream(compressedStream, CompressionMode.Decompress);
+        var resultStream = new MemoryStream();
+
+        var buffer = new byte[4096];
+        int read;
+
+        while ((read = zipStream.Read(buffer, 0, buffer.Length)) > 0) {
+            resultStream.Write(buffer, 0, read);
+        }
+
+        return resultStream.ToArray();
+    }
+
+
+
+You need to Close() the ZipStream after adding all the data you want to compress; it retains a buffer of unwritten bytes internally (even if you Flush()) that needs to be written.
+More generally, Stream is IDisposable, so you should also be using each... (yes, I know that MemoryStream isn't going to lose any data, but if you don't get into this habit, it will bite you with other Streams).
+public static byte[] Compress(byte[] data)
+{
+    using (var compressedStream = new MemoryStream())
+    using (var zipStream = new GZipStream(compressedStream, CompressionMode.Compress))
+    {
+        zipStream.Write(data, 0, data.Length);
+        zipStream.Close();
+        return compressedStream.ToArray();
+    }
+}
+
+public static byte[] Decompress(byte[] data)
+{
+    using(var compressedStream = new MemoryStream(data))
+    using(var zipStream = new GZipStream(compressedStream, CompressionMode.Decompress))
+    using (var resultStream = new MemoryStream())
+    { ... }
+}
+
+[edit : updated re comment]
+Re not using things like MemoryStream - this is always a fun one, with lots of votes on either side of the fence: but ultimatey...
+(rhetorical - we all know the answer...) How is MemoryStream implemented? is it a byte[] (owned by .NET)? is it a memory-mapped file (owned by the OS)?
+The reason you aren't using it is because you are letting knowledge of internal implementation details change how you code against a public API - i.e. you just broke the laws of encapsulation. The public API says: I am IDisposable; you "own" me; therefore, it is your job to Dispose() me when you are through.
+
+Also - keep in mind the DeflateStream in System.IO.Compression does not implement the most efficient deflate algorithm.   If you like, there is an alternative to the BCL GZipStream and DeflateStream; it is implemented in a fully-managed library based on zlib code, that performs better than the built-in {Deflate,GZip}Stream in this respect.  [ But you still need to Close() the stream to get the full bytestream. ] 
+These stream classes are shipped in the DotNetZlib assembly, available in the DotNetZip distribution at http://DotNetZip.codeplex.com/. 

@@ -1,0 +1,168 @@
+Explicit script end tag always converted to self-closing
+javascript xslt
+I'm using xslt to transform xml to an aspx file. In the xslt, I have a script tag to include a jquery.js file. To get it to work with IE, the script tag must have an explicit closing tag. For some reason, this doesn't work with xslt below.
+<?xml version="1.0" encoding="utf-8"?>
+<xsl:stylesheet version="1.0"
+    xmlns="http://www.w3.org/1999/xhtml"
+    xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+    xmlns:msxsl="urn:schemas-microsoft-com:xslt" exclude-result-prefixes="msxsl"
+    xmlns:asp="remove">    
+    <xsl:output method="html"/>
+    <xsl:template match="/">
+        <html xmlns="http://www.w3.org/1999/xhtml">
+            <head>
+                <title>TEST</title>
+                <script type="text/javascript" src="jquery-1.2.6.js"></script>
+
+But if I change the script tag as shown below, it works. 
+        <script type="text/javascript" src="jquery-1.2.6.js">
+            // <![CDATA[ // ]]>
+        </script>
+
+I thought that the <xsl:output method="html" /> would do the trick, but it doesn't seem to work?
+/Jonas
+
+
+And this is against MS's XSLT engine of course? How strange. I can't say I've encountered this in .NET 1.1 or 2.0 and I have a number of transforms doing exactly the same thing, so I'd suggest you go with the simple workaround.
+
+This is quite a common issue when generating HTML from XSLT. I suspect the root of the problem is that the XSLT itself is an XML document. Even though you start with your XSLT programme as serialized XML, by the time the XSLT processor gets it, it's already been de-serialized to an "infoset" representation. At an XML level, an empty tag and a self-closed one are equivalent; the element quite simply doesn't have children. This means that your XSLT processor will probably never see a version of the programme where the script element has both an opening and closing tag. 
+I usually get round this by using a suitably escaped non-breaking space. In any case, you've got to put something inside the script tag. 
+By the way - this isn't about making IE happy. If you look at the HTML spec, you'll find that the end tag is required. I'm sure some people will find it ironic that IE implements it correctly. :-)
+
+If you're creating the XmlWriter yourself you need to pass the transform's OutputSettings to the XmlWriter, eg:
+XmlDocument doc = new XmlDocument();
+doc.LoadXml("<book><author>Trudi Canavan</author><title>Voice of the Gods</title></book>");
+
+XslCompiledTransform transform = new XslCompiledTransform();
+transform.Load("XSLTFile1.xslt");
+
+StringBuilder output = new StringBuilder();
+
+// Here we pass the output setting to the writer, otherwise the transform
+// may be set to Html, but the XmlWriter will be outputting Xml
+XmlWriter writer = XmlWriter.Create(output, transform.OutputSettings);
+
+transform.Transform(doc, writer);
+
+Console.WriteLine(output.ToString());
+Console.ReadKey();
+
+
+I used a comment before script end tag to go through this issue.
+
+This is by design and the only workaround I know of is to use a custom XmlTextWriter :
+public class HtmlTextWriter : XmlTextWriter
+{
+    private readonly string[] fullEndElements = 
+        new string[] { "script", "title" };
+
+    private string lastStartElement = null;
+
+
+    public HtmlTextWriter(TextWriter textWriter)
+        : base(textWriter)
+    {
+    }
+
+    public HtmlTextWriter(string filename, Encoding encoding)
+        : base(filename, encoding)
+    {
+    }
+
+    public HtmlTextWriter(Stream w, Encoding encoding)
+        : base(stream, encoding)
+    {
+    }
+
+    public override void WriteStartElement(string prefix, string localName, string ns)
+    {
+        lastStartElement = localName;
+        base.WriteStartElement(prefix, localName, ns);
+    }
+
+    public override void WriteEndElement()
+    {
+        if (Array.IndexOf(fullEndElements, lastStartElement) > -1)
+        {
+            base.WriteFullEndElement();
+        }
+        else
+        {
+            base.WriteEndElement();
+        }
+    }
+}
+
+
+For those of you using Xalan 2.7.0 (in Java), I had the same problem. I adopted the org/apache/xml/serializer/ToStream.java file in the original source code to work around this problem. If you specify as outputProperty:
+private static Properties XHTML() {
+  Properties p = new Properties();
+  p.setProperty(OutputKeys.METHOD, "xhtml");
+  p.setProperty(OutputKeys.DOCTYPE_PUBLIC,
+    "-//W3C//DTD XHTML 1.0 Strict//EN");
+  p.setProperty(OutputKeys.DOCTYPE_SYSTEM,
+    "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd");
+  p.setProperty(OutputKeys.ENCODING, "UTF-8");
+  p.setProperty("{http://xml.apache.org/xalan}indent-amount", "4");
+  p.setProperty(OutputKeys.INDENT, "yes");
+  p.setProperty(OutputKeys.OMIT_XML_DECLARATION, "no");
+  p.setProperty("{http://example.com}selfclosing","no");
+  return p;
+ }
+
+Note the last line on selfclosing. This is a property that is responded to in this renewed version of ToStream.java and will prevent <div /> and <script /> tags and output <div></div> and <script></script> tags instead. It also includes exceptions to these, namely the ones specified in the HTML standard as allowed to be self-closing (i.e. "area", "base", "basefont", "br", "col", "frame", "hr", "img", "input", "link", "meta", "param"). It worked for me at least, and now webpages are rendered fine in IE as well.
+The new ToStream.java file can be found at http://bvandelft.ruhosting.nl/ToStream.java and a pre-compiled version of the serializer.jar (working with 2.7) is also available at the same URL but serializer.jar (in which the compiled version of ToStream is included) wasn't allowed to post over 1 URL :-p
+
+Bart van Delfts answer pointed me in the right direction with this one so cheers for the hint!
+I was having this issue as well using [javax.xml.transform.Transformer] Whenever I tried to parse a snippet of formatted html, in my case:-
+<textarea></textarea>
+the final output from the Node was being brought into my jsp as:-
+<textarea/>
+
+which was obviously screwing up any following code, owing to it being seen as more of the contents of the textarea element.
+setting t.setOutputProperty(javax.xml.transform.OutputKeys.METHOD, "html"); seems to have provided the self closing behaviour I expected. This property defaults to "xml" from my own testing, so obviously an xml tag with no nodes beneath it is perfectly happy as self closing.
+Hope this helps anyway.
+
+consider this example,
+<Discount>
+       <!--<xsl:if test="Discount>0">-->
+             <xsl:value-of select="Discount"/>
+       <!--</xsl:if>-->
+</Discount>
+
+If i am working with discount for a product. and i am checking it before use. it will return the output of,
+<Discount>value of the discount</Discount>
+
+But if i un-comment the above example like that,
+<Discount>
+       <xsl:if test="Discount>0">
+             <xsl:value-of select="Discount"/>
+       </xsl:if>
+</Discount>
+
+it'll return the o/p after xslt as(if discount is > 0),
+<Discount/>
+
+
+I found this answer on MSDN forum site:
+<xsl:value-of select="' '"/>
+
+If you add the above xslt code before the end of your  in the xsl file it forces the  element to have some content (space in this case) instead of self-closing itself. Tried it and it worked. 
+This is what it created: 
+<script...> </script>
+
+instead of 
+<script ... />.
+
+
+As mentioned, there are tricks with putting an invisible content into the element but in xslt you can always render accurate output as a text:
+<xsl:text disable-output-escaping="yes">
+    &lt;script src="jquery-2.0.3.js"&gt;&lt;/script&gt;
+</xsl:text>
+
+Btw. I think that the method="html" should do the trick too, but you will not render xhtml like that, e.g. br will not be closed.
+
+Another quick hack is to add a Javascript comment within the tag:
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js">//</script>
+
+This will just add a comment to the end of the script - be careful that you dont comment anything out by mistake, though!

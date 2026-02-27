@@ -1,0 +1,23 @@
+"Background" task in palm OS
+palm-os garnet-os
+I'm trying to create a Palm OS app to check a web site every X minutes or hours, and provide a notification when a piece of data is available.  I know that this kind of thing can be done on the new Palm's - for example, my Centro can have email or web sites download when the application isn't on top - but I don't know how to do it.  Can anyone point me in the right direction?
+
+
+This is possible to do but very difficult.  There are several steps you'll have to take.
+First off, this only works on Palm OS 5 and is sketchy on some of the early Palm OS 5 devices.  The latest devices are better but not perfect.
+Next, you will need to create an alarm for your application using AlmSetAlarm.  This is how you accomplish the "every X minutes or hours" part.
+When the alarm fires, your application will get a sysAppLaunchCmdAlarmTriggered launch code, even if it's not already running.  If you only want to do something simple and quick, you can do it in response to the launch code and you're done.
+After you do your stuff in the alarm launch code, be sure to set up the next alarm so that you continue to be called.
+Important notes: You cannot access global variables when responding this launch code!  Depending on the setup in your compiler, you probably also won't be able to access certain C++ features, like virtual functions (which internally use global variables).  There is a setting you can set in Codewarrior that will help with this, but I'm not too familiar with it.  You should architect your code so that it doesn't need globals; for example, you can use FtrSet and FtrGet to store bits of global data that you might need.  Finally, you will only be able to access a single 64KB code segment of 68000 machine code.  Inter-segment jumps don't work properly without globals set up.
+You can get around a lot of these restrictions by moving the majority of your code to a PNOlet, but that's an entirely different and more complicated topic.
+If you want to do something more complicated that could take a while (e.g. load a web page or download email), it is strongly recommended not to do it during the alarm launch code.  You could do something in the sysAppLaunchCmdDisplayAlarm launch code and display a form to the user allowing them to cancel.  But this is bound to get annoying quickly.
+Better for the user experience (but much more complicated) is to become a background application.  This is a bit of black magic and is not really well supported, but it is possible.  There are basically three steps to becoming a background application:
+
+Protect your application database using DmDatabaseProtect.  This will ensure that your application is locked down so it can't be deleted.
+Lock your code segment using MemHandleLock and MemHandleSetOwner (set the owner to 0).  This will ensure that your code is loaded into memory and won't be moved.
+Register for some notifications.  For example, the sysNotifyIdleTimeEvent is a great notification to use to do some periodic background processing.
+
+Once you set this up, you can exit from the alarm launch code and then wait for your notifications to fire.  You will then do all of your background processing when your notification handlers are called.
+Also make sure that if you allocate any system objects (memory, handles, file handles, etc.), you set their owner to 0 (system) if you expect them to persist after you return from your notification handler.  Otherwise the system will clean them up.  If you do this, be super careful to avoid memory and resource leaks!!  They will never get cleaned up when the owner is set to 0!
+To leave background mode, simply do the reverse: unregister for notifications, unlock your code segment, and unprotect your application database.
+If you do any network operations in the background, be sure that you set the sockets to non-blocking mode and deal correctly with that!  Otherwise you will block the foreground application and cause problems.

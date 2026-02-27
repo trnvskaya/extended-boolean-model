@@ -1,0 +1,42 @@
+GDI+ System.Drawing.Bitmap gives error Parameter is not valid intermittently
+c# asp.net
+I have some C# code in an ASP.Net application that does this:
+Bitmap bmp = new Bitmap(1184, 1900);
+And occasionally it throws an exception "Parameter is not valid". Now i've been googling around and apparently GDI+ is infamous for throwing random exceptions, and lots of people have had this problem, but nobody has a solution to it! I've checked the system and it has plenty of both RAM and swap space.
+Now in the past if i do an 'iisreset' then the problem goes away, but it comes back in a few days. But i'm not convinced i've caused a memory leak, because as i say above there is plenty of ram+swap free.
+Anyone have any solutions?
+
+
+You not only need enough memory, it needs to be contiguous.  Over time memory becomes fragmented and it becomes harder to find big blocks.  There aren't a lot of good solutions to this, aside from building up images from smaller bitmaps.
+new Bitmap(x, y) pretty much just needs to allocate memory -- assuming that your program isn't corrupted in some way (is there any unsafe code that could corrupt the heap), then I would start with this allocation failing.  Needing a contiguous block is how a seemingly small allocation could fail.  Fragmentation of the heap is something that is usually solved with a custom allocator -- I don't think this is a good idea in IIS (or possible).  
+To see what error you get on out of memory, try just allocation a gigantic Bitmap as a test -- see what error it throws.
+One strategy I've seen is to pre-allocate some large blocks of memory (in your case Bitmaps) and treat them as a pool (get and return them to the pool).  If you only need them for a short period of time, you might be able to get away with just keeping a few in memory and sharing them.
+
+I just got a reply from microsoft support. Apparently if you look here:
+http://msdn.microsoft.com/en-us/library/system.drawing.aspx
+You can see it says "Classes within the System.Drawing namespace are not supported for use within a Windows or ASP.NET service. Attempting to use these classes from within one of these application types may produce unexpected problems, such as diminished service performance and run-time exceptions."
+So they're basically washing their hands of the issue.
+It appears that they're admitting that this section of the .Net framework is unreliable. I'm a bit disappointed.
+Next up - can anyone recommend a similar library to open a gif file, superimpose some text, and save it again?
+
+Everything I've seen to date in my context is related to memory leaks / handle leaks. I recommend you get a fresh pair of eyes to investigate your code.  
+What actually happens is that the image is disposed at a random point in the future, even if you've created it on the previous line of code. This may be because of a memory/handle leak (cleaning some out of my code appears to improve but not completely resolve this problem). 
+Because this error happens after the application has been in use for a while, sometimes using lots of memory, sometimes not, I feel the garbage collector doesn't obey the rules because of some special tweaks related to services and that is why Microsoft washes their hands of this problem. 
+http://blog.lavablast.com/post/2007/11/The-Mysterious-Parameter-Is-Not-Valid-Exception.aspx
+
+Stop using GDI+ and start using the WPF Imaging classes (.NET 3.0). These are a major cleanup of the GDI+ classes and tuned for performance. Additionally, it sets up a "bitmap chain" that allows you to easily perform multiple actions on the bitmap in an efficient manner.
+Find more by reading about BitmapSource
+Here's an example of starting with a blank bitmap just waiting to receive some pixels:
+using System.Windows.Media.Imaging;
+class Program {
+    public static void Main(string[] args) {
+        var bmp = new WriteableBitmap(1184, 1900, 96.0, 96.0, PixelFormat.Bgr32, null);
+    }
+}
+
+
+For anyone who's interested, the solution i'm going to use is the Mono.Cairo libraries from the mono C# distribution instead of using system.drawing. If i simply drag the mono.cairo.dll, libcairo-2.dll, libpng13.dll and zlib1.dll files from the windows version of mono into the same folder as my executable, then i can develop in windows using visual studio 2005 and it all works nicely.
+Update - i've done the above, and stress tested the application and it all seems to run smoothly now, and uses up to 200mb less ram to boot. Very happy.
+
+Classes within the System.Drawing namespace are not supported for use within a Windows or ASP.NET service
+For a supported alternative, see Windows Imaging Components (msdn), a native library which ironically System.Drawing is based on.

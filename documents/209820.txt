@@ -1,0 +1,141 @@
+Algorithm to order 'tag line' campaigns based on resulting sales
+algorithm statistics
+I want to be able to introduce new 'tag lines' into a database that are shown 'randomly' to users. (These tag lines are shown as an introduction as animated text.)
+Based upon the number of sales that result from those taglines I'd like the good ones to trickle to the top, but still show the others less frequently.
+I could come up with a basic algorithm quite easily but I want something thats a little more 'statistically accurate'.
+I dont really know where to start. Its been a while since I've done anything more than basic statistics. My model would need to be sensitive to tolerances, but obviously it doesnt need to be worthy of a PHD.
+Edit: I am currently tracking a 'conversion rate' - i.e. hits per order. This value would probably be best calculated as a cumulative 'all time' convertsion rate to be fed into the algorithm.
+
+
+I would suggest randomly choosing with a weighting factor based on previous sales. So let's say you had this:
+
+tag1 = 1 sale 
+tag2 = 0 sales 
+tag3 = 1 sale
+tag4 = 2 sales
+tag5 = 3 sales
+
+A simple weighting formula would be 1 + number of sales, so this would be the probability of selecting each tag:
+
+tag1 = 2/12 = 16.7%
+tag2 = 1/12 = 8.3%
+tag3 = 2/12 = 16.6%
+tag4 = 3/12 = 25%
+tag5 = 4/12 = 33.3%
+
+You could easily change the weighting formula to get just the distribution that you want.
+
+You have to come up with a weighting formula based on sales. 
+I don't think there's any such thing as a "statistically accurate" formula here - it's all based on your preference.
+No one can say "this is the correct weighting and the other weighting is wrong" because there isn't a final outcome you are attempting to model - this isn't like trying to weigh responses to a poll about an upcoming election (where you are trying to model results to represent something that will happen in the future).
+
+Looking at your problem, I would modify the requirements a bit -
+1) The most popular one should be shown most often.
+2) Taglines should "age", so one that got a lot of votes (purchase) in the past, but none recently should be shown less often
+3) Brand new taglines should be shown more often during their first days.
+If you agree on those, then a algorithm could be something like:
+START:
+x = random(1, 3); 
+if x = 3 goto NEW else goto NORMAL
+
+NEW:
+TagVec = Taglines.filterYounger(5 days); // I'm taking a LOT of liberties with the pseudo code,,,
+x = random(1, TagVec.Length);
+return tagVec[x-1]; // 0 indexed vectors even in made up language,
+
+
+NORMAL:
+// Similar to EBGREEN above
+sum = 0;
+ForEach(TagLine in TagLines) {
+   sum += TagLine.noOfPurhcases;
+}
+x = random(1, sum);
+ForEach(TagLine in TagLines) {
+   x -= TagLine.noOfPurchase;
+   if ( x > 0) return TagLine; // Find the TagLine that represent our random number
+}
+
+Now, as a setup I would give every new tagline 10 purchases, to avoid getting really big slanting for one single purchase. 
+The aging process I would count a purchase older than a week as 0.8 purhcase per week of age. So 1 week old gives 0.8 points, 2 weeks give 0.8*0.8 = 0,64 and so forth...
+You would have to play around with the Initial purhcases parameter (10 in my example) and the aging speed (1 week here) and the aging factor (0.8 here) to find something that suits you.
+
+Heres an example in javascript. Not that I'm not suggesting running this client side... 
+Also there is alot of optimization that can be done.
+Note: createMemberInNormalDistribution() is implemented here http://stackoverflow.com/questions/75677/converting-a-uniform-distribution-to-a-normal-distribution#196941
+/*
+ * an example set of taglines
+ * hits are sales
+ * views are times its been shown
+ */
+var taglines = [
+    {"tag":"tagline 1","hits":1,"views":234},
+    {"tag":"tagline 2","hits":5,"views":566},
+    {"tag":"tagline 3","hits":3,"views":421},
+    {"tag":"tagline 4","hits":1,"views":120},	
+    {"tag":"tagline 5","hits":7,"views":200}
+];
+
+/*set up our stat model for the tags*/
+var TagModel = function(set){ 
+    var  hits, views, sumOfDiff, sumOfSqDiff; 
+    hits = views = sumOfDiff = sumOfSqDiff = 0;
+    /*find average*/
+    for (n in set){
+    	hits += set[n].hits;
+    	views += set[n].views;	
+    }
+    this.avg = hits/views;
+    /*find standard deviation and variance*/
+    for (n in set){
+    	var diff =((set[n].hits/set[n].views)-this.avg);
+    	sumOfDiff += diff;
+    	sumOfSqDiff += diff*diff;	
+    }
+    this.variance = sumOfDiff;
+    this.std_dev = Math.sqrt(sumOfSqDiff/set.length);
+    /*return tag to use fChooser determines likelyhood of tag*/
+    this.getTag = function(fChooser){
+    	var m = this;
+    	set.sort(function(a,b){
+    			return fChooser((a.hits/a.views),(b.hits/b.views), m);
+    		});
+    	return set[0];
+    };
+};
+
+var config = {
+
+    "uniformDistribution":function(a,b,model){
+    	return Math.random()*b-Math.random()*a;
+    },
+    "normalDistribution":function(a,b,model){
+    	var a1 = createMemberInNormalDistribution(model.avg,model.std_dev)* a;
+    	var b1 = createMemberInNormalDistribution(model.avg,model.std_dev)* b;
+    	return b1-a1;
+    },
+    //say weight = 10^n... higher n is the more even the distribution will be.
+    "weight": .5,
+    "weightedDistribution":function(a,b,model){
+    	var a1 = createMemberInNormalDistribution(model.avg,model.std_dev*config.weight)* a;
+    	var b1 = createMemberInNormalDistribution(model.avg,model.std_dev*config.weight)* b;
+    	return b1-a1;
+    }
+}
+
+var model = new TagModel(taglines);
+
+//to use
+model.getTag(config.uniformDistribution).tag;
+//running 10000 times: ({'tagline 4':836, 'tagline 5':7608, 'tagline 1':100, 'tagline 2':924, 'tagline 3':532})
+
+model.getTag(config.normalDistribution).tag;
+//running 10000 times: ({'tagline 4':1775, 'tagline 5':3471, 'tagline 1':1273, 'tagline 2':1857, 'tagline 3':1624})
+
+model.getTag(config.weightedDistribution).tag;
+//running 10000 times: ({'tagline 4':1514, 'tagline 5':5045, 'tagline 1':577, 'tagline 2':1627, 'tagline 3':1237})
+
+config.weight = 2;
+model.getTag(config.weightedDistribution).tag;
+//running 10000 times: {'tagline 4':1941, 'tagline 5':2715, 'tagline 1':1559, 'tagline 2':1957, 'tagline 3':1828})
+

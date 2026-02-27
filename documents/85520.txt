@@ -1,0 +1,82 @@
+PHP DOMDocument stripping HTML tags
+php
+I'm working on a small templating engine, and I'm using DOMDocument to parse the pages. My test page so far looks like this:
+<block name="content">
+
+   <?php echo 'this is some rendered PHP! <br />' ?>
+
+   <p>Main column of <span>content</span></p>
+
+</block>
+
+And part of my class looks like this:
+private function parse($tag, $attr = 'name')
+{
+    $strict = 0;
+    /*** the array to return ***/
+    $out = array();
+    if($this->totalBlocks() > 0)
+    {
+        /*** a new dom object ***/
+        $dom = new domDocument;
+        /*** discard white space ***/
+        $dom->preserveWhiteSpace = false;
+
+        /*** load the html into the object ***/
+        if($strict==1)
+        {
+            $dom->loadXML($this->file_contents);
+        }
+        else
+        {
+            $dom->loadHTML($this->file_contents);
+        }
+
+        /*** the tag by its tag name ***/
+        $content = $dom->getElementsByTagname($tag);
+
+        $i = 0;
+        foreach ($content as $item)
+        {
+            /*** add node value to the out array ***/
+            $out[$i]['name'] = $item->getAttribute($attr);
+            $out[$i]['value'] = $item->nodeValue;
+            $i++;
+        }
+    }
+
+    return $out;
+}
+
+I have it working the way I want in that it grabs each <block> on the page and injects it's contents into my template, however, it is stripping the HTML tags within the <block>, thus returning the following without the <p> or <span> tags:
+this is some rendered PHP! Main column of content
+
+What am I doing wrong here? :) Thanks
+
+
+Nothing: nodeValue is the concatenation of the value portion of the tree, and will never have tags.
+What I would do to make an HTML fragment of the tree under $node is this:
+
+$doc = new DOMDocument();
+foreach($node->childNodes as $child) {
+    $doc->appendChild($doc->importNode($child, true));
+}
+return $doc->saveHTML();
+
+HTML "fragments" are actually more problematic than you'd think at first, because they tend to lack things like doctypes and character sets, which makes it hard to deterministically go back and forth between portions of a DOM tree and HTML fragments.
+
+Thanks for the ridiculously quick response :)
+the new foreach loop does what I'm looking for.
+foreach ($content as $item)
+	    {
+	        /*** add node value to the out array ***/
+			$out[$i]['name'] = $item->getAttribute($attr);
+
+			$doc = new DOMDocument();
+			foreach($item->childNodes as $child) {
+			    $doc->appendChild($doc->importNode($child, true));
+			}
+			$out[$i]['value'] = $doc->saveHTML();
+			$i++;
+	    }
+

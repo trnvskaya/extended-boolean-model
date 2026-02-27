@@ -1,0 +1,89 @@
+sql - Using aggregate functions (min/max) as part of select statement
+sql aggregate-functions
+I am trying to return the minimum and maximum prices for a villa booking system. I have a look up table that stores the price for each week for each villa. 
+I am using the min and max functions to do this within the select but I'm having lots of problems. Can anyone explain where i'm going wrong? Heres the sp
+ALTER PROCEDURE spVillaGet 
+-- Add the parameters for the stored procedure here
+@accomodationTypeFK int = null,
+@regionFK int = null,
+@arrivalDate datetime = null,
+@numberOfNights int = null,
+@sleeps int = null,
+@priceFloor money = null,
+@priceCeil money = null
+
+AS
+BEGIN
+    -- SET NOCOUNT ON added to prevent extra result sets from
+    -- interfering with SELECT statements.
+    SET NOCOUNT ON;
+-- Insert statements for procedure here
+SELECT tblVillas.name, 
+	   tblVillas.introduction,
+	   tblVillas.italian_introduction,
+	   tblVillas.uk_content,
+	   tblVillas.italian_content,
+	   tblVillas.sleeps,
+	   tblVillas.postcode,
+	   tblLkUpRegions.regionName,
+	   tblLkUpAccomodationTypes.accomodationType,
+	   MIN(price) As MinPrice,
+	   MAX(price) As MaxPrice
+
+FROM tblVillas
+
+LEFT JOIN tblLkUpRegions on tblVillas.regionFK = tblLkUpRegions.regionID
+LEFT JOIN tblLkUpAccomodationTypes on tblVillas.accomodationTypeFK = tblLkUpAccomodationTypes.accomodationId    
+LEFT JOIN tblWeeklyPrices on tblWeeklyPrices.villaFK = tblVillas.villaId
+
+WHERE
+
+	((@accomodationTypeFK is null OR accomodationTypeFK = @accomodationTypeFK)
+	 AND (@regionFK is null OR regionFK = @regionFK)
+	 AND (@sleeps is null OR sleeps = @sleeps) 
+	 AND tblVillas.deleted = 0)
+
+GROUP BY tblVillas.name
+
+
+
+You don't elaborate on what problems you are getting, but this is probably one: you need to specify all the non-aggregate columns in the GROUP BY clause i.e.:
+GROUP BY tblVillas.name, 
+       tblVillas.introduction,
+       tblVillas.italian_introduction,
+       tblVillas.uk_content,
+       tblVillas.italian_content,
+       tblVillas.sleeps,
+       tblVillas.postcode,
+       tblLkUpRegions.regionName,
+       tblLkUpAccomodationTypes.accomodationType
+
+From your follow-up comment is appears that some of your columns are of a data type that can't be used in a GROUP BY clause.  Try this instead:
+SELECT tblVillas.name, 
+           tblVillas.introduction,
+           tblVillas.italian_introduction,
+           tblVillas.uk_content,
+           tblVillas.italian_content,
+           tblVillas.sleeps,
+           tblVillas.postcode,
+           tblLkUpRegions.regionName,
+           tblLkUpAccomodationTypes.accomodationType,
+           (SELECT MIN(price) FROM tblWeeklyPrices where tblWeeklyPrices.villaFK = tblVillas.villaId) As MinPrice,
+           (SELECT MAX(price) FROM tblWeeklyPrices where tblWeeklyPrices.villaFK = tblVillas.villaId) As MaxPrice
+FROM tblVillas
+LEFT JOIN tblLkUpRegions on tblVillas.regionFK = tblLkUpRegions.regionID
+LEFT JOIN tblLkUpAccomodationTypes on tblVillas.accomodationTypeFK = tblLkUpAccomodationTypes.accomodationId    
+WHERE
+        ((@accomodationTypeFK is null OR accomodationTypeFK = @accomodationTypeFK)
+         AND (@regionFK is null OR regionFK = @regionFK)
+         AND (@sleeps is null OR sleeps = @sleeps) 
+         AND tblVillas.deleted = 0)
+
+
+Thanks for your help
+When I Group By and include all the columns from the select except the two functions I get the following error
+Msg 306, Level 16, State 2, Procedure spVillaGet, Line 22
+
+The text, ntext, and image data types cannot be compared or sorted, except when using IS NULL or LIKE operator.
+Msg 306, Level 16, State 2, Procedure spVillaGet, Line 22
+The text, ntext, and image data types cannot be compared or sorted, except when using IS NULL or LIKE operator.

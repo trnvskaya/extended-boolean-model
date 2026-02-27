@@ -1,0 +1,92 @@
+What's the shortest TSQL to concatenate a person's name which may contain nulls
+sql sql-server tsql
+3 fields: FirstName, MiddleName, LastName
+Any field can be null, but I don't want extra spaces. Format should be "First Middle Last", "First Last", "Last", etc.
+
+
+LTRIM(RTRIM(ISNULL(FirstName, '') + ' ' + LTRIM(ISNULL(MiddleName, '') + ' ' + 
+    ISNULL(LastName, ''))))
+
+
+    LTRIM(RTRIM(
+    LTRIM(RTRIM(ISNULL(FirstName, ''))) + ' ' + 
+    LTRIM(RTRIM(ISNULL(MiddleName, ''))) + ' ' + 
+    LTRIM(ISNULL(LastName, ''))
+    ))
+
+NOTE: This won't leave trailing or leading spaces. That's why it's a little bit uglier than other solutions.
+
+LTrim(RTrim(Replace(IsNull(Firstname + ' ', '') + 
+    isNull(MiddleName, '')  + 
+    IsNull(' ' + LastName, ''), '  ', ' ')))
+
+use a UDF: 
+`Select udfConcatName(First, Middle, Last) from foo`
+
+That way all your logic for concatenating names is in one place and once you've gotten it written it's short to call.
+
+Assuming by "extra spaces", you mean extra spaces inserted during the concatenation (which is a reasonable assumption, I think. If you have extra spaces in your data, you should clean it up):
+ISNULL(FirstName + ' ', '')  + ISNULL(MiddleName + ' ', '') + ISNULL(LastName, '')
+
+works, since you'll add a space to the name - which if it's NULL yields NULL - which yields empty string.
+Edit: If you don't count the SET OPTION - which can be a connection or db option:
+SET CONCAT_NULL_YIELDS_NULL OFF
+LTRIM(FirstName + ' ' + NULLIF(MiddleName + ' ', ' ') + LastName)
+
+is a tiny bit shorter, but a large bit uglier.
+Edit2: Since you accepted the UDF answer - IMO, that's a bit of a cheat - here's some in the same vein:
+SELECT a FROM b
+
+b is a view. ;) Or. a stored proc,
+EXEC c
+
+But, since EXEC is optional:
+c
+
+
+'"' + ltrim(rtrim(isnull(FirstName,''))) + ' ' + ltrim(rtrim(isnull(MiddleName,''))) + 
+' ' + ltrim(rtrim(isnull(LastName,''))) + '","' + ltrim(rtrim(isnull(FirstName,''))) + 
+' ' + ltrim(rtrim(isnull(LastName,''))) + '","' + ltrim(rtrim(isnull(LastName,''))) + 
+'"'
+
+ETC
+
+Why not use a computed column on the table that performs the concat for you using your preferred syntax from the many posted here? Then you will just query the computed column - very elegant and if you persist the computed column then you may even get slight performance increase.
+Example here
+
+replace(ltrim(rtrim(isnull(FirstName, '') + ' ' + isnull(MiddleName, '') + ' ' + isnull(LastName, ''))), '  ', ' ')
+
+
+DECLARE @first varchar(10) = 'First'
+DECLARE @middle varchar(10) = ''
+DECLARE @last varchar(10) = 'Last'
+
+LTRIM(RTRIM(
+    @first
+    + ISNULL(NULLIF(' '+LTRIM(RTRIM(@middle)),' '),'')
+    + ISNULL(NULLIF(' '+LTRIM(RTRIM(@last)),' '),'')
+))
+
+WHY THIS WORKS
+The fields are reduced to an empty string if NULL or whitespace by the LTRIM, RTRIM, and ISNULL functions.
+LTRIM(RTRIM(ISNULL(@middle,''))) -- Result is a trimmed non-null string value.
+
+That value is prefixed with a single space, then compared to a single space by the NULLIF function.  If equal, a NULL results.  If not equal, then the value is used.
+NULLIF(' '+'',' ')       -- this would return NULL
+NULLIF(' '+'Smith',' ')  -- this would return ' Smith'
+
+Finally, ISNULL() is used to convert the NULL passed by NULLIF to an empty string.
+ISNULL(NULL,'')          -- this would return ''
+ISNULL(' Smith','')      -- this would return ' Smith'
+
+
+Select firstname, middlename, lastname, ProvidedName = 
+
+RTrim(Coalesce(FirstName + ' ','') 
++ Coalesce(MiddleName + ' ', '')
++ Coalesce(LastName + ' ', '')
++ COALESCE('' + ' ', '')
++ COALESCE(NULL, ''))
+
+From names
+

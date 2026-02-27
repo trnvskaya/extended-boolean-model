@@ -1,0 +1,187 @@
+How to concatenate strings of a string field in a PostgreSQL 'group by' query?
+sql postgresql group-by string-concatenation concat
+I am looking for a way to concatenate the strings of a field within a group by query. So for example, I have a table:
+ID   COMPANY_ID   EMPLOYEE
+1    1            Anna
+2    1            Bill
+3    2            Carol
+4    2            Dave
+
+and I wanted to group by company_id to get something like:
+COMPANY_ID   EMPLOYEE
+1            Anna, Bill
+2            Carol, Dave
+
+There is a built-in function in mySQL to do this group_concat
+
+
+I claim no credit for the answer because I found it after some searching:
+What I didn't know is that PostgreSQL allows you to define your own aggregate functions with CREATE AGGREGATE
+This post on the PostgreSQL list shows how trivial it is to create a function to do what's required:
+CREATE AGGREGATE textcat_all(
+  basetype    = text,
+  sfunc       = textcat,
+  stype       = text,
+  initcond    = ''
+);
+
+SELECT company_id, textcat_all(employee || ', ')
+FROM mytable
+GROUP BY company_id;
+
+
+Update as of PostgreSQL 9.0:
+Recent versions of Postgres (since late 2010) have the string_agg(expression, delimiter) function that will do exactly what the question asked for, even letting you specify the delimiter string:
+SELECT company_id, string_agg(employee, ', ')
+FROM mytable
+GROUP BY company_id;
+
+Update as of PostgreSQL 8.4:
+PostgreSQL 8.4 (in 2009) introduced the aggregate function array_agg(expression) which concatenates the values into an array. Then array_to_string() can be used to give the desired result:
+SELECT company_id, array_to_string(array_agg(employee), ', ')
+FROM mytable
+GROUP BY company_id;
+
+Original Answer (for pre-8.4 PostgreSQL):
+There is no built-in aggregate function to concatenate strings. It seems like this would be needed, but it's not part of the default set. A web search however reveals some manual implementations the same example:
+CREATE AGGREGATE textcat_all(
+  basetype    = text,
+  sfunc       = textcat,
+  stype       = text,
+  initcond    = ''
+);
+
+Here is the CREATE AGGREGATE documentation.
+In order to get the ", " inserted in between them without having it at the end, you might want to make your own concatenation function and substitute it for the "textcat" above. Here is one I put together but haven't tested (update: tested on 8.3.12 and working fine):
+CREATE FUNCTION commacat(acc text, instr text) RETURNS text AS $$
+  BEGIN
+    IF acc IS NULL OR acc = '' THEN
+      RETURN instr;
+    ELSE
+      RETURN acc || ', ' || instr;
+    END IF;
+  END;
+$$ LANGUAGE plpgsql;
+
+Note: The function above will output a comma even if the value in the row is null/empty, which outputs:
+a, b, c, , e, , g
+
+If you would prefer to remove extra commas to output:
+a, b, c, e, g
+
+just add an ELSIF check to the function:
+CREATE FUNCTION commacat_ignore_nulls(acc text, instr text) RETURNS text AS $$
+  BEGIN
+    IF acc IS NULL OR acc = '' THEN
+      RETURN instr;
+    ELSIF instr IS NULL OR instr = '' THEN
+      RETURN acc;
+    ELSE
+      RETURN acc || ', ' || instr;
+    END IF;
+  END;
+$$ LANGUAGE plpgsql;
+
+
+As already mentioned, creating your own aggregate function is the right thing to do. Here is my concatenation aggregate function (you can find details in French): 
+CREATE OR REPLACE FUNCTION concat2(text, text) RETURNS text AS '
+    SELECT CASE WHEN $1 IS NULL OR $1 = \'\' THEN $2
+            WHEN $2 IS NULL OR $2 = \'\' THEN $1
+            ELSE $1 || \' / \' || $2
+            END; 
+'
+ LANGUAGE SQL;
+
+CREATE AGGREGATE concatenate (
+  sfunc = concat2,
+  basetype = text,
+  stype = text,
+  initcond = ''
+
+);
+And then use it as:
+SELECT company_id, concatenate(employee) AS employees FROM ...
+
+
+This latest announcement list snippet might be of interest if you'll be upgrading to 8.4:
+
+Until 8.4 comes out with a
+  super-effient native one, you can add
+  the array_accum() function in the
+  PostgreSQL documentation for rolling
+  up any column into an array, which can
+  then be used by application code, or
+  combined with array_to_string() to
+  format it as a list:
+http://www.postgresql.org/docs/current/static/xaggr.html
+
+I'd link to the 8.4 development docs but they don't seem to list this feature yet.
+
+I found this PostgreSQL documentation helpful: http://www.postgresql.org/docs/8.0/interactive/functions-conditional.html.
+In my case, I sought plain SQL to concatenate a field with brackets around it, if the field is not empty.
+select itemid, 
+  CASE 
+    itemdescription WHEN '' THEN itemname 
+    ELSE itemname || ' (' || itemdescription || ')' 
+  END 
+from items;
+
+
+Following up on Kev's answer, using the Postgres docs:
+First, create an array of the elements, then use the built-in array_to_string function.
+CREATE AGGREGATE array_accum (anyelement)
+(
+ sfunc = array_append,
+ stype = anyarray,
+ initcond = '{}'
+);
+
+select array_to_string(array_accum(name),'|') from table group by id;
+
+
+Following yet again on the use of a custom aggregate function of string concatenation: you need to remember that the select statement will place rows in any order, so you will need to do a sub select in the from statement with an order by clause, and then an outer select with a group by clause to aggregate the strings, thus:
+SELECT custom_aggregate(MY.special_strings)
+FROM (SELECT special_strings, grouping_column 
+        FROM a_table 
+        ORDER BY ordering_column) MY
+GROUP BY MY.grouping_column
+
+
+How about using Postgres built-in array functions? At least on 8.4 this works out of the box:
+SELECT company_id, array_to_string(array_agg(employee), ',')
+FROM mytable
+GROUP BY company_id;
+
+
+As from PostgreSQL 9.0 you can use the aggregate function called string_agg. Your new SQL should look something like this: SELECT company_id, string_agg(employee, ', ')
+FROM mytable
+GROUP BY company_id;
+
+In case anyone comes across this looking for a compatibilty shim for pre-9.0 databases, it is possible to implement everything in string_agg except the ORDER BY clause (which is a syntax extension also introduced in 9.0).
+So with the below definition this will work the same as in a 9.x Postgres DB:
+SELECT string_agg(name, '; ') AS semi_colon_separated_names FROM things;
+
+But this will be a syntax error:
+SELECT string_agg(name, '; ' ORDER BY name) AS semi_colon_separated_names FROM things;
+--> ERROR: syntax error at or near "ORDER"
+
+Tested on PostgreSQL 8.3.
+CREATE FUNCTION string_agg_transfn(text, text, text)
+    RETURNS text AS 
+    $$
+        BEGIN
+            IF $1 IS NULL THEN
+                RETURN $2;
+            ELSE
+                RETURN $1 || $3 || $2;
+            END IF;
+        END;
+    $$
+    LANGUAGE plpgsql IMMUTABLE
+COST 1;
+
+CREATE AGGREGATE string_agg(text, text) (
+    SFUNC=string_agg_transfn,
+    STYPE=text
+);
+

@@ -1,0 +1,186 @@
+Python decorator makes function forget that it belongs to a class
+python reflection metaprogramming
+I am trying to write a decorator to do logging:
+def logger(myFunc):
+    def new(*args, **keyargs):
+        print 'Entering %s.%s' % (myFunc.im_class.__name__, myFunc.__name__)
+        return myFunc(*args, **keyargs)
+
+    return new
+
+class C(object):
+    @logger
+    def f():
+        pass
+
+C().f()
+
+I would like this to print:
+Entering C.f
+
+but instead I get this error message:
+AttributeError: 'function' object has no attribute 'im_class'
+
+Presumably this is something to do with the scope of 'myFunc' inside 'logger', but I've no idea what.
+
+
+It seems that while the class is being created, Python creates regular function objects. They only get turned into unbound method objects afterwards. Knowing that, this is the only way I could find to do what you want:
+def logger(myFunc):
+    def new(*args, **keyargs):
+        print 'Entering %s.%s' % (myFunc.im_class.__name__, myFunc.__name__)
+        return myFunc(*args, **keyargs)
+
+    return new
+
+class C(object):
+    def f(self):
+        pass
+C.f = logger(C.f)
+C().f()
+
+This outputs the desired result.
+If you want to wrap all the methods in a class, then you probably want to create a wrapClass function, which you could then use like this:
+C = wrapClass(C)
+
+
+Class functions should always take self as their first argument, so you can use that instead of im_class.
+def logger(myFunc):
+    def new(self, *args, **keyargs):
+        print 'Entering %s.%s' % (self.__class__.__name__, myFunc.__name__)
+        return myFunc(self, *args, **keyargs)
+
+    return new 
+
+class C(object):
+    @logger
+    def f(self):
+        pass
+C().f()
+
+at first I wanted to use self.__name__ but that doesn't work because the instance has no name. you must use self.__class__.__name__ to get the name of the class.
+
+Claudiu's answer is correct, but you can also cheat by getting the class name off of the self argument.  This will give misleading log statements in cases of inheritance, but will tell you the class of the object whose method is being called.  For example:
+from functools import wraps  # use this to preserve function signatures and docstrings
+def logger(func):
+    @wraps(func)
+    def with_logging(*args, **kwargs):
+        print "Entering %s.%s" % (args[0].__class__.__name__, func.__name__)
+        return func(*args, **kwargs)
+    return with_logging
+
+class C(object):
+    @logger
+    def f(self):
+        pass
+
+C().f()
+
+As I said, this won't work properly in cases where you've inherited a function from a parent class; in this case you might say
+class B(C):
+    pass
+
+b = B()
+b.f()
+
+and get the message Entering B.f where you actually want to get the message Entering C.f since that's the correct class.  On the other hand, this might be acceptable, in which case I'd recommend this approach over Claudiu's suggestion.
+
+You can also use new.instancemethod() to create an instance method (either bound or unbound) from a function.
+
+Functions only become methods at runtime.  That is, when you get C.f you get a bound function (and C.f.im_class is C).  At the time your function is defined it is just a plain function, it is not bound to any class.  This unbound and disassociated function is what is decorated by logger.
+self.__class__.__name__ will give you the name of the class, but you can also use descriptors to accomplish this in a somewhat more general way.  This pattern is described in a blog post on Decorators and Descriptors, and an implementation of your logger decorator in particular would look like:
+class logger(object):
+    def __init__(self, func):
+        self.func = func
+    def __get__(self, obj, type=None):
+        return self.__class__(self.func.__get__(obj, type))
+    def __call__(self, *args, **kw):
+        print 'Entering %s' % self.func
+        return self.func(*args, **kw)
+
+class C(object):
+    @logger
+    def f(self, x, y):
+        return x+y
+
+C().f(1, 2)
+# => Entering <bound method C.f of <__main__.C object at 0x...>>
+
+Obviously the output can be improved (by using, for example, getattr(self.func, 'im_class', None)), but this general pattern will work for both methods and functions.  However it will not work for old-style classes (but just don't use those ;)
+
+I found another solution to a very similar problem using the inspect library.  When the decorator is called, even though the function is not yet bound to the class, you can inspect the stack and discover which class is calling the decorator.  You can at least get the string name of the class, if that is all you need (probably can't reference it yet since it is being created).  Then you do not need to call anything after the class has been created.
+import inspect
+
+def logger(myFunc):
+    classname = inspect.getouterframes(inspect.currentframe())[1][3]
+    def new(*args, **keyargs):
+        print 'Entering %s.%s' % (classname, myFunc.__name__)
+        return myFunc(*args, **keyargs)
+    return new
+
+class C(object):
+    @logger
+    def f(self):
+        pass
+
+C().f()
+
+While this is not necessarily better than the others, it is the only way I can figure out to discover the class name of the future method during the call to the decorator. Make note of not keeping references to frames around in the inspect library documentation.
+
+Ideas proposed here are excellent, but have some disadvantages:
+
+inspect.getouterframes and args[0].__class__.__name__ are not suitable for plain functions and static-methods.
+__get__ must be in a class, that is rejected by @wraps.
+@wraps itself should be hiding traces better.
+
+So, I've combined some ideas from this page, links, docs and my own head,
+and finally found a solution, that lacks all three disadvantages above.
+As a result, method_decorator:
+
+Knows the class the decorated method is bound to.
+Hides decorator traces by answering to system attributes more correctly than functools.wraps() does.
+Is covered with unit-tests for bound an unbound instance-methods, class-methods, static-methods, and plain functions.
+
+Usage:
+pip install method_decorator
+from method_decorator import method_decorator
+
+class my_decorator(method_decorator):
+    # ...
+
+See full unit-tests for usage details.
+And here is just the code of the method_decorator class:
+class method_decorator(object):
+
+    def __init__(self, func, obj=None, cls=None, method_type='function'):
+        # These defaults are OK for plain functions
+        # and will be changed by __get__() for methods once a method is dot-referenced.
+        self.func, self.obj, self.cls, self.method_type = func, obj, cls, method_type
+
+    def __get__(self, obj=None, cls=None):
+        # It is executed when decorated func is referenced as a method: cls.func or obj.func.
+
+        if self.obj == obj and self.cls == cls:
+            return self # Use the same instance that is already processed by previous call to this __get__().
+
+        method_type = (
+            'staticmethod' if isinstance(self.func, staticmethod) else
+            'classmethod' if isinstance(self.func, classmethod) else
+            'instancemethod'
+            # No branch for plain function - correct method_type for it is already set in __init__() defaults.
+        )
+
+        return object.__getattribute__(self, '__class__')( # Use specialized method_decorator (or descendant) instance, don't change current instance attributes - it leads to conflicts.
+            self.func.__get__(obj, cls), obj, cls, method_type) # Use bound or unbound method with this underlying func.
+
+    def __call__(self, *args, **kwargs):
+        return self.func(*args, **kwargs)
+
+    def __getattribute__(self, attr_name): # Hiding traces of decoration.
+        if attr_name in ('__init__', '__get__', '__call__', '__getattribute__', 'func', 'obj', 'cls', 'method_type'): # Our known names. '__class__' is not included because is used only with explicit object.__getattribute__().
+            return object.__getattribute__(self, attr_name) # Stopping recursion.
+        # All other attr_names, including auto-defined by system in self, are searched in decorated self.func, e.g.: __module__, __class__, __name__, __doc__, im_*, func_*, etc.
+        return getattr(self.func, attr_name) # Raises correct AttributeError if name is not found in decorated self.func.
+
+    def __repr__(self): # Special case: __repr__ ignores __getattribute__.
+        return self.func.__repr__()
+

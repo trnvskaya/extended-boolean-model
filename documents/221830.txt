@@ -1,0 +1,108 @@
+Set BufferedImage alpha mask in Java
+java graphics alpha compositing
+I have two BufferedImages I loaded in from pngs. The first contains an image, the second an alpha mask for the image.
+I want to create a combined image from the two, by applying the alpha mask. My google-fu fails me.
+I know how to load/save the images, I just need the bit where I go from two BufferedImages to one BufferedImage with the right alpha channel.
+
+
+Actually, I've figured it out. This is probably not a fast way of doing it, but it works:
+for (int y = 0; y < image.getHeight(); y++) {
+    for (int x = 0; x < image.getWidth(); x++) {
+    	Color c = new Color(image.getRGB(x, y));
+    	Color maskC = new Color(mask.getRGB(x, y));
+    	Color maskedColor = new Color(c.getRed(), c.getGreen(), c.getBlue(),
+    		maskC.getRed());
+    	resultImg.setRGB(x, y, maskedColor.getRGB());
+    }
+}
+
+
+I played recently a bit with this stuff, to display an image over another one, and to fade an image to gray.
+Also masking an image with a mask with transparency (my previous version of this message!).
+I took my little test program and tweaked it a bit to get the wanted result.
+Here are the relevant bits:
+TestMask() throws IOException
+{
+    m_images = new BufferedImage[3];
+    m_images[0] = ImageIO.read(new File("E:/Documents/images/map.png"));
+    m_images[1] = ImageIO.read(new File("E:/Documents/images/mapMask3.png"));
+    Image transpImg = TransformGrayToTransparency(m_images[1]);
+    m_images[2] = ApplyTransparency(m_images[0], transpImg);
+}
+
+private Image TransformGrayToTransparency(BufferedImage image)
+{
+    ImageFilter filter = new RGBImageFilter()
+    {
+        public final int filterRGB(int x, int y, int rgb)
+        {
+            return (rgb << 8) & 0xFF000000;
+        }
+    };
+
+    ImageProducer ip = new FilteredImageSource(image.getSource(), filter);
+    return Toolkit.getDefaultToolkit().createImage(ip);
+}
+
+private BufferedImage ApplyTransparency(BufferedImage image, Image mask)
+{
+    BufferedImage dest = new BufferedImage(
+            image.getWidth(), image.getHeight(),
+            BufferedImage.TYPE_INT_ARGB);
+    Graphics2D g2 = dest.createGraphics();
+    g2.drawImage(image, 0, 0, null);
+    AlphaComposite ac = AlphaComposite.getInstance(AlphaComposite.DST_IN, 1.0F);
+    g2.setComposite(ac);
+    g2.drawImage(mask, 0, 0, null);
+    g2.dispose();
+    return dest;
+}
+
+The remainder just display the images in a little Swing panel.
+Note that the mask image is gray levels, black becoming full transparency, white becoming full opaque.
+Although you have resolved your problem, I though I could share my take on it. It uses a slightly more Java-ish method, using standard classes to process/filter images.
+Actually, my method uses a bit more memory (making an additional image) and I am not sure it is faster (measuring respective performances could be interesting), but it is slightly more abstract.
+At least, you have choice! :-)
+
+Your solution could be improved by fetching the RGB data more than one pixel at a time(see http://java.sun.com/javase/6/docs/api/java/awt/image/BufferedImage.html), and by not creating three Color objects on every iteration of the inner loop.
+final int width = image.getWidth();
+int[] imgData = new int[width];
+int[] maskData = new int[width];
+
+for (int y = 0; y < image.getHeight(); y++) {
+    // fetch a line of data from each image
+    image.getRGB(0, y, width, 1, imgData, 0, 1);
+    mask.getRGB(0, y, width, 1, maskData, 0, 1);
+    // apply the mask
+    for (int x = 0; x < width; x++) {
+        int color = imgData[x] & 0x00FFFFFF; // mask away any alpha present
+        int maskColor = (maskData[x] & 0x00FF0000) << 8; // shift red into alpha bits
+        color |= maskColor;
+        imgData[x] = color;
+    }
+    // replace the data
+    image.setRGB(0, y, width, 1, imgData, 0, 1);
+}
+
+
+I'm too late with this answer, but maybe it is of use for someone anyway. This is a simpler and more efficient version of Michael Myers' method:
+public void applyGrayscaleMaskToAlpha(BufferedImage image, BufferedImage mask)
+{
+    int width = image.getWidth();
+    int height = image.getHeight();
+
+    int[] imagePixels = image.getRGB(0, 0, width, height, null, 0, width);
+    int[] maskPixels = mask.getRGB(0, 0, width, height, null, 0, width);
+
+    for (int i = 0; i < imagePixels.length; i++)
+    {
+        int color = imagePixels[i] & 0x00ffffff; // Mask preexisting alpha
+        int alpha = maskPixels[i] << 24; // Shift blue to alpha
+        imagePixels[i] = color | alpha;
+    }
+
+    image.setRGB(0, 0, width, height, imagePixels, 0, width);
+}
+
+It reads all the pixels into an array at the beginning, thus requiring only one for-loop. Also, it directly shifts the blue byte to the alpha (of the mask color), instead of first masking the red byte and then shifting it.
+Like the other methods, it assumes both images have the same dimensions.

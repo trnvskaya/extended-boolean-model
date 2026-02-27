@@ -1,0 +1,100 @@
+How do .NET sites hide .aspx extension of their files?
+asp.net
+I'm pretty sure stackoverflow.com is created with ASP.NET, but no matter where I click I see no .aspx extension in the address bar.
+How it is done and is there a particular reason for this?
+
+
+You can do this and more with ISAPI rewrite (for IIS).  It allows you to create friendly urls without all the ugly query strings.  It gives users a friendlier interface and can make your content more searchable.
+If you are using Apache, use mod_rewrite.
+The basic premise of both is that they take a friendly url (like the one you see for this site), then they transform it using a series of rules (typically regexs that you specify) to internal urls or query strings that are easily understood by the code.
+An example would be that they convert posts/edit/<postnumber> to editPost.aspx?postNumber=<postnumber> by using a transform rule.
+
+This site uses the ASP.NET MVC framework and Urls map to routes not physical pages. The route passes on to the controller who then decides how to display the page.
+
+Most likely its done by URL Rewriting...
+The webserver is taking URLs like the ones in the address bar of  your browser & repointing them to the ASPX pages behind the scenes
+This can be done in a .NET HTTP Module or as an ISAPI Handler in IIS
+Scott Gutherie has a good article on his site about URL Rewriting
+http://weblogs.asp.net/scottgu/archive/2007/02/26/tip-trick-url-rewriting-with-asp-net.aspx
+
+In the case of stackoverflow, they use ASP.NET MVC rather than ASP.NET web forms.  With web forms, the url is pointing to a file on your disk, while MVC is pointing to a controller action.  If you're using webforms, you'd want to use URL rewriting.  Scott Guthrie has a good article on doing URL rewriting.
+
+As other people have answered, StackOverflow is built using ASP.NET MVC and the ASP.NET MVC uses the System.Web.Routing.  However System.Web.Routing is not part of ASP.NET MVC, it was RTMd with SP1, and means it's possible to use it without ASP.NET MVC.  You can see how to use it with WebForms here:  http://haacked.com/archive/2008/03/11/using-routing-with-webforms.aspx and here: http://www.codeplex.com/ASPNET35Routing
+
+and as far as a reason :
+
+you can change technology (say to PHP) without indexed or bookmarked URLs breaking
+your URLs are more 'REST'ful and correspond to resources and not just a file
+you can remember a URL or read it to someone over the phone more easily
+
+
+you can achieve by modifying your web.config file.
+<configuration>
+<system.webserver>
+<rewrite>
+   <rules>
+            <rule name="RemoveASPX" enabled="true" stopProcessing="true">
+                <match url="(.*)\.aspx" />
+                <action type="Redirect" url="{R:1}" />
+            </rule>
+            <rule name="AddASPX" enabled="true">
+                <match url=".*" negate="false" />
+                <conditions>
+                    <add input="{REQUEST_FILENAME}" matchType="IsFile" negate="true" />
+                    <add input="{REQUEST_FILENAME}" matchType="IsDirectory" negate="true" />
+                    <add input="{URL}" pattern="(.*)\.(.*)" negate="true" />
+                </conditions>
+                <action type="Rewrite" url="{R:0}.aspx" />
+            </rule>
+   </rules>
+</rewrite>
+</system.webserver>
+</configuration>
+
+
+The code below works fine, as long as the pages .aspx, .ashx are at the Application Folder. The priority is to resolve .aspx page first, and then .ashx.
+For example if you try localhost/AppFolder/Time, it will try to resolve localhost/AppFolder/Time.aspx, and if not found, then localhost/AppFolder/Time.ashx.
+P.S.
+
+I didn't fully test this code, so be careful.
+It does not consider folders that may have .aspx files, so, if you try to access /PhysicalApplicationPath/MYFOLDER/page, that it will not resolve to /PhysicalApplicationPath/MYFOLDER/page.aspx.
+
+Code:
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+using System.Web.Security;
+using System.Web.SessionState;
+
+namespace NameSpace
+{
+    public class Global : System.Web.HttpApplication
+    {
+        private void mapearUrlAmigaveis()
+        {
+            String url = Request.Path.ToString().ToLower();
+            int positionQuestionMarkParameter = url.IndexOf('?');
+
+            String urlSemParametros = (positionQuestionMarkParameter != -1) ? url.Substring(0, (positionQuestionMarkParameter - 1)) : url;
+            String[] splitBarra = urlSemParametros.Split('/');
+            int indexOfUltimaBarra = urlSemParametros.LastIndexOf('/');
+
+            if (splitBarra.Length > 0)
+            {
+                String ultimaBarra = splitBarra[(splitBarra.Length - 1)];
+                String caminhoLocalUltimaBarra = Request.PhysicalApplicationPath + ultimaBarra;
+                String parametros = ((positionQuestionMarkParameter != -1) ? url.Substring((positionQuestionMarkParameter - 1), (url.Length - 1)) : String.Empty);
+                if (System.IO.File.Exists(caminhoLocalUltimaBarra + ".aspx"))
+                {
+                    Context.RewritePath(urlSemParametros + ".aspx" + parametros);
+                }
+                else if (System.IO.File.Exists(caminhoLocalUltimaBarra + ".ashx"))
+                {
+                    Context.RewritePath(urlSemParametros + ".ashx" + parametros);
+                }
+            }
+        }
+    }
+}
+

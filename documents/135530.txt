@@ -1,0 +1,65 @@
+Will my index be used if all columns are not used?
+sql sql-server sql-execution-plan
+I have an index on columns A, B, C, D of table T
+I have a query that pulls from T with A, B, C in the WHERE clause.
+Will the index be used or will a separate index be needed that only includes A, B, C?
+
+
+in Oracle databases it will if you reference the leading index columns. ie the columns declared first..
+so in your case yes the index would be used.  and could be check be using an explain plan.
+if MS SQLSERVER is different (and i suspect it might) you'll need a new answer.
+Edit:
+Should also mention it will only consider the index for use.. that does not necessarily mean it WILL use it.
+Edit2:
+Oracle 11g now has an option that will allow it to skip columns in an index.
+
+It depends!
+WHERE A like '%x%'
+  and B = 1
+  and C = 1
+//
+WHERE A = 1
+  OR B = 1
+  OR C = 1
+//
+WHERE DateAdd(dd, 1, A) = '2008-01-01'
+  AND B = 1
+  AND C = 1
+
+These will not rely on the index, because the index is not useful.
+Click on "display estimated execution plan" to confirm potential index usage.
+
+The index will be used, yes.  It's fairly smart about which indexes will produce a more optimal query plan, and it should have no trouble with that.
+As with this sort of thing, don't take my word for it - benchmark it.  Create a table, fill it with representative data, query it, index it, and query it again.
+
+The fact that the index contains a column which is not used in your query will not prevent it from being used.
+That's not to say that it definitely will be used, it may be ignored for a different reason (perhaps because one or more other indexes are more useful).
+As always, take a squizz at the estimated execution plan to see what is likely to happen.
+
+If in doubt, take a look at the execution plan.
+
+Start with the simple equals lookup (WHERE A=1 and B='Red' and C=287) yes the index will (most likely) be used. The index will be used first to help the optimizer "guess" the number of rows that will match the selection, and then second, to actually access those rows. 
+In response to David B's comment about the "like" predicate, SQLServer may still use the index, it depends on what you're selecting. For example, if you're selecting a count(*) then SQLServer would likely scan the index and count the hits that match the where clause since the index is smaller and would require fewer IOs to scan. And it may decide to do that even if you're selecting some columns from the base table, depending on how selective SQLServer feels the index is.
+
+Generally speaking yes it will be, all modern databases are clever enough to do this.  There are exceptions, for example if the statistics on the table show that the volume of data in it is sufficiently small that a full table read will be more efficient then the index will be discounted, but as a rule you can rely on it where appropriate.
+Consequently you can take advantage of this when designing your indexes.  Say for example I have a table which contains A, B, C as key values and colums Y and Z containing data which I know will be retrieved often by the statements  
+SELECT Y FROM table WHERE A = alpha and B = beta and C = gamma 
+SELECT Z FROM table WHERE A = alpha and B = beta and C = gamma 
+The I will generally create an index on A,B,C,X,Z - assuming that X and Z are some reasonably small field.  The reason for this is that I know the access pathway in the statements above will use use the index, and as the data I want to retrieve is already in the index read then no separate read of the block of data required to retrieve the table data itself will be needed.  This strategy can dramatically speed up data retrieval in some circumstances.  Of course you pay for it in update costs and disk space so you need to understand what your database is doing before applying it, but as in most databases reads dramatically outnumber writes it's generally well worth the consideration.
+
+David B is right that you should check the execution plan to verify the index is being used.
+Will the index be used or will a separate index be needed that only includes A, B, C?
+To answer this last part of the question, which I think is the core underlying topic (as opposed to the immediate solution), there is almost never a reason to index a subset of your indexed columns.  If your index is (A, B, C, D), a WHERE against (A, B, C) will most likely result in an index seek, which is the ideal situation -- the index includes all the information the engine needs to go directly to the result set.  I believe this is holds true for numeric types and for equality tests in string types, though it can break down with LIKE '%'s).  On the other hand, if your WHERE only referenced D, you would most likely end up with an index scan, which would mean that the SQL engine would have to scan across all combinations of A, B, and C, and then check whether D met your criteria before deciding whether to add the row to the result set.  On a particularly large table, when I found myself having to do a lot of queries against column "D", I added an additional index for D only, and saw about 90% performance improvement.
+Edit: I should also recommend using the Database Engine Tuning Advisor in SQL Management Studio.  It will tell you if your table isn't indexed ideally for the query you want to run.
+
+Here's another "it depends" answer... it also depends on how large your table is...
+I agree with everyone else who has mentioned checking the execution plan to verify whether or not your index is being used.  
+Here are a couple of articles on reading an execution plan that you should find useful:
+http://www.sqlservercentral.com/articles/Administering/executionplans/1345/
+http://www.codeproject.com/KB/database/sql-tuning-tutorial-1.aspx
+There's also a good article on seeks vs. scans that I'd recommend:
+http://blogs.msdn.com/craigfr/archive/2006/06/26/647852.aspx
+There are a log of good articles on Craig Freedman's blog, here's another one you should find useful.  This article is about some of the factors SQL Server uses to determine which index to use... 
+http://blogs.msdn.com/craigfr/archive/2006/07/13/664902.aspx
+Take care!
+Jeff

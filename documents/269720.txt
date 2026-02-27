@@ -1,0 +1,109 @@
+Kill Derby DB Network Server on background
+java derby javadb
+I'm looking for a good way to run a Apache Derby server in network mode. I'm using the NetworkServerControl to start the server and it's working great.
+I start the server like this:
+/**
+ * starts the network server
+ * @return true if sucessfull
+ */
+public boolean start()
+{
+    try
+    {
+        // just to be sure that we don't start two servers
+        this.stop();
+
+        server = new NetworkServerControl();
+        server.start( null );
+
+        return true;
+    }
+    catch ( Exception ex )
+    {
+        this.logLogger.debug( ex );
+        return false;
+    }
+}
+
+And stop it like this:
+/**
+ * stops the server
+ * 
+ * @return true if there were no problems stopping the server
+ */
+public boolean stop()
+{
+    try
+    {
+        if ( server == null )
+        {
+            server = new NetworkServerControl();
+        }
+        server.shutdown();
+
+        return true;
+    }
+    catch ( Exception ex )
+    {
+        this.logLogger.debug( ex );
+        return false;
+    }
+}
+
+On the main() I have this so the process doesn't die while the server is running
+(...)
+clsDB.start();
+
+while( clsDB.testForConnection() )
+{
+   Thread.sleep( 60000 );
+}
+
+testForConnection() looks like this:
+/**
+ * Try to test for a connection
+ * 
+ * @return true if the server is alive
+ */
+public boolean testForConnection()
+{
+    try
+    {
+        server.ping();
+
+        return true;
+    }
+    catch ( Exception ex )
+    {
+        this.logLogger.debug( ex );
+        return false;
+    }
+}
+
+My problem is that when a new instace of my JAR is called the old one will still be running (unless I'm really really lucky and the test is made before the new server is started).
+I know I could just test if the server is already running and then I wouldn't start again, but I would like for start to work like a restart if the server is already there.
+
+
+I did a project awhile ago with derby (including running in network mode), and I seem to remember that there is some SQL you can execute on the server which shuts derby down.
+So, assuming that's the case (no time to google for it atm sorry) you could, on start up, look for your network instance. If it exists, run this SQL on it. Once you have determined that it's finally shut down (polling that it exists I suppose) you can then start it up again.
+Edit: Oh, it wasn't SQL, it's connecting to the DB with 'shutdown=true' as a parameter. See here:
+DriverManager.getConnection(
+    "jdbc:derby:sample;shutdown=true");
+
+
+The other solution I raised does not interact with your JAR, which you may not enjoy.
+An alternative is to have your JAR that starts the derby instance open a TCP port that it monitors when it starts derby. You can then send your own shutdown commands to that from your new JAR instance (obviously before opening up your own TCP port).
+Startup of an instance of your derby JAR would be:
+
+See if agreed upon TCP port was open.
+If so, send the shutdown command.
+
+The JAR you send the command to would then shut down derby using the stop() method.
+Once it's done shutting derby down it would send a success of whatever back and close the connection.
+
+We listen on the agreed upon TCP port.
+We call start() and start Derby.
+
+This is more work than my other solution but is theorectically a better one, since as part of your restart your JAR may want to do other things as well (clean / restart other resources, log the fact that it's being shutdown, stuff like that).
+
+We ended up with using a file that is created when the server is to be killed, then on the server process we periodically check if the file exists, if it's there we kill the server.

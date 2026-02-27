@@ -1,0 +1,85 @@
+How do I calculate the SIZE of stored procedures in SQL Server 2005?
+sql-server-2005 tsql stored-procedures
+I was asked for a comprehensive breakdown on space used within a specific database. 
+I know I can use *sys.dm_db_partition_stats* in SQL Server 2005 to figure out how much space each table in a database is using, but is there any way to determine the individual and total size of the stored procedures in a database? (Short of opening each one and counting the characters, of course.)
+Total space used by stored procs is not likely to be significant (compared to actual data), but with hundreds of them, it could add up.
+
+
+A slightly better way than counting the characters, is to use information schema.routines.  You could sum the length of each Routine Definition as (Note each routine definition will max out at 4,000 characters, see below for a method that doesn't have this restriction):
+
+select Sum(Len(Routine_Definition)) from information_schema.routines 
+where routine_type = 'PROCEDURE'
+
+Or you could return the length of each sp
+
+select Len(Routine_Definition), * from information_schema.routines 
+where routine_type = 'PROCEDURE'
+
+It's unlikely that the length of your stored procedures is the problem.  Usually running out of space with a database is due to things like not backing up the log file (and then shrinking it using dbcc shrinkfile or dbcc shrinkdatabase).
+In Sql 2000, here is a routine that would provide the length without the 4000 character limit of above:
+
+DECLARE @Name VarChar(250)
+DECLARE RoutineCursor CURSOR FOR
+   select Routine_Name from information_schema.routines where routine_type = 'PROCEDURE'
+
+DECLARE @Results TABLE
+   (   SpName   VarChar(250),
+       SpLength   Int
+   )
+
+CREATE TABLE ##SpText
+   (   SpText   VarChar(8000)   )
+
+OPEN RoutineCursor
+FETCH NEXT FROM RoutineCursor INTO @Name
+
+WHILE @@FETCH_STATUS = 0
+   BEGIN
+      INSERT INTO ##SpText   (SpText)   EXEC sp_helptext @Name
+
+      INSERT INTO @Results (SpName, SpLength) (SELECT @Name, Sum(Len(SpText)) FROM ##SpText)
+      TRUNCATE TABLE ##SpText
+
+      FETCH NEXT FROM RoutineCursor INTO @Name
+   END
+
+CLOSE RoutineCursor
+DEALLOCATE RoutineCursor
+DROP TABLE ##SpText
+
+SELECT SpName, SpLength FROM @Results ORDER BY SpLength DESC
+SELECT Sum(SpLength) FROM @Results
+
+
+
+Dave_H's solution hits a limit of 4,000 character in the information_schema.routines table
+Try this, first you generate the a table with the full text of the sprocs, then sum the character lengths.
+--create a temp table to hold the data
+create table ##sptext (sptext varchar(1000))
+go
+
+--generate the code to insert the full text of your sprocs
+select 'insert into ##sptext (sptext) exec sp_helptext '''+specific_name+''';'
+from information_schema.routines 
+where routine_type = 'PROCEDURE'
+go
+
+/*Copy the output back to your query analyzer and run it*/
+
+--now sum the results    
+select sum(len(sptext))
+from ##sptext
+
+
+;WITH ROUTINES AS (
+    -- CANNOT use INFORMATION_SCHEMA.ROUTINES because of 4000 character limit
+    SELECT o.type_desc AS ROUTINE_TYPE
+            ,o.[name] AS ROUTINE_NAME
+            ,m.definition AS ROUTINE_DEFINITION
+    FROM sys.sql_modules AS m
+    INNER JOIN sys.objects AS o
+        ON m.object_id = o.object_id
+)
+SELECT SUM(LEN(ROUTINE_DEFINITION))
+FROM ROUTINES
+

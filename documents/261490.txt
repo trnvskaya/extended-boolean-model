@@ -1,0 +1,32 @@
+What's the best way to perform system tasks from Ruby on Rails?
+ruby-on-rails ruby setuid
+I am building a small system administration web application (think Web-Min, but in RoR) and I need to be able to access system parameters from my Ruby code.  For instance, I want to allow the user to change the hostname, time zone, or network config of the server.  
+My current thoughts are to have a separate setuid script (Perl, Ruby, ??) so that I can call it from my RoR code and it will perform the actions.  That is quite cumbersome and not very elegant.  I'm a Ruby newbie and would like to know if there is a better way to accomplish this type of thing.
+Thanks!
+
+
+You can use BackgrounDRb. Its purpose is to offload tasks from rails apps, and you can run the server under a different user.
+
+One person suggested using something like result = %x[uptime] and pointed me to this very helpful blog post.  I think this is workable by combining some sort of wrapper script that is called with sudo and has the appropriate permissions in sudoers.
+
+There was a series of RailsCasts episodes that covered background tasks.
+Most fittingly to your problem is perhaps "Rake in Background", which could be a good starting point? As the name suggests, it covers triggering rake tasks from Ruby on Rails.
+The most obvious solution to changing system-settings would be to have a daemon running as root, which accepts a few (very limited and strictly sanitised) inputs, such as a new hostname, or the new IP address for the server.. The other episodes "Starling and Workling" and "Custom Daemon" may help with this too.
+A cleaner solution would be to use sudo. There's two (similar) ways to do this I can think of:
+Allow sudo access to certain commands (like hostname, ifconfig) to the user that will run the rake tasks. This can have big security problems. My favourite example of this is allowing sudo access to vim, which seems innocuous, until you run sudo vim, then !bash and suddenly you have full-root access to a machine via text editor..
+The other way (that is easier to do securely) - have a rake task (or a few separate scripts) that performs the required tasks (changing hostname, for example). Say, /usr/bin/myapp_systemtasks owned by root:root, then allow sudo access to that script. Make sure you are very careful to sanitise the input that script accepts (to prevent things like shell-escaping).
+So, there are ways to do it, but at the end of the day you are making a web-interface to system-level configurations, which is very difficult to do securely.. Whatever you decide to do, make sure it's well tested (by you, and others)
+
+I have done similar tasks with Starling, which is really just a queuing server.  It is very easy to use and you can run the worker threads under a different user easily. 
+One advantage to starling is that it journals the queue so if there are problems it can re-create the queue.
+require 'starling'
+starling = Starling.new('127.0.0.1:22122')
+starling.set('my_queue', 12345)
+
+Then your worker can simply dequeue any tasks:
+require 'starling'
+loop do
+  starling.get('my_queue') # this will block until something gets added to the queue
+  # do stuff
+end
+

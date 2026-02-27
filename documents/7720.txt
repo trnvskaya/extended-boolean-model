@@ -1,0 +1,200 @@
+Packaging Java apps for the Windows/Linux desktop
+java windows swt executable software-distribution
+I am writing an application in Java for the desktop using the Eclipse SWT library for GUI rendering.  I think SWT helps Java get over the biggest hurdle for acceptance on the desktop: namely providing a Java application with a consistent, responsive interface that looks like that belonging to any other app on your desktop.  However, I feel that packaging an application is still an issue.  
+OS X natively provides an easy mechanism for wrapping Java apps in native application bundles, but producing an app for Windows/Linux that doesn't require the user to run an ugly batch file or click on a .jar is still a hassle.  Possibly that's not such an issue on Linux, where the user is likely to be a little more tech-savvy, but on Windows I'd like to have a regular .exe for him/her to run.
+Has anyone had any experience with any of the .exe generation tools for Java that are out there?  I've tried JSmooth but had various issues with it.  Is there a better solution before I crack out Visual Studio and roll my own?
+Edit:  I should perhaps mention that I am unable to spend a lot of money on a commercial solution.
+
+
+Install4J. Not free, but worth it. Give the trial a shot
+
+I went through the same and found that all of the free options weren't very good. Looks like you'll be writing your own. I'd be interested to see if someone has a free/cheap option that works
+
+Have you thought about Java Web Start?  Here is a tutorial specifically for deploying an SWT application with Java Web Start.
+
+Maybe you should take a look at IzPack. I created a very nice installer some years ago and I'd bet that they are still improving it. It allows the installation of docs, binaries and a clickable link to start the application IIRC.
+
+Have you considered writing a small program in C/C++ that just calls CreateProcess to start up the java VM with the jar (or class) file?
+You could get Visual C++ Express and put together the startup program pretty easily.  This would make it easy to add a friendly icon as well.
+
+Another option I was considering: rather than writing a native launcher from scratch, Eclipse comes with the source code for its own launcher, and this could perhaps be repurposed for my app.
+It's a shame that Sun never included anything similar in the JDK.
+
+I've used the free Launch4J to create a custom launcher for my Java programs on Windows. Combined with the free NSIS Installer you can build a nice package for your Windows users.
+Edit: Did not see that you use SWT. Don't know if it works with SWT as well, because I used only Swing in my apps.
+
+In my company we use Launch4J to create the exe file, and NSIS to create the installer, with SWT applications. 
+We have used it for years in several commercial applications and the pair works fine.
+
+Another vote for Launch4J, just wrote an ant task this morning to integrate with one of my projects.  Seems to work really well
+
+Consider converting your application to Eclipse RCP.  It is written in SWT, and the Eclipse IDE contains packaging tools that generate executables for all major platforms.  For windows, it can generate a zip or a folder containing your code.  For a common installation experience, I'd using NSIS.  There is actually a packages generator project at eclipse to create common installers for all platforms eclipse supports.
+
+To follow up on pauxu's answer, I'm using launch4j and NSIS on a project of mine and thought it would be helpful to show just how I'm using them.  Here's what I'm doing for Windows.  BTW, I'm creating .app and .dmg for Mac, but haven't figured out what to do for Linux yet.
+Project Copies of launch4j and NSIS
+In my project I have a "vendor" directory and underneath it I have a directory for "launch4j" and "nsis".  Within each is a copy of the install for each application.  I find it easier to have a copy local to the project rather than forcing others to install both products and set up some kind of environment variable to point to each.
+Script Files
+I also have a "scripts" directory in my project that holds various configuration/script files for my project.  First there is the launch4j.xml file:
+<launch4jConfig>
+  <dontWrapJar>true</dontWrapJar>
+  <headerType>gui</headerType>
+  <jar>rpgam.jar</jar>
+  <outfile>rpgam.exe</outfile>
+  <errTitle></errTitle>
+  <cmdLine></cmdLine>
+  <chdir>.</chdir>
+  <priority>normal</priority>
+  <downloadUrl>http://www.rpgaudiomixer.com/</downloadUrl>
+  <supportUrl></supportUrl>
+  <customProcName>false</customProcName>
+  <stayAlive>false</stayAlive>
+  <manifest></manifest>
+  <icon></icon>
+  <jre>
+    <path></path>
+    <minVersion>1.5.0</minVersion>
+    <maxVersion></maxVersion>
+    <jdkPreference>preferJre</jdkPreference>
+  </jre>
+  <splash>
+    <file>..\images\splash.bmp</file>
+    <waitForWindow>true</waitForWindow>
+    <timeout>60</timeout>
+    <timeoutErr>true</timeoutErr>
+  </splash>
+</launch4jConfig>
+
+And then there's the NSIS script rpgam-setup.nsis.  It can take a VERSION argument to help name the file.
+; The name of the installer
+Name "RPG Audio Mixer"
+
+!ifndef VERSION
+    !define VERSION A.B.C
+!endif
+
+; The file to write
+outfile "..\dist\installers\windows\rpgam-${VERSION}.exe"
+
+; The default installation directory
+InstallDir "$PROGRAMFILES\RPG Audio Mixer"
+
+; Registry key to check for directory (so if you install again, it will 
+; overwrite the old one automatically)
+InstallDirRegKey HKLM "Software\RPG_Audio_Mixer" "Install_Dir"
+
+# create a default section.
+section "RPG Audio Mixer"
+
+    SectionIn RO
+
+    ; Set output path to the installation directory.
+    SetOutPath $INSTDIR
+    File /r "..\dist\layout\windows\"
+
+    ; Write the installation path into the registry
+    WriteRegStr HKLM SOFTWARE\RPG_Audio_Mixer "Install_Dir" "$INSTDIR"
+
+    ; Write the uninstall keys for Windows
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RPGAudioMixer" "DisplayName" "RPG Audio Mixer"
+    WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RPGAudioMixer" "UninstallString" '"$INSTDIR\uninstall.exe"'
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RPGAudioMixer" "NoModify" 1
+    WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RPGAudioMixer" "NoRepair" 1
+    WriteUninstaller "uninstall.exe"
+
+    ; read the value from the registry into the $0 register
+    ;readRegStr $0 HKLM "SOFTWARE\JavaSoft\Java Runtime Environment" CurrentVersion
+
+    ; print the results in a popup message box
+    ;messageBox MB_OK "version: $0"
+
+sectionEnd
+
+Section "Start Menu Shortcuts"
+  CreateDirectory "$SMPROGRAMS\RPG Audio Mixer"
+  CreateShortCut "$SMPROGRAMS\RPG Audio Mixer\Uninstall.lnk" "$INSTDIR\uninstall.exe" "" "$INSTDIR\uninstall.exe" 0
+  CreateShortCut "$SMPROGRAMS\RPG AUdio Mixer\RPG Audio Mixer.lnk" "$INSTDIR\rpgam.exe" "" "$INSTDIR\rpgam.exe" 0
+SectionEnd
+
+Section "Uninstall"
+
+    ; Remove registry keys
+    DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RPGAudioMixer"
+    DeleteRegKey HKLM SOFTWARE\RPG_Audio_Mixer
+
+    ; Remove files and uninstaller
+    Delete $INSTDIR\rpgam.exe
+    Delete $INSTDIR\uninstall.exe
+
+    ; Remove shortcuts, if any
+    Delete "$SMPROGRAMS\RPG Audio Mixer\*.*"
+
+    ; Remove directories used
+    RMDir "$SMPROGRAMS\RPG Audio Mixer"
+    RMDir "$INSTDIR"
+
+SectionEnd
+
+Ant Integration
+I have some targets in my Ant buildfile (build.xml) to handle the above.  First I tel Ant to import launch4j's Ant tasks:
+<property name="launch4j.dir" location="vendor/launch4j" />
+<taskdef name="launch4j" 
+    classname="net.sf.launch4j.ant.Launch4jTask"
+    classpath="${launch4j.dir}/launch4j.jar:${launch4j.dir}/lib/xstream.jar" />
+
+I then have a simple target for creating the wrapper executable:
+<target name="executable-windows" depends="jar" description="Create Windows executable (EXE)">
+    <launch4j configFile="scripts/launch4j.xml" outfile="${exeFile}" />
+</target>
+
+And another target for making the installer:
+<target name="installer-windows" depends="executable-windows" description="Create the installer for Windows (EXE)">
+    <!-- Lay out files needed for building the installer -->
+    <mkdir dir="${windowsLayoutDirectory}" />
+    <copy file="${jarFile}" todir="${windowsLayoutDirectory}" />
+    <copy todir="${windowsLayoutDirectory}/lib">
+        <fileset dir="${libraryDirectory}" />
+        <fileset dir="${windowsLibraryDirectory}" />
+    </copy>
+    <copy todir="${windowsLayoutDirectory}/icons">
+         <fileset dir="${iconsDirectory}" />
+    </copy>
+    <copy todir="${windowsLayoutDirectory}" file="${exeFile}" />
+
+    <mkdir dir="${windowsInstallerDirectory}" />
+
+    <!-- Build the installer using NSIS -->
+    <exec executable="vendor/nsis/makensis.exe">
+        <arg value="/DVERSION=${version}" />
+        <arg value="scripts/rpgam-setup.nsi" />
+    </exec>
+</target>
+
+The top portion of that just copies the necessary files for the installer to a temporary location and the second half executes the script that uses all of it to make the installer.
+
+I have used JSmooth in the past, and still have luck with it.  The UI is pretty buggy, but I only use that for building the config file once, and then I build from Ant after that.
+What issues are you having with JSmooth?
+
+JSMooth has worked very well for us in a production environment, where I first generated a single jar using one-jar (fat jar plugin to eclipse) and then wrapped it with JSmooth.
+(Please note that I wanted a no-install distribution of a single file, which could promt for installing the JRE if needed).
+It has worked so well that I thought nobody was using it :)
+
+You may want to try our tool, BitRock InstallBuilder. Although it is a native application, a lot of our customers use it to package desktop Java applications. If you bundle the JRE and create launcher, etc. the user does not even need to know they are installing a Java application. It is cross platform, so you can generate installers for both Windows and Mac (and Linux, Solaris, etc.) Like install4j tool mentioned in another post, it is a commercial tool, but we have free licenses for open source projects and special discounts for microISVs / small business, etc. just drop us an email.  Also wanted to emphasize that this is an installer tool, so it will not address your needs if you are looking only for a single file executable.
+
+In my company we use launch4J and NSIS for the windows distribution, and jdeb for the Debian distribution, and Java Web Start for the general operating system. This works quite fine.
+
+Please try InstallJammer.The best one I have used ever. Free and powerful.And sufficient for personal and commercial use.
+
+You can now do this through Netbeans! It's really easy and works perfectly. Check out this tutorial on the Netbeans website.
+
+Have you considered Advanced Installer?
+I have used it severally especially for Windows and Mac. No scripting or Ant required. All GUI. Very simple and understandable. Ain't free but worth every penny.
+- Lauch as Administrator
+- File Association
+- Custom Install Themes + In built Themes
+- Package with JRE
+- Install location
+- Native Splash screen implementation
+- You can event create services and installation events
+- Prerequisites
+- JRE minimum version and maximum version
+And a lot more. And don't get it twisted, i have no connections with the dudes...their App is just awesome.

@@ -1,0 +1,93 @@
+.NET 3.5 chart controls exception: Error executing child request for ChartImg.axd
+.net .net-3.5 charts
+Anyone getting this error when using the new free chart controls MS bought from Dundas?
+"Error executing child request for ChartImg.axd"
+On the MSDN forum they suggested it was my web.config:
+ MSDN forum post
+So far that hasn't fixed the problem though.  Any other ideas?
+
+
+I posted a way I fixed this problem on the MSDN forum:
+Well I still don't know why I was getting the exception but I seem to have found a workaround.  I did an experiment where I took the supposed offending web.config and copied it to a new project where I added a new web form and chart control and the chart control rendered fine with the "UseHttpHandler" option.  This led me to believe that it wasn't actually the web.config that was the problem in my case, so I went back to the original project and added a chart to another web form as an experiment, and it worked!  Even more surprising was that after that I went to the offending page and it worked too!  Then I took the new chart off the other page and checked the original offending page and it was broken again.  Then I found out if I put a chart control on any page before the offending page, it would work, otherwise it threw the exception.  These controls are so cool though that I didn't have a problem finding another page to put one on in the path of the offending page :)
+This fixed the problem but if anyone has any theory why I'd be interested...maybe a bug?
+
+I ran into this error, but to correct it by adding an element to the system.web\httpHandler section of my web.config file.  I added the follow:
+<add path="ChartImg.axd" verb="GET,HEAD" type="System.Web.UI.DataVisualization.Charting.ChartHttpHandler, System.Web.DataVisualization, Version=3.5.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35" validate="false" />
+
+
+I encountered the same problem: the chart would work on one page but not on the next. Turns out if the chart is initialized for the first time in a POST (i.e. a postback) the error is thrown because the handler is configured incorrectly. To fix the issue modify the httpHandler configuration that user LaptopHeaven referred to in this topic by adding the POST verb:
+<add path="ChartImg.axd" verb="GET,HEAD,POST" type="System.Web.UI.DataVisualization.Charting.ChartHttpHandler, System.Web.DataVisualization, Version=3.5.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35" validate="false" />
+
+I've written a more thorough explanation of why this error occurs in the MSDN forum post that Scott Anderson referred to in his opening post of this topic. 
+
+Just wanted to point out that it is also a permission problem with the image not found error.
+Set the "Allow modify" permissions on your image folder (per default it is "C:\TempImageFiles" for the account under which your website is running.
+Problem disappears.
+
+Please Add it in webconfig 
+add  verb="GET,HEAD" path="ChartImg.axd" type="System.Web.UI.DataVisualization.Charting.ChartHttpHandler, System.Web.DataVisualization, Version=3.5.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35" 
+Thanks
+Basanth
+
+More info on this:
+I was having trouble with the web.config issues as well and remedied that by ensuring web.config was not open in the code editor when I dragged and dropped the Chart control onto the page.  If web.config was not already open, Visual Studio 2010 would make the appropriate modifications.
+I was able to successfully get past the "error executing child request" error after successfully applying the web.config issues.
+Also regarding usage in an MVC application, I was struggling to implement this in my MVC 2 application (VS2010/.NET 4) and ran into another gotcha.
+The page's call to ChartImg.axd was resulting in an HTTP 404 error.  (I found this using Fiddler.)
+It turns out the page was trying to access the handler from /MyController/ChartImg.axd instead of /ChartImg.axd (from the root).
+I was able to fix the problem by adding this line to my Global.asax.cs file:
+routes.IgnoreRoute("{controller}/{resource}.axd/{*pathInfo}");
+
+This might have been the problem for some users who had to resort to changing the Chart.ImageStorageMode property.
+
+try (dont forget path in ChartImageHandler key)
+    <appSettings>
+    <add key="ChartImageHandler" value="storage=file;timeout=20;dir=c:\TempImageFiles\;" />
+</appSettings>
+
+<httpHandlers>
+...
+    <add path="ChartImg.axd" verb="GET,HEAD" type="System.Web.UI.DataVisualization.Charting.ChartHttpHandler, System.Web.DataVisualization, Version=3.5.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35" validate="false" />
+...
+</httpHandlers>
+
+<handlers>
+...
+    <add name="ChartImageHandler" preCondition="integratedMode" verb="GET,HEAD" path="ChartImg.axd" type="System.Web.UI.DataVisualization.Charting.ChartHttpHandler, System.Web.DataVisualization, Version=3.5.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35" />
+
+...
+</handlers>
+
+
+On .NET 4.0 the charts come built-in, but you still may need to add the similar tag below:
+<add path="ChartImg.axd" verb="GET,HEAD,POST" type="System.Web.UI.DataVisualization.Charting.ChartHttpHandler, System.Web.DataVisualization, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35" validate="false" />
+
+
+In IIS 6.0 (Server 2003) this error will occur if the httpHandler is missing (see Previous Answer)
+Looking into the stack trace it appears that IIS 6.0 assumes that a handler will be loaded. It does an Execute on the statement and the exception is swallowed. Including the following  attribute (as shown above) under the httpHandlers in IIS 6.0 fixed this for me.
+<add path="ChartImg.axd" verb="GET,HEAD" type="System.Web.UI.DataVisualization.Charting.ChartHttpHandler, System.Web.DataVisualization, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"  validate="false"/>
+
+Note that I changed the Version from the previous answer to 4.0.0.0 and tested in Server 2008 (IIS 7.0) and Server 2003 (IIS 6.0)
+
+Another cause for this problem can be because the application pool is set to 'Classic' mode. My handler was configured correctly, but I was getting the same error.
+ <add name="ChartImg" verb="*" path="ChartImg.axd" type="System.Web.UI.DataVisualization.Charting.ChartHttpHandler, System.Web.DataVisualization, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"  />
+
+As soon as I switched the application pool to 'Integrated' mode. The chart control started working correctly.
+
+Also note that while dragging the chart control from the toolbox onto your page is supposed to create the necessary entries in web.config, this only occurs if you are in design mode at the time.
+If you are in source mode and drag and drop it will not happen. 
+Also, there must be some form of registration that occurs in the project/class file when you add a chart control in design mode. Because if you are in source mode and dnd a chart control you wont get the entries in web.config as above. If you then step into design mode and dnd from the toolbox into the page, you will get the entries in web.config.
+But if then delete the chart, you dnd'd in design mode, it will wipe the entries from web.config (assuming a single page site) even though you still have the other chart control on the page from when you dnd'd into source mode. 
+So no, you're not crazy it's just not intuitive. ;)
+
+This problem was resolved by adding chatImageHandler in the webconfig.
+<system.webServer>
+    <validation validateIntegratedModeConfiguration="false"/>
+    <handlers>
+      <remove name="ChartImageHandler"/>
+      <add name="ChartImageHandler" preCondition="integratedMode" verb="GET,HEAD,POST" path="ChartImg.axd" type="System.Web.UI.DataVisualization.Charting.ChartHttpHandler, System.Web.DataVisualization, Version=4.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35"/>
+    </handlers>
+  </system.webServer>
+
+for more details:
+http://www.infinetsoft.com/Post/-Solved-Error-executing-child-request-for-ChartImg-axd/1164#.VyenrNJ97cs

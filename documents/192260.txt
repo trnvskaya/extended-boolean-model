@@ -1,0 +1,157 @@
+Calculating a date around working days/hours?
+c# date
+I am currently working on a website to track projects. In it, it is possible to create Service Level Agreements (SLAs). These are configurable with days of the week that a project can be worked on and also the timespan on each of those days. Eg. on Monday it might be between 08:00 and 16:00 and then on friday from 10:00 to 14:00. They are also configured with a deadline time depending on priority. Eg. a project created with the "Low" priority has a deadline time of two weeks, and a project with "High" priority has a deadline of four hours.
+The problem I'm having is calculating the deadline AROUND the hours described earlier. Say I create a project on Monday at 14:00 with a "High" priority. That means I have four hours for this project. But because of the working hours, I have two hours on monday (untill 16:00) and then another two hours on Friday. That means the Deadline must be set for Friday at 12:00.
+I've spent quite some time googling this, and I can find quite a few examples of finding out how many working hours there are between a given start end ending date. I just can't figure out how to convert it into FINDING the ending datetime, given a starting time and an amount of time untill the deadline.
+The day/timespans are stored in an sql database in the format:
+Day(Eg. 1 for Monday)   StartHour	EndHour
+The StartHour/EndHour are saved as DateTimes, but of course only the time part is important.
+The way I figure it is, I have to somehow iterate through these times and do some datetime calculations. I just can't quite figure out what those calculations should be, what the best way is.
+I found this Question here on the site as I was writing this. It is sort of what I want and I'm playing with it right now, but I'm still lost on how exactly to make it work around my dynamic work days/hours.
+
+
+There's a recursive solution that could work, try thinking along these lines:
+public DateTime getDeadline(SubmitTime, ProjectTimeAllowed)
+{
+   if (SubmitTime+ProjectTimeAllowed >= DayEndTime)
+           return getDeadline(NextDayStart, ProjectTimeAllowed-DayEndTime-SubmitTime)
+   else
+           return SubmitTime + ProjectTimeAllowed
+}
+
+Obviously this is quite rough pseudocode.  Hopefully it just gives you another way to think about the problem.
+
+Here's how I would do it. The algorithm is to see whether the issue can be closed today and if not, use all of today's time to reduce the issue's remaining time and go to tomorrow.
+
+Find the time you have to close the issue as a TimeSpan (I'm calling this the issue's remaining time)
+For each working day, create a DateTime that has only the time of the start and end.
+Set the start time to now.
+Loop: 
+
+Find today's remaining time by subtracting today's end time minus the start time (the result should be a TimeSpan)
+If today's remaining time is greater than the issue's remaining time, take today's date and today's starttime + issue remaining time
+If the issue's remaining time is greater, set the issue's remaining time to be the issue's remaining time minus today's remaining time, move to tomorrow, and go to the top of the loop.
+
+
+
+Using Stu's answer as a starting point, modify the IsInBusinessHours function to look up you business hours for the date parameter. A procedure like the following could be used:
+CREATE PROCEDURE [dbo].[IsInBusinessHours]
+    @MyDate DateTime 
+AS
+BEGIN
+    SELECT     CASE Count(*) WHEN 0 THEN 0 ELSE 1 END AS IsBusinessHour
+FROM         WorkHours
+WHERE     (DATEPART(hour, StartHours) <= DATEPART(hour, @MyDate)) AND (DATEPART(hour, EndHours) > DATEPART(hour, @MyDate)) AND (Day = DATEPART(WEEKDAY, 
+                      @MyDate))
+END
+
+
+Here's some C# code which might help, it could be much cleaner, but it's a quick first draft.
+    class Program
+    {
+    	static void Main(string[] args)
+    	{
+    		// Test
+    		DateTime deadline = DeadlineManager.CalculateDeadline(DateTime.Now, new TimeSpan(4, 0, 0));
+    		Console.WriteLine(deadline);
+    		Console.ReadLine();
+    	}
+    }
+
+    static class DeadlineManager
+    {
+    	public static DateTime CalculateDeadline(DateTime start, TimeSpan workhours)
+    	{
+    		DateTime current = new DateTime(start.Year, start.Month, start.Day, start.Hour, start.Minute, 0);
+    		while(workhours.TotalMinutes > 0)
+    		{
+    			DayOfWeek dayOfWeek = current.DayOfWeek;
+    			Workday workday = Workday.GetWorkday(dayOfWeek);
+    			if(workday == null)
+    			{
+    				DayOfWeek original = dayOfWeek;
+    				while (workday == null)
+    				{
+    					current = current.AddDays(1);
+    					dayOfWeek = current.DayOfWeek;
+    					workday = Workday.GetWorkday(dayOfWeek);
+    					if (dayOfWeek == original)
+    					{
+    						throw new InvalidOperationException("no work days");
+    					}
+    				}
+    				current = current.AddHours(workday.startTime.Hour - current.Hour);
+    				current = current.AddMinutes(workday.startTime.Minute - current.Minute);
+    			}
+
+    			TimeSpan worked = Workday.WorkHours(workday, current);
+    			if (workhours > worked)
+    			{
+    				workhours = workhours - worked;
+    				// Add one day and reset hour/minutes
+    				current = current.Add(new TimeSpan(1, current.Hour * -1, current.Minute * -1, 0));
+    			}
+    			else
+    			{
+    				current.Add(workhours);
+    				return current;
+    			}
+    		}
+    		return DateTime.MinValue;
+    	}
+    }
+
+    class Workday
+    {
+    	private static readonly Dictionary<DayOfWeek, Workday> Workdays = new Dictionary<DayOfWeek, Workday>(7);
+    	static Workday()
+    	{
+    		Workdays.Add(DayOfWeek.Monday, new Workday(DayOfWeek.Monday, new DateTime(1, 1, 1, 10, 0, 0), new DateTime(1, 1, 1, 16, 0, 0)));
+    		Workdays.Add(DayOfWeek.Tuesday, new Workday(DayOfWeek.Tuesday, new DateTime(1, 1, 1, 10, 0, 0), new DateTime(1, 1, 1, 16, 0, 0)));
+    		Workdays.Add(DayOfWeek.Wednesday, new Workday(DayOfWeek.Wednesday, new DateTime(1, 1, 1, 10, 0, 0), new DateTime(1, 1, 1, 16, 0, 0)));
+    		Workdays.Add(DayOfWeek.Thursday, new Workday(DayOfWeek.Thursday, new DateTime(1, 1, 1, 10, 0, 0), new DateTime(1, 1, 1, 16, 0, 0)));
+    		Workdays.Add(DayOfWeek.Friday, new Workday(DayOfWeek.Friday, new DateTime(1, 1, 1, 10, 0, 0), new DateTime(1, 1, 1, 14, 0, 0)));
+    	}
+
+    	public static Workday GetWorkday(DayOfWeek dayofWeek)
+    	{
+    		if (Workdays.ContainsKey(dayofWeek))
+    		{
+    			return Workdays[dayofWeek];
+    		}
+    		else return null;
+    	}
+
+    	public static TimeSpan WorkHours(Workday workday, DateTime time)
+    	{
+    		DateTime sTime = new DateTime(time.Year, time.Month, time.Day,
+    			workday.startTime.Hour, workday.startTime.Millisecond, workday.startTime.Second);
+    		DateTime eTime = new DateTime(time.Year, time.Month, time.Day,
+    			workday.endTime.Hour, workday.endTime.Millisecond, workday.endTime.Second);
+    		if (sTime < time)
+    		{
+    			sTime = time;
+    		}
+    		TimeSpan span = eTime - sTime;
+    		return span;
+    	}
+
+    	public static DayOfWeek GetNextWeekday(DayOfWeek dayOfWeek)
+    	{
+    		int i = (dayOfWeek == DayOfWeek.Saturday) ? 0 : ((int)dayOfWeek) + 1;
+    		return (DayOfWeek)i;
+    	}
+
+
+    	private Workday(DayOfWeek dayOfWeek, DateTime start, DateTime end)
+    	{
+    		this.dayOfWeek = dayOfWeek;
+    		this.startTime = start;
+    		this.endTime = end;
+    	}
+
+    	public DayOfWeek dayOfWeek;
+    	public DateTime startTime;
+    	public DateTime endTime;
+    }
+

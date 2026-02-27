@@ -1,0 +1,122 @@
+Asp.net Usercontrol LoadControl Issue
+asp.net user-controls loadcontrol
+I am having an issue when using LoadControl( type, Params ). Let me explain...
+I have a super simple user control (ascx)
+<%@ Control Language="C#" AutoEventWireup="True" Inherits="ErrorDisplay" Codebehind="ErrorDisplay.ascx.cs" EnableViewState="false" %>
+
+<asp:Label runat="server" ID="lblTitle" />
+<asp:Label runat="server" ID="lblDescription" />
+
+with code ( c# ) behind of:
+public partial class ErrorDisplay : System.Web.UI.UserControl
+{
+
+    private Message _ErrorMessage;    
+
+    public ErrorDisplay()
+    {
+    }
+
+    public ErrorDisplay(Message ErrorMessage)
+    {
+        _ErrorMessage = ErrorMessage;
+    }    
+
+    protected override void OnPreRender(EventArgs e)
+    {
+        base.OnPreRender(e);
+
+        if (_ErrorMessage != null)
+        {
+            lblTitle.Text = _ErrorMessage.Message;
+            lblDescription.Text = _ErrorMessage.Description;
+        }
+    }
+}
+
+Elsewhere in my web application I am adding an instance of the usercontrol to the page using the following code:
+divValidationIssues.Controls.Add(LoadControl(typeof(ErrorDisplay), new object[] { MessageDetails }));
+
+I am using the overloaded version of LoadControl because I want to pass the Message parameter to the constructor. All this appears to work ok.
+However, when the OnPreRender() is fired on the ErrorDisplay usercontrol the lblTitle and lblDescription variables are both null, despite them having a markup equivalent. The message variable has been correctly populated.
+Can anyone shed any light on why this may be happening?
+Thanks
+EDIT:
+Just for clarity I'll also add that the code which is programatically adding the usercontrol to the page is running in response to a button press, so the 'hosting page' has progressed through Init, Page_Load and is now processing the event handlers.
+I cannot add the usercontrols at an earlier asp lifecycle stage as they are being created in response to a button click event.
+
+
+Per the asp.net page lifecycle your controls are not fully added in pre-render, why don't you just load the values in page_load?
+
+Agreeing with Mitchel, you should be able to put a page_load in the control code itself which would fire after the controls are completely available. 
+
+I have tried the following code as well - which yields the same result (i.e. both lblTitle and lblDescription are null)
+protected void Page_Load(object sender, EventArgs e)
+{
+    if (_ErrorMessage != null)
+    {
+        lblTitle.Text = _ErrorMessage.Message;
+        lblDescription.Text = _ErrorMessage.Description;
+    }
+}
+
+I had the understanding that the LoadControl function brought the control it is loading up to the current 'state' of the page onto which it is being included on. hence the Init, Page_Load etc are all run as part of the LoadControl call.
+Interestingly this (unanswered) asp.net forums post exhibits the same problem as I am experiencing.
+MSDN Forums Post
+Additionally - From the MSDN:
+
+When you load a control into a container control, the container raises all of the added control's events until it has caught up to the current event. However, the added control does not catch up with postback data processing. For an added control to participate in postback data processing, including validation, the control must be added in the Init event rather than in the Load event. 
+
+Therefore shouldn't LoadControl correctly initalise the control?
+EDIT:
+Ok, so I'm answering my own question here ..
+I found an answered version of the forum post I linked to above Here 
+Essentially the answer is that the LoadControl( type, params ) cannot infer the 'page infront' ascx to parse and hence it doesn't bother initalising any of the controls. When you use the LoadControl( "ascx path" ) version it is given the page infront and hence does all the parsing and initalision.
+So in summary I need to change the code which is initalising the control and split it into seperate parts. I.e.
+Control ErrorCntrl = LoadControl("ErrorDisplay.ascx");
+ErrorCntrl.ID = SomeID;
+(ErrorCntrl as ErrorDisplay).SetErrorMessage = MessageDetail;
+divErrorContainer.Controls.Add(ErrorCntrl);
+
+And it should work ok.. It isn't as neat as my previous attempt, but at least it will work.
+I am still open to suggestions to improve the above.
+Cheers
+
+Well there is always adding your own load event and calling it after you have ran the constructor and added the control to the page, but it's not a lot different than what you have, although I might choose it for style reasons.
+Glad you found an answer to your issue!
+
+Here is a blog post written by Steven Robbins. The post explains how to pass parameters for a user control using LoadControl, similar to what LoadControl(Type, object[]) would do, except it works :)
+
+I had a similar issue with the Calendar control DayRender event, in that I wanted to add a user control to the e.Cell.Controls collection. After trying a couple of failed approaches with the user control page_load not firing or the listbox on the ascx throwing a null exception, I found that if I initialized my control on the form with LoadControl(ascx) and then start accessing the markup controls on the ascx, everything worked fine. This approach does not depend upon the Page_Load event on the ascx  at all.
+ASCX markup
+
+
+code behind
+Public Class CPCalendarCell
+    Inherits System.Web.UI.UserControl
+Protected Sub Page_Load(ByVal sender As Object, ByVal e As System.EventArgs) Handles Me.Load
+
+End Sub
+
+Public Sub Add(txt As String)
+    Dim li As New ListItem(txt, txt)
+    lstDay.Items.Add(li)
+End Sub
+
+End Class
+page ASPX markup
+
+
+code behind Calendar DayRender event on the form
+Private Sub Calendar1_DayRender(sender As Object, e As System.Web.UI.WebControls.DayRenderEventArgs) Handles Calendar1.DayRender
+    Dim div As CPCalendarCell = LoadControl("~/UserControls/CPCalendarCell.ascx")
+    div.ID = "dv_" & e.Day.Date.ToShortDateString.Replace(" ", "_")
+
+    **e.Cell.Controls.Add(div)**
+
+    div.Add(e.Day.Date.Month.ToString & "/" & e.Day.Date.Day.ToString)
+    div.Add("Item 1")
+    div.Add("Item 2")
+    e.Cell.Style.Add("background-color", IIf(e.Day.IsWeekend, "whitesmoke", "white").ToString)
+End Sub
+

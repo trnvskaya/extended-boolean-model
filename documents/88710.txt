@@ -1,0 +1,223 @@
+Reporting Services Deployment
+deployment reporting-services
+I need to create a repeatable process for deploying SQL Server Reporting Services reports.  I am not in favor of using Visual Studio and or Business Development Studio to do this.  The rs.exe method of scripting deployments also seems rather clunky.  Does anyone have a very elegant way that they have been able to deploy reports. The key here is that I want the process to be completely automated.
+
+
+I know you say that you're not in favor of the Business Development Studio to do this, but I've found the built-in tools to be very reliable and easy to use.
+
+Well not really elegant. We created our own tool that uses the reportingservices2005 web service. We found this to be the most reliable way of getting what we want.
+It's not really that difficult and lets you expand it to do other things like creating data sources and folders as required.
+
+Have you looked into any Continuous Integration solutions such as CruiseControl.NET? If you are able to deploy Reports using rs.exe then you can setup an automated process in CruiseControl to build and deploy your Reports on a timer or whenever a report is modified.
+
+We use rs.exe, once we developed the script we have not needed to touch it anymore, it just works.
+Here is the source (I slightly modified it by hand to remove sensitive data without a chance to test it, hope I did not brake anything), it deploys reports and associated images from subdirectories for various languages. Also datasource is created.
+'=====================================================================
+'  File:      PublishReports.rss
+'
+'  Summary: Script that can be used with RS.exe to 
+'           publish the reports.
+'
+'  Rss file spans from beginnig of this comment to end of module
+' (except of "End Module").
+'=====================================================================
+
+Dim langPaths As String() = {"en", "cs", "pl", "de"}
+Dim filePath As String = Environment.CurrentDirectory
+
+Public Sub Main()
+
+    rs.Credentials = System.Net.CredentialCache.DefaultCredentials
+
+    'Create parent folder
+    Try
+        rs.CreateFolder(parentFolder, "/", Nothing)
+        Console.WriteLine("Parent folder created: {0}", parentFolder)
+    Catch e As Exception
+        Console.WriteLine(e.Message)
+    End Try
+
+    PublishLanguagesFromFolder(filePath)
+
+End Sub
+
+Public Sub PublishLanguagesFromFolder(ByVal folder As String)
+    Dim Lang As Integer
+    Dim langPath As String
+
+    For Lang = langPaths.GetLowerBound(0) To langPaths.GetUpperBound(0)
+        langPath = langPaths(Lang)
+
+        'Create the lang folder
+        Try
+            rs.CreateFolder(langPath, "/" + parentFolder, Nothing)
+            Console.WriteLine("Parent lang folder created: {0}", parentFolder + "/" + langPath)
+        Catch e As Exception
+            Console.WriteLine(e.Message)
+        End Try
+
+        'Create the shared data source
+        CreateDataSource("/" + parentFolder + "/" + langPath)
+
+        'Publish reports and images
+        PublishFolderContents(folder + "\" + langPath, "/" + parentFolder + "/" + langPath)
+    Next 'Lang
+End Sub
+
+Public Sub CreateDataSource(ByVal targetFolder As String)
+    Dim name As String = "data source"
+
+    'Data source definition.
+    Dim definition As New DataSourceDefinition
+    definition.CredentialRetrieval = CredentialRetrievalEnum.Store
+    definition.ConnectString = "data source=" + dbServer + ";initial catalog=" + db
+    definition.Enabled = True
+    definition.EnabledSpecified = True
+    definition.Extension = "SQL"
+    definition.ImpersonateUser = False
+    definition.ImpersonateUserSpecified = True
+    'Use the default prompt string.
+    definition.Prompt = Nothing
+    definition.WindowsCredentials = False
+    'Login information
+    definition.UserName = "user"
+    definition.Password = "password"
+
+    Try
+    'name, folder, overwrite, definition, properties 
+        rs.CreateDataSource(name, targetFolder, True, definition, Nothing)
+    Catch e As Exception
+        Console.WriteLine(e.Message)
+    End Try
+
+End Sub
+
+Public Sub PublishFolderContents(ByVal sourceFolder As String, ByVal targetFolder As String)
+    Dim di As New DirectoryInfo(sourceFolder)
+    Dim fis As FileInfo() = di.GetFiles()
+    Dim fi As FileInfo
+
+    Dim fileName As String
+
+    For Each fi In fis
+        fileName = fi.Name
+        Select Case fileName.Substring(fileName.Length - 4).ToUpper
+            Case ".RDL"
+                PublishReport(sourceFolder, fileName, targetFolder)
+            Case ".JPG", ".JPEG"
+                PublishResource(sourceFolder, fileName, "image/jpeg", targetFolder)
+            Case ".GIF", ".PNG", ".BMP"
+                PublishResource(sourceFolder, fileName, "image/" + fileName.Substring(fileName.Length - 3).ToLower, targetFolder)
+        End Select
+    Next fi
+End Sub
+
+Public Sub PublishReport(ByVal sourceFolder As String, ByVal reportName As String, ByVal targetFolder As String)
+    Dim definition As [Byte]() = Nothing
+    Dim warnings As Warning() = Nothing
+
+    Try
+        Dim stream As FileStream = File.OpenRead(sourceFolder + "\" + reportName)
+        definition = New [Byte](stream.Length) {}
+        stream.Read(definition, 0, CInt(stream.Length))
+        stream.Close()
+    Catch e As IOException
+        Console.WriteLine(e.Message)
+    End Try
+
+    Try
+   'name, folder, overwrite, definition, properties 
+        warnings = rs.CreateReport(reportName.Substring(0, reportName.Length - 4), targetFolder, True, definition, Nothing)
+
+        If Not (warnings Is Nothing) Then
+            Dim warning As Warning
+            For Each warning In warnings
+                Console.WriteLine(warning.Message)
+            Next warning
+        Else
+            Console.WriteLine("Report: {0} published successfully with no warnings", targetFolder + "/" + reportName)
+        End If
+    Catch e As Exception
+        Console.WriteLine(e.Message)
+    End Try
+End Sub
+
+Public Sub PublishResource(ByVal sourceFolder As String, ByVal resourceName As String, ByVal resourceMIME As String, ByVal targetFolder As String)
+    Dim definition As [Byte]() = Nothing
+    Dim warnings As Warning() = Nothing
+
+    Try
+        Dim stream As FileStream = File.OpenRead(sourceFolder + "\" + resourceName)
+        definition = New [Byte](stream.Length) {}
+        stream.Read(definition, 0, CInt(stream.Length))
+        stream.Close()
+    Catch e As IOException
+        Console.WriteLine(e.Message)
+    End Try
+
+    Try
+    'name, folder, overwrite, definition, MIME, properties 
+        rs.CreateResource(resourceName, targetFolder, True, definition, resourceMIME, Nothing)
+        Console.WriteLine("Resource: {0} with MIME {1} created successfully", targetFolder + "/" + resourceName, resourceMIME)
+    Catch e As Exception
+        Console.WriteLine(e.Message)
+    End Try
+End Sub
+
+Here is the batch to call the rs.exe:
+SET ReportServer=%1
+SET DBServer=%2
+SET DBName=%3
+SET ReportFolder=%4
+
+rs -i PublishReports.rss -s %ReportServer% -v dbServer="%DBServer%" -v db="%DBName%" -v parentFolder="%ReportFolder%" >PublishReports.log 2>&1
+
+pause
+
+
+I strongly recommend RSScripter. As noted in the overview: 
+
+Reporting Services Scripter is a .NET
+  Windows Forms application that enables
+  scripting and transfer of all
+  Microsoft SQL Server Reporting
+  Services catalog items to aid in
+  transferring them from one server to
+  another. It can also be used to easily
+  move items on mass from one Reporting
+  Services folder to another on the same
+  server. Depending on the scripting
+  options chosen, Reporting Services
+  Scripter can also transfer all catalog
+  item properties such as Descriptions,
+  History options, Execution options
+  (including report specific and shared
+  schedules), Subscriptions (normal and
+  data driven) and server side report
+  parameters.
+
+
+I used the script @David supplied but I had to add some code (I'm typing this up as an answer, as this would be too long for a comment.
+The problem is: if there is already a "shared datasource" attached to a report in the report definition, this is never the same datasource as the one that is created in the script. 
+This also becomes apparent from the warning emitted by the "CreateReport" method:
+
+The data set '' refers to the shared data source '', which is not published on the report server.
+
+So the data source has to be set explicitly afterwards. I've made the following code changes:
+I added a global variable:
+Dim dataSourceRefs(0) As DataSource
+
+At the end of the CreateDataSource method, that variable gets filled:
+Dim dsr As New DataSourceReference
+dsr.Reference = "/" + parentFolder + "/" + db
+Dim ds As New DataSource
+ds.Item = CType(dsr, DataSourceDefinitionOrReference)
+ds.Name = db
+dataSourceRefs(0) = ds
+
+And in the PublishReport method, that data source gets explicitly set (after CreateReport has been called):
+rs.SetItemDataSources(targetFolder + "/" + reportName.Substring(0, reportName.Length - 4), dataSourceRefs)
+
+Note that this last call is only RS 2005 or higher. If you want to load your reports onto a RS 2000 server, you have to use SetReportDataSources in stead:
+rs.SetReportDataSources(targetFolder + "/" + reportName.Substring(0, reportName.Length - 4), dataSourceRefs)
+

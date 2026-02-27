@@ -1,0 +1,138 @@
+Why should the "PIMPL" idiom be used?
+c++ oop information-hiding pimpl-idiom
+Backgrounder:
+The PIMPL Idiom (Pointer to IMPLementation) is a technique for implementation hiding in which a public class wraps a structure or class that cannot be seen outside the library the public class is part of.
+This hides internal implementation details and data from the user of the library.
+When implementing this idiom why would you place the public methods on the pimpl class and not the public class since the public classes method implementations would be compiled into the library and the user only has the header file?
+To illustrate, this code puts the Purr() implementation on the impl class and wraps it as well.
+Why not implement Purr directly on the public class?
+// header file:
+class Cat {
+    private:
+        class CatImpl;  // Not defined here
+        CatImpl *cat_;  // Handle
+
+    public:
+        Cat();            // Constructor
+        ~Cat();           // Destructor
+        // Other operations...
+        Purr();
+};
+
+
+// CPP file:
+#include "cat.h"
+
+class Cat::CatImpl {
+    Purr();
+...     // The actual implementation can be anything
+};
+
+Cat::Cat() {
+    cat_ = new CatImpl;
+}
+
+Cat::~Cat() {
+    delete cat_;
+}
+
+Cat::Purr(){ cat_->Purr(); }
+CatImpl::Purr(){
+   printf("purrrrrr");
+}
+
+
+
+Placing the call to the impl->Purr inside the cpp file means that in the future you could do something completely different without having to change the header file. Maybe next year they discover a helper method they could have called instead and so they can change the code to call that directly and not use impl->Purr at all. (Yes, they could achieve the same thing by updating the actual impl::Purr method as well but in that case you are stuck with an extra function call that achieves nothing but calling the next function in turn)
+It also means the header only has definitions and does not have any implementation which makes for a cleaner separation, which is the whole point of the idiom.
+
+I think most people refer to this as the Handle Body idiom. See James Coplien's book Advanced C++ Programming Styles and Idioms (Amazon link). It's also known as the Cheshire Cat because of Lewis Caroll's character that fades away until only the grin remains.
+The example code should be distributed across two sets of source files. Then only Cat.h is the file that is shipped with the product.
+CatImpl.h is included by Cat.cpp and CatImpl.cpp contains the implementation for CatImpl::Purr(). This won't be visible to the public using your product.
+Basically the idea is to hide as much as possible of the implementation fom prying eyes.
+This is most useful where you have a commercial product that is shipped as a series of libraries that are accessed via an API that the customer's code is compiled against and linked to.
+We did this with the rewrite of IONAs Orbix 3.3 product in 2000.
+As mentioned by others, using his technique completely decouples the implementation from the interface of the object. Then you won't have to recompile everything that uses Cat if you just want to change the implementation of Purr().
+This technique is used in a methodology called design by contract.
+
+Typically, the only reference to Pimpl class in the header for the Owner class (Cat in this case) would be a forward declaration, as you have done here, because that can greatly reduce the dependencies.
+For example, if your Pimpl class has ComplicatedClass as a member (and not just a pointer or reference to it) then you would need to have ComplicatedClass fully defined before it's use. In practice, this means including "ComplicatedClass.h" (which will also indirectly include anything ComplicatedClass depends on). This can lead to a single header fill pulling in lots and lots of stuff, which is bad for managing your dependencies (and your compile times).
+When you use the pimpl idion, you only need to #include the stuff used in the public interface of your Owner type (which would be Cat here). Which makes things better for people using your library, and means you don't need to worry about people depending on some internal part of your library - either by mistake, or because they want to do something you don't allow so they #define private public before including your files.
+If it's a simple class, there's usually no reason to use a Pimpl, but for times when the types are quite big, it can be a big help (especially in avoiding long build times)
+
+You may find Herb Sutter's article GotW 24: Compilation Firewalls useful.
+
+
+Because you want Purr() to be able to use private members of CatImpl.  Cat::Purr() would not be allowed such an access without a friend declaration.
+Because you then don't mix responsibilities: one class implements, one class forwards.   
+
+
+If your class uses the pimpl idiom, you can avoid changing the header file on the public class.
+This allows you to add/remove methods to the pimpl class, without modifying the external class's header file. You can also add/remove #includes to the pimpl too.
+When you change the external class's header file, you have to recompile everything that #includes it (and if any of those are header files, you have to recompile everything that #includes them, and so on)
+
+I don't know if this is a difference worth mentioning but...
+Would it be possible to have the implementation in its own namespace and have a public wrapper / library namespace for the code the user sees:
+catlib::Cat::Purr(){ cat_->Purr(); }
+cat::Cat::Purr(){
+   printf("purrrrrr");
+}
+
+This way all library code can make use of the cat namespace and as the need to expose a class to the user arises a wrapper could be created in the catlib namespace.
+
+I find it telling that, in spite of how well-known the pimpl idiom is, I don't see it crop up very often in real-life (e.g. in open source projects).
+I often wonder if the "benefits" are overblown; yes, you can make some of your implementation details even more hidden, and yes, you can change your implementation without changing the header, but it's not obvious that these are big advantages in reality.
+That is to say, it's not clear that there's any need for your implementation to be that well hidden, and perhaps it's quite rare that people really do change only the implementation; as soon as you need to add new methods, say, you need to change the header anyway.
+
+I just implemented my first pimpl class over the last couple of days.  I used it to eliminate problems I was having including winsock2.h in Borland Builder.  It seemed to be screwing up struct alignment and since I had socket things in the class private data, those problems were spreading to any cpp file that included the header.
+By using pimpl, winsock2.h was included in only one cpp file where I could put a lid on the problem and not worry that it would come back to bite me.
+To answer the original question, the advantage I found in forwarding the calls to the pimpl class was that the pimpl class is the same as what your original class would have been before you pimpl'd it, plus your implementations aren't spread over 2 classes in some weird fashion.  It's much clearer to implement the publics to simply forward to the pimpl class.  
+Like Mr Nodet said, one class, one responsibility.
+
+Well, I wouldn't  use it. I have a better alternative:
+foo.h:
+class Foo {
+public:
+    virtual ~Foo() { }
+    virtual void someMethod() = 0;
+
+    // This "replaces" the constructor
+    static Foo *create();
+}
+
+foo.cpp:
+namespace {
+    class FooImpl: virtual public Foo {
+
+    public:
+        void someMethod() { 
+            //....
+        }     
+    };
+}
+
+Foo *Foo::create() {
+    return new FooImpl;
+}
+
+Does this pattern have a name?
+As an also Python and Java programmer, I like this a lot more than the pImpl idiom.
+
+For what is worth, it separates the implementation from the interface. This is usually not very important in small size projects. But, in large projects and libraries, it can be used to reduce the build times significantly.
+Consider that the implementation of Cat may include many headers, may involve template meta-programming which takes time to compile on its own. Why should a user, who just wants to use the Cat have to include all that? Hence, all the necessary files are hidden using the pimpl idiom (hence the forward declaration of CatImpl), and using the interface does not force the user to include them.
+I'm developing a library for nonlinear optimization (read "lots of nasty math"), which is implemented in templates, so most of the code is in headers. It takes about five minutes to compile (on a decent multi-core CPU), and just parsing the headers in an otherwise empty .cpp takes about a minute. So anyone using the library has to wait a couple of minutes every time they compile their code, which makes the development quite tedious. However, by hiding the implementation and the headers, one just includes a simple interface file, which compiles instantly.
+It does not necessarily have anything to do with protecting the implementation from being copied by other companies - which wouldn't probably happen anyway, unless the inner workings of your algorithm can be guessed from the definitions of the member variables (if so, it is probably not very complicated and not worth protecting in the first place).
+
+We use PIMPL idiom in order to emulate aspect oriented programming where pre, post and error aspects are called before and after the execution of a member function. 
+struct Omg{
+   void purr(){ cout<< "purr\n"; }
+};
+
+struct Lol{
+  Omg* omg;
+  /*...*/
+  void purr(){ try{ pre(); omg-> purr(); post(); }catch(...){ error(); } }
+};
+
+We also use pointer to base class to share different aspects between many classes.
+The drawback of this approach is that the library user has to take into account all the aspects that are going to be executed, but only sees his class. It requires browsing the documentation for any side-effects.

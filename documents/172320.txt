@@ -1,0 +1,131 @@
+Same class, different namespaces, a way to simplify?
+c# namespaces
+I'm working with a webservice that offers almost duplicated code across two namesspaces.  Lets say for example PigFeet and HorseFeet, both namespaces contain a Feet class and other code that works with the Feet class requires it to be part of that same namespace.
+Right now In my code I'm forced to do something like this:
+if( _animalType == AnimalType.Pig )
+{ 
+     //namespace is pigfeet
+     PigFeet.Feet feet = new Feet();
+     feet.WashFeet();
+}
+
+if( _animalType == AnimalType.Horse )
+{
+     //namespace is horsefeet
+     HorseFeet.Feet feet = new Feet();
+     feet.WashFeet();
+ }
+
+This is leaving me with lots of duplicated code.  Is there a way to choose a namespace more dynamically?
+
+
+In your namespace imports you can assign an alias to a specific namespace or member.
+using PigFeet = PigFeet.Feet;
+using HorseFeet = HorseFeet.Feet;
+
+//now your sample code should look something like
+
+if( _animalType == AnimalType.Pig )
+{ 
+     //namespace is pigfeet
+     PigFeet feet = new PigFeet();
+     feet.WashFeet();
+}
+
+if( _animalType == AnimalType.Horse )
+{
+     //namespace is horsefeet
+     HorseFeet feet = new HorseFeet();
+     feet.WashFeet();
+ }
+
+
+Namespaces are just a way to organize your types. In your case you're having 2 or more different classes that have methods with the same signature but don't have a common interface. In case you cannot change the code of the classes, the only way to avoid duplication here is to use reflection while loosing compile-time type-safety.
+
+The namespace isn't the problem - it's simply that the 2 classes aren't related, so there's no inheritance chain that you can use for polymorphism. 
+You'll need to look at something like duck typing, or an adapter pattern, or building your own proxy classes to get yourself to a common interface. For small numbers of implementations, I've gotten away with just building a single adapter class that delegates to whatever non-null instance it has:
+interface IFeet {
+   void WashFeet();
+}
+
+class FeetAdapter : IFeet {
+   private PigFeet.Feet _pigFeet;
+   private HorseFeet.Feet _horseFeet;
+
+   private FeetAdapter(PigFeet.Feet pigFeet) {
+      _pigFeet = pigFeet;
+   }
+
+   private FeetAdapter(HorseFeet.Feet horseFeet) {
+      _horseFeet = horseFeet;
+   }
+
+   public void WashFeet() {
+      if (_pigFeet != null) {
+         _pigFeet.WashFeet();
+      } else {
+         _horseFeet.WashFeet();
+      }
+   }
+
+   public static FeetAdapter Create(AnimalType animalType) {
+      switch (animalType) {
+         case AnimalType.Pig:
+            return new FeetAdapter(new PigFeet.Feet());
+         case AnimalType.Horse:
+            return new FeetAdapter(new HorseFeet.Feet());
+      }
+   }
+}
+
+For larger cases, you'd be better off with a separate PigFeetAdapter and HorseFeetAdapter that both implement IFeet, along with a FeetAdapterFactory to create them - but the concept is the same as I show above.
+
+Here's me making things worse before making them better.
+You can encapsulate all the AnimalType decision logic in a single class.
+Between the two types (PigsFeet and HorseFeet), there are some similiar methods...
+Since WashFeet has a common signature (void with no params), System.Action can be used to reference that method.  Other methods with common signatures (and parameters) may require System.Func(T).  Other methods without common signatures may need to be coerced into a common signature.
+Here's the client code:
+AnimalFeetFacade myFacade = new AnimalFeetFacade(_animalType);
+myFacade.WashFeet();
+
+Here's the encapsulation class.
+public class AnimalFeetFacade
+{
+  public AnimalFeetFacade(AnimalType theType)
+  {
+    if (theType == AnimalType.Pig)
+    {
+      _washFeet = WashPigFeet;
+      //TODO reference more PigFeet methods here
+    }
+    else if (theType == AnimalType.Horse)
+    {
+       _washFeet = WashHorseFeet;
+       //TODO reference more HorseFeet methods here
+    }
+    else
+    {
+       throw new NotImplementedException("AnimalFeetFacade only works with PigFeet and HorseFeet");
+    }
+  }
+
+  protected Action _washFeet;
+
+  public void WashFeet()
+  {
+    _washFeet.Invoke();
+  }
+
+  protected void WashPigFeet()
+  {
+    PigFeet.Feet = new PigFeet.Feet()
+    feet.WashFeet()
+  } 
+
+  protected void WashHorseFeet()
+  {
+    HorseFeet.Feet = new HorseFeet.Feet()
+    feet.WashFeet()
+  }
+}
+

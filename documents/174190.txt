@@ -1,0 +1,61 @@
+Recursive Rails Nested Resources
+ruby-on-rails ruby
+I have a Rails application for project management where there are Project and Task models. A project can have many tasks, but a task can also have many tasks, ad infinitum.
+Using nested resources, we can have /projects/1/tasks, /projects/1/tasks/new, /projects/1/tasks/3/edit etc.
+However, how do you represent the recursive nature of tasks RESTfully? I don't want go another level deep, so perhaps the following would do:
+map.resources :tasks do |t|
+    t.resources :tasks
+end
+
+That would give me the following urls:
+/tasks/3/tasks/new   
+/tasks/3/tasks/45/edit
+
+Or perhaps when it comes to an individual task I can just use /tasks/45/edit
+Is this a reasonable design?
+Cam
+
+
+there's no reason they should have decendant URLS. 
+logically:
+
+/projects/1  --> project 1 
+/projects/1/edit ( etc )
+/tasks/1     --> task 1 
+/project/1/tasks --> task list for project 1 
+/project/1/tasks/new 
+/project/1/tasks/1/edit ->  /tasks/5/edit ( redundancy ) 
+/project/1/tasks/1 -> redirect to /tasks/1 
+/tasks/1/project -> redirect to /projects/1 
+/tasks/3/tasks --> list of tasks that are children tasks of task 3
+/tasks/3/tasks/5 -> redirect /tasks/5/    ( because you don't really need to have a recursive URL )
+/tasks/5/parents -> list of tasks that are parents of tasks 3
+/tasks/5/parents/3 -> redirect /tasks/3/ 
+
+there's no reason IMHO to require the URLs be associative, you're not going to need to know that task 5 is a child of task 3 to edit task 5. 
+
+Going anywhere beyond a single nested route is generally considered a bad idea.
+From page 108 of The Rails Way:
+"*Jamis Busk a very influential figure in the Rails community, almost as much as David himself. In February 2007, vis his blog, he basically told us that deep nesting was a bad thing, and proposed the following rule of thumb: Resources should never be nested more than one level deep.*"
+Now some would argue with this (which is discussed on page 109) but when you're talking about nesting tasks with tasks it just doesn't seem to make much sense.
+I would approach your solution a different way and like it was mentioned above, a project should have many tasks but for a task to have many tasks doesn't seem correct and maybe those should be re-named as sub-tasks or something along those lines.
+
+I'm currently on a project that does something similar.  The answer I used that was very elegant was I added a parent_id column that pointed to another task.  When doing your model, make sure to do the following:
+belongs_to :project
+belongs_to :parent, :class_name => "Task"
+has_many :children, :class_name => "Task", :foreign_key => "parent_id"
+
+...and then you can do recursion by:
+def do_something(task)
+  task.children.each do |child|
+    puts "Something!"
+    do_something(child)
+  end
+end
+
+This way, you can reference your tasks by its parent or by its children.  When doing your routes, you'll access a single task always by
+/project/:project_id/task/:task_id
+
+even though it may have a parent or children.
+Just make sure that you don't have a task that has its parent the same as its child or else you'll go into an infinite loop when you do your recursion to find all the children.  You can add the condition to your validation scripts to make sure it doesn't.
+See also: acts_as_tree

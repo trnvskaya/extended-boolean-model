@@ -1,0 +1,448 @@
+Are C++ Templates just Macros in disguise?
+c++ templates macros
+I've been programming in C++ for a few years, and I've used STL quite a bit and have created my own template classes a few times to see how it's done.
+Now I'm trying to integrate templates deeper into my OO design, and a nagging thought keeps coming back to me: They're just a macros, really... You could implement (rather UGLY) auto_ptrs using #defines, if you really wanted to.
+This way of thinking about templates helps me understand how my code will actually work, but I feel that I must be missing the point somehow. Macros are meant evil incarnate, yet "template metaprogramming" is all the rage.
+So, what ARE the real distinctions? and how can templates avoid the dangers that #define leads you into, like
+
+Inscrutable compiler errors in
+places where you don't expect them?
+Code bloat? 
+Difficulty in tracing code?
+Setting Debugger Breakpoints?
+
+
+
+They are parsed by the compiler and not by a preprocessor that runs before the compiler.
+Here's what MSDN says about it:
+http://msdn.microsoft.com/en-us/library/aa903548(VS.71).aspx
+
+Here are some problems with the macro:
+
+There is no way for the compiler to verify that the macro parameters are of compatible types. 
+The macro is expanded without any special type checking.
+The i and j parameters are evaluated twice. For example, if either parameter has a postincremented variable, the increment is performed two times.
+Because macros are expanded by the preprocessor, compiler error messages will refer to the expanded macro, rather than the macro definition itself. Also, the macro will show up in expanded form during debugging.
+
+
+If that's not enough for you, I don't know what is.
+
+Templates offer some degree of type safety.
+
+Macros are a text substitution mechanism.
+Templates are a functional turing-complete language that is executed at compile time and is integrated into the C++ type system. You can think of them as a plugin mechanism for the language.
+
+Templates are type safe. With defines, you can have code that compiles, but still does not work correctly.
+Macros expand before compiler gets to the code. This means you would get an error message for expanded code, and debugger only sees the expanded version.
+With macros, there's always a chance that some expression is evaluated twice. Imagine passing something like ++x as a parameter.
+
+Templates can be put in namespaces, or be members of a class.  Macros are just a pre-processing step.  Basically, templates are a first class member of the language that plays nice (nicer?) with everything else.
+
+C++ templates are kind of like Lisp macros (not C macros) in that they operate on the already parsed version of the code and they let you generate arbitrary code at compile time.  Unfortunately, you are programming in something resembling the raw Lambda calculus, so advanced techniques like looping are kind of cumbersome.  For all of the gory details, see Generative Programming by Krysztof Czarnecki and Ulrich Eisenecker.
+
+In case you are looking for a more in-depth treatment of the subject, I can turn you to everyone's favorite C++ hater. This man knows and hates more C++ than I can ever dream to. This simultaneously makes the FQA incredibly inflammatory and an excellent resource. 
+
+Templates can do a lot more than the macro preprocessor is able to do.
+E.g. there are template specializations: If this template is instanciated with this type or constant, than do not use the default implementation, but this one here...
+... templates can enforce that some parameters are of the same type, etc...
+
+Here are some sources You might want to look at:
+
+C++ templates by Vandervoorde and Jossutis. This is the best and most complete book about templates I know.
+The boost library consists almost entirely of template definitions.
+
+
+There's a lot of comments here trying to differentiate macros and templates.
+Yes - they are both the same thing:  Code generation tools.
+Macros are a primitive form, without much compiler enforcement (like doing Objects in C - it can be done, but it's not pretty).  Templates are more advanced, and have a lot better compiler type-checking, error messages, etc.
+However, each has strengths that the other does not.
+Templates can only generate dynamic class types - macros can generate almost any code you want (other than another macro definition).  Macros can be very useful to embed static tables of structured data into your code.
+Templates on the other hand can accomplish some truly FUNKY things that are not possible with macros.  For example:
+template<int d,int t> class Unit
+{
+    double value;
+public:
+    Unit(double n)
+    {
+        value = n;
+    }
+    Unit<d,t> operator+(Unit<d,t> n)
+    {
+        return Unit<d,t>(value + n.value);
+    }
+    Unit<d,t> operator-(Unit<d,t> n)
+    {
+        return Unit<d,t>(value - n.value);
+    }
+    Unit<d,t> operator*(double n)
+    {
+        return Unit<d,t>(value * n);
+    }
+    Unit<d,t> operator/(double n)
+    {
+        return Unit<d,t>(value / n);
+    }
+    Unit<d+d2,t+t2> operator*(Unit<d2,t2> n)
+    {
+        return Unit<d+d2,t+t2>(value + n.value);
+    }
+    Unit<d-d2,t-t2> operator/(Unit<d2,t2> n)
+    {
+        return Unit<d-d2,t-t2>(value + n.value);
+    }
+    etc....
+};
+
+#define Distance Unit<1,0>
+#define Time     Unit<0,1>
+#define Second   Time(1.0)
+#define Meter    Distance(1.0)
+
+void foo()
+{
+   Distance moved1 = 5 * Meter;
+   Distance moved2 = 10 * Meter;
+   Time time1 = 10 * Second;
+   Time time2 = 20 * Second;
+   if ((moved1 / time1) == (moved2 / time2))
+       printf("Same speed!");
+}
+
+The template allows the compiler to dynamically create and use type-safe instances of the template on-the-fly.  The compiler actually does the template-parameter math at compile time, creating separate classes where needed for each unique result.  There is an implied Unit<1,-1> (distance / time = velocity) type that is created and compared within the conditional, but never explicitly declared in code.
+Apparently, someone at a university has defined a template of this sort with 40+ parameters (need a reference), each representing a different physics unit type.  Think about the type-safety of that sort of class, just for your numbers.
+
+Something that hasn't been mentioned is that templates functions can deduce parameter types.
+
+template <typename T>
+void func(T t)
+{
+  T make_another = t;
+
+One may argue that the upcoming "typeof" operator can fix that but even it can't break apart other templates:
+
+template <typename T>
+void func(container<T> c)
+
+or even:
+
+template <tempate <typename> class Container, typename T>
+void func(Container<T> ct)
+
+I also feel that the subject of specialization wasn't covered enough. Here's a simple example of what macros can't do:
+
+template <typename T>
+T min(T a, T B)
+{
+  return a < b ? a : b;
+}
+
+template <>
+char* min(char* a, char* b)
+{
+  if (strcmp(a, b) < 0)
+    return a;
+  else
+    return b;
+}
+
+The space is too small to go into type specialization but what you can do with it, as far as I'm concerned, is mind-blowing.
+
+This isn't an answer so much as a consequence of the answers already stated.  
+Working with scientists, surgeons, graphic artists and others who need to program - but aren't and won't ever be professional full time software developers - i see that macros are easily understood by the occasional programmer, while templates appear to require a higher level of abstract thinking possible only with deeper and ongoing experience programming in C++.  It takes many instances of working with code where templates are useful concept, for the concept to make sense sufficiently for use.   While that could be said of any language feature, the amount of experience for templates presents a larger gap than the specialist casual programmer is likely to gain from their everyday work.
+The average astronomer or electronics engineer probably groks macros just fine, may even understand why macros should be avoided, but won't grok templates well enough for everyday use.  In that context, macros are actually better.  Naturally, there exist many pockets of exceptions; some physicists run circles around the pro software engineers, but this is not typical. 
+
+Although template parameters are type-checked and there are many advantages of templates over macros, templates are very much like macros in that they are still based on text substitution. The compiler will not verify that your template code makes any sense until you give it type parameters to substitute. For example, Visual C++ doesn't complain about this function as long as you don't actually call it:
+template<class T>
+void Garbage(int a, int b)
+{
+    fdsa uiofew & (a9 s) fdsahj += *! wtf;
+}
+
+Consequently, it is, in general, impossible to know whether your template code will work correctly, or compile successfully, for a given category of the type parameters that the template is designed to accept.
+
+In my opinion, macros are a bad habit from C. Although they can be useful for some I do not see a real need for them when there are typedefs and templates. Templates are the natural continuation to Object Oriented Programming. You can do a lot more with templates...
+Consider this... 
+int main()
+{
+    SimpleList<short> lstA;
+    //...
+    SimpleList<int> lstB = lstA; //would normally give an error after trying to compile
+}
+
+In order to make the conversion you can use something that is called a conversion constructor and a sequence constructor (look at the end) along the rather complete example for a list:
+#include <algorithm>
+
+template<class T>
+class SimpleList
+{
+public:
+    typedef T value_type;
+    typedef std::size_t size_type;
+
+private:
+    struct Knot
+    {
+    	value_type val_;
+    	Knot * next_;
+    	Knot(const value_type &val)
+    	:val_(val), next_(0)
+    	{}
+    };
+    Knot * head_;
+    size_type nelems_;
+
+public:
+    //Default constructor
+    SimpleList() throw()
+    :head_(0), nelems_(0)
+    {}
+    bool empty() const throw()
+    { return size() == 0; }
+    size_type size() const throw()
+    { return nelems_; }
+
+private:
+    Knot * last() throw() //could be done better
+    {
+    	if(empty()) return 0;
+    	Knot *p = head_;
+    	while (p->next_)
+    		p = p->next_;
+    	return p;
+    }
+
+public:
+    void push_back(const value_type & val)
+    {
+    	Knot *p = last();
+    	if(!p)
+    		head_ = new Knot(val);
+    	else
+    		p->next_ = new Knot(val);
+    	++nelems_;
+    }
+    void clear() throw()
+    {
+    	while(head_)
+    	{
+    		Knot *p = head_->next_;
+    		delete head_;
+    		head_ = p;
+    	}
+    	nelems_ = 0;
+    }
+    //Destructor:
+    ~SimpleList() throw()
+    { clear(); }
+    //Iterators:
+    class iterator
+    {
+    	Knot * cur_;
+    public:
+    	iterator(Knot *p) throw()
+    	:cur_(p)
+    	{}
+    	bool operator==(const iterator & iter)const throw()
+    	{ return cur_ == iter.cur_; }
+    	bool operator!=(const iterator & iter)const throw()
+    	{ return !(*this == iter); }
+    	iterator & operator++()
+    	{
+    		cur_ = cur_->next_;
+    		return *this;
+    	}
+    	iterator operator++(int)
+    	{
+    		iterator temp(*this);
+    		operator++();
+    		return temp;
+    	}
+    	value_type & operator*()throw()
+    	{ return cur_->val_; }
+    	value_type operator*() const
+    	{ return cur_->val_; }
+    	value_type operator->()
+    	{ return cur_->val_; }
+    	const value_type operator->() const
+    	{ return cur_->val_; }
+    };
+    iterator begin() throw()
+    { return iterator(head_); }
+    iterator begin() const throw()
+    { return iterator(head_); }
+    iterator end() throw()
+    { return iterator(0); }
+    iterator end() const throw()
+    { return iterator(0); }
+    //Copy constructor:
+    SimpleList(const SimpleList & lst)
+    :head_(0), nelems_(0)
+    {
+    	for(iterator i = lst.begin(); i != lst.end(); ++i)
+    		push_back(*i);
+    }
+    void swap(SimpleList & lst) throw()
+    {
+    	std::swap(head_, lst.head_);
+    	std::swap(nelems_, lst.nelems_);
+    }
+    SimpleList & operator=(const SimpleList & lst)
+    {
+    	SimpleList(lst).swap(*this);
+    	return *this;
+    }
+    //Conversion constructor
+    template<class U>
+    SimpleList(const SimpleList<U> &lst)
+    :head_(0), nelems_(0)
+    {
+    	for(typename SimpleList<U>::iterator iter = lst.begin(); iter != lst.end(); ++iter)
+    		push_back(*iter);
+    }
+    template<class U>
+    SimpleList & operator=(const SimpleList<U> &lst)
+    {
+    	SimpleList(lst).swap(*this);
+    	return *this;
+    }
+    //Sequence constructor:
+    template<class Iter>
+    SimpleList(Iter first, Iter last)
+    :head_(0), nelems_(0)
+    {
+    	for(;first!=last; ++first)
+    		push_back(*first);
+
+
+    }
+};
+
+Have a look at the information from cplusplus.com on templates! You can use templates to do what is called traits which is used has a sort of documentation for types and such. You can do so much more with templates then what is possible with macros!
+
+The answer is so long I can't sum up everything but:
+
+for instance macros don't ensure type safety while function templates do: there is no way for the compiler to verify that the macro parameters are of compatible types -- also at the time the function template is instantiated the compiler knows whether int or float define operator +
+templates open the door for metaprogramming (in short, evaluating things and taking decision at compile time): at compile time it's possible to know whether a type is integral or floating point; whether it's a pointer or whether it's const qualified, etc... see "type traits" in upcoming c++0x
+class templates have partial specialization
+function templates have explicit full specialization, in your example add<float>(5, 3); could be implemented differently than add<int>(5, 3); which isn't possible with macros
+macro don't have any scope
+#define min(i, j) (((i) < (j)) ? (i) : (j)) - the i and j parameters are evaluated twice. For example, if either parameter has a postincremented variable, the increment is performed two times
+because macros are expanded by the preprocessor, compiler error messages will refer to the expanded macro, rather than the macro definition itself. Also, the macro will show up in expanded form during debugging 
+etc...
+
+Note: In some rare cases, I preferred relying on variadic macros because there is no such thing as variadic templates until c++0x becomes mainstream. C++11 is live.
+References:
+
+C++ FAQ Lite: [35] Templates
+Advantages of Templates
+Templates vs. Macros (C++)
+
+
+NO. One simple counter example: templates abide to namespaces, macro's ignore namespaces (as they are preprocessor statements).
+namespace foo {
+    template <class NumberType>
+    NumberType add(NumberType a, NumberType b)
+    {
+        return a+b;
+    }
+
+    #define ADD(x, y) ((x)+(y))
+} // namespace foo
+
+namespace logspace 
+{
+    // no problemo
+    template <class NumberType>
+    NumberType add(NumberType a, NumberType b)
+    {
+        return log(a)+log(b);
+    }
+
+    // redefintion: warning/error/bugs!
+    #define ADD(x, y) (log(x)+log(y))
+
+} // namespace logspace
+
+
+On a very basic level, yes, template's are just macro replacements. But you're skipping out on a lot of things by thinking about it that way.
+Consider template specialization, which to my knowledge you can't simulate with macro's. Not only does that allow, well, special implementation for certain types, it's one of the key parts in template meta-programming:
+template <typename T>
+struct is_void
+{
+    static const bool value = false;
+}
+
+template <>
+struct is_void<void>
+{
+    static const bool value = true;
+}
+
+Which in itself is just one example of the many things you can do. Templates themselves are Turing-complete.
+This ignores the very basic things, such as scope, type-safety, and that macro's are messier.
+
+
+templates are typesafe.
+templated objects / types can be namespaced, made private members of a class etc.
+parameters to templated functions are not replicated throughout the function body. 
+
+These really are a big deal and prevent a multitude of bugs.
+
+This answer is meant to shed light on the C preprocessor and how it may be used for generic programming
+
+They are in some regards as they enable some similar semantics. The C preprocessor has been used to enable generic data structures and algorithms (See token Concatination). However without considering any other features of C++ templates, it makes the whole generic programming game a LOT CLEARER to read and implement.
+If anyone wants to see hardcore C only generic programming in action read the libevent sourcecode -- this is also mentioned here. A vast collection of container/algorithms are implemented, and its done in SINGLE header file (very readable). I really admire this, C++ template code (which I prefer for its other attributes) is VERY verbose.
+
+No, it's not possible. The preprocessor is (barely) sufficient for a few things like containers of T, but it's simply insufficient for quite a few other things templates can do.
+For some real examples, read through Modern C++ Programming, by Andre Alexandrescu, or C++ Metaprogramming by Dave Abrahams and Aleksey Gurtovoy. Nearly nothing done in either book can be simulated to any more than an extremely minimal degree with the preprocessor.
+Edit: As far as typename goes, the requirement is pretty simple. The compiler can't always figure out whether a dependent name refers to a type or not. Using typename explicitly tells the compiler that it refers to a type.
+struct X { 
+    int x;
+};
+
+struct Y {
+    typedef long x;
+};
+
+template <class T>
+class Z { 
+    T::x;
+};
+
+Z<X>; // T::x == the int variable named x
+Z<Y>; // T::x == a typedef for the type 'long'
+
+typename tells the compiler that a particular name is intended to refer to a type, not a variable/value, so (for example) you can define other variables of that type.
+
+The typename keyword is presented to enable context-free nested typdef's. These were needed for the trait technique which allow meta-data to be added to types (especially built-in types such as a pointer), this was required to write the STL. The typename keyword is otherwise the same as the class keyword.
+
+Let's try primitive example. Consider
+#define min(a,b) ((a)<(b))?(a):(b)
+
+invoked as
+c = min(a++,++b);
+
+Of course, the real difference is deeper, but that should be enough to discard similarities to macros.
+Edit: And no, you can't ensure type safety with macros. How would you implement typesafe min() for every type defining less than comparison (i.e. operrator<)?
+
+Templates understand data types.  Macros do not.
+This means that you can do stuff like the following...
+
+Define an operation (e.g., one for wrapping numbers) that can take any data type, then provide specializations that pick the appropriate algorithm based on whether the data type is integral or floating point
+Determine aspects of your data types at compile time, permitting tricks like template deduction of array size, which Microsoft uses for its C++ overloads of strcpy_s and its ilk
+
+Additionally, because templates are type safe, there are a number of template coding techniques that could conceivably be performed with some hypothetical advanced preprocessor but would be kludgy and error-prone at best (e.g., template template parameters, default template arguments, policy templates as discussed in Modern C++ Design).
+
+Templates are only similar to macros in their most basic functionality. After all, templates were introduced into language as "civilized" alternative to macros. But even when it comes to that most basic functionality, the similarity is only skin-deep. 
+However, once we get to the more advanced features of templates, like specialization (partial or explicit) any apparent similarity with macros disappears entirely.
+
+There are some basic problems with macros.
+First, they don't respect scope or type.  If I have #define max(a, b)..., then whenever I have the token max in my program, for whatever reason, it will be replaced.  It will be replaced if it's a variable name or deep inside nested scopes.  This can cause hard-to-find compilation errors.  In contrast, templates work inside the C++ type system.  A template function can have its name reused inside a scope, and won't try to rewrite a variable name.
+Second, macros can't be varied.  The template std::swap will normally just declare a temporary variable and do the obvious assignments, because that's the obvious way that normally works.  That's what a macro would be limited to.  That would be extremely inefficient for large vectors, and so vectors have a special swap that swaps the references rather than the entire content.  (This turns out to be very important in stuff the average C++ programmer shouldn't write but does use.)
+Third, macros can't do any form of type inferencing.  You can't write a generic swap macro in the first place, because it would have to declare a variable of a type, and it doesn't know what the type could be.  Templates are type-aware.
+One great example of the power of templates is what was originally called the Standard Template Library, which is in the standard as containers and algorithms and iterators.  Take a look at how they work, and try to think how you'd replace it with macros.  Alexander Stepanov looked over a large variety of languages to implement his STL ideas in, and concluded that C++ with templates was the only one it would work in. 
+
+Macros are integrated in the language and are type-safe.
+Tell me how you would do this with macros. This is heavy template metaprogramming.
+https://www.youtube.com/watch?v=0A9pYr8wevk
+I think that macros, AFAIK, cannot compute types the way that template partial specializations can do it.

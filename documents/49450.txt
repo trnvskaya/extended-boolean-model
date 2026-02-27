@@ -1,0 +1,98 @@
+How do I export (and then import) a Subversion repository?
+svn
+I'm just about wrapped up on a project where I was using a commercial SVN provider to store the source code. The web host the customer ultimately picked includes a repository as part of the hosting package, so, now that the project is over, I'd like to relocate the repository to their web host and discontinue the commercial account.
+How would I go about doing this?
+
+
+Assuming you have the necessary privileges to run svnadmin, you need to use the dump and load commands.
+
+The tool to do that would be 
+svnadmin dump
+
+But for this to work, you need filesystem-access to the repository. And once you have that (and provided the repository is in FSFS format), you can just copy the repository to its new location (if it's in BDB format, dump/load is strongly recommended).
+If you do not have filesystem access, you would have to ask your repository provider to provide the dump for you (and make them delete their repository - and hope they comply)
+
+You might find some help on migrating SVN repositories in Chapter 5. Repository Administration, Migrating a repository.
+This approach requires access to svnadmin.
+
+If you want to move the repository and keep history, you'll probably need filesystem access on both hosts.  The simplest solution, if your backend is FSFS (the default on recent versions), is to make a filesystem copy of the entire repository folder.
+If you have a Berkley DB backend, if you're not sure of what your backend is, or if you're changing SVN version numbers, you're going to want to use svnadmin to dump your old repository and load it into your new repository.  Using svnadmin dump will give you a single file backup that you can copy to the new system.  Then you can create the new (empty) repository and use svnadmin load, which will essentially replay all the commits along with its metadata (author, timestamp, etc).
+You can read more about the dump/load process here:
+http://svnbook.red-bean.com/en/1.8/svn.reposadmin.maint.html#svn.reposadmin.maint.migrate
+Also, if you do svnadmin load, make sure you use the --force-uuid option, or otherwise people are going to have problems switching to the new repository.  Subversion uses a UUID to identify the repository internally, and it won't let you switch a working copy to a different repository.
+If you don't have filesystem access, there may be other third party options out there (or you can write something) to help you migrate: essentially you'd have to use the svn log to replay each revision on the new repository, and then fix up the metadata afterwards.  You'll need the pre-revprop-change and post-revprop-change hook scripts in place to do this, which sort of assumes filesystem access, so YMMV.  Or, if you don't want to keep the history, you can use your working copy to import into the new repository.  But hopefully this isn't the case.
+
+You can also use the svnadmin hotcopy command:
+svnadmin hotcopy OLD_REPOS_PATH NEW_REPOS_PATH
+
+It takes a full backup from repository, including all hooks, configuration files, etc.
+More at SVN Book
+
+Excerpt from my Blog-Note-to-myself
+Now you can import a dump file e.g. if you are migrating between machines / subversion versions. e.g. if I had created a dump file from the source repository and load it into the new repository as shown below. 
+CmdShell> svnadmin dump D:\CoderZone2\svn-repos > ReposDump.dmp
+CmdShell> svnadmin load D:\CoderZone\svn-repos < ReposDump.dmp
+
+
+You can also use svnsync. This only requires read-only access on the source repository
+more at svnbook
+
+If you do not have file access to the repository, I prefer rsvndump (remote Subversion repository dump) to make the dump file.
+
+rsvndump worked great for me migrating a repository from svnrepository.com to an Ubuntu server that I control.
+How to install and use rsvndump on Ubuntu:
+
+Install missing dependencies ("APR" and Subversion libraries)
+sudo apt-get install apache2-threaded-dev
+sudo apt-get install libsvn-dev
+
+Install rsvndump
+wget http://prdownloads.sourceforge.net/rsvndump/rsvndump-0.5.5.tar.gz
+tar xvfz rsvndump-0.5.5.tar.gz
+cd rsvndump-0.5.5
+./configure
+make
+sudo make install
+
+Dump the remote SVN repository to a local file
+rsvndump http://my.svnrepository.com/svn/old_repo > old_repo_dump
+
+Create a new repository and load in the local dump file
+sudo svnadmin create /opt/subversion/my_new_rep
+sudo svnadmin load --force-uuid /opt/subversion/my_new_repo < old_repo_dump
+
+
+
+I found an article about how to move svn repositories from a hosting service to another, and how to do local backups:
+
+Define where you will store your repositories:
+mkdir ~/repo
+MYREPO=/home/me/someplace ## you should use full path here
+
+Now create a empty svn repository with svnadmin create $MYREPO
+Create a hook file and make it executable:
+echo '#!/bin/sh' > $MYREPO/hooks/pre-revprop-change
+chmod +x $MYREPO/hooks/pre-revprop-change
+
+Now we can start importing the repository with svnsync, that will initialize a destination repository for synchronization from another repository:
+svnsync init file://$MYREPO http://your.svn.repo.here/
+
+And the finishing touch to transfer all pending revisions to the destination from the source with which it was initialized:
+svnsync sync file://$MYREPO
+
+
+There now you have a local svn repository in the ~/repo directory.
+Source:
+
+http://kylecordes.com/2007/svnsync-svn-backup
+http://www.workhabit.com/blog/moving-svn-repository-hosted-service
+
+
+Basically, there are plenty of ways to accomplish the task. The topic is covered in depth in SVNBook | Migrating Repository Data Elsewhere, so I suggest reading the book's section.
+Here is a brief description of your options:
+
+It depends on your environment, but there is a great chance that you can simply copy the repository to the new server and it will work. You have to revise repository hook scripts after copying the repo to ensure that they are working as you expect.
+You can use svnadmin dump and svnadmin load commands to, ehm, generate full dump and then load it to another repository on another server. You will need to svnadmin create a new clean repository to load the dump into it. Keep in mind that the approach deals with repository history only and does not move hook scripts and repository configuration files! As well, you must have read filesystem access to the original repository to dump it.
+Since Subversion 1.7, svnrdump tool is available. Generally speaking, it mimics svnadmin dump and svnadmin load functionality, but operates remotely. You are not required to have read / write filesystem access to original and target repositories as tool operates remotely like Subversion client, e.g. over HTTPS protocol. So you need to have read access to original repository and read / write to the target one.
+Another option is to use svnadmin hotcopy command. The command is mostly used for backup purpose, it creates full copy of the repository including configuration and hook scripts. You can move hotcopied repository to another server then.
+

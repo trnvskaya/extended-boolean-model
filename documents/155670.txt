@@ -1,0 +1,44 @@
+Invert 4x4 matrix - Numerical most stable solution needed
+language-agnostic matrix linear-algebra fixed-point matrix-inverse
+I want to invert a 4x4 matrix. My numbers are stored in fixed-point format (1.15.16 to be exact).
+With floating-point arithmetic I usually just build the adjoint matrix and divide by the determinant (e.g. brute force the solution). That worked for me so far, but when dealing with fixed point numbers I get an unacceptable precision loss due to all of the multiplications used. 
+Note: In fixed point arithmetic I always throw away some of the least significant bits of immediate results.
+So - What's the most numerical stable way to invert a matrix? I don't mind much about the performance, but simply going to floating-point would be to slow on my target architecture.
+
+
+Plain old Gaussian elimination would work well.
+It depends on what libraries/classes/structures you're using. You could take a look at the GSL.
+
+To minimize truncation errors and other badness, use "pivoting" - see the chapter on inverting matrices in Numerical Recipes.  They have the best explanation i've found so far. 
+
+I think the answer to this depends on the exact form of the matrix. A standard decomposition method (LU, QR, Cholesky etc.) with pivoting (an essential) is fairly good on fixed point, especially for a small 4x4 matrix. See the book 'Numerical Recipes' by Press et al. for a description of these methods.
+This paper gives some useful algorithms, but is behind a paywall unfortunately. They recommend a (pivoted) Cholesky decomposition with some additional features too complicated to list here.
+
+Meta-answer:  Is it really a general 4x4 matrix?  If your matrix has a special form, then there are direct formulas for inverting that would be fast and keep your operation count down.
+For example, if it's a standard homogenous coordinate transform from graphics, like:
+[ux vx wx tx]
+[uy vy wy ty]
+[uz vz wz tz]
+[ 0  0  0  1]
+
+(assuming a composition of rotation, scale, translation matrices)
+then there's an easily-derivable direct formula, which is
+[ux uy uz -dot(u,t)]
+[vx vy vz -dot(v,t)]
+[wx wy wz -dot(w,t)]
+[ 0  0  0     1    ]
+
+(ASCII matrices stolen from the linked page.)
+You probably can't beat that for loss of precision in fixed point.
+If your matrix comes from some domain where you know it has more structure, then there's likely to be an easy answer.
+
+If the matrix represents an affine transformation (many times this is the case with 4x4 matrices so long as you don't introduce a scaling component) the inverse is simply the transpose of the upper 3x3 rotation part with the last column negated.  Obviously if you require a generalized solution then looking into Gaussian elimination is probably the easiest.
+
+You might consider doubling to 1.31 before doing your normal algorithm.  It'll double the number of multiplications, but you're doing a matrix invert and anything you do is going to be pretty tied to the multiplier in your processor.
+For anyone interested in finding the equations for a 4x4 invert, you can use a symbolic math package to resolve them for you.  The TI-89 will do it even, although it'll take several minutes.
+If you give us an idea of what the matrix invert does for you, and how it fits in with the rest of your processing we might be able to suggest alternatives.
+
+Let me ask a different question: do you definitely need to invert the matrix (call it M), or do you need to use the matrix inverse to solve other equations? (e.g. Mx = b for known M, b) Often there are other ways to do this w/o explicitly needing to calculate the inverse. Or if the matrix M is a function of time & it changes slowly then you could calculate the full inverse once, & there are iterative ways to update it.
+
+I'd like to second the question Jason S raised: are you certain that you need to invert your matrix?  This is almost never necessary.  Not only that, it is often a bad idea.  If you need to solve Ax = b, it is more numerically stable to solve the system directly than to multiply b by A inverse.  
+Even if you have to solve Ax = b over and over for many values of b, it's still not a good idea to invert A. You can factor A (say LU factorization or Cholesky factorization) and save the factors so you're not redoing that work every time, but you'd still solve the system each time using the factorization.

@@ -1,0 +1,142 @@
+Fastest javascript page search
+javascript firefox search performance
+I am writing a Firefox extension. I would like to search the current webpage for a set of words, and count how many times each occurs. This activity is only performed when the user asks, but it must still happen reasonably quickly.
+I am currently using indexOf on the BODY tag's innerHTML element, but am finding it too slow to run repeatedly in the following manner:
+function wordcount(doc, match)
+{
+  var count = 0;
+  var pos = 0;
+  for(;;)
+  {
+    len=doc.indexOf(match, pos);
+    if(len == -1)
+    {
+      break;
+    }
+    pos = len + match.length;
+    count++;
+  }
+  return count;
+}
+
+var html = content.document.body.innerHTML.toLowerCase()
+
+for(var i=0; i<keywords.length; i++)
+{
+  var kw = keywords[i];
+  myDump(kw + ": " + wordcount(html, kw));
+}
+
+With 100 keywords, this takes approximately 10 to 20 seconds to run. There is some scope to reduce the number of keywords, but it will still need to run much quicker.
+Is there a more obvious way to do this? What is the most efficient method? I have some ideas, but am reluctant to code each up without some idea of the performance I can expect:
+
+Navigate the DOM rather than using
+innerHTML. Will this be likely
+quicker or slower? It would have the
+benefit of only searching textual
+content.
+Loop through the document word by
+word, accumulating a count of each
+word's occurence simultaneously.
+With this method I would have to do
+a bit more work parsing the HTML.
+
+Edit: Turns out that the slowest part was the myDump function writing to the error console. Duh! Nevertheless, there some interesting more efficient alternatives have been presented, which I am intending to use.
+
+
+I would select all the text nodes in the document, iterate through them (splitting the contents on whitespace), and increment a counter for each word encountered.  Use a hash of keyword/count to speed up the keyword lookup for increment.
+var keywords = new Hash();  // from prototype or use your own
+
+function traverseNode( node ) {
+    if (node.nodeName == '#text') {
+       indexNode( node );
+    }
+    else {
+       for (var i = 0, len node.ChildNodes.length; i < len; ++i) {
+           traverse( node.childNodes[i] );
+       }
+    }
+}
+
+function indexNode( node ) {
+    var words = node.NodeValue.split( /\s/ );
+    for (var i = 0, len = words.length; i < len; ++i) {
+        if (keywords.hasItem( words[i]) ) {
+           keywords.setItem( words[i], keywords.getItem(words[i]) + 1 );
+        }
+        else {
+           keywords.setItem( words[i], 1 );
+        }
+    }
+}
+
+traverseNode( document.body );
+
+
+An alternative to traversing the DOM manually is to use textContent instead of innerHTML. The downside is you can't filter out script or other elements you might not want to search.
+Either way, I would split the text into words like @tvanfosson's answer, although you may need to split around something besides just whitespace depending on how you define a word.
+
+I'm not sure if it is the fastest but the following worked pretty quickly for me.
+var words = document.body.innerHTML.replace(/<.*?>/g,'').split(/\s+/);
+var i = words.length;
+var keywordCounts = {'keyword': 0, 'javascript': 0, 'today': 0};
+var keywords = [];
+var keywordMatcher = '';
+var word;
+for (word in keywordCounts) {
+    keywords[keywords.length] = word ;
+    keywordMatcher = keywordMatcher + '(' + word + ')?';
+}
+var regex = new RegExp(keywordMatcher);
+var j = keywords.length;
+var matched, keyword;
+if (i && j) {
+    do {
+        i = i - 1;
+        matched = words[i].match(regex);
+        if (!matched) continue;
+        j = keywords.length;
+        do {
+            j = j - 1;
+            if (matched[j + 1]) {
+                keyword = keywords[j];
+                keywordCounts[keyword] = keywordCounts[keyword] + 1;
+            }
+        } while (j);
+    } while (i);
+}
+
+I'll definitely grant that from a Big(O) perspective it isn't the best because as i and j get big it still requires n squared time but I've found regular expression processing to generally be pretty fast.
+Basically I'm taking tvanfosson's idea and expanding on it, but rather than traversing the DOM I'm removing the tags with a regex (the first line) and then splitting the page into individual words. The keyword 'hash' is defined on the third line with initial counts (they should all start at zero obviously). From there I a new regular expression is constructed using each keyword as a group so when matched it returns an array of results that has (in my example) [fullMatch,keywordMatch,javascriptMatch,todayMatch]. I'm using decrementing do while loops because they've been shown in lots of places to be the fastest looping structure in JavaScript and since it doesn't matter in what order the words get processed loop speed is really the only consideration.
+I hope this is helpful, if not it was at least a fun exercise. :)
+
+I could not find hasItem, setItem or getItem in prototypes Hash like tvanfosson suggested, but used set and get and wrote a hasItem based on get. But profiling showed that it is slower to use prototypes Hash compared to javascripts native object.
+If you have an array with keywords, convert it to an hash object with the keywords as the key and a value of 0: 
+function prepareCount(words) {
+    var result = {};
+    for (var i=0,len=words.length; i < len; i++) {
+    	result[words[i]] = 0;
+    }
+    return result;
+}
+
+Instead of splitting the string and go through it with a for statement, you could use a function as a parameter to replace. In the tests I did this was much faster. In the regexp I choosed to match everything but white space. You probably want to add other separators like parentheses, comma, dot and dash and so on, or if you know the text is ASCII only, you can use a-z instead. 
+function countKeywords(text,wordcount) {
+    text.replace(/[^\s]+/g,function(s) {
+    if (wordcount[s]!==undefined) { ++wordcount[s];}
+        return "";
+    });
+    return wordcount;
+}
+
+To use it:
+var wordcount = countKeywords(document.documentElement.textContent.toLowerCase(),prepareCount(["my","key","words"]));
+
+Update:
+Use this regexp to exclude all delimiters in ASCII but underscore (allows non ASCII characters):
+/[^\s\x00-\x2F\x3A-\x40\x5B-\x5E\x60\x7B-\x7F]+/g
+
+if you know that your text with keywords are ASCII only, you can instead use:
+/[a-z]+
+
+node.nodeType should work as well and maybe a little faster since it is integer. A value of 3 is for text nodes.

@@ -1,0 +1,190 @@
+Initializing a static std::map<int, int> in C++
+c++ stdmap
+What is the right way of initializing a static map? Do we need a static function that will initialize it? 
+
+
+Using C++11:
+#include <map>
+using namespace std;
+
+map<int, char> m = {{1, 'a'}, {3, 'b'}, {5, 'c'}, {7, 'd'}};
+
+Using Boost.Assign:
+#include <map>
+#include "boost/assign.hpp"
+using namespace std;
+using namespace boost::assign;
+
+map<int, char> m = map_list_of (1, 'a') (3, 'b') (5, 'c') (7, 'd');
+
+
+I would wrap the map inside a static object, and put the map initialisation code in the constructor of this object, this way you are sure the map is created before the initialisation code is executed.
+
+Best way is to use a function:
+#include <map>
+
+using namespace std;
+
+map<int,int> create_map()
+{
+  map<int,int> m;
+  m[1] = 2;
+  m[3] = 4;
+  m[5] = 6;
+  return m;
+}
+
+map<int,int> m = create_map();
+
+
+It's not a complicated issue to make something similar to boost. Here's a class with just three functions, including the constructor, to replicate what boost did (almost).
+template <typename T, typename U>
+class create_map
+{
+private:
+    std::map<T, U> m_map;
+public:
+    create_map(const T& key, const U& val)
+    {
+        m_map[key] = val;
+    }
+
+    create_map<T, U>& operator()(const T& key, const U& val)
+    {
+        m_map[key] = val;
+        return *this;
+    }
+
+    operator std::map<T, U>()
+    {
+        return m_map;
+    }
+};
+
+Usage:
+
+std::map mymap = create_map<int, int >(1,2)(3,4)(5,6);
+
+The above code works best for initialization of global variables or static members of a class which needs to be initialized and you have no idea when it gets used first but you want to assure that the values are available in it.
+If say, you've got to insert elements into an existing std::map... here's another class for you.
+template <typename MapType>
+class map_add_values {
+private:
+    MapType mMap;
+public:
+    typedef typename MapType::key_type KeyType;
+    typedef typename MapType::mapped_type MappedType;
+
+    map_add_values(const KeyType& key, const MappedType& val)
+    {
+        mMap[key] = val;
+    }
+
+    map_add_values& operator()(const KeyType& key, const MappedType& val) {
+        mMap[key] = val;
+        return *this;
+    }
+
+    void to (MapType& map) {
+        map.insert(mMap.begin(), mMap.end());
+    }
+};
+
+Usage:
+typedef std::map<int, int> Int2IntMap;
+Int2IntMap testMap;
+map_add_values<Int2IntMap>(1,2)(3,4)(5,6).to(testMap);
+
+See it in action with GCC 4.7.2 here: http://ideone.com/3uYJiH
+############### EVERYTHING BELOW THIS IS OBSOLETE #################
+EDIT: The map_add_values class below, which was the original solution I had suggested, would fail when it comes to GCC 4.5+. Please look at the code above for how to add values to existing map.
+
+template<typename T, typename U>
+class map_add_values
+{
+private:
+    std::map<T,U>& m_map;
+public:
+    map_add_values(std::map<T, U>& _map):m_map(_map){}
+    map_add_values& operator()(const T& _key, const U& _val)
+    {
+        m_map[key] = val;
+        return *this;
+    }
+};
+Usage:
+std::map<int, int> my_map;
+// Later somewhere along the code
+map_add_values<int,int>(my_map)(1,2)(3,4)(5,6);
+NOTE: Previously I used a operator [] for adding the actual values. This is not possible as commented by dalle.
+##################### END OF OBSOLETE SECTION #####################
+
+This is similar to PierreBdR, without copying the map.
+#include <map>
+
+using namespace std;
+
+bool create_map(map<int,int> &m)
+{
+  m[1] = 2;
+  m[3] = 4;
+  m[5] = 6;
+  return true;
+}
+
+static map<int,int> m;
+static bool _dummy = create_map (m);
+
+
+Here is another way that uses the 2-element data constructor. No functions are needed to initialize it. There is no 3rd party code (Boost), no static functions or objects, no tricks, just simple C++:
+#include <map>
+#include <string>
+
+typedef std::map<std::string, int> MyMap;
+
+const MyMap::value_type rawData[] = {
+   MyMap::value_type("hello", 42),
+   MyMap::value_type("world", 88),
+};
+const int numElems = sizeof rawData / sizeof rawData[0];
+MyMap myMap(rawData, rawData + numElems);
+
+Since I wrote this answer C++11 is out. You can now directly initialize STL containers using the new initializer list feature:
+const MyMap myMap = { {"hello", 42}, {"world", 88} };
+
+
+You have some very good answers here, but I'm to me, it looks like a case of "when all you know is a hammer"...
+The simplest answer of to why there is no standard way to initialise a static map, is there is no good reason to ever use a static map... 
+A map is a structure designed for fast lookup, of an unknown set of elements. If you know the elements before hand, simply use a C-array. Enter the values in a sorted manner, or run sort on them, if you can't do this. You can then get log(n) performance by using the stl::functions to loop-up entries, lower_bound/upper_bound. When I have tested this previously they normally perform at least 4 times faster than a map.
+The advantages are many fold...
+- faster performance (*4, I've measured on many CPU's types, it's always around 4)
+- simpler debugging. It's just easier to see what's going on with a linear layout.
+- Trivial implementations of copy operations, should that become necessary.
+- It allocates no memory at run time, so will never throw an exception.
+- It's a standard interface, and so is very easy to share across, DLL's, or languages, etc.
+I could go on, but if you want more, why not look at Stroustrup's many blogs on the subject.
+
+Just wanted to share a pure C++ 98 work around:
+#include <map>
+
+std::map<std::string, std::string> aka;
+
+struct akaInit
+{
+    akaInit()
+    {
+        aka[ "George" ] = "John";
+        aka[ "Joe" ] = "Al";
+        aka[ "Phil" ] = "Sue";
+        aka[ "Smitty" ] = "Yando";
+    }
+} AkaInit;
+
+
+You can try:
+    std::map <int, int> mymap = {
+std::pair <int, int> (1, 1),
+std::pair <int, int> (2, 2),
+std::pair <int, int> (2, 2)
+
+};

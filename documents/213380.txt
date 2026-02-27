@@ -1,0 +1,65 @@
+The necessity of hiding the salt for a hash
+security encryption hash brute-force
+At work we have two competing theories for salts.  The products I work on use something like a user name or phone number to salt the hash.  Essentially something that is different for each user but is readily available to us.  The other product randomly generates a salt for each user and changes each time the user changes the password.  The salt is then encrypted in the database.
+My question is if the second approach is really necessary?  I can understand from a purely theoretical perspective that it is more secure than the first approach, but what about from a practicality point of view.  Right now to authenticate a user, the salt must be unencrypted and applied to the login information.  
+After thinking about it, I just don't see a real security gain from this approach.  Changing the salt from account to account, still makes it extremely difficult for someone to attempt to brute force the hashing algorithm even if the attacker was aware of how to quickly determine what it was for each account.  This is going on the assumption that the  passwords are sufficiently strong.  (Obviously finding the correct hash for a set of passwords where they are all two digits is significantly easier than finding the correct hash of passwords which are 8 digits).  Am I incorrect in my logic, or is there something that I am missing?
+EDIT: Okay so here's the reason why I think it's really moot to encrypt the salt.  (lemme know if I'm on the right track).  
+For the following explanation, we'll assume that the passwords are always 8 characters and the salt is 5 and all passwords are comprised of lowercase letters (it just makes the math easier).
+Having a different salt for each entry means that I can't use the same rainbow table (actually technically I could if I had one of sufficient size, but let's ignore that for the moment).  This is the real key to the salt from what I understand, because to crack every account I have to reinvent the wheel so to speak for each one.  Now if I know how to apply the correct salt to a password to generate the hash, I'd do it because a salt really just extends the length/complexity of the hashed phrase.  So I would be cutting the number of possible combinations I would need to generate to "know" I have the password + salt from 13^26 to 8^26 because I know what the salt is.  Now that makes it easier, but still really hard.  
+So onto encrypting the salt.  If I know the salt is encrypted, I wouldn't try and decrypt (assuming I know it has a sufficient level of encryption) it first.  I would ignore it.  Instead of trying to figure out how to decrypt it, going back to the previous example I would just generate a larger rainbow table containing all keys for the 13^26.  Not knowing the salt would definitely slow me down, but I don't think it would add the monumental task of trying to crack the salt encryption first.  That's why I don't think it's worth it.  Thoughts?
+Here is a link describing how long passwords will hold up under a brute force attack:
+http://www.lockdown.co.uk/?pg=combi
+
+
+My understanding of "salt" is that it makes cracking more difficult, but it doesn't try to hide the extra data.  If you are trying to get more security by making the salt "secret", then you really just want more bits in your encryption keys.
+
+There are two techniques, with different goals:
+
+The "salt" is used to make two otherwise equal passwords encrypt differently. This way, an intruder can't efficiently use a dictionary attack against a whole list of encrypted passwords.
+The (shared) "secret" is added before hashing a message, so that an intruder can't create his own messages and have them accepted.
+
+
+The answer here is to ask yourself what you're really trying to protect from?  If someone has access to your database, then they have access to the encrypted salts, and they probably have access to your code as well.  With all that could they decrypt the encrypted salts?  If so then the encryption is pretty much useless anyway.  The salt really is there to make it so it isn't possible to form a rainbow table to crack your entire password database in one go if it gets broken into. From that point of view, so long as each salt is unique there is no difference, a brute force attack would be required with your salts or the encrypted salts for each password individually.
+
+The second approach is only slightly more secure.  Salts protect users from dictionary attacks and rainbow table attacks.  They make it harder for an ambitious attacker to compromise your entire system, but are still vulnerable to attacks that are focused on one user of your system.  If you use information that's publicly available, like a telephone number, and the attacker becomes aware of this, then you've saved them a step in their attack.  Of course the question is moot if the attacker gets your whole database, salts and all.
+EDIT: After re-reading over this answer and some of the comments, it occurs to me that some of the confusion may be due to the fact that I'm only comparing the two very specific cases presented in the question: random salt vs. non-random salt.  The question of using a telephone number as a salt is moot if the attacker gets your whole database, not the question of using a salt at all.
+
+Here is a simple example showing why it is bad to have the same salt for each hash
+Consider the following table
+UserId  UserName,   Password
+     1  Fred	   Hash1 =  Sha(Salt1+Password1)	
+     2  Ted	       Hash2 =  Sha(Salt2+Password2)
+
+Case 1    when salt 1 is the same as salt2 
+If Hash2 is replaced with Hash1 then user 2  could logon with user  1 password
+Case 2    when salt 1 not the same salt2 
+If Hash2 is replaced with Hash1 then user2  can not   logon with users 1 password.
+
+Really, it depends on from what type of attack you're trying to protect your data.
+The purpose of a unique salt for each password is to prevent a dictionary attack against the entire password database.
+Encrypting the unique salt for each password would make it more difficult to crack an individual password, yes, but you must weigh whether there's really much of a benefit. If the attacker, by brute force, finds that this string:
+Marianne2ae85fb5d
+
+hashes to a hash stored in the DB, is it really that hard to figure out what which part is the pass and which part is the salt?
+
+Hiding a salt is unnecessary.
+A different salt should be used for every hash. In practice, this is easy to achieve by getting 8 or more bytes from cryptographic quality random number generator.
+From a previous answer of mine:
+Salt helps to thwart pre-computed dictionary attacks.
+Suppose an attacker has a list of likely passwords. He can hash each and compare it to the hash of his victim's password, and see if it matches. If the list is large, this could take a long time. He doesn't want spend that much time on his next target, so he records the result in a "dictionary" where a hash points to its corresponding input. If the list of passwords is very, very long, he can use techniques like a Rainbow Table to save some space.
+However, suppose his next target salted their password. Even if the attacker knows what the salt is, his precomputed table is worthlessâthe salt changes the hash resulting from each password. He has to re-hash all of the passwords in his list, affixing the target's salt to the input. Every different salt requires a different dictionary, and if enough salts are used, the attacker won't have room to store dictionaries for them all. Trading space to save time is no longer an option; the attacker must fall back to hashing each password in his list for each target he wants to attack.
+So, it's not necessary to keep the salt secret. Ensuring that the attacker doesn't have a pre-computed dictionary corresponding to that particular salt is sufficient.
+
+After thinking about this a bit more, I've realized that fooling yourself into thinking the salt can be hidden is dangerous. It's much better to assume the salt cannot be hidden, and design the system to be safe in spite of that. I provide a more detailed explanation in another answer.
+
+
+... something like a user name or phone number to salt the hash. ...
+My question is if the second approach is really necessary? I can understand from a purely theoretical perspective that it is more secure than the first approach, but what about from a practicality point of view?
+
+From a practical point of view, a salt is an implementation detail. If you ever change how user info is collected or maintained – and both user names and phone numbers sometimes change, to use your exact examples – then you may have compromised your security. Do you want such an outward-facing change to have much deeper security concerns?
+Does stopping the requirement that each account have a phone number need to involve a complete security review to make sure you haven't opened up those accounts to a security compromise?
+
+A hidden salt is no longer salt. It's pepper. It has its use.  It's different from salt.
+Pepper is a secret key added to the password + salt which makes the hash into an HMAC (Hash Based Message Authentication Code).  A hacker with access to the hash output and the salt can theoretically brute force guess an input which will generate the hash (and therefore pass validation in the password textbox).  By adding pepper you increase the problem space in a cryptographically random way, rendering the problem intractable without serious hardware.
+For more information on pepper, check here.
+See also hmac.

@@ -1,0 +1,119 @@
+Typing generic values (C#)
+c# generics
+When I try this with a generic class where this.value is T:
+if (this.value.GetType() == typeof(int))
+{
+    ((int)this.value)++;
+}
+else
+{
+    throw new InvalidOperationException
+            ("T must be an int to perform this operation");
+}
+
+I get a compile-time error: "Cannot convert type 'T' to 'int'"
+What should I do to perform an integral operation on this.value when it's an int?
+Note that this is just an example. The code does type conversions with generics, and "int" is just an example of one type for T. 
+
+
+Unfortunately, it is very hard to convince the compiler about specific T implementations. One (nasty) approach is to cast to object in the middle (note this will box and unbox value-types):
+int i = (int)(object)this.value;
+i++;
+this.value = (T)(object)i;
+
+Ugly but it works. In .NET 3.5 I have some better wrappers for generic arithmetic, here. The Operator class is part of MiscUtil; at the simplest level, I suspect AddAlternative would work very well:
+this.value = Operator.AddAlternative(this.value, 1);
+
+This should infer the implicit <T,int> automatically, or you can add them yourself:
+this.value = Operator.AddAlternative<T,int>(this.value, 1);
+
+Benefit: This is preferable to the original code as it doesn't actually care about the original T - it will work for any type (even your own) that supports "T +(T,int)".
+I think there is also a ChangeType hiding around somewhere in there...
+[edit] Collin K and others make a valid remark about the architectural implications - but being pragmatic there are times when the T really does matter that much... but I'd agree with avoiding this type of specialization unless really necessary. That said (as per  my comment on Collin's post), the ability to perform things like basic arithmetic (increment, Int32 division, etc) on (for example) a Matrix<T> [for T in decimal/float/int/double/etc] is often highly valuable.
+
+Static typing of C# will not let you do so, but you can fool it with casting to object. I would not recommend doing this, it probably shows architectural problem, but anyway: 
+using System;
+
+class Foo<T>
+{
+  public T value;
+
+  public void Increment()
+  {
+   if (value is int) value = (T)(object)(((int)(object)value)+1);
+  }
+}
+
+static class Program
+{
+    static void Main()
+    {
+     Foo<int> x = new Foo<int>();
+     x.Increment();
+     x.Increment();
+      Console.WriteLine(x.value); 
+    }     
+}
+
+
+I don't think I understand what you are after.  If you are requiring that something be a specific type, then you probably shouldn't use Generics.  You could, it just seems silly.  This will do what you are asking, but I don't recommend it.
+namespace GenericsOne
+{
+    using System;
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        Sample<int> one = new Sample<int>();
+        one.AddFive(10);
+
+        // yes, this will fail, it is to show why the approach is generally not a good one.
+        Sample<DateTime> two = new Sample<DateTime>();
+        two.AddFive(new DateTime());
+    }
+}
+
+}
+
+namespace GenericsOne
+{
+    using System;
+public class Sample<T>
+{
+    public int AddFive(T number)
+    {
+        int junk = 0;
+
+        try
+        {
+            junk = Convert.ToInt32(number);
+        }
+        catch (Exception)
+        {
+            Console.WriteLine("Nope");
+        }
+
+        return junk + 5;
+    }
+}
+}
+
+
+In my opinion, type-specific code in a generic class is a code smell. I would refactor it to get something like this:
+public class MyClass<T>
+{
+ ...
+}
+
+public class IntClass : MyClass<int>
+{
+  public void IncrementMe()
+  {
+    this.value++;
+  }
+}
+
+
+This is why I really want numeric or operation constraints in C#4.
+@Marc Gravell's answer is the best way round this (+1), but it is frustating how this is an issue for generics.

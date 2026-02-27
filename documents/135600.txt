@@ -1,0 +1,35 @@
+Reproducing the blocked exe "unblock" option in file properties in windows 2003
+security windows-server-2003 nsis
+When I download my program from my website to my windows 2003 machine, it has a block on it and you have to right click on the exe, then properties, then select the button "Unblock".
+I would like to add detection in my installer for when the file is blocked and hence doesn't have enough permissions.  
+But I can't eaisly reproduce getting my exe in this state where it needs to be unblocked.
+How can I get the unblock to appear on my exe so I can test this functionality?
+
+
+This is done using NTFS File Streams. There is a stream named "Zone.Identifier" added to downloaded files. When IE7 downloads certain types of file that stream contains:
+[ZoneTransfer]
+ZoneId=3
+
+The simplest way to set it is to create a text file with those contents in it, and use more to add it to the alternate stream.
+Zone.Identifier.txt:
+[ZoneTransfer]
+ZoneId=3
+
+Command:
+more Zone.Identifier.txt > file.exe:Zone.Identifier
+
+Then, the way for you to check it would be to try to open the Zone.Identifier stream and look for ZoneId=3, or simply assume that if the stream exists at all that your user will receive that warning.
+It's also important to note that this has nothing to do with permissions. Administrators see the same warning; it's to do entirely with the source and type of file. The entire stream goes away when users uncheck the "Always ask before opening this file" box and then click Run.
+
+There is a supported API for this, documented on MSDN. Search on MSDN for "Persistent Zone Identifier Object". Basically you CoCreateInstance with CLSID_PersistentZoneIdentifier and request an IPersistFile interface. You then call IPersistFile::Load with the name of the file in question. Next, QI for an IZoneIdentifier interface and use IZoneIdentifier::GetId to obtain the zone of the file. If there was no "mark of the web", you should get URLZONE_LOCAL_MACHINE. The ZoneId of 3 mentioned in the other reply is URLZONE_INTERNET. (The enumeration is called URLZONE and is also documented on MSDN, or see sdk\inc\urlmon.h.) You can remove or change the "mark of the web" by calling IZoneIdentifier::Remove or IZoneIdentifier::SetId and then call IPersistFile::Save. There are more details about all of this on MSDN. Good luck!
+
+Thanks for this it helped me a lot.
+You can make the process even easier if you create a batch file with the contents.
+echo [ZoneTransfer] > Zone.Identifier
+echo ZoneId=3 >> Zone.Identifier
+more Zone.Identifier > %1:Zone.Identifier
+
+This will generate the Zone.Identifier for you and mark the file accordingly.
+To run it just supply the file name e.g. if the file is called mark.bat
+mark.bat myfile.txt
+

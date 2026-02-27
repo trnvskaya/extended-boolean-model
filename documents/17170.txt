@@ -1,0 +1,111 @@
+When to use IList and when to use List
+c# .net
+I know that IList is the interface and List is the concrete type but I still don't know when to use each one. What I'm doing now is if I don't need the Sort or FindAll methods I use the interface. Am I right? Is there a better way to decide when to use the interface or the concrete type?
+
+
+I don't think there are hard and fast rules for this type of thing, but I usually go by the guideline of using the lightest possible way until absolutely necessary.
+For example, let's say you have a Person class and a Group class. A Group instance has many people, so a List here would make sense. When I declare the list object in Group I will use an IList<Person> and instantiate it as a List.
+public class Group {
+  private IList<Person> people;
+
+  public Group() {
+    this.people = new List<Person>();
+  }
+}
+
+And, if you don't even need everything in IList you can always use IEnumerable too. With modern compilers and processors, I don't think there is really any speed difference, so this is more just a matter of style.
+
+In situations I usually come across, I rarely use IList directly.
+Usually I just use it as an argument to a method  
+void ProcessArrayData(IList almostAnyTypeOfArray)
+{
+    // Do some stuff with the IList array
+}
+
+This will allow me to do generic processing on almost any array in the .NET framework, unless it uses IEnumerable and not IList, which happens sometimes.
+It really comes down to the kind of functionality you need. I'd suggest using the List class in most cases. IList is best for when you need to make a custom array that could have some very specific rules that you'd like to encapsulate within a collection so you don't repeat yourself, but still want .NET to recognize it as a list.
+
+If you're working within a single method (or even in a single class or assembly in some cases) and no one outside is going to see what you're doing, use the fullness of a List. But if you're interacting with outside code, like when you're returning a list from a method, then you only want to declare the interface without necessarily tying yourself to a specific implementation, especially if you have no control over who compiles against your code afterward. If you started with a concrete type and you decided to change to another one, even if it uses the same interface, you're going to break someone else's code unless you started off with an interface or abstract base type. 
+
+You should use the interface only if you need it, e.g., if your list is casted to an IList implementation other than List. This is true when, for example, you use NHibernate, which casts ILists into an NHibernate bag object when retrieving data.
+If List is the only implementation that you will ever use for a certain collection, feel free to declare it as a concrete List implementation.
+
+It's always best to use the lowest base type possible. This gives the implementer of your interface, or consumer of your method, the opportunity to use whatever they like behind the scenes.
+For collections you should aim to use IEnumerable where possible. This gives the most flexibility but is not always suited.
+
+There are two rules I follow:
+
+Accept the most basic type that will work
+Return the richest type your user will need
+
+So when writing a function or method that takes a collection, write it not to take a List, but an IList<T>, an ICollection<T>, or IEnumerable<T>.  The generic interfaces will still work even for heterogenous lists because System.Object can be a T too.  Doing this will save you headache if you decide to use a Stack or some other data structure further down the road.  If all you need to do in the function is foreach through it, IEnumerable<T> is really all you should be asking for.
+On the other hand, when returning an object out of a function, you want to give the user the richest possible set of operations without them having to cast around.  So in that case, if it's a List<T> internally, return a copy as a List<T>.
+
+I would agree with Lee's advice for taking parameters, but not returning.
+If you specify your methods to return an interface that means you are free to change the exact implementation later on without the consuming method ever knowing. I thought I'd never need to change from a List<T> but had to later change to use a custom list library for the extra functionality it provided. Because I'd only returned an IList<T> none of the people that used the library had to change their code.
+Of course that only need apply to methods that are externally visible (i.e. public methods). I personally use interfaces even in internal code, but as you are able to change all the code yourself if you make breaking changes it's not strictly necessary.
+
+Microsoft guidelines as checked by FxCop discourage use of List<T> in public APIs - prefer IList<T>.
+Incidentally, I now almost always declare one-dimensional arrays as IList<T>, which means I can consistently use the IList<T>.Count property rather than Array.Length.  For example:
+public interface IMyApi
+{
+    IList<int> GetReadOnlyValues();
+}
+
+public class MyApiImplementation : IMyApi
+{
+    public IList<int> GetReadOnlyValues()
+    {
+        List<int> myList = new List<int>();
+        ... populate list
+        return myList.AsReadOnly();
+    }
+}
+public class MyMockApiImplementationForUnitTests : IMyApi
+{
+    public IList<int> GetReadOnlyValues()
+    {
+        IList<int> testValues = new int[] { 1, 2, 3 };
+        return testValues;
+    }
+}
+
+
+You are most often better of using the most general usable type, in this case the IList or even better the IEnumerable interface, so that you can switch the implementation conveniently at a later time.
+However, in .NET 2.0, there is an annoying thing - IList does not have a Sort() method. You can use a supplied adapter instead:
+ArrayList.Adapter(list).Sort()
+
+
+IEnumerable 
+you should try and use the least specific type that suits your purpose. IEnumerable is less specific than IList 
+You use IEnumerable when you want to loop through the items in a collection
+IList 
+IList implements IEnumerable
+You should use IList when you need access by index to your collection, add and delete elements, etc..
+List 
+List implements IList
+
+AList object allows you to create a list, add things to it, remove it, update it, index into it and etc. List is used whenever you just want a generic List where you specify object type in it and that's it.
+IList on the other hand is an Interface. Basically, if you want to create your own type of List, say a list class called BookList, then you can use the Interface to give you basic methods and structure to your new class. IList is for when you want to create your own, special sub-class that implements List.
+Another difference is:
+ IList is an Interface and cannot be instantiated. List is a class and can be instantiated. It means:
+IList<string> MyList = new IList<string>();
+
+List<string> MyList = new List<string>
+
+
+There's an important thing that people always seem to overlook:
+You can pass a plain array to something which accepts an IList<T> parameter, and then you can call IList.Add() and will receive a runtime exception:
+Unhandled Exception: System.NotSupportedException: Collection was of a fixed size.
+For example, consider the following code:
+private void test(IList<int> list)
+{
+    list.Add(1);
+}
+
+If you call that as follows, you will get a runtime exception:
+int[] array = new int[0];
+test(array);
+
+This happens because using plain arrays with IList<T> violates the Liskov substitution principle.
+For this reason, if you are calling IList<T>.Add() you may want to consider requiring a List<T> instead of an IList<T>.

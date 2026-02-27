@@ -1,0 +1,98 @@
+How do you spawn another process in C?
+c process
+How do you run an external program and pass it command line parameters using C? If you have to use operating system API, include a solution for Windows, Mac, and Linux.
+
+
+#include <stdlib.h>
+
+int main()
+{
+    system("echo HAI");
+
+    return 0;
+}
+
+
+One solution is the system function defined in stdlib.h 
+int system(const char *string);
+
+system api example
+
+On UNIX, I think you basically need to fork it if you want the spawned process to run detached from your the spawing one : For instance if you don't want your spawned process to be terminate when you quit your spawning process.
+Here is a page that explains all the subtle differences between Fork, System, Exec.
+If you work on Win,Mac and linux, I can recommend you the Qt Framework and its QProcess object, but I don't know if that's an option for you. The great advantages is that you will be able to compile the same code on windows linux and mac :
+ QString program = "./yourspawnedprogram";
+ QProcess * spawnedProcess = new QProcess(parent);
+ spawnedProcess->start(program);
+ // or spawnedProcess->startDetached(program);
+
+And for extra, you can even kill the child process from the mother process,
+and keep in communication with it through a stream.
+
+If you want to perform more complicated operations, like reading the output of the external program, you may be better served by the popen system call. For example, to programmatically access a directory listing (this is a somewhat silly example, but useful as an example), you could write something like this:
+#include <stdio.h>
+
+int main()
+{
+  int entry = 1;
+  char line[200];
+  FILE* output = popen("/usr/bin/ls -1 /usr/man", "r");
+  while ( fgets(line, 199, output) )
+  {
+    printf("%5d: %s", entry++, line);
+  }
+}
+
+to give output like this
+1: cat1
+2: cat1b
+3: cat1c
+4: cat1f
+5: cat1m
+6: cat1s
+...
+
+
+It really depends on what you're trying to do, exactly, as it's:
+
+OS dependent
+Not quite clear what you're trying to do.
+
+Nevertheless, I'll try to provide some information for you to decide.
+On UNIX, fork() creates a clone of your process from the place where you called fork. Meaning, if I have the following process:
+#include <unistd.h>
+#include <stdio.h>
+
+int main()
+{
+    printf( "hi 2 u\n" );
+    int mypid = fork();
+
+    if( 0 == mypid )
+        printf( "lol child\n" );
+    else
+        printf( "lol parent\n" );
+
+    return( 0 );
+}
+
+The output will look as follows:
+
+
+hi 2 u
+    lol child
+    lol parent  
+
+
+When you fork() the pid returned in the child is 0, and the pid returned in the parent is the child's pid. Notice that "hi2u" is only printed once... by the parent.
+execve() and its family of functions are almost always used with fork(). execve() and the like overwrite the current stackframe with the name of the application you pass to it. execve() is almost always used with fork() where you fork a child process and if you're the parent you do whatever you need to keep doing and if you're the child you exec a new process. execve() is also almost always used with waitpid() -- waitpid takes a pid of a child process and, quite literally, waits until the child terminates and returns the child's exit status to you.  
+Using this information, you should be able to write a very basic shell; one that takes process names on the command line and runs processes you tell it to. Of course, shells do more than that, like piping input and output, but you should be able to accomplish the basics using fork(), execve() and waitpid().
+NOTE: This is *nix specific! This will NOT work on Windows. 
+Hope this helped.
+
+If you need to check/read/parse the output of your external command, I would suggest to use popen() instead of system().
+
+Speaking of platform-dependent recipes, on Windows use CreateProcess, on Posix (Linux, Mac) use fork + execvp. But system() should cover your basic needs and is part of standard library.
+
+I want to give a big warning to not use system and 100% never use system when you write a library. It was designed 30 years ago when multithreading was unknown to the toy operating system called Unix. And it is still not useable even when almost all programs are multithreaded today. 
+Use popen or do a fork+execvp, all else is will give you hard to find problems with signal handling, crashs in environment handling code etc. It's pure evil and a shame that the selected and most rated answer is promoting the use of "system". It's more healthy to promote the use of Cocain on the workplace.

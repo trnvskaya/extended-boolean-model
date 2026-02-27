@@ -1,0 +1,174 @@
+What is the best way to copy a database?
+sql-server sql-server-2008
+I always create a new empty database, after that backup and restore of the existing database into it, but is this really the best way? As it seems very error prone and over complicated for me.
+
+
+It is possible to skip the step of creating the empty database. You can create the new database as part of the restore process.
+This is actually the easiest and best way I know of to clone a database. You can eliminate errors by scripting the backup and restore process rather than running it through the SQL Server Management Studio
+There are two other options you could explore:
+
+Detach the database, copy the .mdf file and re-attach.
+Use SQL Server Integration Services (SSIS) to copy all the objects over
+
+I suggest sticking with backup and restore and automating if necessary.
+Here's a dynamic sql script I've used in the past.  It can be further modified but it will give you the basics.  I prefer scripting it to avoid the mistakes you can make using the Management Studio:
+Declare @OldDB varchar(100)Declare @NewDB varchar(100)Declare @vchBackupPath varchar(255)Declare @query varchar(8000)/*Test code to implement Select @OldDB = 'Pubs'Select @NewDB = 'Pubs2'Select @vchBackupPath = '\\dbserver\C$\Program Files\Microsoft SQL Server\MSSQL.1\MSSQL\Backup\pubs.bak'*/SET NOCOUNT ON;Select @query = 'Create Database ' + @NewDBexec(@query)Select @query = 'Declare @vBAKPath varchar(256)declare @oldMDFName varchar(100)declare @oldLDFName varchar(100)declare @newMDFPath varchar(100)declare @newLDFPath varchar(100)declare @restQuery varchar(800)select @vBAKPath = ''' + @vchBackupPath + '''select @oldLDFName = name from ' + @OldDB +'.dbo.sysfiles where filename like ''%.ldf%''select @oldMDFName = name from  ' + @OldDB +'.dbo.sysfiles where filename like ''%.mdf%''select @newMDFPath = physical_name from ' + @NewDB +'.sys.database_files where type_desc = ''ROWS''select @newLDFPath = physical_name from ' + @NewDB +'.sys.database_files where type_desc = ''LOG''select @restQuery = ''RESTORE DATABASE ' + @NewDB + ' FROM DISK = N'' + '''''''' + @vBAKpath + '''''''' + '' WITH MOVE N'' + '''''''' + @oldMDFName + '''''''' +  '' TO N'' + '''''''' + @newMDFPath + '''''''' +  '', MOVE N'' + '''''''' + @oldLDFName + '''''''' +  '' TO N'' + '''''''' + @newLDFPath + '''''''' +  '', NOUNLOAD, REPLACE, STATS = 10''exec(@restQuery)--print @restQuery'exec(@query)
+The Publish to Provider functionality has worked great for me.  See Scott Gu's Blog Entry.
+If you need something really robust look  at redgate software's tools here...if you are doing much SQL at all, these are worth the $$.
+Backup and Restore is the most straight-forward way I know.  You have to be careful between servers as security credentials don't come with the restored database.
+::================ BackUpAllMyDatabases.cmd ============= START
+::BackUpAllMyDatabases.cmd
+:: COMMAND LINE BATCH SCRIPT FOR TAKING BACKUP OF ALL DATABASES 
+
+::RUN THE SQL SCRIPT VIA THE COMMAND LINE WITH LOGGING 
+sqlcmd -S localhost -e  -i "BackUpAllMyDatabases.sql" -o Result_Of_BackUpAllMyDatabases.log
+
+::VIEW THE RESULTS
+Result_Of_BackUpAllMyDatabases.log
+
+::pause
+::================ BackUpAllMyDatabases.cmd ============= END
+
+
+--=================================================BackUpAllMyDatabases.sql start
+DECLARE @DBName varchar(255)
+
+DECLARE @DATABASES_Fetch int
+
+DECLARE DATABASES_CURSOR CURSOR FOR
+    select
+        DATABASE_NAME   = db_name(s_mf.database_id)
+    from
+        sys.master_files s_mf
+    where
+       -- ONLINE
+        s_mf.state = 0 
+
+       -- Only look at databases to which we have access
+    and has_dbaccess(db_name(s_mf.database_id)) = 1 
+
+        -- Not master, tempdb or model
+    --and db_name(s_mf.database_id) not in ('Master','tempdb','model')
+    group by s_mf.database_id
+    order by 1
+
+OPEN DATABASES_CURSOR
+
+FETCH NEXT FROM DATABASES_CURSOR INTO @DBName
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    declare @DBFileName varchar(256)    
+    set @DBFileName = @DbName + '_' + replace(convert(varchar, getdate(), 112), '-', '.') + '.bak'
+--REMEMBER TO PUT HERE THE TRAILING \ FOR THE DIRECTORY !!!
+    exec ('BACKUP DATABASE [' + @DBName + '] TO  DISK = N''D:\DATA\BACKUPS\' + 
+        @DBFileName + ''' WITH NOFORMAT, INIT,  NAME = N''' + 
+        @DBName + '-Full Database Backup'', SKIP, NOREWIND, NOUNLOAD,  STATS = 100')
+
+    FETCH NEXT FROM DATABASES_CURSOR INTO @DBName
+END
+
+CLOSE DATABASES_CURSOR
+DEALLOCATE DATABASES_CURSOR
+
+--BackUpAllMyDatabases==========================end
+
+--======================RestoreDbFromFile.sql start
+-- Restore database from file
+-----------------------------------------------------------------
+use master
+go
+
+declare @backupFileName varchar(100), @restoreDirectory varchar(100),
+@databaseDataFilename varchar(100), @databaseLogFilename varchar(100),
+@databaseDataFile varchar(100), @databaseLogFile varchar(100),
+@databaseName varchar(100), @execSql nvarchar(1000)
+
+-- Set the name of the database to restore
+set @databaseName = 'ReplaceDataBaseNameHere'
+-- Set the path to the directory containing the database backup
+set @restoreDirectory = 'ReplaceRestoreDirectoryHere' -- such as 'c:\temp\'
+
+-- Create the backup file name based on the restore directory, the database name and today's date
+
+@backupFileName = @restoreDirectory + @databaseName + '-' + replace(convert(varchar, getdate(), 110), '-', '.') + '.bak'
+
+
+-- set @backupFileName = 'D:\DATA\BACKUPS\server.poc_test_fbu_20081016.bak'
+
+-- Get the data file and its path
+select @databaseDataFile = rtrim([Name]),
+@databaseDataFilename = rtrim([Filename])
+from master.dbo.sysaltfiles as files
+inner join
+master.dbo.sysfilegroups as groups
+on
+
+files.groupID = groups.groupID
+where DBID = (
+select dbid
+from master.dbo.sysdatabases
+where [Name] = @databaseName
+)
+
+-- Get the log file and its path
+select @databaseLogFile = rtrim([Name]),
+@databaseLogFilename = rtrim([Filename])
+from master.dbo.sysaltfiles as files
+where DBID = (
+select dbid
+from master.dbo.sysdatabases
+where [Name] = @databaseName
+)
+and
+groupID = 0
+
+print 'Killing active connections to the "' + @databaseName + '" database'
+
+-- Create the sql to kill the active database connections
+set @execSql = ''
+select @execSql = @execSql + 'kill ' + convert(char(10), spid) + ' '
+from master.dbo.sysprocesses
+where db_name(dbid) = @databaseName
+and
+DBID <> 0
+and
+spid <> @@spid
+exec (@execSql)
+
+print 'Restoring "' + @databaseName + '" database from "' + @backupFileName + '" with '
+print ' data file "' + @databaseDataFile + '" located at "' + @databaseDataFilename + '"'
+print ' log file "' + @databaseLogFile + '" located at "' + @databaseLogFilename + '"'
+
+set @execSql = '
+restore database [' + @databaseName + ']
+from disk = ''' + @backupFileName + '''
+with
+file = 1,
+move ''' + @databaseDataFile + ''' to ' + '''' + @databaseDataFilename + ''',
+move ''' + @databaseLogFile + ''' to ' + '''' + @databaseLogFilename + ''',
+norewind,
+nounload,
+replace'
+
+exec sp_executesql @execSql
+
+exec('use ' + @databaseName)
+go
+
+-- If needed, restore the database user associated with the database
+/*
+exec sp_revokedbaccess 'myDBUser'
+go
+
+exec sp_grantdbaccess 'myDBUser', 'myDBUser'
+go
+
+exec sp_addrolemember 'db_owner', 'myDBUser'
+go
+
+use master
+go
+*/
+--======================RestoreDbFromFile.sql
+

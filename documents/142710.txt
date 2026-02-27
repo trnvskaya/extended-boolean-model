@@ -1,0 +1,50 @@
+Can I implement a cooperative multi-tasking system in VxWorks?
+vxworks
+A legacy embedded system is implemented using a cooperative multi-tasking scheduler.  
+The system essentially works along the following lines:
+
+Task A does work
+When Task A is done, it yields the processor.
+Task B gets the processor and does work.
+Task B yields
+...  
+Task n yields
+Task A gets scheduled and does work
+
+One big Circular Queue: A -> B -> C -> ... -> n -> A
+We are porting the system to a new platform and want to minimize system redesign.
+Is there a way to implement that type of cooperative multi-tasking in vxWorks?
+
+
+While VxWorks is a priority based OS, it is possible to implement this type of cooperative multi-tasking.
+Simply put all the tasks at the same priority.
+In your code, where you do your yield, simply insert a 'taskDelay(0);'
+Note that you have to make sure the kernel time slicing is disabled (kernelTimeSlice(0)).
+All tasks at the same priority are in a Queue.  When a task yields, it gets put at the end of the queue.  This would implement the type of algorithm described.
+
+This isn't specific to VxWorks, but the system you have described is a variant of Round Robin Scheduling (I'm assuming you are using priority queues, otherwise it is just Round Robin Scheduling).
+The wiki article provides a bit of background and then you could go from there.
+Good Luck
+
+I once worked on a relatively large embedded product which did this. Time slicing was disabled and threads would explicitly taskDelay when they wanted to allow another thread to run.
+I have to conclude: disabling vxWorks slicing leads to madness. Avoid it, if it is within your power to do so.
+Because tasks were entirely non-preemptive (and interrupt handlers were only allowed to enqueue a message for a regular task to consume), the system had dispensed with any sort of locking for any of its data structures. Tasks were expected to only release the scheduler to another task if all data structures were consistent.
+Over time the original programmers moved on and were replaced by fresh developers to maintain and extend the product. As it grew more features the system as a whole became less responsive. When faced with a task which took too long the new developers would take the straightforward solution: insert taskDelay in the middle. Sometimes this was fine, and sometimes it wasn't...
+Disabling task slicing effectively makes every task in your system into a dependency on every other task. If you have more than three tasks, or you even think you might eventually have more than three tasks, you really need to construct the system to allow for it.
+
+What you describe is essentially:
+void scheduler()
+{
+    while (1)
+    {
+        int st = microseconds();
+        a();
+        b();
+        c();
+        sleep(microseconds() - st);
+    }
+}
+
+However if you don't already have a scheduler, now is a good time to implement one. In the simplest case, each entry point can be either multiply inherited from a Task class, or implement a Task interface (depending on the language).
+
+you can make all the tasks of same priority and use task delay(0) or you can use tasklock and taskunlock inside your low priority tasks where you need to make non-premptive working. 

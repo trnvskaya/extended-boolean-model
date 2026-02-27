@@ -1,0 +1,146 @@
+How do I find the type of the object instance of the caller of the current function?
+c# .net reflection logging
+Currently I have the function CreateLog() for creating a a log4net Log with name after the constructing instance's class. 
+Typically used as in:
+class MessageReceiver
+{
+     protected ILog Log = Util.CreateLog();
+     ...
+}
+
+If we remove lots of error handling the implementation boils down to:
+[EDIT: Please read the longer version of CreateLog further on in this post.]
+public ILog CreateLog()
+{
+        System.Diagnostics.StackFrame stackFrame = new System.Diagnostics.StackFrame(1);
+        System.Reflection.MethodBase method = stackFrame.GetMethod();
+        return CreateLogWithName(method.DeclaringType.FullName);
+}
+
+Problem is that if we inheirit MessageReceiver into sub classes the log will still take its name from MessageReceiver since this is the declaring class of the method (constructor) which calls CreateLog.
+class IMReceiver : MessageReceiver
+{ ... }
+
+class EmailReceiver : MessageReceiver
+{ ... }
+
+Instances of both these classes would get Logs with name "MessageReceiver" while I would like them to be given names "IMReceiver" and "EmailReceiver".
+I know this can easily be done (and is done) by passing a reference to the object in creation when calling CreateLog since the GetType() method on object does what I want.
+There are some minor reasons to prefer not adding the parameter and personally I feel disturbed by not finding a solution with no extra argument.
+Is there anyone who can show me how to implement a zero argument CreateLog() that gets the name from the subclass and not the declaring class?
+EDIT:
+The CreateLog function does more than mentioned above. The reason for having one log per instance is to be able to differ between different instances in the logfile. This is enforced by the CreateLog/CreateLogWithName pair.
+Expanding on the functionality of CreateLog() to motivate its existence.
+public ILog CreateLog()
+{
+        System.Diagnostics.StackFrame stackFrame = new System.Diagnostics.StackFrame(1);
+        System.Reflection.MethodBase method = stackFrame.GetMethod();
+        Type type = method.DeclaringType;
+
+        if (method.IsStatic)
+        {
+            return CreateLogWithName(type.FullName);
+        }
+        else
+        {
+            return CreateLogWithName(type.FullName + "-" + GetAndInstanceCountFor(type));
+        }
+}
+
+Also I prefer writing ILog Log = Util.CreateLog(); rather than copying in some long cryptic line from an other file whenever I write a new class. I am aware that the reflection used in Util.CreateLog is not guaranteed to work though - is System.Reflection.MethodBase.GetCurrentMethod() guaranteed to work?
+
+
+
+Is there anyone who can show me how to implement a zero argument CreateLog() that gets the name from the subclass and not the declaring class?
+
+I don't think you'll be able to do it by looking at the stack frame. 
+While your class is IMReceiver, the call to CreateLog method is in the MessageReceiver class. The stack frame must tell you where the method is being called from, or it wouldn't be any use, so it's always going to say MessageReceiver
+If you called CreateLog explicitly in your IMReceiver and other classes, then it works, as the stack frame shows the method being called in the derived class (because it actually is).
+Here's the best thing I can come up with:
+class BaseClass{
+  public Log log = Utils.CreateLog();
+}
+class DerivedClass : BaseClass {
+  public DerivedClass() {
+    log = Utils.CreateLog();
+  }
+}
+
+If we trace creation of logs, we get this:
+new BaseClass();
+# Log created for BaseClass
+
+new DerivedClass();
+# Log created for BaseClass
+# Log created for DerivedClass
+
+The second 'log created for derived class' overwrites the instance variable, so your code will behave correctly, you'll just be creating a BaseClass log which immediately gets thrown away. This seems hacky and bad to me, I'd just go with specifying the type parameter in the constructor or using a generic. 
+IMHO specifying the type is cleaner than poking around in the stack frame anyway
+If you can get it without looking at the stack frame, your options expand considerably
+
+Normally, MethodBase.ReflectedType would have your info. But, according to MSDN StackFrame.GetMethod:
+The method that is currently executing may be inherited from a base class, although it is called in a derived class. In this case, the ReflectedType property of the MethodBase object that is returned by GetMethod identifies the base class, not the derived class.
+
+which means you're probably out of luck. 
+
+Try the StackTrace.GetFrames method. It returns an array of all the StackFrame objects in the call stack. Your caller should be at index one.
+class Program
+{
+    static void Main(string[] args)
+    {
+        Logger logger = new Logger();
+        Caller caller = new Caller();
+        caller.FirstMethod(logger);
+        caller.SecondMethod(logger);
+    }
+}
+
+public class Caller
+{
+    public void FirstMethod(Logger logger)
+    {
+        Console.Out.WriteLine("first");
+        logger.Log();
+    }
+
+    public void SecondMethod(Logger logger)
+    {
+        Console.Out.WriteLine("second");
+        logger.Log();
+    }
+}
+
+public class Logger
+{
+    public void Log()
+    {
+        StackTrace trace = new StackTrace();
+        var frames = trace.GetFrames();
+        Console.Out.WriteLine(frames[1].GetMethod().Name);
+    }
+}
+
+this outputs
+first
+FirstMethod
+second
+SecondMethod
+
+I think you may be asking the wrong question. First of all the logger should be static to each class - each class should declare its own logger (to ensure that class names are properly reported AND to allow selective reporting of log messages filtered by project or namespace, from the config file.
+Secondly it appears that you have created this method solely to identify the name of the calling class? If so we use this boilerplate code that is pasted into each class:
+private static ILog log = 
+log4net.LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+
+Because it is private you ensure that your inheriting classes must declare their own logger and not use yours. Because it is static you ensure that the overhead of looking up the logger is only incurred once.
+My apologies if you had different reasons for coding the Util.CreateLog() method.
+
+Walk up the stack checking for base class - derived class relationship.
+        var type = new StackFrame(1).GetMethod().DeclaringType;
+        foreach (var frame in new StackTrace(2).GetFrames())
+            if (type != frame.GetMethod().DeclaringType.BaseType)
+                break;
+            else
+                type = frame.GetMethod().DeclaringType;
+        return CreateLogWithName(type.FullName);
+
+You may want to put in a check that the methods examined are constructors. But a scenario where the subclass is instantiating the superclass in a method other than it's constructor, may still want the current behaviour.

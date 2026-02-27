@@ -1,0 +1,78 @@
+List selectors for Objective-C object
+objective-c selector
+I have an object, and I want to list all the selectors to which it responds. It feels like this should be perfectly possible, but I'm having trouble finding the APIs.
+
+
+Something like this should work (just put it in the object you're curious about). For example if you have an object that's a delegate and want to know what 'hooks' are available this will print out messages to give you that clue:
+-(BOOL) respondsToSelector:(SEL)aSelector {
+    printf("Selector: %s\n", [NSStringFromSelector(aSelector) UTF8String]);
+    return [super respondsToSelector:aSelector];
+}
+
+Note that I discovered this in the iPhone Developer's Cookbook so I can't take credit! For example output I get from a UIViewController that implements the protocols <UITableViewDelegate, UITableViewDataSource>:
+Selector: tableView:numberOfRowsInSection:
+Selector: tableView:cellForRowAtIndexPath:
+Selector: numberOfSectionsInTableView:
+Selector: tableView:titleForHeaderInSection:
+Selector: tableView:titleForFooterInSection:
+Selector: tableView:commitEditingStyle:forRowAtIndexPath:
+Selector: sectionIndexTitlesForTableView:
+Selector: tableView:sectionForSectionIndexTitle:atIndex:
+...
+...
+etc.,etc.
+
+
+This is a solution based on the runtime C functions:
+class_copyMethodList returns a list of class methods given a Class object obtainable from an object.
+#import <objc/runtime.h>
+
+[..]
+SomeClass * t = [[SomeClass alloc] init];
+
+int i=0;
+unsigned int mc = 0;
+Method * mlist = class_copyMethodList(object_getClass(t), &mc);
+NSLog(@"%d methods", mc);
+for(i=0;i<mc;i++)
+    NSLog(@"Method no #%d: %s", i, sel_getName(method_getName(mlist[i])));
+
+/* note mlist needs to be freed */
+
+
+I think usually you'll want to do that in the console, instead of cluttering your code with debug code. This is how you can do that while debugging in lldb:
+(Assuming an object t)
+p int $num = 0;
+expr Method *$m = (Method *)class_copyMethodList((Class)object_getClass(t), &$num);
+expr for(int i=0;i<$num;i++) { (void)NSLog(@"%s",(char *)sel_getName((SEL)method_getName($m[i]))); }
+
+
+This is also possible with Swift:
+let obj = NSObject()
+
+var mc: UInt32 = 0
+let mcPointer = withUnsafeMutablePointer(&mc, { $0 })
+let mlist = class_copyMethodList(object_getClass(obj), mcPointer)
+
+print("\(mc) methods")
+
+for i in 0...Int(mc) {
+    print(String(format: "Method #%d: %s", arguments: [i, sel_getName(method_getName(mlist[i]))]))
+}
+
+Output:
+251 methods
+Method #0: hashValue
+Method #1: postNotificationWithDescription:
+Method #2: okToNotifyFromThisThread
+Method #3: fromNotifySafeThreadPerformSelector:withObject:
+Method #4: allowSafePerformSelector
+Method #5: disallowSafePerformSelector
+...
+Method #247: isProxy
+Method #248: isMemberOfClass:
+Method #249: superclass
+Method #250: isFault
+Method #251: <null selector>
+
+Tested with the 6s simulator running iOS 9.2, Xcode Version 7.2 (7C68).

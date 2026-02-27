@@ -1,0 +1,96 @@
+Why ^*$ matches "127.0.0.1"
+c# regex
+I don't understand, why does the following regular expression:
+^*$
+
+Match the string "127.0.0.1"? Using Regex.IsMatch("127.0.0.1", "^*$");
+Using Expresso, it does not match, which is also what I would expect. Using the expression ^.*$ does match the string, which I would also expect.
+Technically, ^*$ should match the beginning of a string/line any number of times, followed by the ending of the string/line. It seems * is implicitly treated as a .*
+What am I missing?
+EDIT:
+Run the following to see an example of the problem.
+using System;
+using System.Text.RegularExpressions;
+
+namespace RegexFubar
+{
+    class Program
+    {
+    	static void Main(string[] args)
+    	{
+    		Console.WriteLine(Regex.IsMatch("127.0.0.1", "^*$"));
+    		Console.Read();
+    	}
+    }
+}
+
+I do not wish to have ^*$ match my string, I am wondering why it does match it. I would think that the expression should result in an exception being thrown, or at least a non-match.
+EDIT2:
+To clear up any confusion. I did not write this regex with the intention of having it match "127.0.0.1". A user of our application entered the expression and wondered why it matched the string when it should not. After looking at it, I could not come up with an explanation for why it matched - especially not since Expresso and .NET seems to handle it differently.
+I guess the question is answered by it being due to the .NET implementation avoiding throwing an exception, even thought it's technically an incorrect expression. But is this really what we want?
+
+
+Using RegexDesigner, I can see it's matching on a 'null' token after '127.0.0.1'. Seems that because you haven't specified a token and the plus matches zero or more times, it matches on the 'null' token.
+The following regex should work:
+^+$
+
+
+Well, theoretically you are right, it should not match. But this depends on how the implementation works internally. Most regex impl. will take your regex and strip ^ from the front (taking note that it must match from start of the string) and strip $ from the end (noting that it must to the end of the string), what is left over is just "*" and "*" on its own is a valid regex. The implementation you are using is just wrong regarding how to handle it. You could try what happens if you replace "^*$" just with "*"; I guess it will also match everything. It seems like the implementation treats a single asterisk like a ".*".
+According to ISO/IEC 9945-2:1993 standard, which is also described in the POSIX standard, it is broken. It is broken because the standard says that after a ^ character, an asterisk has no special meaning at all. That means "^*$" should actually only match a single string and this string is "*"!
+To quote the standard:
+
+The asterisk is special except when used:
+
+in a bracket expression
+as the first character of an entire BRE (after an initial ^, if any)
+as the first character of a subexpression (after an initial ^, if any); see BREs Matching Multiple Characters . 
+
+
+So if it is the first character (and ^ doesn't count as first character if present) it has no special meaning. That means in this case an asterisk should only match one character and that is an asterisk.
+
+Update
+Microsoft says
+
+Microsoft .NET Framework regular
+  expressions incorporate the most
+  popular features of other regular
+  expression implementations such as
+  those in Perl and awk. Designed to be
+  compatible with Perl 5 regular
+  expressions, .NET Framework regular
+  expressions include features not yet
+  seen in other implementations, such as
+  right-to-left matching and on-the-fly
+  compilation.
+
+Source: http://msdn.microsoft.com/en-us/library/hs600312.aspx
+Okay, let's test this:
+# echo -n 127.0.0.1 | perl -n -e 'print (($_ =~ m/(^.*$)/)[0]),"\n";'
+-> 127.0.0.1
+# echo -n 127.0.0.1 | perl -n -e 'print (($_ =~ m/(^*$)/)[0]),"\n";'
+->
+
+Nope, it does not. Perl works correctly. ^.*$ matches the string, ^*$ doesn't => .NET's regex implementation is broken and it does not work like Perl 5 as MS claims.
+
+Asterisk (*) matches the preceding element ZERO OR MORE times. If you want one or more, use the + operator instead of the *.
+You are asking it to match an optional start of string marker and the end of string marker. I.e. if we omit the start of string marker, you're only looking for the end of string marker... which will match any string!
+I don't really understand what you are trying to do. If you could give us more information then maybe I could tell you what you should have done :)
+
+You are effectively saying "match a string that contains nothing or anything". So it's going to match. The ^ and $ bindings don't really make a difference in this case.
+
+Illegal regexp apart, what you want to write is most likely not that.
+You write: "^*$ should match the beginning of a string/line any number of times, followed by the ending of the string/line", which implies you want multiline regexps, but you forget that a line cannot start twice, without a line end inbetween.
+Also, what you're asking in your requirements actually fits "127.0.0.1" :) A "^" is not a line feed/carriage return but also the begin of a line, and "$" is not just a newline but the end of a line.
+Also, "*"s match as much as possible (except when ungreedy mode is set), which means that the regexp /^.**$/ regexp will match everything. If you want to manage newlines, you have to code these explicitly.
+Hope this clarifies something :)
+
+If you try
+Regex.Match("127.0.0.1", "^*1$")
+
+You'll see it also matches. The Match.Index property has a value of 8, meaning that it matched the last '1', not the first one. It makes sense, because "^*" will match zero or more beginning-of-lines and there is zero beginning-of-line before '1'.
+Think of the way "a*1$" would match because there is no 'a' before "1$". So "a*$" would match with the end of line, like your example does.
+By the way, the MSDN docs don't mention '*' ever matching simply '*' except when escaped as '\*'. And '*' by itself will throw an exception, not match '*'.
+
+The POSIX regex standard is really old and limited. The few tools that still follows it today, such as grep, sed and friends, are mostly on a unix/linux shell. Perl and PCRE are two, much extended flavors, in which almost nothing mentioned in the POSIX standard still holds true.
+http://www.regular-expressions.info/refflavors.html
+In PCRE and Perl, the engine treats ^ and $ as tokens that match the beginning and end of the string (or line if the multiline flag is set). * simply repeats the ^ marker zero or more times (in this case, exactly zero times). The engine thus only looks for the end of the source string, which matches any string.

@@ -1,0 +1,75 @@
+Collection<T> versus List<T> what should you use on your interfaces?
+c# .net collections code-analysis
+The code looks like below:
+namespace Test
+{
+    public interface IMyClass
+    {
+        List<IMyClass> GetList();
+    }
+
+    public class MyClass : IMyClass
+    {
+        public List<IMyClass> GetList()
+        {
+            return new List<IMyClass>();
+        }
+    }
+}
+
+When I Run Code Analysis i get the following recommendation.
+
+Warning    3   CA1002 : Microsoft.Design : Change 'List' in 'IMyClass.GetList()' to use Collection, ReadOnlyCollection or KeyedCollection
+
+How should I fix this and what is good practice here?
+
+
+I would personally declare it to return an interface rather than a concrete collection. If you really want list access, use IList<T>. Otherwise, consider ICollection<T> and IEnumerable<T>.
+
+Well the Collection class is really just a wrapper class around other collections to hide their implementation details and other features. I reckon this has something to do with the property hiding coding pattern in object-oriented languages.
+I think you shouldn't worry about it, but if you really want to please the code analysis tool, just do the following:
+//using System.Collections.ObjectModel;
+
+Collection<MyClass> myCollection = new Collection<MyClass>(myList);
+
+
+I don't think anyone has answered the "why" part yet... so here goes. The reason "why" you "should" use a Collection<T> instead of a List<T> is because if you expose a List<T>, then anyone who gets access to your object can modify the items in the list. Whereas Collection<T> is supposed to indicate that you are making your own "Add", "Remove", etc methods.
+You likely don't need to worry about it, because you're probably coding the interface for yourself only (or maybe a few collegues). Here's another example that might make sense.
+If you have a public array, ex:
+public int[] MyIntegers { get; }
+
+You would think that because there is only a "get" accessor that no-one can mess with the values, but that's not true. Anyone can change the values inside there just like this:
+someObject.MyIngegers[3] = 12345;
+
+Personally, I would just use List<T> in most cases. But if you are designing a class library that you are going to give out to random developers, and you need to rely on the state of the objects... then you'll want to make your own Collection and lock it down from there :)
+
+It's mostly about abstracting your own implementations away instead of exposing the List object to be manipulated directly.
+It's not good practice to let other objects (or people) modify the state of your objects directly. Think property getters/setters.
+Collection -> For normal collection
+ReadOnlyCollection -> For collections that shouldn't be modified
+KeyedCollection -> When you want dictionaries instead.
+How to fix it depends on what you want your class to do and the purpose of the GetList() method. Can you elaborate?
+
+In these kind of case I usually try to expose the least amount of implemententation that is needed. If the consumers do not need to know that you are actually using a list then you don't need to return a list. By returning as Microsoft suggests a Collection you hide the fact that you are using a list from the consumers of your class and isolate them against an internal change. 
+
+To answer the "why" part of the question as to why not List<T>, The reasons are future-proofing and API simplicity.
+Future-proofing
+List<T> is not designed to be easily extensible by subclassing it; it is designed to be fast for internal implementations. You'll notice the methods on it are not virtual and so cannot be overridden, and there are no hooks into its Add/Insert/Remove operations. 
+This means that if you need to alter the behaviour of the collection in the future (e.g. to reject null objects that people try to add, or to perform additional work when this happens such as updating your class state) then you need to change the type of collection you return to one you can subclass, which will be a breaking interface change (of course changing the semantics of things like not allowing null may also be an interface change, but things like updating your internal class state would not be).
+So by returning either a class that can be easily subclassed such as Collection<T> or an interface such as IList<T>, ICollection<T> or IEnumerable<T> you can change your internal implementation to be a different collection type to meet your needs, without breaking the code of consumers because it can still be returned as the type they are expecting.
+API Simplicity
+List<T> contains a lot of useful operations such as BinarySearch, Sort and so on. However if this is a collection you are exposing then it is likely that you control the semantics of the list, and not the consumers. So while your class internally may need these operations it is very unlikely that consumers of your class would want to (or even should) call them.
+As such, by offering a simpler collection class or interface, you reduce the number of members that users of your API see, and make it easier for them to use.
+
+I don't see any problem with returning something like 
+this.InternalData.Filter(crteria).ToList();
+
+If I returned a disconnected  copy of internal data, or detached result of a data query - I can safely return List<TItem> without exposing any of implementation details, and allow to use the returned data in the convenient way.
+But this depends on what type of consumer I expect - if this is a something like data grid I prefer to return IEnumerable<TItem> which will be the copied list of items anyway in most cases :)
+
+One purpose is to make the code/design more flexible and extensible!
+
+Something to add though it's been a long time since this was asked.
+When your list type derives from List<T> instead of Collection<T>, you cannot implement the protected virtual methods that Collection<T> implements.
+What this means is that you derived type cannot respond in case any modifications are made to the list. This is because List<T> assumes you are aware when you add or remove items. Being able to response to notifications is an overhead and hence List<T> doesn't offer it.
+In cases when external code has access to your collection, you may not be in control of when an item is being added or removed. Therefore Collection<T> provides a way to know when your list was modified.

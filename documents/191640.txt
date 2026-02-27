@@ -1,0 +1,137 @@
+Get null == null in SQL
+sql oracle  nullable
+I wish to search a database table on a nullable column.  Sometimes the value I'm search for is itself NULL.  Since Null is equal to nothing, even NULL, saying
+where MYCOLUMN=SEARCHVALUE
+
+will fail.  Right now I have to resort to
+where ((MYCOLUMN=SEARCHVALUE) OR (MYCOLUMN is NULL and SEARCHVALUE is NULL))
+
+Is there a simpler way of saying that?
+(I'm using Oracle if that matters)
+
+
+Try 
+WHERE NVL(mycolumn,'NULL') = NVL(searchvalue,'NULL')
+
+
+Use NVL to replace null with some dummy value on both sides, as in:
+WHERE NVL(MYCOLUMN,0) = NVL(SEARCHVALUE,0)
+
+
+I don't know if it's simpler, but I've occasionally used
+
+WHERE ISNULL(MyColumn, -1) = ISNULL(SearchValue, -1)
+
+Replacing "-1" with some value that is valid for the column type but also not likely to be actually found in the data.
+NOTE: I use MS SQL, not Oracle, so not sure if "ISNULL" is valid.
+
+You can do the IsNull or NVL stuff, but it's just going to make the engine do more work.  You'll be calling functions to do column conversions which then have to have the results compared.
+Use what you have
+where ((MYCOLUMN=SEARCHVALUE) OR (MYCOLUMN is NULL and SEARCHVALUE is NULL))
+
+
+I would think that what you have is OK. You could maybe use:
+where NVL(MYCOLUMN, '') = NVL(SEARCHVALUE, '')
+
+
+Another alternative, which is probably optimal from the executed query point of view, and will be useful only if you are doing some kind of query generation is to generate the exact query you need based on the search value.
+Pseudocode follows.
+if (SEARCHVALUE IS NULL) {
+    condition = 'MYCOLUMN IS NULL'
+} else {
+    condition = 'MYCOLUMN=SEARCHVALUE'
+}
+runQuery(query,condition)
+
+
+@Andy Lester asserts that the original form of the query is more efficient than using NVL. I decided to test that assertion:
+    SQL> DECLARE
+      2    CURSOR B IS
+      3       SELECT batch_id, equipment_id
+      4         FROM batch;
+      5    v_t1  NUMBER;
+      6    v_t2  NUMBER;
+      7    v_c1  NUMBER;
+      8    v_c2  NUMBER;
+      9    v_b   INTEGER;
+     10  BEGIN
+     11  -- Form 1 of the where clause
+     12    v_t1 := dbms_utility.get_time;
+     13    v_c1 := dbms_utility.get_cpu_time;
+     14    FOR R IN B LOOP
+     15       SELECT COUNT(*)
+     16         INTO v_b
+     17         FROM batch
+     18        WHERE equipment_id = R.equipment_id OR (equipment_id IS NULL AND R.equipment_id IS NULL);
+     19    END LOOP;
+     20    v_t2 := dbms_utility.get_time;
+     21    v_c2 := dbms_utility.get_cpu_time;
+     22    dbms_output.put_line('For clause: WHERE equipment_id = R.equipment_id OR (equipment_id IS NULL AND R.equipment_id IS NULL)');
+     23    dbms_output.put_line('CPU seconds used: '||(v_c2 - v_c1)/100);
+     24    dbms_output.put_line('Elapsed time: '||(v_t2 - v_t1)/100);
+     25  
+     26  -- Form 2 of the where clause
+     27    v_t1 := dbms_utility.get_time;
+     28    v_c1 := dbms_utility.get_cpu_time;
+     29    FOR R IN B LOOP
+     30       SELECT COUNT(*)
+     31         INTO v_b
+     32         FROM batch
+     33        WHERE NVL(equipment_id,'xxxx') = NVL(R.equipment_id,'xxxx');
+     34    END LOOP;
+     35    v_t2 := dbms_utility.get_time;
+     36    v_c2 := dbms_utility.get_cpu_time;
+     37    dbms_output.put_line('For clause: WHERE NVL(equipment_id,''xxxx'') = NVL(R.equipment_id,''xxxx'')');
+     38    dbms_output.put_line('CPU seconds used: '||(v_c2 - v_c1)/100);
+     39    dbms_output.put_line('Elapsed time: '||(v_t2 - v_t1)/100);
+     40  END;
+     41  /
+
+
+    For clause: WHERE equipment_id = R.equipment_id OR (equipment_id IS NULL AND R.equipment_id IS NULL)
+    CPU seconds used: 84.69
+    Elapsed time: 84.8
+    For clause: WHERE NVL(equipment_id,'xxxx') = NVL(R.equipment_id,'xxxx')
+    CPU seconds used: 124
+    Elapsed time: 124.01
+
+    PL/SQL procedure successfully completed
+
+    SQL> select count(*) from batch;
+
+  COUNT(*)
+----------
+     20903
+
+SQL>
+
+I was kind of surprised to find out just how correct Andy is. It costs nearly 50% more to do the NVL solution. So, even though one piece of code might not look as tidy or elegant as another, it could be significantly more efficient.  I ran this procedure multiple times, and the results were nearly the same each time. Kudos to Andy...
+
+If an out-of-band value is possible:
+where coalesce(mycolumn, 'out-of-band') 
+    = coalesce(searchvalue, 'out-of-band')
+
+
+This can also do the job in Oracle.
+WHERE MYCOLUMN || 'X'  = SEARCHVALUE || 'X'
+
+There are some situations where it beats the IS NULL test with the OR.
+I was also surprised that DECODE lets you check NULL against NULL.
+WITH 
+TEST AS
+(
+    SELECT NULL A FROM DUAL
+)
+SELECT DECODE (A, NULL, 'NULL IS EQUAL', 'NULL IS NOT EQUAL')
+FROM TEST
+
+
+In Expert Oracle Database Architecture I saw:
+WHERE DECODE(MYCOLUMN, SEARCHVALUE, 1) = 1
+
+
+This is a situation we find ourselves in a lot with our Oracle functions that drive reports.  We want to allow users to enter a value to restrict results or leave it blank to return all records.  This is what I have used and it has worked well for us.
+WHERE rte_pending.ltr_rte_id = prte_id
+  OR ((rte_pending.ltr_rte_id IS NULL OR rte_pending.ltr_rte_id IS NOT NULL)
+      AND prte_id IS NULL)
+

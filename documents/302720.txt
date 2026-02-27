@@ -1,0 +1,46 @@
+How to delete child object in NHibernate?
+nhibernate
+I have a parent object which has a one to many relationship with an IList of child objects. What is the best way to delete the child objects? I am not deleting the parent. My parent object contains an IList of child objects. Here is the mapping for the one to many relationship:
+<bag name="Tiers" cascade="all">
+  <key column="mismatch_id_no" />
+  <one-to-many class="TGR_BL.PromoTier,TGR_BL"/>
+</bag>
+
+If I try to remove all objects from the collection using clear(), then call SaveOrUpdate(), I get this exception:
+System.Data.SqlClient.SqlException: Cannot insert the value NULL into column
+
+If I try to delete the child objects individually then remove them from the parent, I get an exception: 
+deleted object would be re-saved by cascade
+
+This is my first time dealing with deleting child objects in NHibernate. What am I doing wrong?
+edit: Just to clarify  - I'm NOT trying to delete the parent object, just the child objects. I have the relationship set up as a one to many on the parent. Do I also need to create a many-to-one relationship on the child object mapping?
+
+
+set Not-Null = true in your mapping on the column causing the issue. I'm not sure of the exact syntax though (sorry).
+
+Change cascade attribute value from "all" to "all-delete-orphan". 
+
+Try using merge() instead of saveOrUpdate(). Also, make sure your cascade is set to all-delete-orphan and that your parent-child relationship is invertible (inverse=true on the parent and then a field in the child that is the parent-id with not-null=true).
+
+You are getting the first error because, when you remove the items from the collection, NHibernate's default mode of operation is to simply break the association.   In the database, NHibernate tries to set the foreign key column on the child row to null.  Since you do not allow nulls in that column, SQL Server raises the error.  Clearing the collection will not necessarily delete the child object, but one way to do so is to set cascade=all-delete-orphan.  This informs NHibernate that it should delete the newly orphaned rows instead of setting the foreign key column.
+You are getting the second error because when you call SaveOrUpdate NHibernate first deletes all of the child objects.  Then, because neither relationship is marked as inverse, NHibernate also tries to set the foreign key column in your child table to null.  Since the rows have already been deleted, you receive the second error.  You need to set inverse=true on one side of your relationship to fix this.  This is usually done on the one (primary key or parent) side.  If you do not do this, NHibernate will make the appropriate updates for each side of the relationship.  Unfortunately, running two updates is not the appropriate thing to do.
+You should always mark one side of your relationships as the inverse side.  Depending on how you code, you may or may not need to use cascading.  If you want to take advantage of one shot deletes as you are trying to do using Clear(), you need to define your cascade.
+
+In our example we have categories with many products where a product is not nullable.
+You can work around the problem by deleting the product and removing it from the parent's collection before the flush but we're still looking for a better solution to this.
+product = pRepo.GetByID(newProduct.ProductID);
+product.Category.Products.Remove(product);
+pRepo.Delete(product);
+
+Hope it helps anyway
+
+Acording to Chuck's answer, I've resolved my problem by adding Inverse = true in parent side mapping: 
+Message has many MessageSentTo:
+[HasMany(typeof(MessageSentTo), Cascade = ManyRelationCascadeEnum.AllDeleteOrphan, Inverse = true)]
+public IList<MessageSentTo> MessageSendTos
+{
+    get { return m_MessageSendTo; }
+    set { m_MessageSendTo = value; }
+}
+
+I am using Castle ActiveRecord. Thank you Chuck.

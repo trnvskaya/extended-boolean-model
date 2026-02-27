@@ -1,0 +1,95 @@
+Unit testing with Entity Framework
+linq unit-testing entity-framework
+I want to test my Entities that are built using Entity Framework.
+My concern is that using Entity Framework means directly working with data source.
+So any ideas how to unit testing Entity Framework based components?
+
+
+Apparently it's very hard. Eloquently put by Erik here - http://stackoverflow.com/questions/316897/tdd-and-adonet-entity-framework#answer-316972
+
+How about using a mocking framework?
+It seems to me that a mocking framework can help you isolaye your business logic from the database.
+
+I agree, a mocking framework is what you're after. You create "mocked" objects that aren't retrieved from your datasource, and you test the data in that object.  I personally have been working with Moq, and I like it--there is also Rhinomocks, plus others.
+
+You are going to want to use a Mocking Framework to retrieve mock values rather than hitting the real data.  Here are a list of a few mocking frameworks and links to some screencasts to help you get started:
+
+Rhino Mocks 
+Moq
+
+Here are some screencasts on how to get started:
+
+Introduction to Mocking with
+Moq
+Rhino Mocks videos
+
+
+Although the examples might be very simplistic I have attempted to discuss a possible solution to this very issue. It involves separation of concerns and our dear friend Dependency Injection.
+http://devblog.petrellyn.com/
+Contact me if you want more details.
+
+I would like to share another input to this. I was able to test Entity Framework based components and application using TypeMock Isolator as well. However it is commercial.
+Have a look at this post:
+Introducing Entity Framework Unit Testing with TypeMock Isolator
+
+Due to the fact that version 1 of the Entity Framework breaks a few major software design principles, there really isn't any way to apply TDD when using it in your application. My research points to NHibernate if you're looking for an immediate solution. It was designed with unit testing in mind.
+However, if you can wait, there appears to be hope for the next release of the Entity Framework:
+Test-Driven Development Walkthrough with the Entity Framework 4.0
+
+For Enity Framework 4, this looks promising: Testability and Entity Framework 4.0
+
+The BookLibrary sample application of the WPF Application Framework (WAF) project shows how an Entity Framework based application can be unit tested.
+
+A cheap approach is to set up a database file with the same structure as your real database and set the connection string in your unit test config to point to that.  The database doesn't need to have all of the tables that the real one has; just the ones the unit test needs. 
+A disadvantage is that you need to manage the state of the database so that unit tests don't impact each other or themselves during and between runs.  
+I know this approach works when both the real and unit testing DBs use SQL Express but I don't know about stubbing in a SqlExpress DB for a full SQL DB.
+I realize this is technically integration testing, but it could be cheaper than refactoring your code or learning a mocking framework.
+Example real connection string:
+<add name="DrinksEntities" 
+     connectionString="metadata=res://*/Model.csdl|res://*/Model.ssdl|res://*/Model.msl;provider=System.Data.SqlClient
+     ;provider connection string=&quot;Data Source=localhost\sqlexpress;Initial Catalog=Drinks2;Integrated Security=True;MultipleActiveResultSets=True;Application Name=EntityFramework&quot;" 
+     providerName="System.Data.EntityClient" />
+
+Example unit testing connection string:
+<add name="DrinksEntities" 
+     connectionString="metadata=res://*/Model.csdl|res://*/Model.ssdl|res://*/Model.msl;provider=System.Data.SqlClient
+     ;provider connection string=&quot;Data Source=.\SQLEXPRESS;attachdbfilename=|DataDirectory|\Inventory.mdf;Integrated Security=True;user instance=True;MultipleActiveResultSets=True;Application Name=EntityFramework&quot;" 
+     providerName="System.Data.EntityClient" />
+
+
+Here's an aggregation of the unit of work pattern+ in-memory database + t4 code generation to automatically generate a fake EF dbContext.
+http://mockingcompetence.wordpress.com/2013/05/20/fakingefdatacontext/
+there are some issues(invalid linq to EF queries and no FK enforcement) with exactly replicating a real EF db connection at this time.
+However, having an in-memory context to quickly run unit tests is almost essential to being able to do TDD or any other kind of unit testing centric approach.
+I will be posting updates to the above link as I figure out more of the issues.
+
+After lots of frustration with this I finally have a solution that I'm happy with for at least part of the problem.
+First use a repository interface something like:
+public interface IRepository
+{
+    IQueryable<T> GetObjectSet<T>();
+}
+
+which we can use to return either an in memory collection or a real DB backed collection.  Next encapsulate your queries into a query object with an interface that look something like this.
+public interface IQuery<T>
+{
+    IQueryable<T> DoQuery(IQueryable<T> collection);
+}
+
+Now divide your unit tests into 2 groups.  The first group will test that your queries are valid.  do this like so:
+[TestMethod]
+public void TestQueryFoo()
+{
+     using(var repo = new SqlRepository("bogus connection string"))
+     {
+         var query = new FooQuery(); // implements IQuery<Foo>
+         var result = query.DoQuery(repo.GetObjectSet<Foo>());  // as long as we don't enumerate the IQueryable EF won't notice that the connection string is bogus
+         var sqlString = ((System.Data.Objects.ObjectQuery)query).ToTraceString(); // This will throw if the query can't be compiled to SQL
+     }
+}
+
+The second set of unit tests can then freely test your business logic without worrying about the SQL compilation step which is, by far, where we run into the most trouble.
+Its not perfect by any stretch of the imagination, triggers are obviously not going to be run, DB implemented constraints can be violated, and some issues with the context and database getting out of sync can crop up.  So while end to end integration tests are still needed it is possible to catch what is IMO the most common issue to crop up at runtime in simple unit tests.
+
+You could use in-memory data base for testing your Entity Framework model.
+Look here for more details

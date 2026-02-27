@@ -1,0 +1,265 @@
+What is the easiest way to encrypt a password when I save it to the registry?
+c# encryption passwords
+Currently I'm writing it in clear text oops!, it's an in house program so it's not that bad but I'd like to do it right. How should I go about encrypting this when writing to the registry and how do I decrypt it?
+OurKey.SetValue("Password", textBoxPassword.Text);
+
+
+
+One option would be to store the hash (SHA1, MD5) of the password instead of the clear-text password, and whenever you want to see if the password is good, just compare it to that hash.
+If you need secure storage (for example for a password that you will use to connect to a service), then the problem is more complicated.
+If it is just for authentication, then it would be enough to use the hash.
+
+You don't decrypt authentication passwords!
+Hash them using something like the SHA256 provider and when you have to challenge, hash the input from the user and see if the two hashes match.
+byte[] data = System.Text.Encoding.ASCII.GetBytes(inputString);
+data = new System.Security.Cryptography.SHA256Managed().ComputeHash(data);
+String hash = System.Text.Encoding.ASCII.GetString(data);
+
+Regarding the down-votes: justify your decision, please... Leaving passwords reversible is a really horrible model.
+Edit2: I thought we were just talking about front-line authentication. Sure there are cases where you want to encrypt passwords for other things that need to be reversible but there should be a 1-way lock on top of it all (with a very few exceptions).
+I've upgraded the hashing algorithm but for the best possible strength you want to keep a private salt and add that to your input before hashing it. You would do this again when you compare. This adds another layer making it even harder for somebody to reverse.
+
+Rather than encrypt/decrypt, you should be passing the password through a hashing algorithm, md5/sha512, or similar. What you would ideally do is hash the password and store the hash, then when the password is needed, you hash the entry and compare the entries.  A password will then never be "decrypted", simply hashed and then compared.
+
+If you want to be able to decrypt the password, I think the easiest way would be to use DPAPI (user store mode) to encrypt/decrypt. This way you don't have to fiddle with encryption keys, store them somewhere or hard-code them in your code - in both cases somebody can discover them by looking into registry, user settings or using Reflector.
+Otherwise use hashes SHA1 or MD5 like others have said here.
+
+..NET provides cryptographics services in class contained in the
+System.Security.Cryptography namespace.
+
+If you need more than this, for example securing a connection string (for connection to a database), check this article, as it provides the best "option" for this.
+Oli's answer is also good, as it shows how you can create a hash for a string.
+
+Please also consider "salting" your hash (not a culinary concept!). Basically, that means appending some random text to the password before you hash it.
+"The salt value helps to slow an attacker perform a dictionary attack should your credential store be compromised, giving you additional time to detect and react to the compromise."
+To store password hashes:
+a) Generate a random salt value:
+byte[] salt = new byte[32];
+System.Security.Cryptography.RNGCryptoServiceProvider.Create().GetBytes(salt);
+
+b) Append the salt to the password.
+// Convert the plain string pwd into bytes
+byte[] plainTextBytes = System.Text UnicodeEncoding.Unicode.GetBytes(plainText);
+// Append salt to pwd before hashing
+byte[] combinedBytes = new byte[plainTextBytes.Length + salt.Length];
+System.Buffer.BlockCopy(plainTextBytes, 0, combinedBytes, 0, plainTextBytes.Length);
+System.Buffer.BlockCopy(salt, 0, combinedBytes, plainTextBytes.Length, salt.Length);
+
+c) Hash the combined password & salt:
+// Create hash for the pwd+salt
+System.Security.Cryptography.HashAlgorithm hashAlgo = new System.Security.Cryptography.SHA256Managed();
+byte[] hash = hashAlgo.ComputeHash(combinedBytes);
+
+d) Append the salt to the resultant hash.
+// Append the salt to the hash
+byte[] hashPlusSalt = new byte[hash.Length + salt.Length];
+System.Buffer.BlockCopy(hash, 0, hashPlusSalt, 0, hash.Length);
+System.Buffer.BlockCopy(salt, 0, hashPlusSalt, hash.Length, salt.Length);
+
+e) Store the result in your user store database.
+This approach means you don't need to store the salt separately and then recompute the hash using the salt value and the plaintext password value obtained from the user.
+Edit: As raw computing power becomes cheaper and faster, the value of hashing -- or salting hashes -- has declined. Jeff Atwood has an excellent 2012 update too lengthy to repeat in its entirety here which states:
+
+This (using salted hashes) will provide the illusion of security more than any actual security. Since you need both the salt and the choice of hash algorithm to generate the hash, and to check the hash, it's unlikely an attacker would have one but not the other. If you've been compromised to the point that an attacker has your password database, it's reasonable to assume they either have or can get your secret, hidden salt.
+The first rule of security is to always assume and plan for the worst.
+  Should you use a salt, ideally a random salt for each user? Sure, it's
+  definitely a good practice, and at the very least it lets you
+  disambiguate two users who have the same password. But these days,
+  salts alone can no longer save you from a person willing to spend a
+  few thousand dollars on video card hardware, and if you think they
+  can, you're in trouble.
+
+
+If it's a password used for authentication by your application, then hash the password as others suggest.
+If you're storing passwords for an external resource, you'll often want to be able to prompt the user for these credentials and give him the opportunity to save them securely.  Windows provides the Credentials UI (CredUI) for this purpose - there are a number of samples showing how to use this in .NET, including this one on MSDN.
+
+This is what you would like to do:
+OurKey.SetValue("Password", StringEncryptor.EncryptString(textBoxPassword.Text));
+OurKey.GetValue("Password", StringEncryptor.DecryptString(textBoxPassword.Text));
+
+You can do that with this the following classes.
+This class is a generic class is the client endpoint. It enables IOC of various encryption algorithms using Ninject.
+public class StringEncryptor
+{
+    private static IKernel _kernel;
+
+    static StringEncryptor()
+    {
+        _kernel = new StandardKernel(new EncryptionModule());
+    }
+
+    public static string EncryptString(string plainText)
+    {
+        return _kernel.Get<IStringEncryptor>().EncryptString(plainText);
+    }
+
+    public static string DecryptString(string encryptedText)
+    {
+        return _kernel.Get<IStringEncryptor>().DecryptString(encryptedText);
+    }
+}
+
+This next class is the ninject class that allows you to inject the various algorithms:
+public class EncryptionModule : StandardModule
+{
+    public override void Load()
+    {
+        Bind<IStringEncryptor>().To<TripleDESStringEncryptor>();
+    }
+}
+
+This is the interface that any algorithm needs to implement to encrypt/decrypt strings:
+public interface IStringEncryptor
+{
+    string EncryptString(string plainText);
+    string DecryptString(string encryptedText);
+}
+
+This is a implementation using the TripleDES algorithm:
+public class TripleDESStringEncryptor : IStringEncryptor
+{
+    private byte[] _key;
+    private byte[] _iv;
+    private TripleDESCryptoServiceProvider _provider;
+
+    public TripleDESStringEncryptor()
+    {
+        _key = System.Text.ASCIIEncoding.ASCII.GetBytes("GSYAHAGCBDUUADIADKOPAAAW");
+        _iv = System.Text.ASCIIEncoding.ASCII.GetBytes("USAZBGAW");
+        _provider = new TripleDESCryptoServiceProvider();
+    }
+
+    #region IStringEncryptor Members
+
+    public string EncryptString(string plainText)
+    {
+        return Transform(plainText, _provider.CreateEncryptor(_key, _iv));
+    }
+
+    public string DecryptString(string encryptedText)
+    {
+        return Transform(encryptedText, _provider.CreateDecryptor(_key, _iv));
+    }
+
+    #endregion
+
+    private string Transform(string text, ICryptoTransform transform)
+    {
+        if (text == null)
+        {
+            return null;
+        }
+        using (MemoryStream stream = new MemoryStream())
+        {
+            using (CryptoStream cryptoStream = new CryptoStream(stream, transform, CryptoStreamMode.Write))
+            {
+                byte[] input = Encoding.Default.GetBytes(text);
+                cryptoStream.Write(input, 0, input.Length);
+                cryptoStream.FlushFinalBlock();
+
+                return Encoding.Default.GetString(stream.ToArray());
+            }
+        }
+    }
+}
+
+You can watch my video and download the code for this at : http://www.wrightin.gs/2008/11/how-to-encryptdecrypt-sensitive-column-contents-in-nhibernateactive-record-video.html
+
+Like ligget78 said, DPAPI would be a good way to go for storing passwords. Check out the ProtectedData class on MSDN for example usage.
+
+I have looked all over for a good example of encryption and decryption process but most were overly complex. 
+Anyhow there are many reasons someone may want to decrypt some text values including passwords. The reason I need to decrypt the password on the site I am working on currently is because they want to make sure when someone is forced to change their password when it expires that we do not let them change it with a close variant of the same password they used in the last x months. 
+So I wrote up a process that will do this in a simplified manner. I hope this code is beneficial to someone. For all I know I may end up using this at another time for a different company/site.
+public string GenerateAPassKey(string passphrase)
+    {
+        // Pass Phrase can be any string
+        string passPhrase = passphrase;
+        // Salt Value can be any string(for simplicity use the same value as used for the pass phrase)
+        string saltValue = passphrase;
+        // Hash Algorithm can be "SHA1 or MD5"
+        string hashAlgorithm = "SHA1";
+        // Password Iterations can be any number
+        int passwordIterations = 2;
+        // Key Size can be 128,192 or 256
+        int keySize = 256;
+        // Convert Salt passphrase string to a Byte Array
+        byte[] saltValueBytes = Encoding.ASCII.GetBytes(saltValue);
+        // Using System.Security.Cryptography.PasswordDeriveBytes to create the Key
+        PasswordDeriveBytes pdb = new PasswordDeriveBytes(passPhrase, saltValueBytes, hashAlgorithm, passwordIterations);
+        //When creating a Key Byte array from the base64 string the Key must have 32 dimensions.
+        byte[] Key = pdb.GetBytes(keySize / 11);
+        String KeyString = Convert.ToBase64String(Key);
+
+        return KeyString;
+    }
+
+ //Save the keystring some place like your database and use it to decrypt and encrypt
+//any text string or text file etc. Make sure you dont lose it though.
+
+ private static string Encrypt(string plainStr, string KeyString)        
+    {            
+        RijndaelManaged aesEncryption = new RijndaelManaged();
+        aesEncryption.KeySize = 256;
+        aesEncryption.BlockSize = 128;
+        aesEncryption.Mode = CipherMode.ECB;
+        aesEncryption.Padding = PaddingMode.ISO10126;
+        byte[] KeyInBytes = Encoding.UTF8.GetBytes(KeyString);
+        aesEncryption.Key = KeyInBytes;
+        byte[] plainText = ASCIIEncoding.UTF8.GetBytes(plainStr);
+        ICryptoTransform crypto = aesEncryption.CreateEncryptor();
+        byte[] cipherText = crypto.TransformFinalBlock(plainText, 0, plainText.Length);
+        return Convert.ToBase64String(cipherText);
+    }
+
+ private static string Decrypt(string encryptedText, string KeyString) 
+    {
+        RijndaelManaged aesEncryption = new RijndaelManaged(); 
+        aesEncryption.KeySize = 256;
+        aesEncryption.BlockSize = 128; 
+        aesEncryption.Mode = CipherMode.ECB;
+        aesEncryption.Padding = PaddingMode.ISO10126;
+        byte[] KeyInBytes = Encoding.UTF8.GetBytes(KeyString);
+        aesEncryption.Key = KeyInBytes;
+        ICryptoTransform decrypto = aesEncryption.CreateDecryptor(); 
+        byte[] encryptedBytes = Convert.FromBase64CharArray(encryptedText.ToCharArray(), 0, encryptedText.Length); 
+        return ASCIIEncoding.UTF8.GetString(decrypto.TransformFinalBlock(encryptedBytes, 0, encryptedBytes.Length)); 
+    }
+
+ String KeyString = GenerateAPassKey("PassKey");
+ String EncryptedPassword = Encrypt("25Characterlengthpassword!", KeyString);
+ String DecryptedPassword = Decrypt(EncryptedPassword, KeyString);
+
+
+Tom Scott got it right in his coverage of how (not) to store passwords, on Computerphile.
+https://www.youtube.com/watch?v=8ZtInClXe1Q
+
+If you can at all avoid it, do not try to store passwords yourself. Use a separate, pre-established, trustworthy user authentication platform (e.g.: OAuth providers, you company's Active Directory domain, etc.) instead.
+If you must store passwords, don't follow any of the guidance here. At least, not without also consulting more recent and reputable publications applicable to your language of choice.
+
+There's certainly a lot of smart people here, and probably even some good guidance given. But the odds are strong that, by the time you read this, all of the answers here (including this one) will already be outdated.
+
+The right way to store passwords changes over time.
+Probably more frequently than some people change their underwear.
+
+All that said, here's some general guidance that will hopefully remain useful for awhile.
+
+Don't encrypt passwords. Any storage method that allows recovery of the stored data is inherently insecure for the purpose of holding passwords - all forms of encryption included.
+Process the passwords exactly as entered by the user during the creation process. Anything you do to the password before sending it to the cryptography module will probably just weaken it. Doing any of the following also just adds complexity to the password storage & verification process, which could cause other problems (perhaps even introduce vulnerabilities) down the road.
+
+Don't convert to all-uppercase/all-lowercase.
+Don't remove whitespace.
+Don't strip unacceptable characters or strings.
+Don't change the text encoding.
+Don't do any character or string substitutions.
+Don't truncate passwords of any length.
+
+Reject creation of any passwords that can't be stored without modification. Reinforcing the above. If there's some reason your password storage mechanism can't appropriately handle certain characters, whitespaces, strings, or password lengths, then return an error and let the user know about the system's limitations so they can retry with a password that fits within them. For a better user experience, make a list of those limitations accessible to the user up-front. Don't even worry about, let alone bother, hiding the list from attackers - they'll figure it out easily enough on their own anyway.
+Use a long, random, and unique salt for each account. No two accounts' passwords should ever look the same in storage, even if the passwords are actually identical.
+Use slow and cryptographically strong hashing algorithms that are designed for use with passwords. MD5 is certainly out. SHA-1/SHA-2 are no-go. But I'm not going to tell you what you should use here either. (See the first #2 bullet in this post.)
+Iterate as much as you can tolerate. While your system might have better things to do with its processor cycles than hash passwords all day, the people who will be cracking your passwords have systems that don't. Make it as hard on them as you can, without quite making it "too hard" on you.
+
+
+Most importantly...
+Don't just listen to anyone here.
+Go look up a reputable and very recent publication on the proper methods of password storage for your language of choice. Actually, you should find multiple recent publications from multiple separate sources that are in agreement before you settle on one method.
+It's extremely possible that everything that everyone here (myself included) has said has already been superseded by better technologies or rendered insecure by newly developed attack methods. Go find something that's more probably not.

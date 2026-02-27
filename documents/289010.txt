@@ -1,0 +1,160 @@
+C# List<> Sort by x then y
+c# .net sorting
+Similar to List<> OrderBy Alphabetical Order, we want to sort by one element, then another.  we want to achieve the functional equivalent of 
+SELECT * from Table ORDER BY x, y  
+
+We have a class that contains a number of sorting functions, and we have no issues sorting by one element.
+For example:  
+public class MyClass {
+    public int x;
+    public int y;
+}  
+
+List<MyClass> MyList;
+
+public void SortList() {
+    MyList.Sort( MySortingFunction );
+}
+
+And we have the following in the list:  
+Unsorted     Sorted(x)     Desired
+---------    ---------    ---------
+ID   x  y    ID   x  y    ID   x  y
+[0]  0  1    [2]  0  2    [0]  0  1
+[1]  1  1    [0]  0  1    [2]  0  2
+[2]  0  2    [1]  1  1    [1]  1  1
+[3]  1  2    [3]  1  2    [3]  1  2
+
+Stable sort would be preferable, but not required. Solution that works for .Net 2.0 is welcome.
+
+
+For versions of .Net where you can use LINQ OrderBy and ThenBy (or ThenByDescending if needed):
+using System.Linq;
+....
+List<SomeClass>() a;
+List<SomeClass> b = a.OrderBy(x => x.x).ThenBy(x => x.y).ToList();
+
+
+Note: for .Net 2.0 (or if you can't use LINQ) see Hans Passant answer to this question.
+
+You need to implement the IComparer interface.  Here's a good post with example code.
+
+Do keep in mind that you don't need a stable sort if you compare all members.  The 2.0 solution, as requested, can look like this:
+ public void SortList() {
+     MyList.Sort(delegate(MyClass a, MyClass b)
+     {
+         int xdiff = a.x.CompareTo(b.x);
+         if (xdiff != 0) return xdiff;
+         else return a.y.CompareTo(b.y);
+     });
+ }
+
+Do note that this 2.0 solution is still preferable over the popular 3.5 Linq solution, it performs an in-place sort and does not have the O(n) storage requirement of the Linq approach.  Unless you prefer the original List object to be untouched of course.
+
+The trick is to implement a stable sort. I've created a Widget class that can contain your test data:
+public class Widget : IComparable
+{
+    int x;
+    int y;
+    public int X
+    {
+        get { return x; }
+        set { x = value; }
+    }
+
+    public int Y
+    {
+        get { return y; }
+        set { y = value; }
+    }
+
+    public Widget(int argx, int argy)
+    {
+        x = argx;
+        y = argy;
+    }
+
+    public int CompareTo(object obj)
+    {
+        int result = 1;
+        if (obj != null && obj is Widget)
+        {
+            Widget w = obj as Widget;
+            result = this.X.CompareTo(w.X);
+        }
+        return result;
+    }
+
+    static public int Compare(Widget x, Widget y)
+    {
+        int result = 1;
+        if (x != null && y != null)                
+        {                
+            result = x.CompareTo(y);
+        }
+        return result;
+    }
+}
+
+I implemented IComparable, so it can be unstably sorted by List.Sort().
+However, I also implemented the static method Compare, which can be passed as a delegate to a search method.
+I borrowed this insertion sort method from C# 411:
+ public static void InsertionSort<T>(IList<T> list, Comparison<T> comparison)
+        {           
+            int count = list.Count;
+            for (int j = 1; j < count; j++)
+            {
+                T key = list[j];
+
+                int i = j - 1;
+                for (; i >= 0 && comparison(list[i], key) > 0; i--)
+                {
+                    list[i + 1] = list[i];
+                }
+                list[i + 1] = key;
+            }
+    }
+
+You would put this in the sort helpers class that you mentioned in your question.
+Now, to use it:
+    static void Main(string[] args)
+    {
+        List<Widget> widgets = new List<Widget>();
+
+        widgets.Add(new Widget(0, 1));
+        widgets.Add(new Widget(1, 1));
+        widgets.Add(new Widget(0, 2));
+        widgets.Add(new Widget(1, 2));
+
+        InsertionSort<Widget>(widgets, Widget.Compare);
+
+        foreach (Widget w in widgets)
+        {
+            Console.WriteLine(w.X + ":" + w.Y);
+        }
+    }
+
+And it outputs:
+0:1
+0:2
+1:1
+1:2
+Press any key to continue . . .
+
+This could probably be cleaned up with some anonymous delegates, but I'll leave that up to you.
+EDIT: And NoBugz demonstrates the power of anonymous methods...so, consider mine more oldschool :P
+
+I had an issue where OrderBy and ThenBy did not give me the desired result (or I just didn't know how to use them correctly). 
+I went with a list.Sort solution something like this.
+    var data = (from o in database.Orders Where o.ClientId.Equals(clientId) select new {
+    OrderId = o.id,
+    OrderDate = o.orderDate,
+    OrderBoolean = (SomeClass.SomeFunction(o.orderBoolean) ? 1 : 0)
+    });
+
+    data.Sort((o1, o2) => (o2.OrderBoolean.CompareTo(o1.OrderBoolean) != 0
+    o2.OrderBoolean.CompareTo(o1.OrderBoolean) : o1.OrderDate.Value.CompareTo(o2.OrderDate.Value)));
+
+
+This may help you,
+How to Sort C# Generic List

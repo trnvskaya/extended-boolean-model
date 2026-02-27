@@ -1,0 +1,96 @@
+Are non-pure virtual functions with parameters bad practice?
+c++ polymorphism
+I have a base class with an optional virtual function
+class Base {
+    virtual void OnlyImplementThisSometimes(int x) {}
+};
+
+When I compile this I get a warning about the unused param x.  Is there some other way I should have implemented the virtual function?  I have re-written it like this:
+class Base {
+    virtual void OnlyImplementThisSometimes(int x) 
+    {
+        x = 0;
+    }
+};
+
+I also have the problem that if I'm not careful, the subclass I make can implement the wrong function and then I don't notice because of overloading: e.g.
+class Derived : public Base {
+    void OnlyImplementThisSometimes(int x, int y) { // some code }
+};
+
+Derived d;
+Base *b = dynamic_cast<Base *>(&d);
+b->OnlyImplementThisSometimes(x); // calls the method in the base class
+
+The base class method was called because I implemented the derived function with an "int y" param but there is no warning about this.  Are these just common pitfalls in C++ or have I misunderstood virtual functions?
+
+
+Why define it in the base class?  If the base class isn't going to use the method, then just define it as a virtual method in your derived class.
+Or the default implementation could throw an exception
+
+If you provide a default implementation of a virtual function, it should be a correct implementation for all derived classes that don't override that function.  If you can't provide a correct implementation, then my advice would be to make a pure virtual function and leave it up to the derived class to provide an implementation.  Derived classes that do not allow the method to be called can throw an exception to ensure that it is not used by mistake.
+
+Ignoring the design issues you can get around the compiler warning about an unused variable by omitting the variable name, for example:
+virtual void OnlyImplementThisSometimes(int ) { }
+
+Mistakenly implementing the wrong method signature when trying to override the virtual function is just something you need to be careful about in C++. Languages like C# get around this with the 'override' keyword.
+
+This is somewhat common in my code.   For example, I have classes that are designed for single-threaded operation and multi-threaded.  There are a lot of common routines and data.  I put all of that in the base class (which has a couple of pure virtual as well).
+I implement two empty virtual functions in the base class:  Init() and Cleanup(). The single threaded derived class does not impliment them, but the mulit-threaded one does.
+I have a factory function create the approprite derived class then return a pointer.  The client code only knows about the base class type and it calls Init() and Cleanup().  Both scenarios do the right thing.
+Of course, there may be other good suggestions on how to do this, but this idiom works well for a lot of my code.
+
+In addition to simply omitting the variable name, in many compilers you can tell the compiler, that you are aware that it is unused and SHUTUP by doing this
+int func(int x)
+{
+   (void) x;
+}
+
+
+It's not a bad practice and it's a common idiom for specifying parts of a class that are optional to implement.
+Currently I'm using it for a user input system, because it would be tedious for a user of that class to implement every single method even it he most likely won't use it anyway.
+class mouse_listener{
+public:
+	virtual ~mouse_listener() {}
+
+	virtual void button_down(mouse_button a_Button) {}
+	virtual void button_up(mouse_button a_Button) {}
+	virtual void scroll_wheel(mouse_scroll a_Scroll) {}
+	virtual void mouse_move_abs(math::point a_Position) {}
+	virtual void mouse_move_rel(math::point a_Position) {}
+};
+
+
+Btw, if you know your base class, there's never any need to do dynamic up-casts, i.e. from derived to base.
+Base *b = &d;
+
+Will do just as well, dynamic_cast<> should instead be used when you down-cast, i.e. from base to derived:
+if((Derived *d = dynamic_cast<Derived *>(b)) != 0)
+{
+  // use d
+}
+
+(And of course in the case of down-cast, static_cast<> will usually work as well.)
+
+We define a macro _unused as:
+#define _unused(x) ((void)x)
+
+Then define the function as:
+virtual void OnlyImplementThisSometimes(int x) { _unused( x );}
+
+This not only keeps the compiler from complaining, but makes it obvious to anyone maintaining the code that you haven't forgotten about x -- you are intentionally ignoring it.
+
+The simplest answer to this is shown below:
+class Base {
+    virtual void OnlyImplementThisSometimes(int x) { x;}
+};
+
+A simple reference to the variable which does absolutely nothing will remove all warnings (from VC++ at highest level anyway).
+
+Try this:
+class Base {
+    virtual void OnlyImplementThisSometimes(int x) = 0;
+};
+
+It's been a while since I've done stuff like that but I believe that is how you declare a virtual function.
+Also as others have said, variable names are optional in function declarations like this.

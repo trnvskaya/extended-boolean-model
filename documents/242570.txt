@@ -1,0 +1,285 @@
+Copying content from a hidden or clipped window in XP?
+c windows user-interface
+I need to copy the content of a window (BitBlt) which is hidden, to another window. The problem is that once I hide the source window, the device context I got isn't painted anymore.
+
+
+Maybe you can trigger a redraw operation on the window with InvalidateRect?
+
+Copy the source bitmap to a memory bitmap before closing/hiding the window.
+
+You could try sending a WM_PRINT message to the window. For many windows (including all standard windows and common controls) this will cause it to paint into the supplied DC.
+Also, if you pass an HDC as the wparam of a WM_PAINT message, many windows (such as the common controls) will paint into that DC rather than onto the screen.
+
+Unfortunately, I think you're going to have real problems getting this to work reliably. You don't say exactly what you're doing, but I assume that, given the window handle, you're grabbing the device context associated with the window by calling GetWindowDC(), and then using the resulting device context.
+This will work okay on XP when the window is visible. However, on Vista, if desktop compositing is enabled, it won't even work properly then: you'll get 0 back from GetWindowDC(). Fundamentally, grabbing window device contexts isn't going to work reliably.
+If the window you're trying to copy from is part of your own application, I'd suggest modifying your code to support the WM___PRINT message: this acts like WM_PAINT, but allows you to supply a device context to draw into. 
+If the window isn't from your application, you're basically out of luck: if the window is hidden, the image of what it would show if it were visible doesn't exist anywhere.
+
+What you need is the PrintWindow function that's available in Win32 API since Windows XP. If you need it to work with older versions of Windows, you can try WM_PRINT, although I've never been able to make it work.
+There's a nice article here that shows how to use PrintWindow, and here's the relevant code snippet from that article:
+// Takes a snapshot of the window hwnd, stored in the memory device context hdcMem
+HDC hdc = GetWindowDC(hwnd);
+if (hdc)
+{
+    HDC hdcMem = CreateCompatibleDC(hdc);
+    if (hdcMem)
+    {
+        RECT rc;
+        GetWindowRect(hwnd, &rc);
+
+        HBITMAP hbitmap = CreateCompatibleBitmap(hdc, RECTWIDTH(rc), RECTHEIGHT(rc));
+        if (hbitmap)
+        {
+            SelectObject(hdcMem, hbitmap);
+
+            PrintWindow(hwnd, hdcMem, 0);
+
+            DeleteObject(hbitmap);
+        }
+        DeleteObject(hdcMem);
+    }
+    ReleaseDC(hwnd, hdc);
+}
+
+I should have some Python code that uses wxPython to achieve the same thing. Drop me a note if you want it.
+
+The PrintWindow function doesn't seem to work on a hidden window, only on visible ones.
+
+Approaching things from a different perspective, are you sure that's really what you want to be doing?  You don't, for example, want to be using CreateCompatibleDC and CreateCompatibleBitmap to create your invisible drawing surface, drawing on that and then using BitBlt?
+Some more information about the background to what you're up to might enable someone to come up with either a solution or some lateral thinking...
+
+http://msdn.microsoft.com/en-us/library/dd144909.aspx (getPixel) might help...
+
+I just tested this in Windows 7, should work fine from XP up.
+It brings the window to the foreground without giving it focus, before capturing it.  It's not perfection, but it's the best you're going to do if you can't get PrintWindow() to work.
+It's a static method, so you just can simply call it like so:
+Orwellophile.TakeScreenShotOfWindow("window.jpg", Form.Handle);
+
+No mess, no fuss.  It's from a larger class, so hopefully nothing is missing.  The originals are:
+http://sfinktah.trac.cvsdude.com/vhddirector/browser/main/VHD%20Director/UnhandledExceptionManager.cs
+and http://sfinktah.trac.cvsdude.com/vhddirector/browser/main/CSharp.cc/Win32Messaging.cs although they're nowhere as neat as the example I've pasted below.
+using System;
+using System.Drawing;
+using System.Threading;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+public class Orwellophile {
+    public static void TakeScreenshotOfWindow(String strFilename, IntPtr hTargetWindow)
+    {
+        Rectangle objRectangle;
+        RECT r;
+        IntPtr hForegroundWindow = GetForegroundWindow();
+
+        GetWindowRect(hTargetWindow, out r);
+        objRectangle = r.ToRectangle();
+
+        if (hTargetWindow != hForegroundWindow)
+        {
+            ShowWindow(hTargetWindow, SW_SHOWNOACTIVATE);
+            SetWindowPos(hTargetWindow.ToInt32(), HWND_TOPMOST, r.X, r.Y, r.Width, r.Height, SWP_NOACTIVATE);
+            Thread.Sleep(500);
+        }
+
+        TakeScreenshotPrivate(strFilename, objRectangle);
+    }
+
+    private static void TakeScreenshotPrivate(string strFilename, Rectangle objRectangle)
+    {
+        Bitmap objBitmap = new Bitmap(objRectangle.Width, objRectangle.Height);
+        Graphics objGraphics = default(Graphics);
+        IntPtr hdcDest = default(IntPtr);
+        int hdcSrc = 0;
+
+        objGraphics = Graphics.FromImage(objBitmap);
+
+
+        hdcSrc = GetDC(0);                  // Get a device context to the windows desktop and our destination  bitmaps
+        hdcDest = objGraphics.GetHdc();     // Copy what is on the desktop to the bitmap
+        BitBlt(hdcDest.ToInt32(), 0, 0, objRectangle.Width, objRectangle.Height, hdcSrc, objRectangle.X, objRectangle.Y, SRCCOPY);
+        objGraphics.ReleaseHdc(hdcDest);    // Release DC
+        ReleaseDC(0, hdcSrc);
+
+        objBitmap.Save(strFilename);
+    }
+
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+    [DllImport("user32.dll")]
+    static extern IntPtr GetWindowDC(IntPtr hWnd);
+    [DllImport("gdi32.dll")]
+    static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
+    [DllImport("gdi32.dll", ExactSpelling = true, PreserveSig = true, SetLastError = true)]
+    static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
+    [DllImport("User32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool PrintWindow(IntPtr hwnd, IntPtr hDC, uint nFlags); // To capture only the client area of window, use PW_CLIENTONLY = 0x1 as nFlags
+    [DllImport("gdi32.dll")]
+    static extern bool DeleteObject(IntPtr hObject);
+    [DllImport("user32.dll")]
+    static extern bool ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowPos")]
+    static extern bool SetWindowPos(
+         int hWnd,           // window handle
+         int hWndInsertAfter,    // placement-order handle
+         int X,          // horizontal position
+         int Y,          // vertical position
+         int cx,         // width
+         int cy,         // height
+         uint uFlags);       // window positioning flags
+    [DllImport("user32.dll")]
+    static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowRect(IntPtr hwnd, out RECT lpRect);
+    [DllImport("user32.dll", CharSet = CharSet.Auto, ExactSpelling = true)]
+    static public extern IntPtr GetForegroundWindow();
+    private const int SW_SHOWNOACTIVATE = 4;
+    private const int HWND_TOPMOST = -1;
+    private const uint SWP_NOACTIVATE = 0x0010;
+    private const int SRCCOPY = 0xcc0020;
+}
+
+Note that you can implement your own light-weight RECT class/struct, but this is the one I use.  I've attached it separately due to it's size
+[StructLayout(LayoutKind.Sequential)]
+public struct RECT
+{
+    private int _Left;
+    private int _Top;
+    private int _Right;
+    private int _Bottom;
+
+    public RECT(System.Drawing.Rectangle Rectangle)
+        : this(Rectangle.Left, Rectangle.Top, Rectangle.Right, Rectangle.Bottom)
+    {
+    }
+    public RECT(int Left, int Top, int Right, int Bottom)
+    {
+        _Left = Left;
+        _Top = Top;
+        _Right = Right;
+        _Bottom = Bottom;
+    }
+
+    public int X
+    {
+        get { return _Left; }
+        set { _Left = value; }
+    }
+    public int Y
+    {
+        get { return _Top; }
+        set { _Top = value; }
+    }
+    public int Left
+    {
+        get { return _Left; }
+        set { _Left = value; }
+    }
+    public int Top
+    {
+        get { return _Top; }
+        set { _Top = value; }
+    }
+    public int Right
+    {
+        get { return _Right; }
+        set { _Right = value; }
+    }
+    public int Bottom
+    {
+        get { return _Bottom; }
+        set { _Bottom = value; }
+    }
+    public int Height
+    {
+        get { return _Bottom - _Top; }
+        set { _Bottom = value - _Top; }
+    }
+    public int Width
+    {
+        get { return _Right - _Left; }
+        set { _Right = value + _Left; }
+    }
+    public Point Location
+    {
+        get { return new Point(Left, Top); }
+        set
+        {
+            _Left = value.X;
+            _Top = value.Y;
+        }
+    }
+    public Size Size
+    {
+        get { return new Size(Width, Height); }
+        set
+        {
+            _Right = value.Height + _Left;
+            _Bottom = value.Height + _Top;
+        }
+    }
+
+    public Rectangle ToRectangle()
+    {
+        return new Rectangle(this.Left, this.Top, this.Width, this.Height);
+    }
+    static public Rectangle ToRectangle(RECT Rectangle)
+    {
+        return Rectangle.ToRectangle();
+    }
+    static public RECT FromRectangle(Rectangle Rectangle)
+    {
+        return new RECT(Rectangle.Left, Rectangle.Top, Rectangle.Right, Rectangle.Bottom);
+    }
+
+    static public implicit operator Rectangle(RECT Rectangle)
+    {
+        return Rectangle.ToRectangle();
+    }
+    static public implicit operator RECT(Rectangle Rectangle)
+    {
+        return new RECT(Rectangle);
+    }
+    static public bool operator ==(RECT Rectangle1, RECT Rectangle2)
+    {
+        return Rectangle1.Equals(Rectangle2);
+    }
+    static public bool operator !=(RECT Rectangle1, RECT Rectangle2)
+    {
+        return !Rectangle1.Equals(Rectangle2);
+    }
+
+    public override string ToString()
+    {
+        return "{Left: " + _Left + "; " + "Top: " + _Top + "; Right: " + _Right + "; Bottom: " + _Bottom + "}";
+    }
+
+    public bool Equals(RECT Rectangle)
+    {
+        return Rectangle.Left == _Left && Rectangle.Top == _Top && Rectangle.Right == _Right && Rectangle.Bottom == _Bottom;
+    }
+    public override bool Equals(object Object)
+    {
+        if (Object is RECT)
+        {
+            return Equals((RECT)Object);
+        }
+        else if (Object is Rectangle)
+        {
+            return Equals(new RECT((Rectangle)Object));
+        }
+
+        return false;
+    }
+
+    public override int GetHashCode()
+    {
+        return Left.GetHashCode() ^ Right.GetHashCode() ^ Top.GetHashCode() ^ Bottom.GetHashCode();
+    }
+}
+
+
+For a window that is hidden behind another window you can set it to be transparent (with a high alpha so that it doesn't look transparent).  It should then be possible to capture the whole window with BitBlt.

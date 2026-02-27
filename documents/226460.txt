@@ -1,0 +1,178 @@
+Semi-Tricky SQL Query
+sql sql-server
+I am trying to write a query for SQL Server 2005 but I can't figure out how to do it.  I have a table with the following fields:
+MessageID int
+CategoryID int
+Priority tinyint
+MessageText NVARCHAR(MAX)
+I need a query that will return * for each row that has the highest priority within a Category.  For example, if I had the following data:
+MessageID, CategoryID, Priority, MessageText
+1, 100, 1, Error #1234 occurred
+2, 100, 2, Error #243 occurred
+3, 100, 3, Error #976 occurred
+4, 200, 4, Error #194 occurred
+5, 200, 1, Error #736 occurred
+6, 300, 3, Error #54 occurred
+7, 300, 2, Error #888 occurred
+then the result would be:
+MessageID, CategoryID, Priority, MessageText
+3, 100, 3, Error #976 occurred
+4, 200, 4, Error #194 occurred
+6, 300, 3, Error #54 occurred
+Notice that it returns one row per category, and that it is the row which had the highest priority for that Category.
+Can anyone tell me how I can write this query?
+
+
+I believe that this should work, table name assumed as Messages
+SELECT
+    M.MessageId,
+    M.CategoryId,
+    M.Priority,
+    M.MessageText
+FROM 
+(
+    SELECT 
+    	CategoryId,
+    	MAX(Priority) AS Priority
+    FROM Messages
+    GROUP BY CategoryId
+) AS MaxValues
+    INNER JOIN Messages M
+    	ON (MaxValues.CategoryId = M.CategoryId
+    			AND MaxValues.Priority = M.Priority)
+
+NOTE
+The only "gotcha" in this method is that if you have more than one max priority...
+
+SELECT
+    Messages.MessageID
+    , Messages.CategoryID
+    , Messages.Priority
+    , Messages. MessageText
+FROM
+    Messages
+    INNER JOIN
+    (
+    	SELECT 
+    		CategoryID
+    		, MAX(Priority) AS Priority
+    	FROM 
+    		Messages
+    	GROUP BY
+    		CategoryID
+    ) AS MaxResults
+    ON
+    	(
+    		Messages.CategoryID = MaxResults.CategoryID
+    		AND
+    		Messages.Priority = MaxResults.Priority
+    	)
+
+It looks like this is basically the same answer given above... with the same Caveat.
+Although this one will work right off the bat.
+
+Verified:
+SELECT
+    highest_priority_messages.*
+FROM
+(
+    SELECT
+    m.MessageID
+    , m.CategoryID
+    , m.Priority
+    , m.MessageText
+    , Rank() OVER 
+        (PARTITION BY m.CategoryID ORDER BY m.Priority DESC) AS p_rank
+    FROM [Message] m
+    GROUP BY 
+        m.CategoryID 
+        , m.Priority
+        , m.MessageID
+        , m.MessageText
+) highest_priority_messages
+WHERE 
+    p_rank = 1
+
+
+This is shorter and easier to read (imo).
+select ms.*
+from 
+  messages ms
+ ,(
+  select ms1.categoryid, max(ms1.priority) as max_priority
+  from messages ms1
+  group by ms1.categoryid
+  ) tmp
+where ms.categoryid = tmp.categoryid
+  and ms.priority = tmp.max_priority;
+
+
+If you'd like to do it without all of the subqueries:
+SELECT
+     MessageID,
+     CategoryID,
+     Priority,
+     MessageText
+FROM
+     dbo.Messages M1
+LEFT OUTER JOIN dbo.Messages M2 ON
+     M2.CategoryID = M1.CategoryID AND
+     M2.Priority > M1.Priority
+WHERE
+     M2.MessageID IS NULL
+
+You might have to adjust the query depending on how you want to handle ties. You didn't have any such examples, so I wasn't sure.
+
+I'm not quite high enough rank (yet) to post a comment, so I'd like to add to cfeduke's solution:
+SELECT
+    highest_priority_messages.*
+FROM
+(
+    SELECT
+    m.MessageID
+    , m.CategoryID
+    , m.Priority
+    , m.MessageText
+    , Rank() OVER 
+        (PARTITION BY m.CategoryID ORDER BY m.Priority DESC, m.MessageID DESC) AS p_rank
+    FROM [Message] m
+    GROUP BY 
+        m.CategoryID 
+        , m.Priority
+        , m.MessageID
+        , m.MessageText
+) highest_priority_messages
+WHERE 
+    p_rank = 1
+
+If you add another CategoryID 100 Message with Priority 3, the original solution would bring back 2 rows, by adding another order condition we eliminate the chance of two items ranking the same.
+Here's a copy of the row I inserted to test this.
+insert into [Message] (MessageID, CategoryID, Priority, MessageText)
+select 8, 100, 3, 'Error #976-2 occurred'
+
+
+select distinct query1.* from
+
+(select categoryId,msgText,max(priorityId) as MAX_PRIORITY
+ from message
+  group by categoryId,msgText
+ order by categoryId
+) query1,
+
+
+(select categoryId,max(priorityId) as MAX_PRIORITY
+ from message
+  group by categoryId
+ order by categoryId
+) query2
+
+where query1.MAX_PRIORITY = query2.MAX_PRIORITY
+
+order by query1.categoryId
+
+
+SELECT DISTINCT CategoryId,PS.Priority,MessageID,MessageText
+FROM Priority_Scene PS
+JOIN (SELECT MAX(Priority) AS Priority FROM Priority_Scene GROUP BY CategoryId) A
+ON A.Priority   = PS.Priority
+

@@ -1,0 +1,38 @@
+Asp.Net MVC Beta: Previous RouteData overrides current RouteData?
+asp.net-mvc routedata
+I have something similar to the following method: 
+    public ActionResult Details(int id)
+    {
+        var viewData = new DetailsViewData
+        {
+            Booth = BoothRepository.Find(id),
+            Category = ItemType.HotBuy
+        };
+        return View(viewData);
+    }
+
+and the following Route:
+routes.MapRoute("shows","shows/{controller}/{action}/{id}", new {id = 0});
+
+Everything worked fine before the Beta, when I had Preview 3. Now the method will fill the id correctly the first time I execute the action. However the second time the controller's ModelState contains the last-use id value. This causes the ActionInvoker to use it in the method's parameter instead of the Route value.
+So if I call the action twice on two different entities the results are such:
+www.mysite.com/shows/Booth/Details/1  => Details(1)
+www.mysite.com/shows/Booth/Details/2  => Details(1)  //from ModelState["id"]
+
+From my quick scan with Reflector it seems it first binds parameters to the ModelState then to Routes. However, I never even posted anything from the model. As far as I can tell the ModelState should not contain anything. 
+Is this a bug in the Beta, possibly a bug somewhere in my code, or is there some design feature that I am ignorant of? Any insight into the nature of ModelState and why this happens is appreciated.
+EDIT: 
+ I discovered that this issue is actually a symptom of what appears to be a bug with the DefaultValueProvider if you instantiate a Controller from an IoC container that exists for the lifetime of the Asp.Net application.What happens is that the DefaultValueProvider uses the first ControllerContext given to the Controller and never updates it until the controller is recreated. This causes old RouteData to be used for method parameters instead of the current RouteData.
+
+
+It's hard for me to tell what you expect to happen and what is happening from your post. Is it possible there's an error in your BoothRepository.Find method such that it returns the same thing every time?
+ModelBinder should not be affecting this method because the parameter to the action method is a simple type, int.
+Were both of these requests GET requests? If you still are having problems, can you try and create the simplest repro possible and email it to philha - microsoft dot com?
+EDIT: The problem ended up being that the developer was attempting to re-use the valueprovider across requests (by having Castle Windsor manage the lifecycle of Controllers). Right now, there's no support for re-using controller instances across requests like you would with IHttpHandler which has a IsReusable property. So in general, reusing controllers across requests requires doing a lot more work on your end. :)
+
+The problem is the LifeStyle, I completetly overlooked the fact it was being defined, which means by default the controllers will use the Singleton lifestyle.  Setting the LifeStyle to Transient for all controllers will sort this problem.
+
+if you use spring.net   modify 
+Controller's  singleton  to  "false"
+
+This is a common issue when using Singleton behavior with a IoC container such as Spring.NET or Windsor. Controllers should not have singleton behavior because the ControllerContext is per request, much like HttpContext.

@@ -1,0 +1,175 @@
+Is it possible to change headers on an S3 object without downloading the entire object?
+amazon-s3
+I've uploaded a bunch of images to Amazon S3, and now want to add a Cache-Control header to them. 
+Can the header be updated without downloading the entire image? If so, how?
+
+
+It's beta functionality, but you can specify new meta data when you copy an object. Specify the same source and destination for the copy, and this has the effect of just updating the meta data on your object.
+PUT /myObject HTTP/1.1
+Host: mybucket.s3.amazonaws.com  
+x-amz-copy-source: /mybucket/myObject  
+x-amz-metadata-directive: REPLACE  
+x-amz-meta-myKey: newValue
+
+
+This is out of beta and is available by doing a put command and copying the object as documented here.  It is also available in their SDK's.  For example with C#:
+var s3Client = new AmazonS3Client("publicKey", "privateKey");
+var copyRequest = new CopyObjectRequest()
+                  .WithDirective(S3MetadataDirective.REPLACE)
+                  .WithSourceBucket("bucketName")
+                  .WithSourceKey("fileName")
+                  .WithDestinationBucket("bucketName")
+                  .WithDestinationKey("fileName)
+                  .WithMetaData(new NameValueCollection { { "x-amz-meta-yourKey", "your-value }, { "x-amz-your-otherKey", "your-value" } });
+var copyResponse = s3Client.CopyObject(copyRequest);
+
+
+with the amazon aws-sdk, Doing a copy_object with extra headers seems to do the trick for setting caching control headers for an existing S3 Object.
+=====================x===============================================
+<?php
+    error_reporting(-1);
+    require_once 'sdk.class.php';
+
+    // UPLOAD FILES TO S3
+        // Instantiate the AmazonS3 class
+    $options = array("key" => "aws-key" , "secret" => "aws-secret") ;
+
+
+        $s3 = new AmazonS3($options);
+        $bucket = "bucket.3mik.com" ;
+
+
+    $exists = $s3->if_bucket_exists($bucket);
+    if(!$exists) {
+        trigger_error("S3 bucket does not exists \n" , E_USER_ERROR);
+    }
+
+    $name = "cows-and-aliens.jpg" ;
+    echo " change headers for $name  \n" ;
+    $source = array("bucket" => $bucket, "filename" => $name);
+    $dest = array("bucket" => $bucket, "filename" => $name);
+
+    //caching headers
+    $offset = 3600*24*365;
+    $expiresOn = gmdate('D, d M Y H:i:s \G\M\T', time() + $offset);
+    $headers = array('Expires' => $expiresOn, 'Cache-Control' => 'public, max-age=31536000');
+
+       $meta = array('acl' => AmazonS3::ACL_PUBLIC, 'headers' => $headers);
+
+    $response = $s3->copy_object($source,$dest,$meta);
+    if($response->isOk()){
+        printf("copy object done \n" );
+
+    }else {
+        printf("Error in copy object \n" );
+    }
+
+?>
+
+=======================x================================================
+
+This is how you do it with AWS SDK for PHP 2:
+<?php
+require 'vendor/autoload.php';
+
+use Aws\Common\Aws;
+use Aws\S3\Enum\CannedAcl;
+use Aws\S3\Exception\S3Exception;
+
+const MONTH = 2592000;
+
+// Instantiate an S3 client
+$s3 = Aws::factory('config.php')->get('s3');
+// Settings
+$bucketName = 'example.com';
+$objectKey = 'image.jpg';
+$maxAge = MONTH;
+$contentType = 'image/jpeg';
+
+try {
+    $o = $s3->copyObject(array(
+        'Bucket' => $bucketName,
+        'Key' => $objectKey,
+        'CopySource' => $bucketName . '/'. $objectKey,
+        'MetadataDirective' => 'REPLACE',
+        'ACL' => CannedAcl::PUBLIC_READ,
+        'command.headers' => array(
+            'Cache-Control' => 'public,max-age=' . $maxAge,
+            'Content-Type' => $contentType
+        )
+    ));
+
+    // print_r($o->ETag);
+} catch (Exception $e) {
+    echo $objectKey . ': ' . $e->getMessage() . PHP_EOL;
+}
+?>
+
+
+In Java, try this
+S3Object s3Object = amazonS3Client.getObject(bucketName, fileKey);
+ObjectMetadata metadata = s3Object.getObjectMetadata();
+Map customMetaData = new HashMap();
+customMetaData.put("yourKey", "updateValue");
+customMetaData.put("otherKey", "newValue");
+metadata.setUserMetadata(customMetaData);
+
+amazonS3Client.putObject(new PutObjectRequest(bucketName, fileId, s3Object.getObjectContent(), metadata));
+
+You can also try copy object. Here metadata will not copy while copying an Object. 
+You have to get metadata of original and set to copy request. 
+This method is more recommended to insert or update metadata of an Amazon S3 object
+ObjectMetadata metadata = amazonS3Client.getObjectMetadata(bucketName, fileKey);
+ObjectMetadata metadataCopy = new ObjectMetadata();
+metadataCopy.addUserMetadata("yourKey", "updateValue");
+metadataCopy.addUserMetadata("otherKey", "newValue");
+metadataCopy.addUserMetadata("existingKey", metadata.getUserMetaDataOf("existingValue"));
+
+CopyObjectRequest request = new CopyObjectRequest(bucketName, fileKey, bucketName, fileKey)
+      .withSourceBucketName(bucketName)
+      .withSourceKey(fileKey)
+      .withNewObjectMetadata(metadataCopy);
+
+amazonS3Client.copyObject(request);
+
+
+I had the same need and so I wrote this for my nodeJS environment.
+https://github.com/newbreedofgeek/s3-bucket-cache-control
+I've tested it, but pls do your due diligence first as its a risky change.
+
+Here is a helping code in Python. 
+
+
+import boto
+
+one_year  = 3600*24*365
+cckey = 'cache-control'
+s3_connection = S3Connection()
+bucket_name = 'my_bucket'
+bucket = s3_connection.get_bucket(bucket_name validate=False)
+
+
+for key in bucket:
+    key_name = key.key
+    if  key.size == 0: # continue on directories
+        continue
+    # Get key object
+    key = bucket.get_key(key_name)
+
+    if key.cache_control is not None:
+        print("Exists")
+        continue
+
+    cache_time = one_year
+    #set metdata
+    key.set_metadata(name=cckey, value = ('max-age=%d, public' % (cache_time)))
+    key.set_metadata(name='content-type', value = key.content_type)
+    # Copy the same key
+    key2 = key.copy(key.bucket.name, key.name, key.metadata, preserve_acl=True)
+    continue
+
+    
+
+
+
+Explanation: Code adds new metadata to the existing key and then copies the same file.

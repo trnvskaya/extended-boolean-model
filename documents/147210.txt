@@ -1,0 +1,62 @@
+How can I reseed an identity column in a T-SQL table variable?
+sql-server tsql table-variable
+I have a T-SQL table variable (not a table) which has an auto incrementing identity column. I want to clear all data from this variable and reset the identity column value to 1. How can this be done?
+
+
+Truncating the table will dump ALL the data, and reset the identity seed.
+Otherwise, you can use this call to reset the identity while retaining any of the data:
+DBCC CHECKIDENT (yourtableName, reseed, @NewStartSeedValue)
+
+
+If you're using a table variable, you can't do it. If it were a table, you could truncate it or use DBCC CHECKIDENT. But, if you have to use a table variable, you have to use something other than an identity column. Or, more accurately, use the identity column in your table variable but output using ROWNUMBER:
+DECLARE @t table (pkint int IDENTITY(1,1), somevalue nvarchar(50))
+INSERT INTO @t (somevalue) VALUES( 'one')
+INSERT INTO @t (somevalue) VALUES('twp')
+INSERT INTO @t (somevalue) VALUES('three')
+SELECT row_number() OVER (ORDER BY pkint), somevalue FROM @t
+DELETE FROM @t
+INSERT INTO @t (somevalue) VALUES('four')
+SELECT row_number() OVER (ORDER BY pkint), somevalue FROM @t
+
+It's the best you can do with the table variable. 
+
+If you need to truncate the table variable in each turn of a while loop, you can put the declare @myTbl (...) statement in the loop.  This will recreate the table and reset the identity column on each turn of the loop.  However, it has a heavy performance hit.  I had fairly tight loop, and redeclaring the table variable relative to delete @myTbl was several times slower.
+
+Dan
+
+
+    declare @tb table (recid int,lineof int identity(1,1))
+
+    insert into @tb(recid)
+    select recid from tabledata 
+
+    delete from @tb where lineof>(select min(lineof) from @tb)+@maxlimit
+
+I did this when I wanted to use a TOP and a variable when using SQL 2000.  Basically, you add in the records and then look at the minimum one.  I had the same problem and noticed this thread.  Deleting the table doesn't reset the seed although I imagine using GO should drop the table and variable to reset the seed.
+@maxlimit in the query above was to get the top 900 of the query and since the table variable would have a different starting identity key, this would solve that issue.
+Any subsequent query can subtract that derived procedure to make it insert as "1", etc.
+Hope it helps.
+Lauren
+
+I suggest you  use two table variables.  The @Table1 has an identity seed on the first column.  @Table2 has the same first column but no identity seed on it.
+As you loop through your process, 
+Insert into @Table2 from @Table1
+
+then Delete From both Tables as your Process Loops.
+On your first pass, the @Table2 will have a a sequential number in the first row starting at 1.  
+The second time through the loop your second table might have sequential numbers in the first column starting at say 1081.   But if you select the minimum value to a variable 
+(Select @FixSeed = min(RowID) From @Table2)
+
+Then you can update @Table2 to make RowID start at 1 as follows:
+Update @Table2  Set  RowID = RowID - @FixSeed +1
+
+Hope this helps
+
+If you have deleted all the rows in a table, and you want to reset the identity column value.
+USe DBCC CHECKIDENT command.
+DBCC CHECKIDENT(tblPerson, RESEED, 0)
+
+This command will reset PersonId identity column.
+Another thing to note is that you may need to enclose the table name in single quotes or square brackets if you are referencing by a full path, or if your table name has spaces in it.
+DBCC CHECKIDENT ( âdatabasename.dbo.ordersâ,RESEED, 0)
+

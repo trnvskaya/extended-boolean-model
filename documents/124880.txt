@@ -1,0 +1,120 @@
+Is it possible to prevent stack allocation of an object and only allow it to be instantiated with 'new'?
+c++ c++-faq
+Is it possible to prevent stack allocation of an object and only allow it to be instiated with 'new' on the heap?
+
+
+You could make the constructor private, then provide a public static factory method to create the objects.
+
+One way you could do this would be to make the constructors private and only allow construction through a static method that returns a pointer. For example:
+class Foo
+{
+public:
+    ~Foo();
+    static Foo* createFoo()
+    {
+        return new Foo();
+    }
+private:
+    Foo();
+    Foo(const Foo&);
+    Foo& operator=(const Foo&);
+};
+
+
+You could create a header file that provides an abstract interface for the object, and factory functions that return pointers to objects created on the heap.
+// Header file
+
+class IAbstract
+{
+	virtual void AbstractMethod() = 0;
+
+public:
+	virtual ~IAbstract();
+};
+
+IAbstract* CreateSubClassA();
+IAbstract* CreateSubClassB();
+
+// Source file
+
+class SubClassA : public IAbstract
+{
+	void AbstractMethod() {}
+};
+
+class SubClassB : public IAbstract
+{
+	void AbstractMethod() {}
+};
+
+IAbstract* CreateSubClassA()
+{
+	return new SubClassA;
+}
+
+IAbstract* CreateSubClassB()
+{
+	return new SubClassB;
+}
+
+
+In the case of C++11
+class Foo
+{
+  public:
+    ~Foo();
+    static Foo* createFoo()
+    {
+        return new Foo();
+    }
+
+    Foo(const Foo &) = delete; // if needed, put as private
+    Foo & operator=(const Foo &) = delete; // if needed, put as private
+    Foo(Foo &&) = delete; // if needed, put as private
+    Foo & operator=(Foo &&) = delete; // if needed, put as private
+
+  private:
+    Foo();
+};
+
+
+The following allows public constructors and will stop stack allocations by throwing at runtime. Note thread_local is a C++11 keyword.
+class NoStackBase {
+    const bool _stack;
+    static thread_local bool _heap;
+protected:
+    NoStackBase(): _stack(!_heap) {
+        _heap = false;
+        if (_stack)
+            throw std::logic_error("heap allocations only");
+    }
+public:
+    virtual ~NoStackBase() {}
+    void* operator new(size_t size) throw (std::bad_alloc) { 
+        _heap = true;
+        return ::operator new(size);
+    }
+    void* operator new(size_t size, const std::nothrow_t& nothrow_value) throw () {
+        _heap = true;
+        return ::operator new(size, nothrow_value);
+    }
+    void* operator new(size_t size, void* ptr) throw () {
+        _heap = true;
+        return ::operator new(size, ptr);
+    }
+    void* operator new[](size_t size) throw (std::bad_alloc) {
+        _heap = true;
+        return ::operator new[](size);
+    }
+    void* operator new[](size_t size, const std::nothrow_t& nothrow_value) throw () {
+        _heap = true;
+        return ::operator new[](size, nothrow_value);
+    }
+    void* operator new[](size_t size, void* ptr) throw () {
+        _heap = true;
+        return ::operator new[](size, ptr);
+    }
+};
+
+bool thread_local NoStackBase::_heap = false;
+

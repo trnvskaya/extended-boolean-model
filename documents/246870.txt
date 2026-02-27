@@ -1,0 +1,95 @@
+"Simple" SQL Query
+sql sql-server
+Each of my clients can have many todo items and every todo item has a due date.
+What would be the query for discovering the next undone todo item by due date for each file?  In the event that a client has more than one todo, the one with the lowest id is the correct one.
+Assuming the following minimal schema:
+clients (id, name)
+
+todos (id, client_id, description, timestamp_due, timestamp_completed)
+
+Thank you.
+
+
+The following should get you close, first get the min time for each client, then lookup the client/todo information
+SELECT
+    C.Id,
+    C.Name,
+    T.Id
+    T.Description,
+    T.timestamp_due
+FROM
+{
+    SELECT
+        client_id,
+        MIN(timestamp_due) AS "DueDate"
+    FROM todos
+    WHERE timestamp_completed IS NULL
+    GROUP BY ClientId
+} AS MinValues
+    INNER JOIN Clients C
+    ON (MinValues.client_id = C.Id)
+    INNER JOIN todos T
+    ON (MinValues.client_id = T.client_id
+    	AND MinValues.DueDate = T.timestamp_due)
+ORDER BY C.Name
+
+NOTE: Written assuming SQL Server
+
+SELECT c.name, MIN(t.id)
+FROM clients c, todos t
+WHERE c.id = t.client_id AND t.timestamp_complete IS NULL
+GROUP BY c.id
+HAVING t.timestamp_due <= MIN(t.timestamp_due)
+
+Avoids a subquery, correlated or otherwise but introduces a bunch of aggregate operations which aren't much better.
+
+This question is the classic pick-a-winner for each group.  It gets posted about twice a day.
+SELECT *
+FROM todos t
+WHERE t.timestamp_completed is null
+  and
+(
+  SELECT top 1 t2.id
+  FROM todos t2
+  WHERE t.client_id = t2.client_id
+    and t2.timestamp_completed is null
+     --there is no earlier record
+    and
+    (t.timestamp_due > t2.timestamp_due
+       or (t.timestamp_due = t2.timestamp_due and t.id > t2.id)
+    )
+) is null
+
+
+Some Jet SQL, I realize it is unlikely that the questioner is using Jet, however the reader may be.
+SELECT c.name, t.description, t.timestamp_due
+FROM (clients c 
+      INNER JOIN 
+         (SELECT t.client_id, Min(t.id) AS MinOfid
+          FROM todos t
+          WHERE t.timestamp_completed Is Null
+          GROUP BY t.client_id) AS tm 
+ON c.id = tm.client_id) 
+INNER JOIN todos t ON tm.MinOfid = t.id
+
+
+I haven't tested this yet, so you may have to tweak it:
+SELECT
+    TD1.client_id,
+    TD1.id,
+    TD1.description,
+    TD1.timestamp_due
+FROM
+    Todos TD1
+LEFT OUTER JOIN Todos TD2 ON
+    TD2.client_id = TD1.client_id AND
+    TD2.timestamp_completed IS NULL AND
+    (
+    	TD2.timestamp_due < TD1.timestamp_due OR
+    	(TD2.timestamp_due = TD1.timestamp_due AND TD2.id < TD1.id)
+    )
+WHERE
+    TD2.id IS NULL
+
+Instead of trying to sort and aggregate, you're basically answering the question, "Is there any other todo that would come before this one?" (based on your definition of "before"). If not, then this is the one that you want.
+This should be valid on most SQL platforms.

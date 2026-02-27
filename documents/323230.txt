@@ -1,0 +1,63 @@
+Reading byte stream returned from JavaEE server
+iphone objective-c cocoa-touch
+We have a JavaEE server and servlets providing data to mobile clients (first JavaME, now soon iPhone). The servlet writes out data using the following code:
+DataOutputStream dos = new DataOutputStream(out);
+
+dos.writeInt(someInt);
+
+dos.writeUTF(someString);
+
+... and so on
+This data is returned to the client as bytes in the HTTP response body, to reduce the number of bytes transferred.
+In the iPhone app, the response payload is loaded into NSData object. Now, after spending hours and hours trying to figure out how to read the data out in the Objective-C application, I'm almost ready to give up, as I haven't found any good way to read the data into NSInteger and NSString (as corresponding to above protocol)
+Would anyone have any pointers how to read stuff out from a binary protocol written by a java app? Any help is greatly appreciated!
+Thanks!
+
+
+The main thing is to understand the binary data format itself. It doesn't matter what's written it, so long as you know what the bytes mean.
+As such, the docs for DataOutputStream are your best bet. They specify everything (hopefully) about what the binary data will look like.
+Next, I would try to basically come up with a class on the iPhone which will read the same format into appropriate data structure. I don't know Objective C at all, but I'm sure that it can't be too hard to read 4 bytes, know that the first byte is the most significant (etc) and do appropriate bit-twiddling to get the right kind of integer. (Basically read a byte, shift it left 8, read the next byte and add it into the result, shift the whole lot left 8 bits, etc.) There may well be more efficient ways of doing it, but get something that works first. When you've got unit tests around it all, you can move onto optimising it.
+
+Don't forget that Objective-C is just C in a pretty dress--and C excels at this kind of bit-grovelling.  To a large extent, you should be able to just define a C struct that looks like your data and cast the pointer to your data into a pointer to that struct.  Now, exactly which types to use, and if you need to byte-swap anything, will depend on how Java constructs this stream; that's what you'll need to spend time with Java's documentation for.
+Fundamentally, though, this is a design smell.  You're having this problem because you made assumptions about your client platform that are no longer valid.  If it's an option, I'd recommend you offer a second, more portable interface to the same functions (just adding "WithXML" wrappers or something should suffice).  This will save you time if you ever end up porting to another platform that doesn't use Java.
+
+Carl, if you really can't change what the server provides have a look at this class. It should be the pointer you are looking for. That said: The idea to use native java serialization as a transport format does not sound like a good idea. My first choice would have been JSON. If that's still too big I would probably rather use something like Thrift or Protobuffers. They also provide binary serialization - but in a cross language manner. (There is also the oldie ASN1 - but that's painful)
+
+You'll have to do the demarshalling yourself; fortunately, it's fairly straightforward.  Java's DataOutputStream class writes integers in big-endian (network) format.  So, to demarshall the integer, we grab 4 bytes and unpack them into a 4-byte integer.
+For UTF-8 strings, DataOutputStream first writes a 2-byte value indicating the number of bytes that follow.  We read that in, and then read the subsequent bytes.  Then, to decode the string, we can use the NSString method initWithBytes:length:encoding: as so:
+NSData *data = ...;  // this comes from the HTTP request
+int length = [data length];
+const uint8_t *bytes = (const uint8_t *)[data bytes];
+
+if(length < 4)
+    ; // oops, handle error
+
+// demarshall the big-endian integer from 4 bytes
+uint32_t myInt = (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | (bytes[3]);
+// convert from (n)etwork endianness to (h)ost endianness (may be a no-op)
+// ntohl is defined in <arpa/inet.h>
+myInt = ntohl(myInt);
+
+// advance to next datum
+bytes += 4;
+length -= 4;
+
+// demarshall the string length
+if(length < 2)
+    ; // oops, handle error
+uint16_t myStringLen = (bytes[0] << 8) | (bytes[1]);
+// convert from network to host endianness
+myStringLen = ntohs(myStringLen);
+bytes += 2;
+length -= 2;
+
+// make sure we actually have as much data as we say we have
+if(myStringLen > length)
+    myStringLen = (uint16_t)length;
+
+// demarshall the string
+NSString *myString = [[NSString alloc] initWithBytes:bytes length:myStringLen encoding:NSUTF8StringEncoding];
+bytes += myStringLen;
+length -= myStringLen;
+
+You can (and probably should) write functions to demarshall, so that you don't have to repeat this code for every field you want to demarshall.  Also, be extra careful about buffer overflows.  You're handling data sent over the network, which you should always distrust.  Always verify your data, and always check your buffer lengths.

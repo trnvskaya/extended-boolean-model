@@ -1,0 +1,83 @@
+How do I generate a compiled lambda with method calls?
+c# lambda expression-trees
+I'm generating compiled getter methods at runtime for a given member.  Right now, my code just assumes that the result of the getter method is a string (worked good for testing).  However, I'd like to make this work with a custom converter class I've written, see below, "ConverterBase" reference that I've added.
+I can't figure out how to add the call to the converter class to my expression tree.
+    public Func<U, string> GetGetter<U>(MemberInfo info)
+    {
+        Type t = null;
+        if (info is PropertyInfo) 
+        {
+            t = ((PropertyInfo)info).PropertyType;
+        }
+        else if (info is FieldInfo)
+        {
+            t = ((FieldInfo)info).FieldType;
+        }
+        else
+        {
+            throw new Exception("Unknown member type");
+        }
+
+        //TODO, replace with ability to specify in custom attribute
+        ConverterBase typeConverter = new ConverterBase();
+
+        ParameterExpression target = Expression.Parameter(typeof(U), "target");
+        MemberExpression memberAccess = Expression.MakeMemberAccess(target, info);
+
+        //TODO here, make the expression call "typeConverter.FieldToString(fieldValue)"
+
+        LambdaExpression getter = Expression.Lambda(memberAccess, target);
+
+        return (Func<U, string>)getter.Compile();
+    }
+
+I'm looking for what to put in the second TODO area (I can handle the first :)).
+The resulting compiled lambda should take an instance of type U as a param, call the specified member access function, then call the converter's "FieldToString" method with the result, and return the resulting string.
+
+
+You need to wrap the object in an ExpressionConstant, e.g. by using Expression.Constant. Here's an example:
+class MyConverter
+{
+    public string MyToString(int x)
+    {
+        return x.ToString();
+    }
+}
+
+static void Main()
+{
+    MyConverter c = new MyConverter();
+
+    ParameterExpression p = Expression.Parameter(typeof(int), "p");
+    LambdaExpression intToStr = Expression.Lambda(
+        Expression.Call(
+            Expression.Constant(c),
+            c.GetType().GetMethod("MyToString"),
+            p),
+        p);
+
+    Func<int,string> f = (Func<int,string>) intToStr.Compile();
+
+    Console.WriteLine(f(42));
+    Console.ReadLine();
+}
+
+
+Can you illustrate what (if it was regular C#) you want the expression to evaluate? I can write the expression easily enough - I just don't fully understand the question...
+(edit re comment) - in that case, it'll be something like:
+    ConverterBase typeConverter = new ConverterBase();
+    var target = Expression.Parameter(typeof(U), "target");
+    var getter = Expression.MakeMemberAccess(target, info);
+    var converter = Expression.Constant(typeConverter, typeof(ConverterBase));
+
+    return Expression.Lambda<Func<U, string>>(
+    Expression.Call(converter, typeof(ConverterBase).GetMethod("FieldToString"),
+        getter), target).Compile();
+
+Or if the type refuses to bind, you'll need to inject a cast/convert:
+    MethodInfo method = typeof(ConverterBase).GetMethod("FieldToString");
+    return Expression.Lambda<Func<U, string>>(
+        Expression.Call(converter, method,
+            Expression.Convert(getter, method.GetParameters().Single().ParameterType)),
+            target).Compile();
+

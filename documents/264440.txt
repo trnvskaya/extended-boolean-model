@@ -1,0 +1,76 @@
+Converting plist to binary plist
+objective-c iphone cocoa-touch plist core-foundation
+Apple strongly recommends using the binary plist format when reading large XML-based data sets into iPhone apps. Among their reasoning is the fact that XML parsing is very taxing on the iPhone. However, this requires that files residing on the remote web server be converted first.
+For frequently-changing content, it is not acceptable to do this manually. If at all possible, I'd like to avoid having a web based app call the command line to perform the conversion (i.e., plutil). 
+Are there publicly available algorithms to perform this conversion?
+
+
+It's not clear if you want to do the conversion on the iPhone or on the server. If it's on the server and you can use the Cocoa frameworks, the NSPropertyListSerialization provides services to convert between the supported plist types (string, XML, and binary) on OS X (since 10.2). There are also analogous methods in the Core Foundation library if you'd prefer to use that instead.
+To convert an XML plist to a binary one:
+NSString *xmlPlistPath; // already set
+NSString *outPath; // already set
+
+
+NSData *plistData;
+NSString *error;
+NSPropertyListFormat format;
+id plist;
+plistData = [NSData dataWithContentsOfFile:xmlPlistPath];
+
+plist = [NSPropertyListSerialization propertyListFromData:plistData
+                                         mutabilityOption:NSPropertyListImmutable
+                                                   format:&format
+                                         errorDescription:&error];
+
+if(plist == nil) { // unable to parse plist
+    //deal with failure -- error gives description of the error
+} else {
+    binaryPlistData = [NSPropertyListSerialization dataFromPropertyList:plist
+                                                                 format:NSPropertyListBinaryFormat_v1_0
+                                                       errorDescription:&error];
+    if(binaryPlistData == nil) {//unable to create serialized plist
+         // deal with failure -- error gives description of the error
+    }
+
+    if(![binaryPlistData writeToFile:outPath atomically:YES]) {
+        // unable to write file
+    }
+}
+
+See Property List Pramming Guide page on developer.apple.com for more information.
+
+Yes. All the plist code is part of CoreFoundation, which is opensource. CoreFoundation can be directly built and run on Linux and Windows, so you can write a CF tool using the normal APIs you would use on Mac OS X, but build and run it on other platforms.
+The particular API you want to be looking at is CFPropertyListWriteToStream(). The code for CoreFoundation is available from Apple (tarball), among other places. 
+Finally depending on how often you update the file, how much processor you have to spare on the server, and how much repetition there is your data there may be one significant enhancement left that you can do. By default certain elements in binary plists are uniqued (such as strings). Other elements are not (such as arrays and dictionarts). The binary plist format allows them to be uniqued, the issue is that it is expensive to actually walk through and unique arrays and dictionaries. If you have a lot of identical arrays or dicts in your content you may see a significant size reduction by uniquing them. You can enable that by hacking up _flattenPlist() in CFBinaryPlist.c.
+If you do that make sure to test it very thoroughly, and do not do on any files you cannot update over the network, just in case a future release makes any optimizations that break that. Also, make sure you are ready to turn it off at a moments notice.
+
+There is a PHP and ruby implementation for that:
+http://code.google.com/p/cfpropertylist/
+
+The linked Ruby implementation is Ruby 1.9 only. I knocked up a quick binary serializer which works in Ruby 1.8.
+http://gist.github.com/303378
+
+There is a Perl implementation too called
+Data::Plist
+
+The binary_plist gem to add the plist as a valid response format for Rails controllers looks promising.
+
+Java Spring framework solution
+
+Command-line tool plutil - property list utility
+Apple has two very good command-line tools for mangling property list files. 
+
+/usr/libexec/Plistbuddy - for editing plists
+/usr/bin/plutil - syntax checking and type conversion
+
+From plutil man page:
+
+plutil can be used to check the syntax of property list files, or convert
+       a plist file from one format to another.  Specifying - as an input file
+       reads from stdin.
+
+Converting an existing plist to XML, Binary, or JSON format
+plutil -convert xml1 stops2.plist
+plutil -convert binary1 stops2.plist
+plutil -convert json stops2.plist
+

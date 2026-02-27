@@ -1,0 +1,54 @@
+How do I examine the contents of an std::vector in gdb, using the icc compiler?
+c++ stl vector gdb icc
+I want to examine the contents of a std::vector in gdb but I don't have access to _M_impl because I'm using icc, not gcc, how do I do it? Let's say it's a std::vector for the sake of simplicity.
+There is a very nice answer here but this doesn't work if I use icc, the error message is "There is no member or method named _M_impl". There appears to be a nice debug toolset here but it also relies on _M_impl.
+
+
+The std::vector template guarantees the data is stored contiguously.  If you take the address of the front element (say, &v[0], for instance), you can access any other element in the vector through a C-style array.  That doesn't require you to have the source code of the STL available to your debugger.
+
+After messing with this some, it appears that v.front() and v.begin() are likely inlined and GDB isn't finding them.  I'll keep looking, but personally I would simply add the line int* i = &v[0] to the source file, and then use GDB commands on i while debugging.  Note that the compiler is free to remove that dead code.  You may need to output the value of i to avoid that, or simply not crank up optimizations.
+
+Not sure this will work with your vector, but it worked for me.
+#include <string>
+#include <vector>
+
+int main() {
+    std::vector<std::string> vec;
+    vec.push_back("Hello");
+    vec.push_back("world");
+    vec.push_back("!");
+    return 0;
+}
+
+gdb:
+(gdb) break source.cpp:8
+(gdb) run
+(gdb) p vec.begin()
+$1 = {
+   _M_current = 0x300340
+}
+(gdb) p $1._M_current->c_str()
+$2 = 0x3002fc "Hello"
+(gdb) p $1._M_current +1
+$3 = (string *) 0x300344
+(gdb) p $3->c_str()
+$4 = 0x30032c "world"
+
+
+Generally when I deal with the container classes in a debugger, I build a reference to the element, as a local variable, so it is easy to see in the debugger, without mucking about in the container implementation.
+Here is a contrived example.
+vector<WeirdStructure>  myWeird;
+
+/* push back a lot of stuff into the vector */ 
+
+size_t z;
+for (z = 0; z < myWeird.size(); z++)
+{
+    WeirdStructure& weird = myWeird[z];
+
+    /* at this point weird is directly observable by the debugger */ 
+
+    /* your code to manipulate weird goes here */  
+}
+
+That is the idiom I use.

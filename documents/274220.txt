@@ -1,0 +1,89 @@
+Does Castle-Windsor support ForwardedTypes via XML configuration
+inversion-of-control castle-windsor castle
+I have a class that implements multiple interfaces.
+I would like to register these interfaces via XML.
+All I've found is documentation for the new Fluent Interface. 
+Is this option supported via XML?
+What would be involved in adding this feature?
+
+
+[Update] This is now possible in Windsor 2.1 or newer. See the documentation for syntax here.
+
+This feature has not been implemented in the XML interpreter as of yet..  however it is not difficult to add support for it via a facility (obviously this technique is also useful when wanting to add other features absent from the existing configuration parser).
+So first off we add a facility which will detect when a handler is created for a type, and at the same time will register any of the forwarded services so they point to the existing handler:
+public class HandlerForwardingFacility : AbstractFacility
+{
+  IConversionManager conversionManager;
+
+  protected override void Init()
+  {
+    conversionManager = (IConversionManager)Kernel.GetSubSystem(SubSystemConstants.ConversionManagerKey);
+    Kernel.HandlerRegistered += new HandlerDelegate(Kernel_HandlerRegistered);      
+  }
+
+  void Kernel_HandlerRegistered(IHandler handler, ref bool stateChanged)
+  {
+    if (handler is ForwardingHandler) return;
+
+    var model = handler.ComponentModel;
+
+    if (model.Configuration == null) return;
+
+    var forward = model.Configuration.Children["forward"];
+    if (forward == null) return;
+
+    foreach (var service in forward.Children)
+    {
+      Type forwardedType = (Type)conversionManager.PerformConversion(service, typeof (Type));
+      Kernel.RegisterHandlerForwarding(forwardedType, model.Name);
+    }
+  }
+}
+
+And then of course we need to make use of this in code, for this example I'm going to have a mutant duck/dog component that supports two separate services - IDuck and IDog:
+public interface IDog
+{
+  void Bark();
+}
+
+public interface IDuck
+{
+  void Quack();
+}
+
+public class Mutant : IDog, IDuck
+{
+  public void Bark()
+  {
+    Console.WriteLine("Bark");
+  }
+
+  public void Quack()
+  {
+    Console.WriteLine("Quack");
+  }
+}
+
+Now to actually configure the container:
+ <castle>
+  <facilities>
+    <facility id="facility.handlerForwarding" type="Example.Facilities.HandlerForwardingFacility, Example" />
+  </facilities>
+  <components>
+    <component id="mutant" service="Example.IDog, Example" type="Example.Mutant, Example">
+      <forward>
+        <service>Example.IDuck, Example</service>
+      </forward>
+    </component>
+  </components>
+</castle>
+
+And now we can happily execute a test like this:
+  WindsorContainer container = new WindsorContainer(new XmlInterpreter());
+
+  var dog = container.Resolve<IDog>();
+  var duck = container.Resolve<IDuck>();
+
+  Assert.AreSame(dog, duck);
+
+Hope this helps.

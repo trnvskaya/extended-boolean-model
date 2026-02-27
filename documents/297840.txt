@@ -1,0 +1,52 @@
+How can I clean up dead connections using Oracle?
+oracle
+Right now I have a few new applications being developed against an Oracle Database, and sometimes they crash or fail to end correctly, etc... anyways the problem is they sometimes seem to leave their connections open, and I need to cleanup after them.
+My question is if there is a way from the database-side of things to determine dead connections and clean them up?
+
+
+Here's a page referring to connection timeout parameters you can set in Oracle 11g. I think the 'Abandon Connection Timeout' is what you're looking for.  
+
+You may also be interested in killing them.  Running this script in SQL*Plus will give you a list of "kill" statements.  You can pick out the ones you want to kill based on the sid and run those.  Oracle has some of it's own internal connections, do not kill them.
+SELECT 'alter system kill session ''' || sid || ',' || serial# || ''';     ' || sql_id death
+FROM v$session
+/
+
+
+I believe you are looking for the SQLNet.ora parameter EXPIRE_TIME which tells the database to send a probe to the client every few minutes to verify that the connection is still alive.
+
+Here's how to identify the session to kill (you will need SID and SERIAL# to kill it). Should I mention that you need to make sure you're killing the right session? sys_context('userenv','sid') gets the SID of your own session.
+SELECT s.inst_id,
+       s.sid,
+       s.serial#,
+       p.spid,
+       s.username,
+       s.osuser,
+       s.program
+FROM   gv$session s
+JOIN gv$process p ON p.addr = s.paddr AND p.inst_id = s.inst_id
+WHERE  s.type != 'BACKGROUND';
+
+You can then issue alter system kill session '[sid],[serial#]' as suggested by WW.
+However the alter system kill session command does not forcibly kill the session, rather it asks the session to die. If the session is really hung, you will find that the request hangs for 60 seconds and then returns ORA-00031 Session marked for kill. And the session is still there.
+In that case, first check that the session isn't rolling back a large transaction (cross reference the SID and SERIAL# from the above):
+SELECT s.username,
+       s.osuser,
+       s.sid,
+       s.serial#,
+       t.used_ublk,
+       t.used_urec,
+       rs.segment_name,
+      r.rssize,
+       r.status
+FROM   v$transaction t,
+       v$session s,
+       v$rollstat r,
+       dba_rollback_segs rs
+WHERE  s.saddr = t.ses_addr
+AND    t.xidusn = r.usn
+AND    rs.segment_id = t.xidusn
+ORDER BY t.used_ublk DESC;
+
+If a transaction is rolling back you will see USED_UREC decreasing. Leave it to complete rollback. 
+Otherwise, ALTER SYSTEM DISCONNECT SESSION '[sid],[serial#]' IMMEDIATE; will forcibly disconnect the session and roll back the open transaction.
+All the above info came from here.

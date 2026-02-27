@@ -1,0 +1,97 @@
+extern inline
+c++ c extern inline-functions
+I understand that "inline" by itself is a suggestion to the compiler, and at its descretion it may or may not inline the function, and it will also produce linkable object code.
+I think that "static inline" does the same (may or may not inline) but will not produce linkable object code when inlined (since no other module could link to it).
+Where does "extern inline" fit into the picture?
+Assume I want to replace a preprocessor macro by an inline function and require that this function gets inlined (e.g., because it uses the __FILE__ and __LINE__ macros which should resolve for the caller but not this called function). That is, I want to see a compiler or linker error in case the function does not get inlined. Does "extern inline" do this? (I assume that, if it does not, there is no way to achieve this behavior other than sticking with a macro.)
+Are there differences between C++ and C?
+Are there differences between different compiler vendors and versions?
+
+
+I believe you misunderstand __FILE__ and __LINE__ based on this statement:
+
+because it uses the __FILE__ and
+  __LINE__ macros which should resolve for the caller but not this called
+  function
+
+There are several phases of compilation, and preprocessing is the first.  __FILE__ and __LINE__ are replaced during that phase.  So by the time the compiler can consider the function for inlining they have already been replaced. 
+
+in K&R C or C89, inline was not part of the language. Many compilers implemented it as an extension, but there were no defined semantics regarding how it worked. GCC was among the first to implement inlining, and introduced the inline, static inline, and extern inline constructs; most pre-C99 compiler generally follow its lead. 
+GNU89:
+
+inline: the function may be inlined (it's just a hint though). An out-of-line version is always emitted and externally visible. Hence you can only have such an inline defined in one compilation unit, and every other one needs to see it as an out-of-line function (or you'll get duplicate symbols at link time).
+static inline will not generate a externally visible out-of-line version, though it might generate a file static one. The one-definition rule does not apply, since there is never an emitted external symbol nor a call to one.
+extern inline will not generate an out-of-line version, but might call one (which you therefore must define in some other compilation unit. The one-definition rule applies, though; the out-of-line version must have the same code as the inline offered here, in case the compiler calls that instead.
+
+C99 (or GNU99):
+
+inline: like GNU "extern inline"; no externally visible function is emitted, but one might be called and so must exist
+extern inline: like GNU "inline": externally visible code is emitted, so at most one translation unit can use this.
+static inline: like GNU "static inline". This is the only portable one between gnu89 and c99
+
+C++:
+A function that is inline anywhere must be inline everywhere, with the same definition. The compiler/linker will sort out multiple instances of the symbol. There is no definition of static inline or extern inline, though many compilers have them (typically following the gnu89 model).
+
+It sounds like you're trying to write something like this:
+inline void printLocation()
+{
+  cout <<"You're at " __FILE__ ", line number" __LINE__;
+}
+
+{
+...
+  printLocation();
+...
+  printLocation();
+...
+  printLocation();
+
+and hoping that you'll get different values printed each time. As Don says, you won't, because __FILE__ and __LINE__ are implemented by the preprocessor, but inline is implemented by the compiler. So wherever you call printLocation from, you'll get the same result.
+The only way you can get this to work is to make printLocation a macro. (Yes, I know...)
+#define PRINT_LOCATION  {cout <<"You're at " __FILE__ ", line number" __LINE__}
+
+...
+  PRINT_LOCATION;
+...
+  PRINT_LOCATION;
+...
+
+
+The situation with inline, static inline and extern inline is complicated, not least because gcc and C99 define slightly different meanings for their behavior (and presumably C++, as well).  You can find some useful and detailed information about what they do in C here.
+
+Macros are your choice here rather than the inline functions. A rare occasion where macros rule over inline functions. Try the following: I wrote this "MACRO MAGIC" code and it should work! Tested on gcc/g++ Ubuntu 10.04
+//(c) 2012 enthusiasticgeek (LOGGING example for StackOverflow)
+
+#ifdef __cplusplus
+
+#include <cstdio>
+#include <cstring>
+
+#else
+
+#include <stdio.h>
+#include <string.h>
+
+#endif
+
+//=========== MACRO MAGIC BEGINS ============
+
+//Trim full file path
+#define __SFILE__ (strrchr(__FILE__,'/') ? strrchr(__FILE__,'/')+1 : __FILE__ )
+
+#define STRINGIFY_N(x) #x
+#define TOSTRING_N(x) STRINGIFY_N(x)
+#define _LINE (TOSTRING_N(__LINE__))
+
+#define LOG(x, s...) printf("(%s:%s:%s)"  x "\n" , __SFILE__, __func__, _LINE, ## s);
+
+//=========== MACRO MAGIC ENDS ============
+
+int main (int argc, char** argv) {
+
+  LOG("Greetings StackOverflow! - from enthusiasticgeek\n");
+
+  return 0;
+}
+
+For multiple files define these macros in a separate header file including the same in each c/cc/cxx/cpp files. Please prefer inline functions or const identifiers (as the case demands) over macros wherever possible.

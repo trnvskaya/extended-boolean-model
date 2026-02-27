@@ -1,0 +1,36 @@
+Microsoft SQL Server - What does it mean that a Transaction Log is Full?
+sql-server tsql transaction-log
+What does it mean that a Transaction Log is Full? I have it the file set to grow 20% when needed. I have 4GBs left on the drive. How do I solve this issue permanently?
+Running these commands solves the issue temporarily:
+
+DBCC SHRINKFILE('MyDatabase_log', 1)
+BACKUP LOG MyDatabase WITH TRUNCATE_ONLY
+DBCC SHRINKFILE('MyDatabase_log', 1)
+
+
+
+You should look at SQL Server Recovery models.  The short answer is to change the recovery model to "Simple", but this has implications for backup/recovery.
+
+I wouldn't do a 20% growth rate. That can have big consequences when it needs to grow. If it ever grew to, say, 100GB it'd have to grow by 20GB on the next growth - prepare for your system to slow down rather whilst this happens... Rather, I'd set it to a fixed rate - say 100MB. Of course we don't know the current size to make a more accurate recommendation.
+
+Backup often, the transaction log is cleared out every time you back up the database.
+
+The Transaction Log is where SQL server 'Records' every change it makes so that if something goes wrong, (From  software crash to Power failure, to an asteroid strike... well maybe not an an asteroid strike), it can "recover" by "undoing" all the changes it has made, since the last consistent "CheckPoint" -  back to what was that last "Consistent" state of the database... at that checkpoint.  Every time a Transaction completes (or "commits"), all the changes that have been stored in the Transaction Log are flagged as "ok", and the CheckPopint marker is allowed to be moved forward to after those changes, so that a future recovery will only "undo" changes to some point after that.  After this happens, all the entries in the Transaction Log from before the CheckPoint are no longer needed to recover from a system crash... but they still may be needed to recover from a Hard Disk crash, so... 
+As the other gentleman mentioned, the "recovery model" you have set up on the server controls what happens to Transaction Log entries from before the checkpoints.  In Simple Mode, they are deleted when a checkpoint occurs, but you are at risk if the main data disk crashes, because your transaction log will not contain the changes written to disk since the last backup.
+In the other recovery models, the Transaction Log entries are not deleted until you do a Backup, thus protecting you against this risk...  
+So, generally, when this issue occurs, it's because the server is in one of the "normal" (not simple) recovery models set up, (Incremental or Full) and they are not doing backups... . In this case the Transaction Log just keeps Growing..., and Growing... kinda like those prostate ads on TV... 
+
+It sounds like you don't have a backup strategy in place.  Performing any of the backups--Full, Differential, or Transaction Log--will trunc the log with the added benefit of saving a point from which you can recover in the event of a failure.  You can run the Database Maintenance Wizard to help you setup a schedule of backups to run periodically.
+If you honestly don't care about your data at all (in which case, I wonder why you have a database at all), then you can set the database's Recovery Mode to "Simple," which will prevent the TLog from growing at all.
+One last thing:  if you are doing bulk load operations, you might also look into changing to "Bulk-Logged" while doing the bulk operations.
+
+You must backup the transaction log not just the database or the log will continue to grow until you run out of space. 
+
+There are many different ways to solve this problem.  It depends on what your backup requirements are.
+The main issue is that your transaction logs are not being backed up regularly, which causes the transaction log to keep growing.
+SQL Server 2005 has a Simple recovery mode (a property/option on the database itself), which I use primarily in DEV and TEST environments where hourly snapshots are not required, the transaction log only grows enough to handle the biggest transaction run on the server.  No schedules or maintenance plans are required for this recovery mode.
+In SQL Server 2000, you basically had a scheduled backup script that ran the same command you used, hourly or so:
+BACKUP LOG MyDatabase WITH TRUNCATE_ONLY
+For production environments, typically we have an hourly Transaction Log backup and a daily Full backup scheduled in the database maintenance plans.  This keeps the transaction log truncated to a reasonable size (a size that holds 1 hour worth of transaction data, obviously).
+
+Another simple answer is that your backup might not be scheduled. During an upgrade cycle one of our databases backup schedule was removed from the job.  The log grew until we discovered that the backup was not running.

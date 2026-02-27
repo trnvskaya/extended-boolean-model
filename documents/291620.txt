@@ -1,0 +1,26 @@
+How to assign Date parameters to Hibernate query for current timezone?
+java hibernate timezone
+When you assign a date to a named SQL parameter Hibernate automatically converts it to GMT time. How do you make it use the current server timezone for all dates?
+Lets say you have a query:
+Query q = session.createQuery("from Table where date_field < :now");
+q.setDate("now", new java.util.Date());
+
+"now" will be set to GMT time, while "new Date()" gets your current server time.
+Thanks.
+
+
+Hibernate is ignorant of timezones. Any timezone conversion should be done prior to executing the query. 
+E.g., if your database server is set to CST, but the user is on EST, you'll need to add 1 hour to any timestamps which are the input to a query. 
+
+We use a custom Hibernate date type.  Any time we set a parameter on a query we use a base class or utility method so we can pass the user's timezone into the custom type parameter.  
+You could get by with just manually adjusting the time in the utility method for queries, but this way dates that are read in or written to the database are also correctly converted.  This method also handles the situation where the database stores the date in its local time zone.  So even if you have a user in one time zone, a database server in another, and Java using GMT, it can get everything straight.  It ends up looking like:
+Properties properties = new Properties();
+properties.setProperty("timeZone", databaseTimeZone);
+query.setParameter("from", dateEnteredByUser, Hibernate.custom(LocalizedDateType.class, properties));
+
+As an added bonus, we use this to deal with the fact that SQL Server converts 23:59:59.999 to the next day.  In the custom type we check for that and back it off.
+
+As it turned out Hibernate doesn't convert dates to GMT automatically, it just cuts off time if you use query.setDate(), so if you pass "2009-01-16 12:13:14" it becomes "2009-01-16 00:00:00". 
+To take time into consideration you need to use query.setTimestamp("date", dateObj) instead.
+
+If you need a timeZone synchronized value you can use now() in your HQL. Also I suggest you to use the Joda library. It has a hibernate-plugin module.

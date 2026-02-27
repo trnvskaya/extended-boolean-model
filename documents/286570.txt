@@ -1,0 +1,60 @@
+How do I translate init.d scripts from Ubuntu/Debian Linux to Solaris?
+linux shell solaris init.d
+I have several init.d scripts that I'm using to start some daemons. Most of these scripts I've found on the internet and they all use start-stop-daemon. My understanding is that "start-stop-daemon" is a command that is specific to Linux or BSD distros and is not available on Solaris.
+What is the best way to translate my init.d scripts from Linux to Solaris? Is there a command equivalent to start-stop-daemon that I can use, roughly?
+Since I'm not much of a Solaris user, I'm willing to admit upfront that I don't even know if my question is inherently invalid or not.
+
+
+start-stop-daemon is a Linux thing, and not used that much on Solaris. I guess you can port the command though, if you want to reuse your init scripts.
+Otherwise it depends on what version of Solaris you are using. Starting with Solaris 10 and also OpenSolaris they use a new startup script framework "Solaris Service Management Facility", which you configure with the commands svcs, svccfg and svcadm.
+See http://www.oracle.com/technetwork/server-storage/solaris/overview/servicemgmthowto-jsp-135655.html for more information.
+For older Solaris releases most init scripts are written in pure shell without any helper commands like start-stop-daemon.
+
+On Solaris 10 or later using SMF is recommended, but on an earlier release you'd create an init script in /etc/init.d and link to it from the rcX.d directories. Here's a bare-bones example of an init script for launching an rsync daemon:
+#!/sbin/sh
+
+startcmd () {
+    /usr/local/bin/rsync --daemon  # REPLACE WITH YOUR COMMANDS
+}
+
+stopcmd () {
+    pkill -f "/usr/local/bin/rsync --daemon"  # REPLACE WITH YOUR COMMANDS
+}
+
+case "$1" in
+'start')
+        startcmd
+        ;;
+'stop')
+        stopcmd
+        ;;
+'restart')
+        stopcmd
+        sleep 1
+        startcmd
+        ;;
+*)
+        echo "Usage: $0 { start | stop | restart }"
+        exit 1
+        ;;
+esac
+
+Create a link to the script from each rcX.d directory (following the "S"/"K" convention). 
+ln rsync /etc/rc3.d/S91rsync
+for i in `ls -1d /etc/rc*.d | grep -v 3`; do ln rsync $i/K02rsync; done
+
+See the README in each rcX.d directory and check the man page for init.d. Here's a bit of the man page:
+
+File  names  in  rc?.d   directories   are   of   the   form 
+  [SK]nn,  where  S  means start this job, K  means
+  kill this job, and nn is the relative sequence  number  for killing or
+  starting the job.
+When entering  a  state  (init  S,0,2,3,etc.)  the  rc[S0-6]  script 
+  executes  those  scripts in /etc/rc[S0-6].d that are  prefixed with K
+  followed by those scripts prefixed  with  S.  When  executing  each 
+  script  in  one  of the /etc/rc[S0-6]  directories, the /sbin/rc[S0-6]
+  script passes a single argu-  ment.  It  passes  the  argument 'stop'
+  for scripts prefixed  with K and the argument 'start' for scripts
+  prefixed with S.  There  is  no  harm  in applying the same sequence
+  number to  multiple scripts.
+

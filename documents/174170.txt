@@ -1,0 +1,100 @@
+Python - Py2exe can't build .exe using the 'email' module
+python winapi py2exe
+py2exe does not work with the standard email module
+Hello. I am trying to use py2exe for converting a script into an exe. The build process shows this:
+
+The following modules appear to be missing
+['email.Encoders', 'email.Generator', 'email.Iterators', 'email.MIMEBase', 'email.MIMEMultipart', 'email.MIMEText', 'email.Utils', 'email.base64MIME']
+The executable does not work. The referenced modules are not included. I researched this on the Internet and I found out that py2exe has a problem with the Lazy import used in the standard lib email module. Unfortunately I have not succeeded in finding a workaround for this problem. Can anyone help?
+Thank you,
+P.S.
+Imports in the script look like this:
+Code: Select all
+    import string,time,sys,os,smtplib
+    from email.MIMEMultipart import MIMEMultipart
+    from email.MIMEBase import MIMEBase
+    from email.MIMEText import MIMEText
+    from email import Encoders
+
+
+Have a look at this question how-to-package-twisted-program-with-py2exe it seems to be the same problem.
+The answer given there is to explicitly include the modules on the command line to py2exe.
+
+If you don't have to work with py2exe, bbfreeze works better, and I've tried it with the email module. http://pypi.python.org/pypi/bbfreeze/0.95.4
+
+Use the "includes" option.  See: http://www.py2exe.org/index.cgi/ListOfOptions
+
+What version of Python are you using?  If you are using 2.5 or 2.6, then you should be doing your import like:
+import string,time,sys,os,smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email.mime.text import MIMEText
+from email import Encoders
+
+I'm pretty certain that py2exe's modulefinder can correctly find the email package if you use it correctly (i.e. use the above names in Python 2.5+, or use the old names in Python 2.4-).  Certainly the SpamBayes setup script does not need to explicitly include the email package, and it includes the email modules without problem.
+The other answers are correct in that if you do need to specifically include a module, you use the "includes" option, either via the command-line, or passing them in when you call setup.
+
+while porting my app from py24 to 26 I had the same problem.
+After reading http://www.py2exe.org/index.cgi/ExeWithEggs
+if found finaly following solution:
+in my application.py:
+import email
+import email.mime.text
+import email.mime.base
+import email.mime.multipart
+import email.iterators
+import email.generator
+import email.utils
+
+try:    
+    from email.MIMEText import MIMEText
+except:    
+    from email.mime import text as MIMEText
+
+in setup.py:
+import modulefinder
+modulefinder.AddPackagePath("mail.mime", "base")
+modulefinder.AddPackagePath("mail.mime", "multipart")
+modulefinder.AddPackagePath("mail.mime", "nonmultipart")
+modulefinder.AddPackagePath("mail.mime", "audio")
+modulefinder.AddPackagePath("mail.mime", "image")
+modulefinder.AddPackagePath("mail.mime", "message")
+modulefinder.AddPackagePath("mail.mime", "application")
+
+For py2exe to work with packages loaded during runtime, the main thing seems to be that u explicitly import the modules needed by your app somewhere in your app. 
+And then give py2exe in setup.py with moudlefinder.AddPackagePath( ,  ) the hint, where to search for modules it couldn't find by std. introspection.
+in the app
+
+This solve my problem:
+in setup.py edit
+includes = ["email"]
+
+
+Please try this.  This works on my py2exe build. Just replace "project_name.py" with your main script.  The EXTRA_INCLUDES are packages that you need to include in your build like email package.  I this works with you also.  
+from distutils.core import setup
+    import py2exe, sys, os
+
+    sys.argv.append('py2exe')
+
+    EXTRA_INCLUDES = [
+        "email.iterators", "email.generator", "email.utils", "email.base64mime", "email", "email.mime",
+        "email.mime.multipart", "email.mime.text", "email.mime.base",
+        "lxml.etree", "lxml._elementpath", "gzip"
+    ]
+
+    setup(
+        options = {'py2exe': {'bundle_files': 1, 'compressed': True, 'includes': EXTRA_INCLUDES,
+                    'dll_excludes': ['w9xpopen.exe','MSVCR71.dll']}},
+        console = [{'script': "project_name.py"}],
+        zipfile = None,
+    )
+
+
+I got it working by explicitly including missing modules in setup.py:
+OLD setup.py:
+setup(console = ['main.py'])
+
+New setup.py:
+setup(console = ['main.py'], 
+      options={"py2exe":{"includes":["email.mime.multipart","email.mime.text"]}})
+

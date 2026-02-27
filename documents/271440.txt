@@ -1,0 +1,124 @@
+Captured variable in a loop in C#
+c# closures captured-variable
+I met an interesting issue about C#. I have code like below.
+List<Func<int>> actions = new List<Func<int>>();
+
+int variable = 0;
+while (variable < 5)
+{
+    actions.Add(() => variable * 2);
+    ++ variable;
+}
+
+foreach (var act in actions)
+{
+    Console.WriteLine(act.Invoke());
+}
+
+I expect it to output 0, 2, 4, 6, 8. However, it actually outputs five 10s.
+It seems that it is due to all actions referring to one captured variable. As a result, when they get invoked, they all have same output.
+Is there a way to work round this limit to have each action instance have its own captured variable?
+
+
+Yes - take a copy of the variable inside the loop:
+while (variable < 5)
+{
+    int copy = variable;
+    actions.Add(() => copy * 2);
+    ++ variable;
+}
+
+You can think of it as if the C# compiler creates a "new" local variable every time it hits the variable declaration. In fact it'll create appropriate new closure objects, and it gets complicated (in terms of implementation) if you refer to variables in multiple scopes, but it works :)
+Note that a more common occurrence of this problem is using for or foreach:
+for (int i=0; i < 10; i++) // Just one variable
+foreach (string x in foo) // And again, despite how it reads out loud
+
+See section 7.14.4.2 of the C# 3.0 spec for more details of this, and my article on closures has more examples too.
+
+Yes you need to scope variable within the loop and pass it to the lambda that way:
+List<Func<int>> actions = new List<Func<int>>();
+
+int variable = 0;
+while (variable < 5)
+{
+    int variable1 = variable;
+    actions.Add(() => variable1 * 2);
+    ++variable;
+}
+
+foreach (var act in actions)
+{
+    Console.WriteLine(act.Invoke());
+}
+
+Console.ReadLine();
+
+
+The way around this is to store the value you need in a proxy variable, and have that variable get captured.
+I.E.
+while( variable < 5 )
+{
+    int copy = variable;
+    actions.Add( () => copy * 2 );
+    ++variable;
+}
+
+
+I believe what you are experiencing is something known as Closure http://en.wikipedia.org/wiki/Closure_(computer_science). Your lamba has a reference to a variable which is scoped outside the function itself. Your lamba is not interpreted until you invoke it and once it is it will get the value the variable has at execution time.
+
+The same situation is happening in multi-threading (C#, .NET 4.0].
+See the following code:
+Purpose is to print 1,2,3,4,5 in order.
+for (int counter = 1; counter <= 5; counter++)
+{
+    new Thread (() => Console.Write (counter)).Start();
+}
+
+The output is interesting! (It might be like 21334...)
+The only solution is to use local variables.
+for (int counter = 1; counter <= 5; counter++)
+{
+    int localVar= counter;
+    new Thread (() => Console.Write (localVar)).Start();
+}
+
+
+Behind the scenes, the compiler is generating a class that represents the closure for your method call. It uses that single instance of the closure class for each iteration of the loop. The code looks something like this, which makes it easier to see why the bug happens:
+void Main()
+{
+    List<Func<int>> actions = new List<Func<int>>();
+
+    int variable = 0;
+
+    var closure = new CompilerGeneratedClosure();
+
+    Func<int> anonymousMethodAction = null;
+
+    while (closure.variable < 5)
+    {
+        if(anonymousMethodAction == null)
+            anonymousMethodAction = new Func<int>(closure.YourAnonymousMethod);
+
+        //we're re-adding the same function 
+        actions.Add(anonymousMethodAction);
+
+        ++closure.variable;
+    }
+
+    foreach (var act in actions)
+    {
+        Console.WriteLine(act.Invoke());
+    }
+}
+
+class CompilerGeneratedClosure
+{
+    public int variable;
+
+    public int YourAnonymousMethod()
+    {
+        return this.variable * 2;
+    }
+}
+
+This isn't actually the compiled code from your sample, but I've examined my own code and this looks very much like what the compiler would actually generate.

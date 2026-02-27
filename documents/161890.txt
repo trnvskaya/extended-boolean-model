@@ -1,0 +1,26 @@
+How do you track the time of replicated rows for Subscribers in SQL Server 2005?
+sql-server sql-server-2005 replication
+The basic problem is like this:
+A subscriber has successfully replicated a row from the publisher, using transactional replication. Now, how do we keep track the time of this row being last successfully replicated?  
+A friend has suggested the following solution, which he used for his SQL Server 2000:
+1) Add a datetime column.
+2) Change the replication stored procedure to update the datetime column (!).
+The step #2 sets off all sorts of warning bells within me, so I'm asking if there are better solutions for SQL Server 2005 in this situation, before I even go into detail with his solution. 
+
+
+I'd do exactly what your friend suggested. That way, only calls to the replication procedure would update the timestamp. 
+The problem with this approach is that you need a write lock, but I don' see any other practical way.
+You could otherwise use a trigger that fires when you fetch the row (don't quote me on that, I very seldom used triggers), but that doesn't seem right (you might end with false positives)
+
+If you are working with transactional replication, why don't you just record time of primary data update and consider it was replicated to the other databases on next replication job? 
+
+@Philippe: The main problem with that approach is the replication may take awhile to reach some of the more remote database, due to bad network connection. So, the update time of the main record will not reflect the time of the record actually replicated in the remote database.
+Anyway, I have tested out my friend's method, and it worked fine for our requirement.  
+If anyone wants to do this as well, here's an important note: be careful about initializing the subscription and future schema changes. 
+For my case, we decided to initialize the snapshot manually in order to keep the added datetime column in the Subscriber database. Another possible approach might be to allow initialization, but modify the existing stored procedures to ignore replicating the added datetime column. 
+
+I had this exact problem a few weeks ago trying to find records that have changed recently.
+Create a new column and set the data type to TIMESTAMP. SS2005 automatically updates this type when the row is updated. The only problem is that this 'timestamp' has nothing at all to do with a date or time, it is just a number that reflects the last successful update of that row (any update, not just via replication). If that is all you need, then you should be fine. 
+If you need the last replication update, things might get a bit tricky, and you need get your hands dirty with triggers and stored procs.
+http://www.sqlteam.com/article/timestamps-vs-datetime-data-types
+Hope that helps~ 

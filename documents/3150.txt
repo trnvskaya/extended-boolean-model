@@ -1,0 +1,127 @@
+How to set up unit testing for Visual Studio C++
+c++ visual-studio unit-testing testing
+I'm having trouble figuring out how to get the testing framework set up and usable in Visual Studio 2008 for C++ presumably with the built-in unit testing suite.
+Any links or tutorials would be appreciated.
+
+
+I use UnitTest++.
+In the years since I made this post the source has moved from SourceForge to github.  Also the example tutorial is now more agnostic - doesn't go into any configuration or project set up at all.
+I doubt it will still work for Visual Studio 6 as the project files are now created via CMake. If you still need the older version support you can get the last available version under the SourceForge branch.
+
+I've used CppUnit with VS2005 and Eclipse. The wiki is very thorough (especially if you are familiar with JUnit).
+
+I'm not 100% sure about VS2008, but I know that the Unit Testing framework that microsoft shipped in VS2005 as part of their Team Suite was only for .NET, not C++
+I've used CppUnit also and it was alright. Much the same as NUnit/JUnit/so on.
+If you've used boost, they also have a unit testing library
+The guys behind boost have some serious coding chops, so I'd say their framework should be pretty good, but it might not be the most user friendly :-)
+
+The framework included with VS9 is .NET, but you can write tests in C++/CLI, so as long as you're comfortable learning some .NET isms, you should be able to test most any C++ code.
+boost.test
+ and googletest
+look to be fairly similar, but adapted for slightly different uses. Both of these have a binary component, so you'll need an extra project in your solution to compile and run the tests.
+The framework we use is CxxTest, which is much lighter; it's headers only, and uses a Perl (!) script to scrape test suite information from your headers (suites inherit from CxxTest::Base, all your test methods' names start with "test"). Obviously, this requires that you get Perl from one source or another, which adds overhead to your build environment setup.
+
+The unit tester for VS2008 is only for .NET code as far as I know.
+I used CppUnit on Vs2005 and found it to be pretty good. 
+As far as I remember, the setup was relatively painless, just make sure that in your testing projects the linker (Linker->Input->Additional Dependencies) includes cppunitd.lib. 
+Then, #include <cppunit/extensions/HelperMacros.h> in your header
+You can then follow the steps in http://cppunit.sourceforge.net/doc/1.11.6/cppunit_cookbook.html to get your test class working.
+
+I like the CxxTest as well for the same reasons. It's a header file only so no linking required. You aren't stuck with Perl as there is a Python runner as well. I will be reviewing the google library soon. The Boost stuff pulls in too much other baggage. 
+
+This page may help, it reviews quite a few C++ unit test frameworks:
+
+CppUnit  
+Boost.Test
+CppUnitLite 
+NanoCppUnit
+Unit++
+CxxTest
+
+Check out CPPUnitLite or CPPUnitLite2. 
+CPPUnitLite was created by Michael Feathers, who originally ported Java's JUnit to C++ as CPPUnit (CPPUnit tries mimic the development model of JUnit - but C++ lacks Java's features [e.g. reflection] to make it easy to use). 
+CPPUnitLite attempts to make a true C++-style testing framework, not a Java one ported to C++. (I'm paraphrasing from Feather's Working Effectively with Legacy Code book). CPPUnitLite2 seems to be another rewrite, with more features and bug fixes.
+I also just stumbled across UnitTest++ which includes stuff from CPPUnitLite2 and some other framework.
+Microsoft has released WinUnit. 
+Also checkout Catch or Doctest
+
+Personally, I prefer WinUnit since it doesn't require me to write anything except for my tests (I build a .dll as the test, not an exe).  I just build a project, and point WinUnit.exe to my test output directory and it runs everything it finds.  You can download the WinUnit project here. (MSDN now requires you to download the entire issue, not the article.  WinUnit is included within.)
+
+There is a way to test unmanaged C++ using the built in testing framework within Visual Studio 2008. If you create a C++ Test Project, using C++/CLI, you can then make calls to an unmanaged DLL. You will have to switch the Common Language Runtime support to /clr from /clr:safe if you want to test code that was written in unmanaged C++.
+I have step by step details on my blog here: http://msujaws.wordpress.com/2009/05/06/unit-testing-mfc-with-mstest/
+
+The tools that have been mentioned here are all command line tools. If you look for a more integrated solution, have a look at cfix studio, which is a Visual Studio AddIn for C/C++ unit testing . It is quite similar to TestDriven.Net, but for (unmanaged) C/C++ rather than .Net. 
+
+Here is the approach I use to test the IIS URL Rewrite module at Microsoft (it is command-line based, but should work for VS too):
+
+Make sure your header files are consumable by moving source code to cpp files and using forward declaration if needed.
+Compile your code to test as library (.lib)
+Create your UnitTest project as C++ with CLR support.
+Include your header files.
+Include your .lib files.
+Add a reference to Microsoft.VisualStudio.QualityTools.UnitTestFramework.dll
+Use a really small class for declaring your unit test and jump from managed to C++/Native code like this (may have typos):
+
+Here is an example:
+// Example
+#include "stdafx.h"
+#include "mstest.h"
+
+// Following code is native code.
+#pragma unmanaged
+void AddTwoNumbersTest() {
+  // Arrange
+  Adder yourNativeObject;
+  int expected = 3;
+  int actual;
+  // Act
+  actual = yourNativeObject.Add(1, 2);
+  // Assert
+  Assert::AreEqual(expected, actual, L"1 + 2 != 3");
+}
+
+// Following code is C++/CLI (Managed)
+#pragma managed
+using namespace Microsoft::VisualStudio::TestTools::UnitTesting;
+[TestClass]
+public ref class TestShim {
+public:
+  [TestMethod]
+  void AddTwoNumbersTest() {
+     // Just jump to C++ native code (above)
+     ::AddTwoNumbersTest();
+  }
+};
+
+With this approach, people don't have to learn too much C++/CLI stuff, all the real test will be done in C++ native and the TestShim class will be used to 'publish' the test to MSTest.exe (or make it visible).
+For adding new tests you just declare a new [TestMethod] void NewTest(){::NewTest();} method and a new void NewTest() native function. No macros, no tricks, straighforward.
+Now, the  heade file is optionally, but it can be used to expose the Assert class' methods with C++ native signatures (e.g. wchar_t* instead of Stirng^), so it can you can keep it close to C++ and far from C++/CLI:
+Here is an example:
+// Example
+#pragma once
+#pragma managed(push, on)
+using namespace System;
+class Assert {
+public:
+    static void AreEqual(int expected, int actual) {
+        Microsoft::VisualStudio::TestTools::UnitTesting::Assert::AreEqual(expected, actual);
+    }
+
+    static void AreEqual(int expected, int actual, PCWSTR pszMessage) {
+        Microsoft::VisualStudio::TestTools::UnitTesting::Assert::AreEqual(expected, actual, gcnew String(pszMe
+ssage));
+    }
+
+    template<typename T>
+    static void AreEqual(T expected, T actual) {
+        Microsoft::VisualStudio::TestTools::UnitTesting::Assert::AreEqual(expected, actual);
+    }
+
+    // Etcetera, other overloads...
+}
+#pragma managed(pop)
+
+HTH
+
+I was suffering to implement unit test for unmanaged C++ application in windows environment with Visual Studio. So I manage to overcome and wrote a post as a step by step guidance to unmanaged C++ Application Unit Test. Hope It may help you.
+http://codeketchup.blogspot.sg/2012/12/unit-test-for-unmanaged-c-in-visual.html 

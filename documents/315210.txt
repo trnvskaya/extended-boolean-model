@@ -1,0 +1,111 @@
+Unable to debug WCF service message
+visual-studio-2008 wcf
+I've got a Visual Studio 2008 solution with a WCF service, and a client.
+When I run my client, and call a method from my service I get a message saying "Unable to automatically debug 'Home.Service'. The remote procedure could not be debugged. This usually indicates that debugging has not been enabled on the server."
+I've googled around, and have tried the following.
+<system.web>
+   <compilation debug="true" />
+</system.web>
+
+has been added in app.config on both the client and the server.
+I have also made sure that the project is being compiled in Debug mode.
+What else could be causing this message?
+Edit: Added more info based on feedback questions
+
+It is using wsHttpBinding
+I have set
+<serviceDebug includeExceptionDetailInFaults="true"/>
+
+I am using
+var service = new HomeReference.HomeServiceClient();
+service.ClientCredentials.Windows.ClientCredential = CredentialCache.DefaultNetworkCredentials;
+
+
+Unfortunately the error shows up the first time I call a method on my Service. I can dismiss the messagebox, and the application continues working. Any Exceptions thrown on the server at not propagated back to the client though (I assume it should?)
+
+
+Have you tried
+	<serviceBehaviors>
+
+  <serviceDebug includeExceptionDetailInFaults="true"/>
+			</behavior>
+		</serviceBehaviors>
+
+For debugging purposes?
+Edit : nevermind, I think I misunderstood the question
+
+Add this line of code after you create your service reference in your client.
+MyWCFService.IService _proxy = new MyWCFService.IService();
+_proxy.ClientCredentials.Windows.ClientCredential = System.Net.CredentialCache.DefaultNetworkCredentials;
+
+
+I've had a similar problem and it turns out to have been due to Windows Authentication not being enabled on the IIS site/virtual directory.
+Have you tried setting the authentication mode to Integrated instead of Anonymous?
+http://msdn.microsoft.com/en-us/library/x8a5axew(VS.80).aspx
+
+In my case the problem turned out to be a mismatch between security settings on client and server. I was using a custom binding like this:
+<customBinding>
+    <binding name="AuthorisedBinaryHttpsBinding" receiveTimeout="00:03:00" sendTimeout="00:03:00">
+      <!-- this next element caused the problem: -->
+      <security authenticationMode="UserNameOverTransport">
+      </security>
+      <binaryMessageEncoding>
+        <readerQuotas maxDepth="100" maxStringContentLength="1000000"
+          maxArrayLength="655360000" />
+      </binaryMessageEncoding>
+      <httpsTransport />
+    </binding>
+  </customBinding>
+
+When I removed the security element that I've highlighted above the problem with the "Unable to automatically debug" message went away. 
+To solve the problem I first turned on WCF tracing. This showed me that WCF was throwing a MessageSecurityException: 
+
+Security processor was unable to find
+  a security header in the message. This
+  might be because the message is an
+  unsecured fault or because there is a
+  binding mismatch between the
+  communicating parties.   This can
+  occur if the service is configured for
+  security and the client is not using
+  security.
+
+That pointed me to look at the Binding settings on the client side. It turned out that I hadn't added the required security element to my custom binding there. Since I was doing this through code, I needed the following (note the 3rd line):
+  var binding = new CustomBinding(
+      binaryEncoding,
+      SecurityBindingElement.CreateUserNameOverTransportBindingElement(),
+      new HttpsTransportBindingElement { MaxReceivedMessageSize = MaxMessageSize, });
+
+As to why Visual Studio was showing that error, I've no idea - looks to me to be a bug.
+
+I was fighting with this exact same error for over an hour and low and behold I restarted VS2008 and it magically fixed itself. Give it a try as it might save you some time.
+
+The other reason you might see this error (and I believe is the case for me) is if you're running in 64bit Windows. Apparently Visual Studio doesn't have any x64 debugger support.
+You can work around this by changing the Platform Target for the consuming application:
+Project Properties -> Build -> Change "Platform Target" to "x86".
+Unfortunately this won't work for me as I'm trying to run in the Windows Azure Development AppFabric which seems to require everything to run in 64bit mode!
+
+In your web service web.config ensure that compilation debug is set to true.
+That should fix your problem!
+
+I also got the same problem. I changed  in both client & service config files like
+Compilation debug is set to true.
+This worked for me.
+
+Automatically attaching to a service has the following limitations:
+
+The service must be part of the Visual Studio solution you are debugging.
+The service must be hosted. It may be part of a Web Site Project (File System and HTTP), Web Application Project (File System and HTTP), or WCF Service Library project. WCF Service Library projects can be either Service Libraries or Workflow Service Libraries.
+The service must be invoked from a WCF client.
+Debugging must be enabled with the following code in the app.config or Web.config file:
+<system.web>
+  <compilation debug="true" />
+</system.web>
+
+
+See Limitations on WCF Debugging
+In addition, if both projects (client and service) are in the same solution but will run in different processes (for example if you are using your local IIS Server for development and are running your web application on a different application pool than the service it consumes), you may need to enable "Multiple startup projects" for the solution (on Solution Properties -> Startup Project) so that the debugger can attach to both. 
+To avoid the service browser window to show up every time you debug, you may set the "Start Action" (on service project properties) to "Don't open a page. Wait for request from external application."
+This is from personal experience and may help others.
+
+In my case the problem turned out to be something completely different. I had changed the name of an operation on the webservice and forgot to update the client. For some reason this resulted in the "Unable to automatically debug ..." error.

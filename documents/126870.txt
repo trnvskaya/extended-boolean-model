@@ -1,0 +1,79 @@
+Best design for lookup-and-possibly-change method
+oop
+I am designing a class that stores (caches) a set of data.  I want to lookup a value, if the class contains the value then use it and modify a property of the class.  I am concerned about the design of the public interface.
+Here is how the class is going to be used:
+
+ClassItem *pClassItem = myClass.Lookup(value);
+if (pClassItem)
+{ // item is found in class so modify and use it 
+  pClassItem->SetAttribute(something);
+  ... // use myClass
+}
+else
+{  // value doesn't exist in the class so add it
+  myClass.Add(value, something); 
+}
+
+However I don't want to have to expose ClassItem to this client (ClassItem is an implementation detail of MyClass).
+To get round that the following could be considered:
+
+bool found = myClass.Lookup(value);
+if (found)
+{ // item is found in class so modify and use it 
+  myClass.ModifyAttribute(value, something);
+  ... // use myClass
+}
+else
+{  // value doesn't exist in the class so add it
+  myClass.Add(value, something); 
+}
+
+However this is inefficient as Modify will have to do the lookup again.  This would suggest a lookupAndModify type of method:
+
+bool found = myClass.LookupAndModify(value, something);
+if (found)
+{ // item is found in class
+  ... // use myClass
+}
+else
+{  // value doesn't exist in the class so add it
+  myClass.Add(value, something); 
+}
+
+But rolling LookupAndModify into one method seems like very poor design.  It also only modifies if value is found and so the name is not only cumbersome but misleading as well.
+Is there another better design that gets round this issue?  Any design patterns for this (I couldn't find anything through google)?
+
+
+This assumes that you're setting value to the same "something" in both the Modify and Add cases:
+if (!myClass.AddIfNotExists(value, something)) {
+   // use myClass
+}
+
+Otherwise:
+if (myClass.TryModify(value, something)) {
+   // use myClass
+} else {
+   myClass.Add(value, otherSomething);
+}
+
+
+Two things.
+The first solution is close.
+Don't however, return ClassItem *.  Return an "opaque object".  An integer index or other hash code that's opaque (meaningless) to the client, but usable by the myClass instance.
+Then lookup returns an index, which modify can subsequently use.
+void *index = myClass.lookup( value );
+if( index ) {
+    myClass.modify( index, value );
+}
+else {
+    myClass.add( value );
+}
+
+After writing the "primitive" Lookup, Modify and Add, then write your own composite operations built around these primitives.
+Write a LookupAndModify, TryModify, AddIfNotExists and other methods built from your lower-level pieces.
+
+Actually std::set<>::insert() does precisely this. If the value exists, it returns the iterator pointing to the existing item. Otherwise, the iterator where the insertion was made is returned.
+It is likely that you are using a similar data structure for fast lookups anyway, so a clean public interface (calling site) will be:
+myClass.SetAttribute(value, something)
+
+which always does the right thing. MyClass handles the internal plumbing and clients don't worry about whether the value exists.

@@ -1,0 +1,51 @@
+SQL statement problem
+sql dataset
+I have this code:
+SELECT    idcallhistory3, callid, starttime, answertime, endtime, duration,
+          is_answ, is_fail, is_compl, is_fromoutside, mediatype, from_no,
+          to_no, callerid, dialednumber, lastcallerid, lastdialednumber,
+          group_no, line_no
+FROM      "public".callhistory3
+WHERE     (starttime >= ?) AND (endtime <= ?) AND (is_fromoutside = ?) 
+          AND (from_no = ?) AND (to_no = ?)
+
+The problem is I need to pass one value for ? and get all the result without filter, some thing like *
+Any help?
+
+
+The typical way of doing this is something like:
+WHERE (? IS NULL OR starttime >= ?)
+
+and then pass in DBNull.Value. Obviously you need to do this for each parameter you want to be able to "wildcard" like this.
+
+WHERE 
+  (@start is null OR starttime >= @start) AND 
+  (@end is null OR endtime <= @end) AND 
+  (@fromOutside is null OR is_fromoutside = @fromOutside) AND 
+  (@fromNo is null OR from_no = @fromNo) AND 
+  (@toNo is null OR to_no = @toNo)
+
+Pass nulls for all parameters (dang sql nulls; thanks GC).
+
+Add the "Where" statement conditionally -- only if you need to filter the results
+
+For complex queries with multiple optional sections, you may find that it is better to create the SQL to suit. You can do this either at the caller (for example, in C#), or in the database (at least, with SQL Server) - but either way, you must ensure it remains parameterised. With the caller doing the work, it is just a case of adding suitable parameters to the command. If the db is generating the TSQL, then the approach depends on the RDBMS. With SQL-Server, sp_ExecuteSql is your friend - i.e. you might build a @cmd variable based on the query, then:
+EXEC sp_ExecuteSQL @cmd, N'@someArg int', @actualArg
+
+Where @someArg is the declaration inside @cmd, and @actualArg is the value to pass in at execution time.
+
+I like COALESCE.  
+You just have to be careful with null values on the left hand side, if there can be nulls on the left hand side you can do something like the last line so that nulls will match.  Typically with anything like this though you will want to make sure your query still performs ok.
+SELECT    idcallhistory3, callid, starttime, answertime, endtime, duration,
+          is_answ, is_fail, is_compl, is_fromoutside, mediatype, from_no,
+          to_no, callerid, dialednumber, lastcallerid, lastdialednumber,
+          group_no, line_no
+FROM      "public".callhistory3
+WHERE     (starttime >= COALESCE(@starttime, starttime )) 
+          AND (endtime <= COALESCE(@endtime, endtime)) 
+          AND (is_fromoutside = COALESCE(@is_fromoutside, is_fromoutside)) 
+          AND (from_no = COALESCE(@from_no, from_no)) 
+          AND (COALESCE(to_no, -1) = COALESCE(@to_no, to_no, -1)) -- make nulls match
+
+
+I agree with Jamal Hansen.  COALESCE is by far the best performing way to go, at least on SQL Server

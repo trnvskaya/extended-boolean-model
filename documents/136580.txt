@@ -1,0 +1,161 @@
+How to have a Label inherite a Composite's GC in SWT
+java user-interface swt
+I'm writing an app and our designers want to use gradients for some of the backgrounds on a few of our composites. 
+I wrote the following code:
+composite.addListener (SWT.Paint, new Listener () {
+    public void handleEvent (Event e) {
+            GC gc = e.gc;
+            Rectangle rect = composite.getClientArea ();
+            Color color1 = new Color (display, 0, 0, 0);
+            Color color2 = new Color (display, 255, 255, 255);
+            gc.setForeground(color1);
+            gc.setBackground(color2);
+            gc.fillGradientRectangle (rect.x, rect.y, rect.width, rect.height , true);
+
+        }
+    });
+
+This draws the gradient fine on the composite, but we have Label/CLabels, Canvases and Links on top of the composite. 
+In these areas, the background is just the plain gray you get when drawing an empty canvas. 
+I've tried forcing the Labels to inherit the background like so:
+label.setBackgroundMode(SWT.INHERIT_DEFAULT) //SWT.INHERIT_FORCE Doesn't work either
+
+But this leaves me with the same default gray and no gradient behind the components on top of the Composite. 
+Any suggestions for getting the gradient to be the background of each element?
+I wouldn't be opposed to drawing the Gradient onto a gc with an image supplied and then setting the background to that Image. However that method just hasn't been working at all, composite or any of its elements. 
+Also it's not possible for me to set the gradient individually to my knowledge. We want the whole composite to be one uniform flowing gradient. 
+[edit] I uploaded an example upto twitpic here.
+Thanks,
+Brian Gianforcaro
+
+
+The first thing I would try is to capture an image from the widget and paint the portion of the image where the child widget is located onto the child widget directly.
+
+If that doesn't work, try using the same paint listener for both widget, but before to set the GC's transform to after transforming the GC to translate coordinates to the label's coordinate space:
+Listener listener = new Listener () {
+  public void handleEvent (Event e) {
+    GC gc = e.gc;
+    Rectangle rect = composite.getClientArea ();
+    Point offset = ((Control)e.widget).toControl(composite.toDisplay(0, 0));
+    Color color1 = new Color (display, 0, 0, 0);
+    Color color2 = new Color (display, 255, 255, 255);
+    gc.setForeground(color1);
+    gc.setBackground(color2);
+    gc.fillGradientRectangle (rect.x + offset.x, rect.y + offset.y,
+        rect.width, rect.height , true);
+  }
+}
+composite.addListener (SWT.Paint, listener);
+label.addListener(SWT.Paint, listener);
+
+Also, be careful to dispose any Color instances you create after you are done with them.  Otherwise you will leak system resources and eventually run out.
+
+Use composite.setBackgroundMode(SWT.INHERIT_DEFAULT), but do not paint the composite directly - paint an image and set it as the background image using composite.setBackgroundImage(Image). Unless I'm missing a trick, this means you only have to regenerate the image when the composite is resized too.
+You should be able to cut'n'paste this code as is to see what I mean:
+import org.eclipse.swt.SWT;
+import org.eclipse.swt.graphics.*;
+import org.eclipse.swt.layout.*;
+import org.eclipse.swt.widgets.*;
+
+/**
+ * SWT composite with transparent label
+ * 
+ * @author McDowell
+ */
+public class Sweet {
+
+    private Image imageGradient;
+    private Label label;
+    private Composite composite;
+
+    private void createComponents(Shell parent) {
+        composite = new Composite(parent, SWT.NONE);
+        composite.addListener(SWT.Resize, new Listener() {
+            public void handleEvent(Event e) {
+                changeImage();
+            }
+        });
+        composite.setLayout(new FormLayout());
+        composite.setBackgroundMode(SWT.INHERIT_DEFAULT);
+
+        label = new Label(composite, SWT.None);
+        label.setText("Hello, World!");
+    }
+
+    private void changeImage() {
+        Image oldImage = imageGradient;
+
+        Display display = composite.getDisplay();
+        Rectangle rect = composite.getClientArea();
+        imageGradient = new Image(display, rect.width, rect.height);
+        GC gc = new GC(imageGradient);
+        try {
+            Color color1 = new Color(display, 200, 200, 255);
+            try {
+                Color color2 = new Color(display, 255, 255, 255);
+                try {
+                    gc.setForeground(color1);
+                    gc.setBackground(color2);
+                    gc.fillGradientRectangle(rect.x, rect.y, rect.width,
+                            rect.height, true);
+                } finally {
+                    color2.dispose();
+                }
+            } finally {
+                color1.dispose();
+            }
+        } finally {
+            gc.dispose();
+        }
+        composite.setBackgroundImage(imageGradient);
+
+        if (oldImage != null) {
+            oldImage.dispose();
+        }
+    }
+
+    private void openShell(Display display) {
+        Shell shell = new Shell(display);
+        try {
+            shell.setSize(200, 100);
+            shell.setLayout(new FillLayout());
+            createComponents(shell);
+            shell.open();
+            while (!shell.isDisposed()) {
+                if (!display.readAndDispatch()) {
+                    display.sleep();
+                }
+            }
+        } finally {
+            if (!shell.isDisposed()) {
+                shell.dispose();
+            }
+        }
+    }
+
+    public void run() {
+        Display display = Display.getDefault();
+        try {
+            openShell(display);
+        } finally {
+            display.dispose();
+        }
+    }
+
+    public void dispose() {
+        if (imageGradient != null) {
+            imageGradient.dispose();
+        }
+    }
+
+    public static void main(String[] args) {
+        Sweet sweet = new Sweet();
+        try {
+            sweet.run();
+        } finally {
+            sweet.dispose();
+        }
+    }
+
+}
+

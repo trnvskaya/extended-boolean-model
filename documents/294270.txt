@@ -1,0 +1,179 @@
+How do you call a constructor for global objects, for arrays of objects, and for objects inside classes/structs?
+c++ oop constructor
+How would you call the constructor of the following class in these three situations: Global objects, arrays of objects, and objects contained in another class/struct?
+The class with the constructor (used in all three examples):
+class Foo {
+    public:
+        Foo(int a) { b = a; }
+
+    private:
+        int b;
+};
+
+And here are my attempts at calling this constructor:
+Global objects
+Foo global_foo(3); // works, but I can't control when the constructor is called.
+
+int main() {
+    // ...
+}
+
+Arrays of objects
+int main() {
+    // Array on stack
+    Foo array_of_foos[30](3); // doesn't work
+
+    // Array on heap
+    Foo *pointer_to_another_array = new Foo(3) [30]; // doesn't work
+}
+
+There I'm attempting to call the constructor for all elements of the arrays, but I'd also like to know how to call it on individual elements.
+Objects contained in classes/structs
+class Bar {
+    Foo foo(3); // doesn't work
+};
+
+int main() {
+    Bar bar;
+}
+
+
+
+Global objects
+Yours is the only way. On the other hand, try to avoid this. Itâs better to use functions (or even other objects) as factories instead. That way, you can control the time of creation.
+Arrays of objects
+Thereâs no way to do this directly. Non-POD objects will always be default-constructed. std::fill is often a great help. You might also want to look into allocators and std::uninitialized_fill.
+Objects contained in classes/structs
+Use initialization lists in your constructor:
+class Bar {
+    Foo foo;
+
+    Bar() : foo(3) { }
+};
+
+Static members must actually be defined outside the class:
+class Bar {
+    static Foo foo;
+};
+
+Foo Bar::foo(3);
+
+
+For the global case there is no way to control when it is called.  The C++ spec essentially says it will be called before main() and will be destroyed sometime afterwards.  Other than that' the compiler is free to do as it pleases.  
+In the first array case you are creating a static array of Foo objects.  By default each value in the array will be initialized with the default constructor of Foo().  There is no way with a raw C++ array to force a particular overloaded constructor to be called.  You can infer a bit of control by switching to a vector instead of an array.  The vector constructor has an overloaded constructor vector(size,defaultValue) which should achieve what you are looking for.  But in this case you must be careful because instead of calling Foo(3) it will call Foo(const Foo& other) where other is Foo(3).
+The second array case is very similar to the first case.  The only real difference is where the memory is allocated (on the heap instead of the stack).  It has the same limitation with regards to calling to the constructor.  
+The contained case is a different issue.  C++ has a clear separation between the definition of a field within an object and the initialization of the field.  To get this to work in C++ you'll need to change your Bar definition to the following
+class Bar{
+  Foo foo;
+  Bar() : foo(3){}
+};
+
+
+To correct some misconceptions about globals:
+
+The order is well defined within a compilation unit.
+
+It is the same as the order of definition
+
+The order across compilation units is undefined.
+The order of destruction is the EXACT opposite of creation.
+
+Not something I recommend but: So a simple solution is to to put all globals into a single compilation unit.
+Alternatively you can tweak the use of function static variables.
+Basically you can have a function the returns a reference to the global you want (defining the global inside the function). It will be created on first use (and destroyed in reverse order of creation).
+Foo& getGlobalA() // passed parameters can be passed to constructor
+{
+    static Foo  A;
+    return A;
+}
+Foo& getGlobalB()
+{
+    static Foo  B;
+    return B;
+}
+etc.
+
+
+The Konrad reply is OK, just a puntualization about the arrays....
+There is a way to create an array of items(not pointers) and here it follows:
+//allocate raw memory for our array
+void *rawMemory = operator new[](30 * sizeof(Foo))
+
+// point array_of_foos to this memory so we can use it as an array of Foo
+Foo *array_of_foos = static_cast<Foo *>(rawMemory);
+
+// and now we can create the array of objects(NOT pointers to the objects)
+//  using the buffered new operator
+for (int i = 0; i < 30; i++)
+    new(array_of_foos[i])Foo(3);
+
+This approach is described here: http://www.amazon.com/gp/product/0321334876?ie=UTF8&tag=aristeia.com-20&linkCode=as2&camp=1789&creative=9325&creativeASIN=0321334876
+
+Construction of arrays of objects:
+You can modify your original example by using default parameters.
+Currently only the default constructor is supported.
+This is something that is being addressed by the next version (because everybody asks this question)
+
+C++0X initializer lists solve this problem for the arrays of objects case. See this Herb Sutter blog entry, where he describes them in detail.
+In the meantime you might be able to work around the problem like so:
+class Foo {
+public:
+    Foo(int a) : b(a) {}
+
+private:
+    int b;
+};
+
+class Foo_3 : public Foo {
+public:
+    Foo_3() : Foo(3) {}
+};
+
+Foo_3 array_of_foos[30];
+
+Here, the Foo_3 class exists solely for the purpose of calling the Foo constructor with the correct argument. You could make it a template even:
+template <int i>    
+class Foo_n : public Foo {
+public:
+    Foo_n() : Foo(i) {}
+};
+
+Foo_n<3> array_of_foos[30];
+
+Again this might not do exactly what you want but may provide some food for thought.
+(Also note that in your Foo class you really should get into the habit of using member initializer lists instead of assignments in the constructor, as per my example above)
+
+There seems to be the general gist in this thread that you cannot initialize members of an array other than using the default constructor. One answer even creates another type, just to call another constructor. Even though you can (if the array is not part as a member of a class!):
+struct foo {
+    foo(int a): a(a) { }
+    explicit foo(std::string s): s(s) { }
+private:
+    int a;
+    std::string s;
+};
+
+/* global */
+foo f[] = { foo("global"), foo("array") };
+
+int main() {
+    /* local */
+    foo f[] = { 10, 20, 30, foo("a"), foo("b") };
+}
+
+The type, however, needs to be copy-able: The items given are copy-initialized into the members of the array.
+For arrays as members in classes, it's the best to use containers currently:
+struct bar {
+    /* create a vector of 100 foo's, initialized with "initial" */
+    bar(): f(100, foo("initial")) { }
+private:
+    std::vector<foo> f;
+};
+
+Using the placement-new technique described by andy.gurin is an option too. But note it will complicate things. You will have to call destructors yourself. And if any constructor throws, while you are still building up the array, then you need to figure where you stopped... Altogether, if you want to have arrays in your class, and want to initialize them, use of a std::vector is a simple bet.
+
+I reckon there are two ways to make sure global class objects' constructors are called safely at the time of their "creation":
+
+Declare them in a namespace and make that namespace globally accessible.
+Make it a global pointer to the class object and assign a new class object to it in main(), granted code for other global objects' constructors that access the object will execute before this.
+
+Just my two cents.

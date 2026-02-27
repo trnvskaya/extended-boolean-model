@@ -1,0 +1,327 @@
+How do I use LINQ Contains(string[]) instead of Contains(string)
+c# linq string contains
+I got one big question.
+I got a linq query to put it simply looks like this:
+from xx in table
+where xx.uid.ToString().Contains(string[])
+select xx
+
+The values of the string[] array would be numbers like (1,45,20,10,etc...)
+the Default for .Contains is .Contains(string).
+I need it to do this instead:  .Contains(string[])...
+EDIT : One user suggested writing an extension class for string[].  I would like to learn how, but any one willing to point me in the right direction?
+EDIT : The uid would also be a number. That's why it is converted to a string.
+Help anyone?
+
+
+How about:
+from xx in table
+where stringarray.Contains(xx.uid.ToString())
+select xx
+
+
+This is an example of one way of writing an extension method (note: I wouldn't use this for very large arrays; another data structure would be more appropriate...):
+namespace StringExtensionMethods
+{
+    public static class StringExtension
+    {
+        public static bool Contains(this string[] stringarray, string pat)
+        {
+            bool result = false;
+
+            foreach (string s in stringarray)
+            {
+                if (s == pat)
+                {
+                    result = true;
+                    break;
+                }
+            }
+
+            return result;
+        }
+    }
+}
+
+
+I believe you could also do something like this.
+from xx in table
+where (from yy in string[] 
+       select yy).Contains(xx.uid.ToString())
+select xx
+
+
+spoulson has it nearly right, but you need to create a List<string> from string[] first.  Actually a List<int> would be better if uid is also int.  List<T> supports Contains().  Doing  uid.ToString().Contains(string[]) would imply that the uid as a string contains all of the values of the array as a substring???  Even if you did write the extension method the sense of it would be wrong. 
+[EDIT]
+Unless you changed it around and wrote it for string[] as Mitch Wheat demonstrates, then you'd just be able to skip the conversion step. 
+[ENDEDIT] 
+Here is what you want, if you don't do the extension method (unless you already have the collection of potential uids as ints -- then just use List<int>() instead).  This uses the chained method syntax, which I think is cleaner, and
+does the conversion to int to ensure that the query can be used with more providers.
+var uids = arrayofuids.Select(id => int.Parse(id)).ToList();
+
+var selected = table.Where(t => uids.Contains(t.uid));
+
+
+Try the following.  
+string input = "someString";
+string[] toSearchFor = GetSearchStrings();
+var containsAll = toSearchFor.All(x => input.Contains(x));
+
+
+If you are truly looking to replicate Contains, but for an array, here is an extension method and sample code for usage:
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+
+namespace ContainsAnyThingy
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            string testValue = "123345789";
+
+            //will print true
+            Console.WriteLine(testValue.ContainsAny("123", "987", "554")); 
+
+            //but so will this also print true
+            Console.WriteLine(testValue.ContainsAny("1", "987", "554"));
+            Console.ReadKey();
+
+        }
+    }
+
+    public static class StringExtensions
+    {
+        public static bool ContainsAny(this string str, params string[] values)
+        {
+            if (!string.IsNullOrEmpty(str) || values.Length > 0)
+            {
+                foreach (string value in values)
+                {
+                    if(str.Contains(value))
+                        return true;
+                }
+            }
+
+            return false;
+        }
+    }
+}
+
+
+So am I assuming correctly that uid is a Unique Identifier (Guid)? Is this just an example of a possible scenario or are you really trying to find a guid that matches an array of strings?
+If this is true you may want to really rethink this whole approach, this seems like a really bad idea. You should probably be trying to match a Guid to a Guid
+Guid id = new Guid(uid);
+var query = from xx in table
+            where xx.uid == id
+            select xx;
+
+I honestly can't imagine a scenario where matching a string array using "contains" to the contents of a Guid would be a good idea. For one thing, Contains() will not guarantee the order of numbers in the Guid so you could potentially match multiple items. Not to mention comparing guids this way would be way slower than just doing it directly.
+
+You should write it the other way around, checking your priviliged user id list contains the id on that row of table:
+string[] search = new string[] { "2", "3" };
+var result = from x in xx where search.Contains(x.uid.ToString()) select x;
+
+LINQ behaves quite bright here and converts it to a good SQL statement:
+sp_executesql N'SELECT [t0].[uid]
+FROM [dbo].[xx] AS [t0]
+WHERE (CONVERT(NVarChar,[t0].[uid]))
+IN (@p0, @p1)',N'@p0 nvarchar(1),
+@p1 nvarchar(1)',@p0=N'2',@p1=N'3'
+
+which basicly embeds the contents of the 'search' array into the sql query, and does the filtering with 'IN' keyword in SQL.
+
+I managed to find a solution, but not a great one as it requires using AsEnumerable() which is going to return all results from the DB, fortunately I only have 1k records in the table so it isn't really noticable, but here goes.
+var users = from u in (from u in ctx.Users
+                       where u.Mod_Status != "D"
+                       select u).AsEnumerable()
+            where ar.All(n => u.FullName.IndexOf(n,
+                        StringComparison.InvariantCultureIgnoreCase) >= 0)
+            select u;
+
+
+My original post follows:
+
+How do you do the reverse? I want to
+  do something like the following in
+  entity framework.
+string[] search = new string[] { "John", "Doe" };
+var users = from u in ctx.Users
+            from s in search
+           where u.FullName.Contains(s)
+          select u;
+
+What I want is to find all users where
+  their FullName contains all of the
+  elements in `search'. I've tried a
+  number of different ways, all of which
+  haven't been working for me.
+I've also tried
+var users = from u in ctx.Users select u;
+foreach (string s in search) {
+    users = users.Where(u => u.FullName.Contains(s));
+}
+
+This version only finds those that
+  contain the last element in the search
+  array.
+
+
+The best solution I found was to go ahead and create a Table-Valued Function in SQL that produces the results, such as ::
+CREATE function [dbo].[getMatches](@textStr nvarchar(50)) returns @MatchTbl table(
+Fullname nvarchar(50) null,
+ID nvarchar(50) null
+)
+as begin
+declare @SearchStr nvarchar(50);
+set @SearchStr = '%' + @textStr + '%';
+insert into @MatchTbl 
+select (LName + ', ' + FName + ' ' + MName) AS FullName, ID = ID from employees where LName like @SearchStr;
+return;
+end
+
+GO
+
+select * from dbo.getMatches('j')
+
+Then, you simply drag the function into your LINQ.dbml designer and call it like you do your other objects. The LINQ even knows the columns of your stored function. I call it out like this ::
+Dim db As New NobleLINQ
+Dim LNameSearch As String = txt_searchLName.Text
+Dim hlink As HyperLink
+
+For Each ee In db.getMatches(LNameSearch)
+   hlink = New HyperLink With {.Text = ee.Fullname & "<br />", .NavigateUrl = "?ID=" & ee.ID}
+   pnl_results.Controls.Add(hlink)
+Next
+
+Incredibly simple and really utlizes the power of SQL and LINQ in the application...and you can, of course, generate any table valued function you want for the same effects!
+
+I believe that what you really want to do is:
+let's imagine a scenario
+you have two database
+and they have a table of products in common
+And you want to select products from the table "A" that id has in common with the "B"
+using the method contains would be too complicated to do this
+what we are doing is an intersection, and there is a method called intersection for that
+an example from msdn:
+http://msdn.microsoft.com/en-us/vcsharp/aa336761.aspx#intersect1
+int [] numbers = (0, 2, 4, 5, 6, 8, 9);
+int [] numbersB = (1, 3, 5, 7, 8);
+var = commonNumbers numbersA.Intersect (numbersB);
+I think what you need is easily solved with intersection
+
+string[] stringArray = {1,45,20,10};
+from xx in table 
+where stringArray.Contains(xx.uid.ToString()) 
+select xx
+
+
+Or if you already have the data in a list and prefer the other Linq format :)
+List<string> uids = new List<string>(){"1", "45", "20", "10"};
+List<user> table = GetDataFromSomewhere();
+
+List<user> newTable = table.Where(xx => uids.Contains(xx.uid)).ToList();
+
+
+LINQ in .NET 4.0 has another option for you; the .Any() method;
+string[] values = new[] { "1", "2", "3" };
+string data = "some string 1";
+bool containsAny = values.Any(data.Contains);
+
+
+from xx in table
+where xx.uid.Split(',').Contains(string value )
+select xx
+
+
+Check this extension method:
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+
+namespace ContainsAnyProgram
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            const string iphoneAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 5_0 like...";
+
+            var majorAgents = new[] { "iPhone", "Android", "iPad" };
+            var minorAgents = new[] { "Blackberry", "Windows Phone" };
+
+            // true
+            Console.WriteLine(iphoneAgent.ContainsAny(majorAgents));
+
+            // false
+            Console.WriteLine(iphoneAgent.ContainsAny(minorAgents));
+            Console.ReadKey();
+        }
+    }
+
+    public static class StringExtensions
+    {
+        /// <summary>
+        /// Replicates Contains but for an array
+        /// </summary>
+        /// <param name="str">The string.</param>
+        /// <param name="values">The values.</param>
+        /// <returns></returns>
+        public static bool ContainsAny(this string str, params string[] values)
+        {
+            if (!string.IsNullOrEmpty(str) && values.Length > 0)
+                return values.Any(str.Contains);
+
+            return false;
+        }
+    }
+}
+
+
+This is a late answer, but I believe it is still useful.
+I have created the NinjaNye.SearchExtension nuget package that can help solve this very problem.:
+string[] terms = new[]{"search", "term", "collection"};
+var result = context.Table.Search(terms, x => x.Name);
+
+You could also search multiple string properties
+var result = context.Table.Search(terms, x => x.Name, p.Description);
+
+Or perform a RankedSearch which returns IQueryable<IRanked<T>> which simply includes a property which shows how many times the search terms appeared:
+//Perform search and rank results by the most hits
+var result = context.Table.RankedSearch(terms, x => x.Name, x.Description)
+                     .OrderByDescending(r = r.Hits);
+
+There is a more extensive guide on the projects GitHub page: https://github.com/ninjanye/SearchExtensions
+Hope this helps future visitors
+
+Linq extension method. Will work with any IEnumerable object:
+    public static bool ContainsAny<T>(this IEnumerable<T> Collection, IEnumerable<T> Values)
+    {
+        return Collection.Any(x=> Values.Contains(x));
+    }
+
+Usage:
+string[] Array1 = {"1", "2"};
+string[] Array2 = {"2", "4"};
+
+bool Array2ItemsInArray1 = List1.ContainsAny(List2);
+
+
+Try:
+var stringInput = "test";
+var listOfNames = GetNames();
+var result = from names in listOfNames where names.firstName.Trim().ToLower().Contains(stringInput.Trim().ToLower());
+select names;
+
+
+Dim stringArray() = {"Pink Floyd", "AC/DC"}
+Dim inSQL = From alb In albums Where stringArray.Contains(alb.Field(Of String)("Artiste").ToString())
+Select New With
+  {
+     .Album = alb.Field(Of String)("Album"),
+     .Annee = StrReverse(alb.Field(Of Integer)("Annee").ToString()) 
+  }
+

@@ -1,0 +1,55 @@
+How do you display a dialog from a hidden window application?
+winapi com
+I have developed a COM component (dll) that implements an Edit() method displaying a WTL modal dialog.
+The complete interface to this COM component corresponds to a software standard used in the chemical process industry (CAPE-OPEN) and as a result this COM component is supposed to be usable by a range of 3rd party executables that are out of my control.
+My component works as expected in many of these EXEs, but for one in particular the Edit() method just hangs without the dialog appearing.
+However, if I make a call to ::MessageBox() immediately before DoModal() the dialog displays and behaves correctly after first showing the MessageBox.
+I have a suspicion that the problem may be something to do with this particular EXE running as a 'hidden window application'.
+I have tried using both NULL and the return value from ::GetConsoleWindow() as the dialog's parent, neither have worked.
+The dialog itself is an ATL/WTL CPropertySheetImpl.
+The parent application (EXE) in question is out of my control as it is developed by a (mildly hostile) 3rd party.
+I do know that I can successfully call ::MessageBox() or display the standard Windows File Dialog from my COM component, and that after doing so I am then able to display my custom dialog. I'm just unable to display my custom dialog without first displaying a 'standard' dialog.
+Can anyone suggest how I might get it to display the dialog without first showing an unnecessary MessageBox? I know it is possible because I've seen this EXE display the dialogs from other COM components corresponding to the same interface.
+
+
+Are you using a parent for the Dialog? e.g.
+MyDialog dialog(pParent);
+dialog.DoModal();
+
+If you are, try removing the parent. Especially if the parent is the desktop window.
+
+Depending on how the "hidden window" application works, it might not be able to display a window. For example, services don't have a "main message loop", and thus are not able to process messages sent to windows in the process. i.e, the application displaying the window should have something like this:
+    while(GetMessage(&msg, NULL, 0, 0))
+    {
+        if(!TranslateAccelerator(msg.hwnd, hAccelTable, &msg)) 
+        {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+    }
+
+in WinMain.
+
+This isn't supposed to be reliable - but try ::GetDesktopWindow() as the parent (it returns a HWND).
+Be warned - if your app crashes, it will bring down the desktop with it. But i'd be interested to see if it works.
+
+It turns out I was mistaken:
+
+If I create my dialog with a NULL parent then it is not displayed, and hangs the parent application
+However if I create my dialog with ::GetConsoleWindow() as the parent then the dialog is displayed; it just fooled me because it was displayed behind the window of the application that launched the parent application
+
+So now I just have to find out how to bring my dialog to the front.
+Thanks for the answers ;-)
+
+Whatever you do, do not use the desktop window as the parent for your modal dialog box.
+See here for explanation: http://blogs.msdn.com/b/oldnewthing/archive/2004/02/24/79212.aspx
+To quote the rationale:
+
+Put this together: If the owner of a
+  modal dialog is the desktop, then the
+  desktop becomes disabled, which
+  disables all of its descendants. In
+  other words, it disables every window
+  in the system. Even the one you're
+  trying to display!
+

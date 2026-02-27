@@ -1,0 +1,33 @@
+Encapsulating SQL in a named_scope
+sql ruby-on-rails named-scope
+I was wondering if there was a way to use "find_by_sql" within a named_scope. I'd like to treat custom sql as named_scope so I can chain it to my existing named_scopes. It would also be good for optimizing a sql snippet I use frequently.
+
+
+sure why not 
+:named_scope :conditions => [ your sql ]
+
+While you can put any SQL you like in the conditions of a named scope, if you then call find_by_sql then the 'scopes' get thrown away.
+Given:
+class Item
+  # Anything you can put in an sql WHERE you can put here
+  named_scope :mine, :conditions=>'user_id = 12345 and IS_A_NINJA() = 1'
+end
+
+This works (it just sticks the SQL string in there - if you have more than one they get joined with AND)
+Item.mine.find :all
+=> SELECT * FROM items WHERE ('user_id' = 887 and IS_A_NINJA() = 1)
+
+However, this doesn't
+Items.mine.find_by_sql 'select * from items limit 1'
+=> select * from items limit 1
+
+So the answer is "No". If you think about what has to happen behind the scenes then this makes a lot of sense. In order to build the SQL rails has to know how it fits together.
+When you create normal queries, the select, joins, conditions, etc are all broken up into distinct pieces. Rails knows that it can add things to the conditions without affecting everything else (which is how with_scope and named_scope work).
+With find_by_sql however, you just give rails a big string. It doesn't know what goes where, so it's not safe for it to go in and add the things it would need to add for the scopes to work.
+
+This doesn't address exactly what you asked about, but you might investigate 'contruct_finder_sql'. It lets you can get the SQL of a named scope.
+named_scope :mine, :conditions=>'user_id = 12345 and IS_A_NINJA() = 1'
+named_scope :additional {
+  :condtions => mine.send(:construct_finder_sql,{}) + " additional = 'foo'"
+}
+

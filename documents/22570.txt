@@ -1,0 +1,170 @@
+What's a good way to check if two datetimes are on the same calendar day in TSQL?
+sql sql-server tsql datetime user-defined-functions
+Here is the issue I am having: I have a large query that needs to compare datetimes in the where clause to see if two dates are on the same day.  My current solution, which sucks, is to send the datetimes into a UDF to convert them to midnight of the same day, and then check those dates for equality.  When it comes to the query plan, this is a disaster, as are almost all UDFs in joins or where clauses.  This is one of the only places in my application that I haven't been able to root out the functions and give the query optimizer something it can actually use to locate the best index.
+In this case, merging the function code back into the query seems impractical.
+I think I am missing something simple here.
+Here's the function for reference.
+if not exists (select * from dbo.sysobjects 
+              where id = object_id(N'dbo.f_MakeDate') and               
+              type in (N'FN', N'IF', N'TF', N'FS', N'FT'))
+  exec('create function dbo.f_MakeDate() returns int as 
+         begin declare @retval int return @retval end')
+go
+
+alter function dbo.f_MakeDate
+(
+    @Day datetime, 
+    @Hour int, 
+    @Minute int
+)
+returns datetime
+as
+
+/*
+
+Creates a datetime using the year-month-day portion of @Day, and the 
+@Hour and @Minute provided
+
+*/
+
+begin
+
+declare @retval datetime
+set @retval = cast(
+    cast(datepart(m, @Day) as varchar(2)) + 
+    '/' + 
+    cast(datepart(d, @Day) as varchar(2)) + 
+    '/' + 
+    cast(datepart(yyyy, @Day) as varchar(4)) + 
+    ' ' + 
+    cast(@Hour as varchar(2)) + 
+    ':' + 
+    cast(@Minute as varchar(2)) as datetime)
+return @retval
+end
+
+go
+
+To complicate matters, I am joining on time zone tables to check the date against the local time, which could be different for every row:
+where 
+dbo.f_MakeDate(dateadd(hh, tz.Offset + 
+    case when ds.LocalTimeZone is not null 
+    then 1 else 0 end, t.TheDateINeedToCheck), 0, 0) = @activityDateMidnight
+
+[Edit]
+I'm incorporating @Todd's suggestion:
+where datediff(day, dateadd(hh, tz.Offset + 
+    case when ds.LocalTimeZone is not null 
+    then 1 else 0 end, t.TheDateINeedToCheck), @ActivityDate) = 0
+
+My misconception about how datediff works (the same day of year in consecutive years yields 366, not 0 as I expected) caused me to waste a lot of effort.
+But the query plan didn't change.  I think I need to go back to the drawing board with the whole thing.
+
+
+where
+year(date1) = year(date2)
+and month(date1) = month(date2)
+and day(date1) = day(date2)
+
+
+This is much more concise:
+where 
+  datediff(day, date1, date2) = 0
+
+
+this will remove time component from a date for you:  
+select dateadd(d, datediff(d, 0, current_timestamp), 0)
+
+
+You pretty much have to keep the left side of your where clause clean. So, normally, you'd do something like:
+WHERE MyDateTime >= @activityDateMidnight 
+      AND MyDateTime < (@activityDateMidnight + 1)
+
+(Some folks prefer DATEADD(d, 1, @activityDateMidnight) instead - but it's the same thing).
+The TimeZone table complicates matter a bit though. It's a little unclear from your snippet, but it looks like t.TheDateInTable is in GMT with a Time Zone identifier, and that you're then adding the offset to compare against @activityDateMidnight - which is in local time. I'm not sure what ds.LocalTimeZone is, though.
+If that's the case, then you need to get @activityDateMidnight into GMT instead.
+
+Make sure to read Only In A Database Can You Get 1000% + Improvement By Changing A Few Lines Of Code so that you are sure that the optimizer can utilize the index effectively when messing with dates
+
+You're spoilt for choice in terms of options here. If you are using Sybase or SQL Server 2008 you can create variables of type date and assign them your datetime values. The database engine gets rid of the time for you. Here's a quick and dirty test to illustrate (Code is in Sybase dialect):
+declare @date1 date
+declare @date2 date
+set @date1='2008-1-1 10:00'
+set @date2='2008-1-1 22:00'
+if @date1=@date2
+    print 'Equal'
+else
+    print 'Not equal'
+
+For SQL 2005 and earlier what you can do is convert the date to a varchar in a format that does not have the time component. For instance the following returns 2008.08.22
+select convert(varchar,'2008-08-22 18:11:14.133',102)
+
+The 102 part specifies the formatting (Books online can list for you all the available formats)
+So, what you can do is write a function that takes a datetime and extracts the date element and discards the time. Like so:
+create function MakeDate (@InputDate datetime) returns datetime as
+begin
+    return cast(convert(varchar,@InputDate,102) as datetime);
+end
+
+You can then use the function for companions
+Select * from Orders where dbo.MakeDate(OrderDate) = dbo.MakeDate(DeliveryDate)
+
+
+I would use the dayofyear function of datepart:
+
+Select *
+from mytable
+where datepart(dy,date1) = datepart(dy,date2)
+and
+year(date1) = year(date2) --assuming you want the same year too
+
+See the datepart reference here.
+
+Regarding timezones, yet one more reason to store all dates in a single timezone (preferably UTC). Anyway, I think the answers using datediff, datepart and the different built-in date functions are your best bet.
+
+Eric Z Beard:
+
+I do store all dates in GMT. Here's the use case: something happened at 11:00 PM EST on the 1st, which is the 2nd GMT. I want to see activity for the 1st, and I am in EST so I will want to see the 11PM activity. If I just compared raw GMT datetimes, I would miss things. Each row in the report can represent an activity from a different time zone.
+
+Right, but when you say you're interested in activity for Jan 1st 2008 EST:
+SELECT @activityDateMidnight = '1/1/2008', @activityDateTZ = 'EST'
+
+you just need to convert that to GMT (I'm ignoring the complication of querying for the day before EST goes to EDT, or vice versa):
+Table: TimeZone
+Fields: TimeZone, Offset
+Values: EST, -4
+
+--Multiply by -1, since we're converting EST to GMT.
+--Offsets are to go from GMT to EST.
+SELECT @activityGmtBegin = DATEADD(hh, Offset * -1, @activityDateMidnight)
+FROM TimeZone
+WHERE TimeZone = @activityDateTZ
+
+which should give you '1/1/2008 4:00 AM'. Then, you can just search in GMT:
+SELECT * FROM EventTable
+WHERE 
+   EventTime >= @activityGmtBegin --1/1/2008 4:00 AM
+   AND EventTime < (@activityGmtBegin + 1) --1/2/2008 4:00 AM
+
+The event in question is stored with a GMT EventTime of 1/2/2008 3:00 AM. You don't even need the TimeZone in the EventTable (for this purpose, at least). 
+Since EventTime is not in a function, this is a straight index scan - which should be pretty efficient. Make EventTime your clustered index, and it'll fly. ;)
+Personally, I'd have the app convert the search time into GMT before running the query.
+
+@Eric: No you won't miss anything. If you want to see what happened at 11pm EST, you look for things that happened at the corresponding time in GMT. If all the records are converted into GMT before saving, it shouldn't matter. So long as you convert the requested time (i.e. 11pm) to GMT before using it in the query.
+
+Eric Z Beard:
+
+the activity date is meant to indicate the local time zone, but not a specific one
+
+Okay - back to the drawing board. Try this:
+where t.TheDateINeedToCheck BETWEEN (
+    dateadd(hh, (tz.Offset + ISNULL(ds.LocalTimeZone, 0)) * -1, @ActivityDate)
+    AND
+    dateadd(hh, (tz.Offset + ISNULL(ds.LocalTimeZone, 0)) * -1, (@ActivityDate + 1))
+)
+
+which will translate the @ActivityDate to local time, and compare against that. That's your best chance for using an index, though I'm not sure it'll work - you should try it and check the query plan.
+The next option would be an indexed view, with an indexed, computed TimeINeedToCheck in local time. Then you just go back to:
+where v.TheLocalDateINeedToCheck BETWEEN @ActivityDate AND (@ActivityDate + 1)
+
+which would definitely use the index - though you have a slight overhead on INSERT and UPDATE then.

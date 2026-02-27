@@ -1,0 +1,203 @@
+Naming of ID columns in database tables
+sql naming-conventions
+I was wondering peoples opinions on the naming of ID columns in database tables.
+If I have a table called Invoices with a primary key of an identity column I would call that column InvoiceID so that I would not conflict with other tables and it's obvious what it is.
+Where I am workind current they have called all ID columns ID.
+So they would do the following:
+Select  
+    i.ID 
+,   il.ID 
+From
+    Invoices i
+    Left Join InvoiceLines il
+        on i.ID = il.InvoiceID
+
+Now, I see a few problems here:
+1. You would need to alias the columns on the select
+2. ID = InvoiceID does not fit in my brain
+3. If you did not alias the tables and referred to InvoiceID is it obvious what table it is on?
+What are other peoples thoughts on the topic?
+
+
+We use InvoiceID, not ID.  It makes queries more readable -- when you see ID alone it could mean anything, especially when you alias the table to i.
+
+I do hate the plain id name. I strongly prefer to always use the invoice_id or a variant thereof. I always know which table is the authoritative table for the id when I need to, but this confuses me
+SELECT * from Invoice inv, InvoiceLine inv_l where 
+inv_l.InvoiceID = inv.ID 
+SELECT * from Invoice inv, InvoiceLine inv_l where 
+inv_l.ID = inv.InvoiceLineID 
+SELECT * from Invoice inv, InvoiceLine inv_l where 
+inv_l.ID = inv.InvoiceID 
+SELECT * from Invoice inv, InvoiceLine inv_l where 
+inv_l.InvoiceLineID = inv.ID
+
+What's worst of all is the mix you mention, totally confusing. I've had to work with a database where almost always it was foo_id except in one of the most used ids. That was total hell.
+
+For the sake of simplicity most people name the column on the table ID. If it has a foreign key reference on another table, then they explicity call it InvoiceID (to use your example) in the case of joins, you are aliasing the table anyway so the explicit inv.ID is still simpler than inv.InvoiceID
+
+I definitely agree with including the table name in the ID field name, for exactly the reasons you give. Generally, this is the only field where I would include the table name.
+
+You could use the following naming convention. It has its flaws but it solves your particular problems.
+
+Use short (3-4 characters) nicknames for the table names, i.e. Invoice - inv, InvoiceLines - invl
+Name the columns in the table using those nicknames, i.e. inv_id, invl_id
+For the reference columns use invl_inv_id for the names.
+
+this way you could say
+SELECT * FROM Invoice LEFT JOIN InvoiceLines ON inv_id = invl_inv_id
+
+
+It's not really important, you are likely to run into simalar problems in all naming conventions.
+But it is important to be consistent so you don't have to look at the table definitions every time you write a query.
+
+For the column name in the database, I'd use "InvoiceID".
+If I copy the fields into a unnamed struct via LINQ, I may name it "ID" there, if it's the only ID in the structure.
+If the column is NOT going to be used in a foreign key, so that it's only used to uniquely identify a row for edit editing or deletion, I'll name it "PK".
+
+I always prefered ID to TableName + ID for the id column and then TableName + ID for a foreign key.  That way all tables have a the same name for the id field and there isn't a redundant description.  This seems simpler to me because all the tables have the same primary key field name.  
+As far as joining tables and not knowing which Id field belongs to which table, in my opinion the query should be written to handle this situation.  Where I work, we always prefece the fields we use in a statement with the table/table alias.  
+
+If you give each key a unique name, e.g. "invoices.invoice_id" instead of "invoices.id", then you can use the "natural join" and "using" operators with no worries. E.g.
+SELECT * FROM invoices NATURAL JOIN invoice_lines
+SELECT * FROM invoices JOIN invoice_lines USING (invoice_id)
+
+instead of
+SELECT * from invoices JOIN invoice_lines
+    ON invoices.id = invoice_lines.invoice_id
+
+SQL is verbose enough without making it more verbose.
+
+I think you can use anything for the "ID" as long as you're consistent. Including the table name is important to. I would suggest using a modeling tool like Erwin to enforce the naming conventions and standards so when writing queries it's easy to understand the relationships that may exist between tables. 
+What I mean by the first statement is, instead of ID you can use something else like 'recno'. So then this table would have a PK of invoice_recno and so on.
+Cheers,
+Ben
+
+Theres been a nerd fight about this very thing in my company of late.  The advent of LINQ has made the redundant tablename+ID pattern even more obviously silly in my eyes.  I think most reasonable people will say that if you're hand writing your SQL in such a manner as that you have to specify table names to differentiate FKs then it's not only a savings on typing but it adds clarity to your SQL to use just the ID in that you can clearly see which is the PK and which is the FK.
+ie.
+LEFT JOIN Customers ON Employee.ID = Customer.EmployeeID
+tells me not only that the two are linked but which is the PK and which is the FK
+whereas in the old style you're forced to either look or hope that they were named well.
+
+My vote is for InvoiceID for the table ID. I also use the same naming convention when it's used as a foreign key and use intelligent alias names in the queries.
+ Select Invoice.InvoiceID, Lines.InvoiceLine, Customer.OrgName
+ From Invoices Invoice
+ Join InvoiceLines Lines on Lines.InvoiceID = Invoice.InvoiceID
+ Join Customers Customer on Customer.CustomerID = Invoice.CustomerID
+
+Sure, it's longer than some other examples. But smile. This is for posterity and someday, some poor junior coder is going to have to alter your masterpiece. In this example there is no ambiguity and as additional tables get added to the query, you'll be grateful for the verbosity.
+
+Coming at this from the perspective of a formal data dictionary, I would name the data element invoice_ID. Generally, a data element name will be unique in the data dictionary and ideally will have the same name throughout, though sometimes additional qualifying terms may be required based on context e.g. the data element named employee_ID could be used twice in the org chart and therefore qualified as supervisor_employee_ID and subordinate_employee_ID respectively. 
+Obviously, naming conventions are subjective and a matter of style. I've find ISO/IEC 11179 guidelines to be a useful starting point.
+For the DBMS, I see tables as collections of entites (except those that only ever contain one row e.g. cofig table, table of constants, etc) e.g. the table where my employee_ID is the key would be named Personnel. So straight away the TableNameID convention doesn't work for me.
+I've seen the TableName.ID=PK TableNameID=FK style used on large data models and have to say I find it slightly confusing: I much prefer an identifier's name be the same throughout i.e. does not change name based on which table it happens to appear in. Something to note is the aforementioned style seems to be used in the shops which add an IDENTITY (auto-increment) column to every table while shunning natural and compound keys in foreign keys. Those shops tend not to have formal data dictionaries nor build from data models. Again, this is merely a question of style and one to which I don't personally subscribe. So ultimately, it's not for me.
+All that said, I can see a case for sometimes dropping the qualifier from the column name when the table's name provides a context for doing so e.g. the element named employee_last_name may become simply last_name in the Personnel table. The rationale here is that the domain is 'people's last names' and is more likely to be UNIONed with last_name columns from other tables rather than be used as a foreign key in another table, but then again... I might just change my mind, sometimes you can never tell. That's the thing: data modelling is part art, part science.
+
+I prefer DomainName || 'ID'.  (i.e. DomainName + ID)
+DomainName is often, but not always, the same as TableName.  
+The problem with ID all by itself is that it doesn't scale upwards.  Once you have about 200 tables,  each with a first column named ID, the data begins to look all alike.  If you always qualify ID with the table name,  that helps a little, but not that much.
+DomainName & ID can be used to name foreign keys as well as primary keys.  When foriegn keys are named after the column that they reference,  that can be of mnemonic assistance.  Formally, tying the name of a foreign key to the key it references is not necessary, since the referential integrity constrain will establish the reference. But it's awfully handy when it comes to reading queries and updates.  
+Occasionally, DomainName || 'ID'   can't be used, because there would be two columns in the same table with the same name.  Example:  Employees.EmployeeID and Employees.SupervisorID.  In those cases,  I use RoleName || 'ID', as in the example.
+Last but not least,  I use natural keys rather than synthetic keys when possible.  There are situations where natural keys are unavailable or untrustworthy,  but there are plenty of situations where the natural key is the right choice.  In those cases, I let the natural key take on the name it would naturally have.  This name often doesn't even have the letters, 'ID' in it. Example:  OrderNo  where No is an abbreviation for "Number".  
+
+For each table I choose a tree letter shorthand(e.g. Employees => Emp)
+That way a numeric autonumber primary key becomes nkEmp.
+It is short, unique in the entire database and I know exactly its properties at a glance.
+I keep the same names in SQL and all languages I use (mostly C#, Javascript, VB6).
+
+See the Interakt site's naming conventions for a well thought out system of naming tables and columns. The method makes use of a suffix for each table (_prd for a product table, or _ctg for a category table) and appends that to each column in a given table. So the identity column for the products table would be id_prd and is therefore unique in the database.
+They go one step further to help with understanding the foreign keys: The foreign key in the product table that refers to the category table would be idctg_prd so that it is obvious to which table it belong (_prd suffix) and to which table it refers (category).
+Advantages are that there is no ambiguity with the identity columns in different tables, and that you can tell at a glance which columns a query is referring to by the column names.
+
+What I do to keep things consistent for myself (where a table has a single column primary key used as the ID) is to name the primary key of the table Table_pk.  Anywhere I have a foreign key pointing to that tables primary key, I call the column PrimaryKeyTable_fk.  That way I know that if I have a Customer_pk in my Customer table and a Customer_fk in my Order table, I know that the Order table is referring to an entry in the Customer table.
+To me, this makes sense especially for joins where I think it reads easier.
+SELECT * 
+FROM Customer AS c
+    INNER JOIN Order AS c ON c.Customer_pk = o.Customer_fk
+
+
+FWIW, our new standard (which changes, uh, I mean "evolves", with every new project) is:
+
+Lower case database field names
+Uppercase table names
+Use underscores to separate words in the field name - convert these to Pascal case in code.
+pk_ prefix means primary key
+_id suffix means an integer, auto-increment ID
+fk_ prefix means foreign key (no suffix necessary)
+_VW suffix for views
+is_ prefix for booleans
+
+So, a table named NAMES might have the fields pk_name_id, first_name, last_name, is_alive, and fk_company and a view called LIVING_CUSTOMERS_VW, defined like:
+
+SELECT first_name, last_name
+FROM CONTACT.NAMES
+WHERE (is_alive = 'True')
+
+As others have said, though, just about any scheme will work as long as it is consistent and doesn't unnecessarily obfuscate your meanings.
+
+I just started working in a place that uses only "ID" (in the core tables, referenced by TableNameID in foreign keys), and have already found TWO production problems directly  caused by it.
+In one case the query used "... where ID in (SELECT ID FROM OtherTable ..." instead of "... where ID in (SELECT TransID FROM OtherTable ...".
+Can anyone honestly say that wouldn't have been much easier to spot if full, consistent names were used where the wrong statement would have read "... where TransID in (SELECT OtherTableID from OtherTable ..."?  I don't think so.
+The other issue occurs when refactoring code.  If you use a temp table whereas previously the query went off a core table then the old code reads "... dbo.MyFunction(t.ID) ..." and if that is not changed but "t" now refers to a temp table instead of the core table, you don't even get an error - just erroneous results.
+If generating unnecessary errors is a goal (maybe some people don't have enough work?), then this kind of naming convention is great.  Otherwise consistent naming is the way to go.
+
+also see Primary key/foreign Key naming convention
+
+My preference is also ID for primary key and TableNameID for foreign key. I also like to have a column "name" in most tables where I hold the user readable identifier (i.e. name :-)) of the entry. This structure offers great flexibility in the application itself, I can handle tables in mass, in the same way. This is a very powerful thing. Usually an OO software is built on top of the database, but the OO toolset cannot be applied because the db itself does not allow it. Having the columns id and name is still not very good, but it is a step.
+
+Select
+      i.ID  ,   il.ID  From
+      Invoices i
+      Left Join InvoiceLines il
+          on i.ID = il.InvoiceID
+
+Why cant I do this?
+Select  
+    Invoices.ID 
+,   InvoiceLines.ID 
+From
+    Invoices
+    Left Join InvoiceLines
+        on Invoices.ID = InvoiceLines.InvoiceID
+
+In my opinion this is very much readable and simple. Naming variables as i and il is a poor choice in general.
+
+ID is a SQL Antipattern. 
+See http://www.amazon.com/s/ref=nb_sb_ss_i_1_5?url=search-alias%3Dstripbooks&field-keywords=sql+antipatterns&sprefix=sql+a
+If you have many tables with ID as the id you are making reporting that much more difficult. It obscures meaning and makes complex queries harder to read as well as requiring you to use aliases to differentiate on the report itself. 
+Further if someone is foolish enough to use a natural join in a database where they are available, you will join to the wrong records. 
+If you would like to use the USING syntax that some dbs allow, you cannot if you use ID. 
+If you use ID you can easily end up with a mistaken join if you happen to be copying the join syntax (don't tell me that no one ever does this!)and forget to change the alias in the join condition. 
+So you now have
+select * 
+from table1 t1 
+join table2 t2 on t1.id = t2.table1id
+join table3 t3 on t1.id = t3.table2id
+
+when you meant
+select * 
+from table1 t1 
+join table2 t2 on t1.id = t2.table1id
+join table3 t3 on t2.id = t3.table2id
+
+If you use tablenameID as the id field, this kind of accidental mistake is far less likely to happen and much easier to find. 
+
+I agree with Keven and a few other people here that the PK for a table should simply be Id and foreign keys list the OtherTable + Id.
+However I wish to add one reason which recently gave more weight to this arguement.
+In my current position we are employing the entity framework using POCO generation.  Using the standard naming convention of Id the the PK allows for inheritance of a base poco class with validation and such for tables which share a set of common column names.  Using the Tablename + Id as the PK for each of these tables destroys the ability to use a base class for these.
+Just some food for thought.
+
+I personally prefer (as it has been stated above) the Table.ID for the PK and TableID for the FK. Even (please don't shoot me) Microsoft Access recommends this.
+HOWEVER, I ALSO know for a fact that some generating tools favor the TableID for PK because they tend to link all column name that contain 'ID' in the word, INCLUDING ID!!!
+Even the query designer does this on Microsoft SQL Server (and for each query you create, you end up ripping off all the unnecessary newly created relationships on all tables on column ID)
+THUS as Much as my internal OCD hates it, I roll with the TableID convention. Let's remember that it's called a Data BASE, as it will be the base for hopefully many many many applications to come. And all technologies Should benefit of a well normalized with clear description Schema.
+It goes without saying that I DO draw my line when people start using TableName, TableDescription and such. In My opinion, conventions should do the following:
+
+Table name: Pluralized. Ex. Employees
+Table alias: Full table Name, singularized. Ex.
+SELECT Employee.*, eMail.Address
+FROM Employees AS Employee LEFT JOIN eMails as eMail on Employee.eMailID = eMail.eMailID -- I would sure like it to just have the eMail.ID here.... but oh well
+
+
+[Update]
+Also, there are some valid posts in this thread about duplicated columns due of the "kind of relationship" or role. Example, if a Store has an EmployeeID, that tells me squat. So I sometimes do something like Store.EmployeeID_Manager. Sure it's a bit larger but at leas people won't go crazy trying to find table ManagerID, or what EmployeeID is doing there. When querying is WHERE I would simplify it as: 
+    SELECT EmployeeID_Manager as ManagerID FROM Store

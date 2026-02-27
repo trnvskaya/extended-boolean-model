@@ -1,0 +1,194 @@
+If I stop a long running query, does it rollback?
+sql sql-server duplicate-data
+A query that is used to loop through 17 millions records to remove duplicates  has been running now for about 16 hours and I wanted to know if the query is stopped right now if it will finalize the delete statements or if it has been deleting while running this query? Indeed, if I do stop it, does it finalize the deletes or rolls back?
+I have found that when I do a 
+ select count(*) from myTable
+
+That the rows that it returns (while doing this query) is about 5 less than what the starting row count was. Obviously the server resources are extremely poor, so does that mean that this process has taken 16 hours to find 5 duplicates (when there are actually thousands), and this could be running for days?
+This query took 6 seconds on 2000 rows of test data, and it works great on that set of data, so I figured it would take 15 hours for the complete set.
+Any ideas?
+Below is the query:
+--Declare the looping variable
+DECLARE @LoopVar char(10)
+
+
+    DECLARE
+     --Set private variables that will be used throughout
+      @long DECIMAL,
+      @lat DECIMAL,
+      @phoneNumber char(10),
+      @businessname varchar(64),
+      @winner char(10)
+
+    SET @LoopVar = (SELECT MIN(RecordID) FROM MyTable)
+
+    WHILE @LoopVar is not null
+    BEGIN
+
+      --initialize the private variables (essentially this is a .ctor)
+      SELECT 
+        @long = null,
+        @lat = null,
+        @businessname = null,
+        @phoneNumber = null,
+        @winner = null
+
+      -- load data from the row declared when setting @LoopVar  
+      SELECT
+        @long = longitude,
+        @lat = latitude,
+        @businessname = BusinessName,
+        @phoneNumber = Phone
+      FROM MyTable
+      WHERE RecordID = @LoopVar
+
+      --find the winning row with that data. The winning row means 
+      SELECT top 1 @Winner = RecordID
+      FROM MyTable
+      WHERE @long = longitude
+        AND @lat = latitude
+        AND @businessname = BusinessName
+        AND @phoneNumber = Phone
+      ORDER BY
+        CASE WHEN webAddress is not null THEN 1 ELSE 2 END,
+        CASE WHEN caption1 is not null THEN 1 ELSE 2 END,
+        CASE WHEN caption2 is not null THEN 1 ELSE 2 END,
+        RecordID
+
+      --delete any losers.
+      DELETE FROM MyTable
+      WHERE @long = longitude
+        AND @lat = latitude
+        AND @businessname = BusinessName
+        AND @phoneNumber = Phone
+        AND @winner != RecordID
+
+      -- prep the next loop value to go ahead and perform the next duplicate query.
+      SET @LoopVar = (SELECT MIN(RecordID) 
+    FROM MyTable
+    WHERE @LoopVar < RecordID)
+    END
+
+
+
+I'm pretty sure that is a negatory. Otherwise what would the point of transactions be?
+
+Your query is not wrapped in a transaction, so it won't rollback the changes already made by the individual delete statements.
+I specifically tested this myself on my own SQL Server using the following query, and the ApplicationLog table was empty even though I cancelled the query:
+declare @count int
+select @count = 5
+WHILE @count > 0
+BEGIN
+  print @count
+  delete from applicationlog;
+  waitfor time '20:00';
+  select @count = @count -1
+END
+
+However your query is likely to take many days or weeks, much longer then 15 hours.  Your estimate that you can process 2000 records every 6 seconds is wrong because each iteration in your while loop will take significantly longer with 17 million rows then it does with 2000 rows.  So unless your query takes significantly less then a second for 2000 rows, it will take days for all 17 million.
+You should ask a new question on how you can delete duplicate rows efficiently.
+
+no, sql server will not roll back the deletes it has already performed if you stop query execution. oracle requires an explicit committal of action queries or the data gets rolled back, but not mssql.
+with sql server it will not roll back unless you are specifically running in the context of a transaction and you rollback that transaction, or the connection closes without the transaction having been committed. but i don't see a transaction context in your above query.
+you could also try re-structuring your query to make the deletes a little more efficient, but essentially if the specs of your box are not up to snuff then you might be stuck waiting it out.
+going forward, you should create a unique index on the table to keep yourself from having to go through this again. 
+
+As a loop your query will struggle to scale well, even with appropriate indexes. The query should be rewritten to a single statement, as per the suggestions in your previous question on this.
+If you're not running it explicitly within a transaction it will only roll back the executing statement.
+
+If you don't do anything explicit about transactions then the connection will be in autocommit transactions mode. In this mode every SQL statement is considered a transaction.
+The question is whether this means the individual SQL statements are transactions and are therefore being committed as you go, or whether the outer WHILE loop counts as a transaction.
+There doesn't seem to be any discussion of this in the description of the WHILE construct on MSDN.  However, since a WHILE statement can't directly modify the database it would seem logical that it doesn't start an auto-commit transaction.
+
+I inherited a system which had logic something like yours implemented in SQL.   In our case, we were trying to link together rows using fuzzy matching that had similar names/addresses, etc, and that logic was done purely in SQL.   At the time I inherited it we had about 300,000 rows in the table and according to the timings, we calculated it would take A YEAR to match them all.
+As an experiment to see how much faster I could do it outside of SQL, I wrote a program to dump the db table into flat files, read the flat files into a C++ program, build my own indexes, and do the fuzzy logic there, then reimport the flat files into the database.   What took A YEAR in SQL took about 30 seconds in the C++ app.
+So, my advice is, don't even try what you are doing in SQL.   Export, process, re-import.
+
+I think this query would be much more efficient if it was re-written using a single-pass algorithm using a cursor.  You would order you cursor table by longitude,latitude,BusinessName AND @phoneNumber. Youâd step through the rows one at a time. If a row has the same longitude, latitude, businessname, and phonenumber as the previous row, then delete it. 
+
+DELETES that have been performed up to this point will not be rolled back.
+
+As the original author of the code in question, and having issued the caveat that performance will be dependant on indexes, I would propose the following items to speed this up.
+RecordId better be PRIMARY KEY.  I don't mean IDENTITY, I mean PRIMARY KEY.  Confirm this using sp_help
+Some index should be used in evaluating this query.  Figure out which of these four columns has the least repeats and index that...
+SELECT *
+FROM MyTable
+WHERE @long = longitude
+  AND @lat = latitude
+  AND @businessname = BusinessName
+  AND @phoneNumber = Phone
+
+Before and After adding this index, check the query plan to see if index scanning has been added.
+
+Implicit transactions
+If no 'Implicit transactions' has been set, then each iteration in your loop committed the changes.
+It is possible for any SQL Server to be set with 'Implicit transactions'. This is a database setting (by default is OFF). You can also have implicit transactions in the properties of a particular query inside of Management Studio (right click in query pane>options), by default settings in the client, or a SET statement.
+SET IMPLICIT_TRANSACTIONS ON;
+
+Either way, if this was the case, you would still need to execute an explicit COMMIT/ROLLBACK regardless of interruption of the query execution.
+
+Implicit transactions reference:
+http://msdn.microsoft.com/en-us/library/ms188317.aspx
+http://msdn.microsoft.com/en-us/library/ms190230.aspx
+
+I think you need to seriously consider your methodolology. 
+ You need to start thinking in sets (although for performance you may need batch processing, but not row by row against a 17 million record table.)
+First do all of your records have duplicates? I suspect not, so the first thing you wan to do is limit your processing to only those records which have duplicates. Since this is a large table and you may need to do the deletes in batches over time depending on what other processing is going on, you first pull the records you want to deal with into a table of their own that you then index. You can also use a temp table if you are going to be able to do this all at the same time without ever stopping it other wise create a table in your database and drop at the end.
+Something like (Note I didn't write the create index statments, I figure you can look that up yourself):
+SELECT min(m.RecordID), m.longitude, m.latitude, m.businessname, m.phone  
+     into  #RecordsToKeep    
+FROM MyTable   m
+join 
+(select longitude, latitude, businessname, phone
+from MyTable
+group by longitude, latitude, businessname, phone
+having count(*) >1) a 
+on a.longitude = m.longitude and a.latitude = m.latitude and
+a.businessname = b.businessname and a.phone = b.phone 
+group by  m.longitude, m.latitude, m.businessname, m.phone   
+ORDER BY CASE WHEN m.webAddress is not null THEN 1 ELSE 2 END,        
+	CASE WHEN m.caption1 is not null THEN 1 ELSE 2 END,        
+	CASE WHEN m.caption2 is not null THEN 1 ELSE 2 END
+
+
+
+while (select count(*) from #RecordsToKeep) > 0
+begin
+select top 1000 * 
+into #Batch
+from #RecordsToKeep
+
+Delete m
+from mytable m
+join #Batch b 
+		on b.longitude = m.longitude and b.latitude = m.latitude and
+		b.businessname = b.businessname and b.phone = b.phone 
+where r.recordid <> b.recordID
+
+Delete r
+from  #RecordsToKeep r
+join #Batch b on r.recordid = b.recordid
+
+end
+
+Delete m
+from mytable m
+join #RecordsToKeep r 
+		on r.longitude = m.longitude and r.latitude = m.latitude and
+		r.businessname = b.businessname and r.phone = b.phone 
+where r.recordid <> m.recordID
+
+
+Also try thinking another method to remove duplicate rows:
+delete t1 from table1 as t1 where exists (
+    select * from table1 as t2 where
+        t1.column1=t2.column1 and
+        t1.column2=t2.column2 and
+        t1.column3=t2.column3 and
+        --add other colums if any
+        t1.id>t2.id
+)
+
+I suppose that you have an integer id column in your table.
+
+If your machine doesn't have very advanced hardware then it may take sql server a very long time to complete that command.  I don't know for sure how this operation is performed under the hood but based on my experience this could be done more efficiently by bringing the records out of the database and into memory for a program that uses a tree structure with a remove duplicate rule for insertion.  Try reading the entirety of the table in chuncks (say 10000 rows at a time) into a C++ program using ODBC.  Once in the C++ program use and std::map where key is the unique key and struct is a struct that holds the rest of the data in variables.  Loop over all the records and perform insertion into the map.  The map insert function will handle removing the duplicates.  Since search inside a map is lg(n) time far less time to find duplicates than using your while loop.  You can then delete the entire table and add the tuples back into the database from the map by forming insert queries and executing them via odbc or building a text file script and running it in management studio.

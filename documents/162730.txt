@@ -1,0 +1,101 @@
+Rendered pIxel width data for each character in a browser's font
+javascript jquery html css font-size
+I have a table column that needs to be limited to a certain width - say 100 pixels.  At times the text in that column is wider than this and contains no spaces. For example:
+a_really_long_string_of_text_like_this_with_no_line_breaks_makes_the_table_unhappy
+
+I would like to calculate the width of text server-side and add an ellipsis after the correct number of characters.  The problem is that I don't have data about the rendered size of the text.
+For example, assuming the browser was Firefox 3 and the font was 12px Arial.  What would be the width of the letter "a", the width of the letter "b", etc.?
+Do you have data showing the pixel width of each character?  Or a program to generate it?
+I think a clever one-time javascript script could do the trick.  But I don't want to spend time re-inventing the wheel if someone else has already done this.  I am surely not the first person to come up against this problem.
+
+
+Very very hard to do server-side. You can never know what fonts users have installed, and there are many things that affect the display of text.
+Try this instead:
+table-layout: fixed;
+
+That'll make sure the table is never larger than the size you specified.
+
+How about overflow: scroll?
+
+This would not only be impossible to do server-side, it would also not make sense. You don't what browser your client will be using, and you don't know what font settings on the client side will override whatever styling information you assign to a piece of HTML. You might think that you're using absolute positioning pixels in your style properties, but the client could simply be ignoring those or using some plugin to zoom everything because the client uses a high-dpi screen.
+Using fixed widths is generally a bad idea.
+
+This is essentially impossible to do on the server side. In addition to the problem of people having different fonts installed, you also have kerning (the letter "f" will take up a different amount of space depending on what is next to it) and font rendering options (is cleartype on? "large fonts"?).
+
+You could put the text into an invisible span and read that spans width, but basicly this looks like someone trying to sabotage your site, and therefore I would recommend banning posts with words longer than a certain lenth, for example 30 characters without spaces (allowing links to be longer !-)
+-- but the simple approach is to put a block-element inside the table-cell:
+<td><div style="width:100px;overflow:hidden">a_really_long_string_of_text_like_this_with_no_line_breaks_makes_the_ta ... </div></td>
+
+This will effectively stop the table-cluttering !o]
+
+There's nothing you can do server-side to calculate it. All you have to work with is the browser identification string, which may or may not tell you the user's operating system and browser accurately. You can also "ask" (via a font tag or CSS) for a certain font to be used to display the text but there's no guarantee that the user has that font installed. Beyond that the user could have a different DPI setting at the operating system level, or could have made the text bigger or smaller with the browser zoom function, or could be using their own stylesheet altogether.
+
+Ext JS has a module to do just that
+
+TextMetrics
+  Provides precise pixel measurements
+  for blocks of text so that you can
+  determine exactly how high and wide,
+  in pixels, a given block of text will
+  be. 
+
+I am sure that there are other libraries available out there that do it as well.
+
+Here is my client-side solution that I came up with.  It is pretty specific to my application but I am sharing it here in case someone else comes across the same problem.
+It works a bit more quickly than I had expected.  And it assumes the contents of the cells are text only - any HTML will formatting will be erased in the shortening process.
+It requires jQuery.
+function fixFatColumns() {
+  $('table#MyTable td').each(function() {
+    var defined_width = $(this).attr('width');
+    if (defined_width) {
+      var actual_width = $(this).width();
+      var contents = $(this).html();
+      if (contents.length) {
+        var working_div = $('#ATempDiv');
+        if (working_div.is('*')) {
+          working_div.html(contents);
+        } else {
+          $('body').append('<div id="ATempDiv" style="position:absolute;top:-100px;left:-500px;font-size:13px;font-family:Arial">'+contents+'</div>');
+          working_div = $('#ATempDiv');
+        }
+
+        if (working_div.width() > defined_width) {
+          contents = working_div.text();
+          working_div.text(contents);
+          while (working_div.width() + 8 > defined_width) {
+            // shorten the contents of the columns
+            var working_text = working_div.text();
+            if (working_text.length > 1) working_text = working_text.substr(0,working_text.length-1);
+            working_div.text(working_text);
+          }
+          $(this).html(working_text+'...')
+        }
+
+        working_div.empty();
+      }
+
+    }
+  });
+
+}
+
+
+If you're ok with this not working for FireFox, why not just use CSS?  Have the table with table-layout:fixed, have the column in question have overflow:hidden;text-overflow:ellipsis; white-space:nowrap.
+
+http://www.css3.info/preview/text-overflow/
+
+This is a new function of css3.
+
+Some users have larger or smaller default font settings. You can't do this on the server. You can only measure it once the browser has rendered the page.
+
+Since font size can be easily changed on the browser side, your server-side calculation is made invalid very easily.
+A quick client side fix would be to style your cells with an overflow attribute:
+td
+{
+    overflow: scroll; /* or overflow: hidden;  etc. */
+}
+
+A better alternative is to truncate your strings server side and provide a simple javascript tooltip that can display the longer version.  An "expand" button may also help that could display the result in an overlay div.
+
+What you want is the <wbr> tag. This is a special HTML tag that tells the browser that it is acceptable to break a word here if a wrap is necessary. I would not inject the  into the text for persistent storage because then you are coupling your data with where/how you will display that data. However, it is perfectly acceptable to inject the  tags server side in code that is view-centric (like with a JSP tag or possibly in the controller). That's how I would do it. Just use some regular expression to find words that are longer than X characters and inject this tag every X characters into such words.
+Update: I was doing some looking around and it looks like wbr is not supported on all browsers. Most notably, IE8. I haven't tested this myself though. Perhaps you could use overflow:hidden as a backup or something like that.

@@ -1,0 +1,48 @@
+How to configure security when calling WCF Service from .Net 2.0 Client
+wcf security .net-2.0
+I have a WCF service up and running and am able to communicate between the service and a .Net 2.0 Client using basicHttpBinding.  
+I now need to lock down the WCF service so that it can only be called by authenticated clients.
+I have control over the clients that will be calling my service. The clients are part of a product that will be installed in the wild and "phoning home" to push and pull data.  The client app is written for .Net 2.0 framework and cannot be upgraded to 3.0 or 3.5 at this time.  I cannot add windows user accounts to the client machines.
+What are my options for securing the WCF Service and being able to authenticate from my .Net 2.0 clients?  Also, data needs to be passed over https.
+I've been searching the web, and feel like I'm on a wild goose chase.
+
+
+Using SSL certificate is the only option for .NET 2.0 client accessing WCF service as basicHttpBinding provides no security. By using SSL, you are securing the whole transport channel.
+Check the link http://www.codeplex.com/WCFSecurityGuide/Release/ProjectReleases.aspx?ReleaseId=15892 . It covers WCF Security covering all scenarios.
+To get free SSL certificate please visit http://www.comodo.com/  or http://www.instantssl.com/ and try out in your application.
+
+You security will be covered by the ssl.
+For authentication you have two options - basic (username and password) or certificate.
+Here is a video that demonstrates configuring certificate authentication.
+In that you are configuring the security elements of the basicHttpBinding shown below:
+<basicHttpBinding>
+       <binding name="basicHttp">
+           <security mode="TransportWithMessageCredential">
+               <message clientCredentialType="Certificate"/>
+           </security>
+       </binding>
+   </basicHttpBinding>
+There is also a good page on this here. Google on clientCredentialType and you should find yourself on the right track soon enough.
+For setting up the client certificates you are after the wse* policy file.
+You will need to work out how you will provide the client certificate to the various sites.- that depends on security concerns of the project. There are various ways (none of which I can remember sorry, I last did this for wse* to wse* about two years ago so the details are forgotten, but it is certainly possible, took a few days solid research to find a good method).
+
+You can configure a WCF endpoint to use 2-way SSL authentication. That means that you can require clients to present an X.509 certificate that confirms their identity whenever they make a request to the service.
+On the server side of things, you can use one of the built-in validation schemes in WCF or provide your own validation logic to check the X.509 certificate.
+If you were hosting your service in IIS, it would be trivial to configure SSL to require client certificates at the transport-level. However, you can find a good guide on how to implement this behaviour in a self-hosted WCF service here:
+http://leastprivilege.com/2007/08/25/certificate-based-authentication-and-wcf-message-security/
+I haven't tried this myself but, since this creates a security requirement at the message-level, I think you will have to use wsHttpBinding to enforce it in your WSDL contract, since imposing security requirements to access a web service is part of the WS-* standards.
+If you have to use basicHttpBinding, you can try this solution instead that moves things up at the transport-level:
+http://leastprivilege.com/2007/08/26/certificate-based-authentication-and-wcf-mode-independent/
+Hope this helps
+
+OK so, with SSL you have transport level security; which is fine, that protects the message from sniffing and changing.
+So now you have options; do you need the validation to be silent, or can you prompt the user for a username/password when your program starts? If it must be silent then you can go the client side certificate as mentioned (although that is painful, you will need to generate the certificates yourself and validate them, so you need to look at running your own certificate authority). Or you can embed a custom header in the message which contains a client ID and do it the kludgey way.
+If however you can prompt for a username and password then you authenticate that way and plug it into a database lookup quite easily using a custom authenticator, or even using the ASP.NET membership database.
+
+Here is what I ended up doing which seemed to be the simplest solution in our situation, which is pretty small scale with only a handful of web services exposed:
+
+Secured the transport with SSL
+Clients first login to the web service by calling a Login method on the web service.  If the login succeeds, it returns an encrypted FormsAuthenticationTicket to the client.
+Clients must then supply the forms authentication ticket with each web service call.  Each method checks if the ticket is valid and if so it does its work.  If the ticket has expired or is invalid, clients must re-authenticate.
+
+Hope that helps someone...

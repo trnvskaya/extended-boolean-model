@@ -1,0 +1,160 @@
+Repair SVN Checksum
+svn subclipse
+I'm using subclipse in Flex Builder 3, and recently received this error when trying to commit:
+svn: Checksum mismatch for '/Users/redacted/Documents/Flex Builder 3/path/to/my/file.mxml'; expected: 'f8cb275de72776657406154dd3c10348', actual: 'null'
+I worked around it by:
+
+Committing all the other changed files, omitting the troublesome one.
+Copying the contents of the trouble file to a TextMate window
+Deleting my project in FlexBuilder/Eclipse
+Checking my project out fresh from SVN
+Copying the text of the trouble file back in from the TextMate Window
+Committing the changes.
+
+It worked, but I can't help but think there's a better way. What's actaully happening to cause the svn:checksum error, and what's the best fix.
+Maybe more important -- is this a symptom of a greater problem?
+
+
+The file in the .svn directory that keeps track of what you have checked out, when, what revision, and from where, has gotten corrupted somehow, for that particular file.
+This is no more dangerous or critical than the normal odd file problem, and can be because of various problems, like a subversion program dying mid-change, power-disruption, etc.
+Unless it happens more I wouldn't make much out of it.
+It can be fixed by doing what you did, make a copy of your work-files, check out a fresh copy, and add the modified files back in.
+Note that this might cause problems if you have a busy project where you would normally have to merge in changes.
+For instance, you and a collegue both check out a fresh copy, and start working on the same file. At some point, your collegue checks in his modifications. When you attempt to do the same, you get the checksum problem you have. If you now make copies of your changed files, do a fresh checkout, then subversion will lose track of how your changes should be merged back in.
+If you didn't get the problem in this case, when you got around to checkin in your modifications, you would need to update your working copy first, and possibly handle a conflict with your file.
+However, if you do a fresh checkout, complete with your collegues changes, it now looks like you removed his changes and substituted with your own. No conflicts, and no indications from subversion that something is amiss.
+I occasionally get similar things, usually with files that nobody has been near in weeks. Generally, if you know you haven't been working in the directory in question, you can just delete the directory with the problem and run 
+svn update
+to recreate it.
+If you have live changes in the directory then as lassevk and you yourself suggested, a more careful approach is required.
+Generally speaking I would say it's a good idea not to leave edited files uncommitted, and keep the working copy tidy - don't add a whole bunch of extra files into the working copy that you aren't going to use. Commit regularly, and then if the working copy goes tits up, you can just delete the whole thing and start over without worrying about what you might or might not be losing, and without the pain of trying to figure out what files to save. 
+Just today, I managed to recover from this error by checking out a copy of the corrupted directory to /tmp and replacing the files in .svn/text-base with the just co'ed ones. I wrote up the procedure in some detail here on my blog. I'd be interested to hear from more experienced SVN users what are the advantages and disadvantages of each approach.
+
+SVN keeps pristine copies of all the files you checkout buried in the .svn directories.  This is called the text-base.  This allows for speedy diffs and reverts.  During various operations, SVN will do checksums on these text-base files to catch file corruption issues.
+In general, an SVN checksum mismatch means a file that shouldn't have been altered was changed somehow.  What does that mean?
+
+Disk corruption (bad HDD or IDE cable)
+Bad RAM
+Bad network link
+Some kind of background process altered a file behind your back (malware)
+
+All of these are bad.
+HOWEVER, I think your problem is different.  Look at the error message.  Note that it expected some MD5 hashes, but instead got back 'null'.  If this were a simple file corruption issue, I would expect that you would have two different MD5 hashes for the expected/got.  The fact that you have a 'null' implies that something else is wrong.
+I have two theories:
+
+Bug in SVN.
+Something had an exclusive lock on the file, and the MD5 couldn't happen.
+
+In the case of #1, try upgrading to the latest SVN version.  Maybe also post this on the svn-devel mailing list (http://svn.haxx.se), so the developers can see it.
+In the case of #2, check to see if anything has the file locked.  You can download a copy of Process Explorer to check.  Note that you probably want to see who has a lock on the text-base file, not the actual file you were trying to commit.
+
+There's also a simpler cause for this  than just bugs, or disk corruption etc. I think it the most likely cause for this to happen is when someone writes a recursive text replacement on the working copy, without excluding .svn files.
+This means the pristine copies of the files (basically the BASE version of the files, that's stored inside the .svn administrative area) get modified, and that invalidates the MD5 sum.
+@Andrew Hedges: that also explains why your solution fixes this.  
+
+try:
+svn up --force file.c
+This worked for me without having to do anything extra
+
+Had this issue, our dev VM's are all *nix our workstations win32.
+some fool(s) created files of the same name (different case) on the *nix box
+all of a sudden checkouts on Win32 blows up... 
+because win doesn't know which of the 2 files of the same name to MD5 against, 
+checkouts on *nix were fine... leaving us to scratch our heads for a bit
+I was able to update the repo on the win box by copying the ".svn" folders over from a *nix box with a good working copy. have yet to see if the repo can be cleaned to the point where we can do a full checkout again
+
+another, possibly even scarier, workaround for checksum conflicts i found is as follows:
+CAVEAT: Make sure your local copy is the best known version, AND that anyone else on your project knows what you're doing!  (in case this wasn't obvious already).
+if you know your local copy of the file is "the good one" you can directly delete the file from the SVN server and then force commit your local copy.  
+syntax for direct deletion:
+svn delete -m "deleting corrupted file XXXX" svn+ssh://username@svnserver/path/to/XXXX
+good luck!
+J
+
+here's how i fixed the issue - v simple, but as per jsh above, need to be sure your copy is the best one.
+simply
+
+make a copy all problem files, in the same folder.
+delete the old ones with svn rm
+commit. 
+then rename the copies back to the original file names.
+commit again.
+
+suspect this probably kills all sorts of revision history on that file, so it's a pretty ugly way to go about it...
+
+I've observed a lot of solutions from patching .svn/entries file to fresh checkout.
+It can be a new way (thank to my collegue):
+- go to work directory where recorder/expected checksum issue occured
+- call "svn diff" and make sure that there isnt any local modifications
+- cd ..
+- remove trouble file's directory with "rm -rf"
+- issue "svn up" command, svn client will restore new fresh files copies
+
+
+Matt, there is easier way than you described - modifying checksum in .svn/entries file. Here is full description:
+http://maymay.net/blog/2008/06/17/fix-subversion-checksum-mismatch-error-by-editing-svnentries-file/
+
+One other easy way....
+
+Update your project to get latest version
+checkout the same version in an other folder
+replace .svn folder from the new checkout to the working copy  ( i've replaced .svn-base files )
+
+
+
+Check out only folder with problematic file from repository to some other location.
+Make sure .svn\text-base\<problematic file>.svn-base is identical to one checked out.
+Make sure problematic file section (all lines of the section) in .svn\entries is identical to one checked out.
+
+
+You won't believe this, but I have actually fixed my error by removing the <scm>...</scm> stance from the offending pom.xml file I was hoping to check in. It contained the URL of the subversion repository it is checked in (this is what the Maven setting is for!), but somehow it generated a faulty checksum for the file while checking in.
+I literally tried all aforementioned methods of fixing this, but to no avail. Did I encounter a very rare situation in where the checksum generator is not robust enough?
+
+I also stumbled upon this issue and was trying to look for quick solutions, tried some of the solution given in this thread.
+This is how I resolved this issue in my development environment (to me it was minimal change):
+1- Locally deleted directory in which the file got corrupted (WEB-INF):
+ svn: Checksum mismatch for 'path-to-folder\WEB-INF\web.xml':
+   expected:  d60cb051162e4a6790a3ea0c9ddfb434
+     actual:  16885ded2cbc1adc250e4cbbc1427546
+
+2- Copied and pasted directory (WEB-INF) from a fresh checkout 
+3- Did svn up, now Eclipse/TortoiseSVN started showing conflict in this directory
+4- Marked conflict as Resolved
+This worked, I was able to update, commit earlier corrupted web.xml
+
+In my case the sum was different. All I've done was:
+1) Make Check Out to separate folder
+2) Replace by file from this folder in .svn directory with my project problem-file which was said in svn-client error message 
+3) ..Profit!
+
+As an alternative to checking out a fresh copy (which I also had to do after trying all other options) and than merging all your changes which you previously saved backed into it, the following approach worked the same way, but saved me a considerable amount of time, and possibly some errors:
+
+Check out a fresh working copy
+Copy .svn folder from you fresh copy into your corrupt copy
+Voila
+
+Of course, you should backup your original corrupt working copy just in case. In my case, I was free to remove it after I was done, as everything went fine.
+
+1) Go to the folder causing problem
+2) Execute command svn update --set-depth empty
+3) This folder will empty and revert the empty folder.
+4) sync with the svn and update.
+This work for me.
+
+This will happens when the .svn folder corrupted.
+Solution:
+Remove the entire folder of the file contains and checkout the folder again.
+
+Although this is an old issue, I thought I would give my 2 cents as well, since Ive just wrestled with the problem for more than an hour.
+The solutions above either didn't work for me, or seemed over-complicated.
+My solution was simply to remove all svn folders from the project.
+find . -name .svn -exec rm -rf {} \;
+After this, I did simple checkout of the project again. Thus leaving all my un-committed files intact, but still got a rebuild of all the svn files.
+
+I had this problem on ubuntu 14.04 and solve it by follow steps:
+
+$ cd /var/www/myProject
+$ svn upgrade
+$ svn update
+
+after these steps i could commit file without error.

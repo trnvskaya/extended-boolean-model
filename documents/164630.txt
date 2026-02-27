@@ -1,0 +1,170 @@
+How to create and resolve relative paths?
+c# file-io path
+My app open file in subdirectory of directory where it is executed, subdirectory is called sample and it contains files:
+
+example.raf (example extension, non significant)
+background.gif
+
+example.raf contains relative path to background.gif (in this case only file name cause the files is in same directory as raf) and opening of RAF causes application to read and display background.gif.
+When I use OpenFileDialog to load RAF file everything is alright, image loads correctly. I know that open file dialog changes in some way current working directory but i was unable to recreate this  without calling open file dialog
+Unfortunately in case when i call raf reading method directly from code, without supplying path to file form OpenFileDialog like this
+LoadRAF("sample\\example.raf");
+
+in this case i got problem, app try to load image from  ExecutablePath and not from subdirectory which contains RAF file and image. Ofcourse it is normal behavior but in this case it is highkly unwanted. It is required to handle both relative and absolute type of paths in my app, so what should i do to solve this, how to change ExecutablePath  or what other thing i can do to make this work at least as in case of OpenFileDialog?
+
+
+The OpenFileDialog is spitting out an absolute path behind the scenes.
+If you know the location of raf file you can do something like:
+string parentPath = Directory.GetParent(rafFilePath);
+string imagePath = Path.Combine(parentPath, imageFileNameFromRaf);
+
+imagePath will now contain the absolute path to your image derived from the image name contained in the raf file, and the directory the raf file was in.
+
+Next code from my project ZipSolution (http://zipsolution.codeplex.com/)
+shows how to resolve and create relative pathes in .net
+using System;
+using System.Collections.Generic;
+using System.Text;
+using System.IO;
+
+namespace ZipSolution
+{
+    internal static class RelativePathDiscovery
+    {
+        /// <summary>
+        /// Produces relative path when possible to go from baseLocation to targetLocation
+        /// </summary>
+        /// <param name="baseLocation">The root folder</param>
+        /// <param name="targetLocation">The target folder</param>
+        /// <returns>The relative path relative to baseLocation</returns>
+        /// <exception cref="ArgumentNullException">base or target locations are null or empty</exception>
+        public static string ProduceRelativePath(string baseLocation, string targetLocation)
+        {
+            if (string.IsNullOrEmpty(baseLocation))
+            {
+                throw new ArgumentNullException("baseLocation");
+            }
+
+            if (string.IsNullOrEmpty(targetLocation))
+            {
+                throw new ArgumentNullException("targetLocation");
+            }
+
+            if (!Path.IsPathRooted(baseLocation))
+            {
+                return baseLocation;
+            }
+
+            if (!Path.IsPathRooted(targetLocation))
+            {
+                return targetLocation;
+            }
+
+            if (string.Compare(Path.GetPathRoot(baseLocation), Path.GetPathRoot(targetLocation), true) != 0)
+            {
+                return targetLocation;
+            }
+
+            if (string.Compare(baseLocation, targetLocation, true) == 0)
+            {
+                return ".";
+            }
+
+            string resultPath = ".";
+
+            if (!targetLocation.EndsWith(@"\"))
+            {
+                targetLocation = targetLocation + @"\";
+            }
+
+            if (baseLocation.EndsWith(@"\"))
+            {
+                baseLocation = baseLocation.Substring(0, baseLocation.Length - 1);
+            }
+
+            while (!targetLocation.StartsWith(baseLocation + @"\", StringComparison.OrdinalIgnoreCase))
+            {
+                resultPath = resultPath + @"\..";
+                baseLocation = Path.GetDirectoryName(baseLocation);
+
+                if (baseLocation.EndsWith(@"\"))
+                {
+                    baseLocation = baseLocation.Substring(0, baseLocation.Length - 1);
+                }
+            }
+
+            resultPath = resultPath + targetLocation.Substring(baseLocation.Length);
+
+            // preprocess .\ case
+            return resultPath.Substring(2, resultPath.Length - 3);
+        }
+
+        /// <summary>
+        /// Resolves the relative pathes
+        /// </summary>
+        /// <param name="relativePath">Relative path</param>
+        /// <param name="basePath">base path for discovering</param>
+        /// <returns>Resolved path</returns>
+        public static string ResolveRelativePath(string relativePath, string basePath)
+        {
+            if (string.IsNullOrEmpty(basePath))
+            {
+                throw new ArgumentNullException("basePath");
+            }
+
+            if (string.IsNullOrEmpty(relativePath))
+            {
+                throw new ArgumentNullException("relativePath");
+            }
+
+            var result = basePath;
+
+            if (Path.IsPathRooted(relativePath))
+            {
+                return relativePath;
+            }
+
+            if (relativePath.EndsWith(@"\"))
+            {
+                relativePath = relativePath.Substring(0, relativePath.Length - 1);
+            }
+
+            if (relativePath == ".")
+            {
+                return basePath;
+            }
+
+            if (relativePath.StartsWith(@".\"))
+            {
+                relativePath = relativePath.Substring(2);
+            }
+
+            relativePath = relativePath.Replace(@"\.\", @"\");
+            if (!relativePath.EndsWith(@"\"))
+            {
+                relativePath = relativePath + @"\";
+            }
+
+            while (!string.IsNullOrEmpty(relativePath))
+            {
+                int lengthOfOperation = relativePath.IndexOf(@"\") + 1;
+                var operation = relativePath.Substring(0, lengthOfOperation - 1);
+                relativePath = relativePath.Remove(0, lengthOfOperation);
+
+                if (operation == @"..")
+                {
+                    result = Path.GetDirectoryName(result);
+                }
+                else
+                {
+                    result = Path.Combine(result, operation);
+                }
+            }
+
+            return result;
+        }
+    }
+}
+
+
+You can try to change the current directory to the directory containing your executable using Environment.CurrentDirectory before reading from relative paths. Or instead if you have a relative path (Path.IsPathRooted) you can combine (Path.Combine) your root directory with the relative path to have an absolute one.

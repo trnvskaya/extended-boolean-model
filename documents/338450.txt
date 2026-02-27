@@ -1,0 +1,82 @@
+TimedRotatingFileHandler Changing File Name?
+python logging
+I am trying to implement the python logging handler called TimedRotatingFileHandler. 
+When it rolls over to midnight it appends the current day in the form: "YYYY-MM-DD".
+LOGGING_MSG_FORMAT  = '%(name)-14s > [%(levelname)s] [%(asctime)s] : %(message)s'
+LOGGING_DATE_FORMAT	= '%Y-%m-%d %H:%M:%S'
+
+logging.basicConfig(
+			level=logging.DEBUG,
+			format=LOGGING_MSG_FORMAT,
+			datefmt=LOGGING_DATE_FORMAT
+			)
+root_logger = logging.getLogger('')
+logger = logging.handlers.TimedRotatingFileHandler("C:\\logs\\Rotate_Test",'midnight',1)
+root_logger.addHandler(logger)
+while True:
+	daemon_logger = logging.getLogger('TEST')
+	daemon_logger.info("SDFKLDSKLFFJKLSDD")
+	time.sleep(60)
+
+The first log file created is called just "Rotate_Test" then once it rolls over to the next day it changes the file name to: "Rotate_Test.YYYY-MM-DD" Where YYYY-MM-DD is the current day.
+How can i change how it alters the filename? I googled and looked at the API and found pretty much nothing.
+
+
+"How can i change how it alters the filename?"
+Since it isn't documented, I elected to read the source.  This is what I concluded from reading the source of logging/handlers.py
+handler = logging.handlers.TimedRotatingFileHandler("C:\\isis_ops\\logs\\Rotate_Test",'midnight',1)
+handler.suffix = "%Y-%m-%d" # or anything else that strftime will allow
+root_logger.addHandler(handler)
+
+The suffix is the formatting string.
+
+Thanks.
+I looked at the source.
+There isn't really a way to change its form. Since manipulating suffix, only appends to the end of the file name. Ether way, there is no way real way to manipulate the full file name, what i was hoping for was where you can declare a file mask, and when it does the "RollOver" it will create a new file name based on the file mask. I am just going to go back to my original idea, was to just kill the whole logging subsystem and reinitialize it with the new file name when it RollsOver.
+Thanks Tho.
+
+Just an update, i ended up going a different approach.
+The easiest way i found to modify the file output, was to simply use a FileHandler, then when it is time to do a roll over.
+I do this:
+if(current_time > old_time):
+    for each in logging.getLogger('Debug').handlers:
+      each.stream = open("C:\\NewOutput", 'a')
+
+Thats the gist of it. It took alot of poking and looking around but modifying the stream is the easiest way to do so.
+:)
+
+There is another approach to this problem: for example, I need to rotate logs on a daily basis but they must be named with a suffix in the %m%d%Y format...
+So I wrote a TimedRotatingFileHandler remix!
+try:
+    import codecs
+except ImportError:
+    codecs = None
+import logging.handlers
+import time
+import os
+
+class MyTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
+  def __init__(self,dir_log):
+   self.dir_log = dir_log
+   filename =  self.dir_log+time.strftime("%m%d%Y")+".txt" #dir_log here MUST be with os.sep on the end
+   logging.handlers.TimedRotatingFileHandler.__init__(self,filename, when='midnight', interval=1, backupCount=0, encoding=None)
+  def doRollover(self):
+   """
+   TimedRotatingFileHandler remix - rotates logs on daily basis, and filename of current logfile is time.strftime("%m%d%Y")+".txt" always
+   """ 
+   self.stream.close()
+   # get the time that this sequence started at and make it a TimeTuple
+   t = self.rolloverAt - self.interval
+   timeTuple = time.localtime(t)
+   self.baseFilename = self.dir_log+time.strftime("%m%d%Y")+".txt"
+   if self.encoding:
+     self.stream = codecs.open(self.baseFilename, 'w', self.encoding)
+   else:
+     self.stream = open(self.baseFilename, 'w')
+   self.rolloverAt = self.rolloverAt + self.interval
+
+
+You can do this by changing the log suffix as suggested above but you will also need to change the extMatch variable to match the suffix for it to find rotated files:
+handler.suffix = "%Y%m%d"
+handler.extMatch = re.compile(r"^\d{8}$")
+

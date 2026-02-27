@@ -1,0 +1,49 @@
+java ee | ejb3 | runtime dispatch
+java java-ee ejb javabeans
+I would like to call an ejb3 at runtime. The name of the ejb and the method name will only be available at runtime, so I cannot include any remote interfaces at compile time.
+String bean = 'some/Bean';
+String meth = 'doStuff';
+
+//lookup the bean
+Object remoteInterface = (Object) new InitialContext().lookup(bean);
+
+//search the method ..
+// foreach (methods)
+// if method == meth, method.invoke(bean);
+
+the beans should be distributed accross multiple application servers, and all beans are to be called remotely.
+Any hints? specifically i do not want:
+
+dependency injection
+inclusion of appliation specific ejb interfaces in the dispatcher (above)
+webservices, thats like throwing out processing power for nothing, all the xml crap
+
+Is it possible to load an ejb3 remote interface over the network (if yes, how?), so I could cache the interface in some hashmap or something.
+I have a solution with a remote dispatcher bean, which I can include in the above main dispatcher, which does essentially the same, but just relays the call to a local ejb (which I can lookup how? naming lookup fails). Given the remote dispatcher bean, I can use dependency injection.
+thanks for any help
+(netbeans and glassfish btw)
+
+
+ejb3 calls use RMI.  RMI supports remote class loading, so i'd suggest looking into that.
+also, JMX mbeans support fully untyped, remote invocations.  so, if you could use mbeans instead of session beans, that could work.  (JBoss, for instance, supports ejb3-like mbeans with some custom annotations).
+lastly, many app servers support CORBA invocations, and CORBA supports untyped method invocations.
+
+You might be able to use java.rmi.server.RMIClassLoader for the remote class loading. You'll also need to load any classes that the remote service returns or throws.
+
+It cannot be done. You will always get a "class not found" exception. That is in my opinion the biggest disadvantage of EJB/Java. You loose some of the dynamcis, because the meta-language features are limited.
+EJB3 supports RMI/IIOP, but not RMI/JRMP (standard RMI) so dynamic class loading is not supported.You loose some Java generality, but gain other features like being able to communicate about transactions and security.
+
+You need to use reflection for this, and it is very simple to do. Assuming that you're looking for a void method called meth:
+Object ejb = ctx.lookup(bean);
+for (Method m : ejb.getClass().getMethods()) {
+    if (m.getName().equals(meth) && m.getParameterTypes().length == 0) {
+        m.invoke(service);
+    }
+}
+
+If you're looking for a specific method signature just modify the m.getParameterTypes() test accordingly, e.g. for a method with a single String parameter you can try:
+Arrays.equals(m.getParameterTypes(), new Class[]{String.class})
+
+And then pass an Object[] array with the actual arguments to the m.invoke() call:
+m.invoke(service, new Object[]{"arg0"})
+

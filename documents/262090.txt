@@ -1,0 +1,66 @@
+Find JPEG resolution with PHP
+php image-processing gdlib
+Calling all PHP gurus!
+I understand that you can use getimagesize() to get the actual pixel height and width of an image in PHP. However, if you open an image in photoshop and look at the image size dialog, you notice that there is a resolution value that determines the print size of the image.
+Given an arbitrary jpg image file, I need to use PHP to determine this resolution number. It appears that this information is stored in the jpg file somewhere, so how do I get to it?
+One other requirement - I only have gdlib available to me. I need to do this without the use of other php libraries (imagemagick, etc.)
+Thanks for the help!
+
+
+You could just read the JPEG file directly, bytes 14-18 specify:
+
+byte 14: 01, X and Y density unit specifier (00: none, pixel ratios, 01: DPI,02: DPC)
+bytes 15-16: horizontal pixel density,
+byte 16-18: vertical pixel densit
+
+Also see: http://www.obrador.com/essentialjpeg/headerinfo.htm
+
+Depending on how the image is saved, EXIF contains a metric crapload of information - Read more about it in the PHP manual. You may need to parse/process the results a bit, however (e.g. the flash info is, or at least has been, just a byte, expressing various states).
+
+SOLUTION: User the PHP JPEG Metadata Toolkit - downloaded from here: http://www.ozhiker.com/electronics/pjmt/
+This toolkit has some handy scripts that will do all sorts of things, including viewing and editing of the header, metadata, and jfif information in jpeg file. Here is a script that gives you the XDensity and the YDensity (the x and y print resolution) of a jpg:
+<?php
+
+include_once("./JPEG.php");
+include_once("./JFIF.php");
+
+$image_header = get_jpeg_header_data("./myImage.jpg");
+$image_info = get_JFIF($image_header);
+
+print( "XDensity:" . $image_info['XDensity'] . "<br />");
+print( "YDensity:" . $image_info['YDensity'] . "<br />");
+
+?>
+
+
+I don't understand this. Pixels = printsize x resolution, and the number of pixels is a set value. So, if you have an image of 300x300 pixels, you have 1"x1" of 300 DPI resolution, 2"x2" of 150 DPI resolution, or 4"x4" of 75 DPI resolution etc. An image doesn't have a resolution unless it has a physical size to compare to its pixel size.
+What is it I'm missing? (and just how glaringly obvious is it to everyone else? =] )
+
+There are two places that a resolution (i.e. resolution of the JPEG when printed, also referred to in shorthand as DPI or dots per inch) can potentially be stored.
+The first is in the JPEG's JFIF header, which is often (but NOT always) right at the start of the JPEG.
+The other is in the EXIF data.
+Note that resolution data is usually NOT present, as it only has meaning if associated with a physical output size. E.g. if a digital camera writes the value, it is usually meaningless . However, when the JPEG is being output to a printer (e.g.) then the value will have meaning.
+Here is some code to get it from the JFIF header, provided one is present, and is inside an APP0 chunk which is the second chunk in the file. (The first chunk is always the SOI marker.):
+function read_JFIF_dpi($filename)
+{
+    $dpi = 0;
+    $fp = @fopen($filename, r);
+    if ($fp) {
+        if (fseek($fp, 6) == 0) { // JFIF often (but not always) starts at offset 6.
+            if (($bytes = fread($fp, 16)) !== false) { // JFIF header is 16 bytes.
+                if (substr($bytes, 0, 4) == "JFIF") { // Make sure it is JFIF header.
+                    $JFIF_density_unit = ord($bytes[7]);
+                    $JFIF_X_density = ord($bytes[8])*256 + ord($bytes[9]); // Read big-endian unsigned short int.
+                    $JFIF_Y_density = ord($bytes[10])*256 + ord($bytes[11]); // Read big-endian unsigned short int.
+                    if ($JFIF_X_density == $JFIF_Y_density) { // Assuming we're only interested in JPEGs with square pixels.
+                        if ($JFIF_density_unit == 1) $dpi = $JFIF_X_density; // Inches.
+                        else if ($JFIF_density_unit == 2) $dpi = $JFIF_X_density * 2.54; // Centimeters.
+                    }
+                }
+            }
+        }
+        fclose($fp);
+    }
+    return ($dpi);
+}
+

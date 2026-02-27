@@ -1,0 +1,64 @@
+Oracle single-table constant merge with CLOB using JDBC
+oracle jdbc merge clob ora-01461
+As a follow-up to this question, I need help with the following scenario:
+In Oracle, given a simple data table:
+create table data (
+    id       VARCHAR2(255),
+    key      VARCHAR2(255),
+    value    CLOB);
+
+I am using the following merge command:
+merge into data
+using (
+    select
+        ? id,
+        ? key,
+        ? value
+    from
+        dual
+) val on (
+    data.id=val.id
+    and data.key=val.key
+)
+when matched then 
+    update set data.value = val.value 
+when not matched then 
+    insert (id, key, value) values (val.id, val.key, val.value);
+
+I am invoking the query via JDBC from a Java application.
+When the "value" string is large, the above query results in the following Oracle error:
+ORA-01461: cannot bind a LONG value for insert into a long column
+
+I even set the "SetBigStringTryClob" property as documented here with the same result.
+Is it possible to achieve the behavior I want given that "value" is a CLOB?
+EDIT: Client environment is Java
+
+
+You haven't mentioned specifically in your post, but judging by the tags for the question, I'm assuming you're doing this from Java.
+I've had success with code like this in a project I just finished.  This application used Unicode, so there may be simpler solutions if your problem domain is limited to a standard ASCII character set.
+Are you currently using the OracleStatement.setCLOB() method?  It's a terribly awkward thing to have to do, but we couldn't get around it any other way.  You have to actually create a temporary CLOB, and then use that temporary CLOB in the setCLOB() method call.
+Now, I've ripped this from a working system, and had to make a few ad-hoc adjustments, so if this doesn't appear to work in your situation, let me know and I'll go back to see if I can get a smaller working example.  
+This of course assumes you're using the Oracle Corp. JDBC drivers (ojdbc14.jar or ojdbc5.jar) which are found in $ORACLE_HOME/jdbc/lib
+CLOB tempClob = CLOB.createTemporary(conn, true, CLOB.DURATION_SESSION);
+
+
+// Open the temporary CLOB in readwrite mode to enable writing
+tempClob.open(CLOB.MODE_READWRITE);
+
+// Get the output stream to write
+Writer tempClobWriter = tempClob.getCharacterOutputStream();
+
+// Write the data into the temporary CLOB
+tempClobWriter.write(stringData);
+
+// Flush and close the stream
+tempClobWriter.flush();
+tempClobWriter.close();
+
+// Close the temporary CLOB
+tempClob.close();
+
+myStatement.setCLOB(column.order, tempClob);
+
+Regards,
+Dwayne King

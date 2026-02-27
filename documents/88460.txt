@@ -1,0 +1,66 @@
+KVM/QEMU network TAP problems with libvirt
+kvm qemu libvirt
+I'm trying to use libvirt with virsh to manage my kvm/qemu vms. The problem I have is with getting it to work with  public IPs. The server is running ubuntu 8.04.
+libvirt keeps trying to run it as:
+/usr/bin/kvm -M pc -m 256 -smp 3 -monitor pty -no-acpi \ 
+  -drive file=/opt/virtual-machines/calculon/root.qcow2,if=ide,boot=on \ 
+  -net nic,vlan=0,model=virtio -net tap,fd=10,vlan=0 -usb -vnc 127.0.0.1:0
+
+Which boots, but does not have any network access (pings go nowhere). Running it without fd=10 makes it work right, with kvm creating the necessary TAP device for me and networking functioning inside the host. All the setup guides I've seen focus on setting up masquerading, while I just want a simple bridge and unfiltered access to the net (both the guests and host must use public IPs). 
+Running ifconfig on the host gives this, the bridge is manually setup in my /etc/network/interfaces file. :
+br0   Link encap:Ethernet  HWaddr 00:1e:c9:3c:59:b8
+      inet addr:12.34.56.78  Bcast:12.34.56.79  Mask:255.255.255.240
+      inet6 addr: fe80::21e:c9ff:fe3c:59b8/64 Scope:Link
+      UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
+      RX packets:3359 errors:0 dropped:0 overruns:0 frame:0
+      TX packets:3025 errors:0 dropped:0 overruns:0 carrier:0
+      collisions:0 txqueuelen:0
+      RX bytes:180646 (176.4 KB)  TX bytes:230908 (225.4 KB)
+
+eth0  Link encap:Ethernet  HWaddr 00:1e:c9:3c:59:b8
+      inet6 addr: fe80::21e:c9ff:fe3c:59b8/64 Scope:Link
+      UP BROADCAST RUNNING MULTICAST  MTU:1500  Metric:1
+      RX packets:6088386 errors:0 dropped:0 overruns:0 frame:0
+      TX packets:3058 errors:0 dropped:0 overruns:0 carrier:0
+      collisions:0 txqueuelen:1000
+      RX bytes:680236624 (648.7 MB)  TX bytes:261696 (255.5 KB)
+      Interrupt:33
+
+Any help would be greatly appreciated.
+
+
+I followed the bridged networking guide at https://help.ubuntu.com/community/KVM and have the following in /etc/network/interfaces:
+auto eth0
+iface eth0 inet manual
+
+auto br0
+iface br0 inet static
+        address 192.168.0.10
+        network 192.168.0.0
+        netmask 255.255.255.0
+        broadcast 192.168.0.255
+        gateway 192.168.0.1
+        bridge_ports eth0
+        bridge_fd 9
+        bridge_hello 2
+        bridge_maxage 12
+        bridge_stp off
+
+I have not changed any libvirt network settings and my kvm images are booted like:
+/usr/bin/kvm -M pc -no-kqemu -m 256 -smp 1 -monitor pty -boot c -hda \
+    /libvirt/apt.img -net nic,macaddr=00:16:3e:77:32:1d,vlan=0 -net \
+    tap,fd=11,script=,vlan=0 -usb -vnc 127.0.0.1:0
+
+I then specify the static network settings in the kvm image as normal. Has all worked ok since I followed the guide.
+I do have the following settings in my xml files in /etc/libvirt/qemu/ though under devices:
+<interface type='bridge'>
+  <mac address='00:16:3e:77:32:1d'/>
+  <source bridge='br0'/>
+</interface>
+
+
+i guess your tap device should be shown in ifconfig.
+run "brctl show "
+it will show bridge and tunnel device connection.
+you may have to put iptable entry show that all the packets will be routed through bridge
+iptables -I INPUT -i br0 -j ACCEPT

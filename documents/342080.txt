@@ -1,0 +1,60 @@
+Read & Update filestream
+c# .net filereader filewriter
+I have a little utility that does a search of a number of files. I had to create it because both Google & Windows desktop searches were not finding the appropriate lines in files. The searching works fine (I am willing to improve on it) but one of the things I would like to add to my util is a batch find/replace.
+So how would be the best way to read a line from a file, compare it to a search term and if it passes, then update the line, and continue through the rest of the file?
+
+
+I would do the following for each file:
+
+Do the search as normal. Also check for the token to replace. As soon as you've seen it, start that file again. If you don't see the token to replace, you're done.
+When you start again, create a new file and copy each line that you read from the input file, doing the replacement as you go.
+When you've finished with the file:
+
+Move the current file to a backup filename
+Move the new file to the original filename
+Delete the backup file
+
+
+Be careful that you don't do this on binary files etc though - the consequences of doing a textual search and replace on binary files would usually be dire!
+
+If PowerShell is an option, the function defined below can be used to perform find and replace across files. For example, to find 'a string' in text files in the current directory, you would do:
+dir *.txt | FindReplace 'a string'
+
+To replace 'a string' with another value, just add the new value at the end:
+dir *.txt | FindReplace 'a string' 'replacement string'
+
+You can also call it on a single file using FindReplace -path MyFile.txt 'a string'.
+function FindReplace( [string]$search, [string]$replace, [string[]]$path ) {
+  # Include paths from pipeline input.
+  $path += @($input)
+
+  # Find all matches in the specified files.
+  $matches = Select-String -path $path -pattern $search -simpleMatch
+
+  # If replacement value was given, perform replacements.
+  if( $replace ) {
+    # Group matches by file path.
+    $matches | group -property Path | % {
+      $content = Get-Content $_.Name
+
+      # Replace all matching lines in current file.
+      foreach( $match in $_.Group ) {
+        $index = $match.LineNumber - 1
+        $line = $content[$index]
+        $updatedLine = $line -replace $search,$replace
+        $content[$index] = $updatedLine
+
+        # Update match with new line value.
+        $match | Add-Member NoteProperty UpdatedLine $updatedLine
+      }
+
+      # Update file content.
+      Set-Content $_.Name $content
+    }
+  }
+
+  # Return matches.
+  $matches
+}
+
+Note that Select-String also supports regex matches, but has been constrainted to simple matches for simplicity ;) You can also perform a more robust replacement like Jon suggested, rather than just overwriting the file with the new content.

@@ -1,0 +1,36 @@
+Best way of doing an SVn checkout/update on a web hosting package
+svn deployment
+I want to deploy my site on my web hosting package by doing a checkout through subversion. I do not have SSH access to my hosting package, which is just a basic LAMP web hosting package, but I do know that there is an SVN client installed on the web server.
+I was thinking of writing some sort of script (PHP or Shell) that can do different functions. Like a checkout, update, switch to another tag etc. and that I can call externally in some sort of fashion.
+Any input on best practices, things to look out for and how to go about this is very much appreciated.
+
+UPDATE: I have been using the
+  following technique for the past
+  couple of weeks now. I've carefully
+  crafted (and well tested) a couple
+  shell scripts that I can execute from
+  cron through cPanel. Whenever cron has
+  completed a job it will email me the
+  console output of the job. this way I
+  can monitor if all commands succeeded. Since I only
+  do updates on the server and no
+  commits, I haven't run into any
+  issues concerning Subversion. Of course, in my .htaccess
+  files I have created a rule that will deny
+  any access to the hidden .svn folders.
+
+
+
+I would hesitate to manage your site on your web host with Subversion unless you have shell access. When performing Subversion operations, there might be things that require your interactive attention which you wouldn't be able to provide through a script interface.
+What I might suggest instead, is to maintain a local checkout directory that mirrors your remote directory. When you want to make a change to your live site, do an svn update on your local checkout, to make it look exactly like you want, then use your favourite mirroring tool (rsync or something) to push the site up to your web host.
+Alternately, you could switch web hosts to one where you have shell access. I manage some web sites this way using Git and it works really well.
+
+The good news is that svn is very easily scriptable, but the bad news is that you are likely to have a difficult time without shell access.
+If you do this without shell access, be careful of anything that can change a file in a directory under svn. This can lead to conflicts between working copy and latest version and block your updates. You might want to build in a revert command into your update script, and revert recursively before the update.
+The other choice would be to export rather than check out. You wouldn't have the .svn directories, and you wouldn't have to be concerned about files being conflicted. You might want to export into a clean directory rather than overwrite, since I think the svn export does not touch non-versioned files including files deleted through svn.
+The difficult part is that the web server's userid probably does not have write permission to the directories you want to hit with your checkout. So it needs to run the svn commands as another user for write permissions and file ownership. I used suid-perl to change effective uid/gid, and call those perl scripts from the php. The Perl then calls the svn command with the correct identity. If you do need suid, then you'll need to be able to change file permissions and set the suid bit. Maybe your FTP can set suid permissions, otherwise you'll need a shell. The only other option which comes to mind (which is a bad idea) is to grant the web server write access to your entire directory.
+If the svn repository is on a separate machine, you will probably want to use svn+ssh. This could mean storing a key file or password on the web server. Make sure the permissions are correct on the key files, since ssh rejects them if they are readable to anyone other than the owner. Just to be safe, make sure the login on the subversion server can do nothing but access the svn repository.
+In your .htaccess files or httpd.conf you should block all access to .svn directories from anyone anywhere. 
+I also keep my PHP updater page in a directory protected by password over SSL. It only has one action it can perform, which is updating the web directory to the latest revision from svn. It accepts no user input. If it did allow the user to choose a tag or revision, it would only accept tag selections from a list, or integer revision numbers. Those would be highly sanitized before use, and no user input would ever be used in a shell command or option.
+The main thing is to be careful of security when you have any PHP or externally accessible script execute a command which modifies data on the server.
+I think on a machine where you do not get shell access, you will have a lot of difficulty with permissions and file ownership. Unless you are strongly tied to this hosting provider, I would recommend upgrading to a provider who offers the tools to make your job easier. You'll save yourself enough time that it will likely be worth the money.

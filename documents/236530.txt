@@ -1,0 +1,176 @@
+Using the typical get set properties in C#... with parameters
+c# vb.net properties
+I'd like to do the same in C#. Is there anyway of using properties in C# with parameters in the same way I've done with the parameter 'Key' in this VB.NET example?
+
+Private Shared m_Dictionary As IDictionary(Of String, Object) = New Dictionary(Of String, Object)
+
+
+Public Shared Property DictionaryElement(ByVal Key As String) As Object
+    Get
+        If m_Dictionary.ContainsKey(Key) Then
+            Return m_Dictionary(Key)
+        Else
+            Return [String].Empty
+        End If
+    End Get
+    Set(ByVal value As Object)
+        If m_Dictionary.ContainsKey(Key) Then
+            m_Dictionary(Key) = value
+        Else
+            m_Dictionary.Add(Key, value)
+        End If
+
+    End Set
+End Property
+
+Thanks
+
+
+
+Is there anyway of using properties in C# with parameters
+
+No. You only can provide the default property in C# with an argument, to model indexed access (as in a dictionary):
+public T this[string key] {
+    get { return m_Dictionary[key]; }
+    set { m_Dictionary[key] = value; }
+}
+
+Other properties can't have arguments. Use a function instead. By the way, it's recommented to do the same in VB so other .NET languages (C# â¦) can use your code.
+By the way, your code is unnecessarily complicated. Four things:
+
+You don't need to escape the String identifier. Use the keyword directly.
+Why not use ""?
+Use TryGetValue, it's faster. You query the dictionary twice.
+Your setter doesn't have to test whether the value already exists.
+
+
+Public Shared Property DictionaryElement(ByVal Key As String) As Object
+    Get
+        Dim ret As String
+        If m_Dictionary.TryGetValue(Key, ret) Then Return ret
+        Return "" ' Same as String.Empty! '
+    End Get
+    Set(ByVal value As Object)
+        m_Dictionary(Key) = value
+    End Set
+End Property
+
+
+Your code sample strikes me as a very strange design and an abuse of what properties are intended for. Why not just an instance method AddOrUpdateKey:
+Public Sub AddOrUpdateKey(ByVal Key As String, ByVal Value as Object)
+    If m_Dictionary.ContainsKey(Key) Then
+        m_Dictionary(Key) = Value
+    Else
+        m_Dictionary.Add(Key, Value)
+    End If
+End Sub
+
+Your property also returns String.Empty if the key does not exist, but claims to return an Object, nor a String.
+
+The "proper" way to do it in C# is to create child class specifically to access the collection. It should either hold the collection itself or have internal linkages to the parent class.
+
+Here is a sample for you (with changes along the lines of Grauenwolf's suggestions):
+using System;
+using System.Collections.Generic;
+
+public class Test
+{
+    public FakeIndexedPropertyInCSharp DictionaryElement { get; set; }
+
+    public Test()
+    {
+        DictionaryElement = new FakeIndexedPropertyInCSharp();
+    }
+
+    public class FakeIndexedPropertyInCSharp
+    {
+        private Dictionary<string, object> m_Dictionary = new Dictionary<string, object>();
+
+        public object this[string index]
+        {
+            get 
+            {
+                object result;
+                return m_Dictionary.TryGetValue(index, out result) ? result : null;
+            }
+            set 
+            {
+                m_Dictionary[index] = value; 
+            }
+        }
+    }
+
+
+}
+
+class Program
+{
+    static void Main(string[] args)
+    {
+        Test t = new Test();
+        t.DictionaryElement["hello"] = "world";
+        Console.WriteLine(t.DictionaryElement["hello"]);
+    }
+}
+
+
+Thanks Konrad, Alan, Grauenwolf, 
+In conclusion, I can't use C# properties exactly in the same way that in VB.NET... :_(  Anyway, your answers has been very usefull to me, and IÂ´ll probably take this ideas to my C# code.
+In addition to the answers to the properties question, there are other good points. For example, 
+
+
+Use TryGetValue, it's faster. You query the dictionary twice.
+Your setter doesn't have to test whether the value already exists.
+
+
+Thanks SÃ¶ren, too, using a method don't fits well in my initial aims, but thanks very much.
+
+A more general-purpose, safer, and reusable solution to your problem might be implementing a generic, "parameterized" property class, like this:
+    // Generic, parameterized (indexed) "property" template
+    public class Property<T>
+    {
+        // The internal property value
+        private T PropVal = default(T);
+
+        // The indexed property get/set accessor 
+        //  (Property<T>[index] = newvalue; value = Property<T>[index];)
+        public T this[object key]
+        {
+            get { return PropVal; }     // Get the value
+            set { PropVal = value; }    // Set the value
+        }
+    }
+
+You could then implement any number of properties within your public class so that clients could set/get the properties with an index, descriptor, security key, or whatever, like this:
+    public class ParameterizedProperties
+    {
+        // Parameterized properties
+        private Property<int> m_IntProp = new Property<int>();
+        private Property<string> m_StringProp = new Property<string>();
+
+        // Parameterized int property accessor for client access
+        //  (ex: ParameterizedProperties.PublicIntProp[index])
+        public Property<int> PublicIntProp
+        {
+            get { return m_IntProp; }
+        }
+
+        // Parameterized string property accessor
+        //  (ex: ParameterizedProperties.PublicStringProp[index])
+        public Property<string> PublicStringProp
+        {
+            get { return m_StringProp; }
+        }
+    }
+
+Finally, client code would access your public class's "parameterized" properties like this:
+        ParameterizedProperties parmProperties = new ParameterizedProperties();
+        parmProperties.PublicIntProp[1] = 100;
+        parmProperties.PublicStringProp[1] = "whatever";
+        int ival = parmProperties.PublicIntProp[1];
+        string strVal = parmProperties.PublicStringProp[1];
+
+Sure, this seems weird, but it definitely does the trick.  Besides, from a client-code perspective, it's not weird at all -- it's simple and intuitive and acts just like real properties.  It doesn't break any C# rules, nor is it incompatible with other .NET managed languages.  And from the class-implementer's perspective, creating a reusable, generic, "parameterized" property template class makes component coding a relative breeze, as shown here.
+NOTE: You can always override the generic property class to provide custom processing, such as indexed lookup, security-controlled property access, or whatever-the-heck you want.
+Cheers!
+Mark Jones

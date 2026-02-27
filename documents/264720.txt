@@ -1,0 +1,207 @@
+gdi+ Graphics::DrawImage really slow~~
+gdi+ performance drawimage
+I am using a GDI+ Graphic to draw a 4000*3000 image to screen, but it is really slow. It takes about 300ms. I wish it just occupy less than 10ms.
+Bitmap *bitmap = Bitmap::FromFile("XXXX",...);
+
+//--------------------------------------------
+// this part takes about 300ms, terrible!
+int width = bitmap->GetWidth();
+int height = bitmap->GetHeight();
+DrawImage(bitmap,0,0,width,height);
+
+//------------------------------------------
+I cannot use CachedBitmap, because I want to edit the bitmap later.
+How can I improve it? Or is any thing wrong? 
+This native GDI function also draws the image into the screen, and it just take 1 ms:
+SetStretchBltMode(hDC, COLORONCOLOR);   
+StretchDIBits(hDC, rcDest.left, rcDest.top, 
+    	rcDest.right-rcDest.left, rcDest.bottom-rcDest.top, 
+    	0, 0, width, height,
+    	BYTE* dib, dibinfo, DIB_RGB_COLORS, SRCCOPY);
+
+//--------------------------------------------------------------
+If I want to use StretchDIBits, I need to pass BITMAPINFO, But how can I get BITMAPINFO from a Gdi+ Bitmap Object? I did the experiment by FreeImage lib, I call StretchDIBits using FreeImageplus object, it draw really fast. But now I need to draw Bitmap, and write some algorithm on Bitmap's bits array, how can I get BITMAPINFO if I have an Bitmap object? It's really annoying      -_______-|
+
+
+You have a screen of 4000 x 3000 resolution? Wow!
+If not, you should draw only the visible part of the image, it would be much faster...
+[EDIT after first comment] My remark is indeed a bit stupid, I suppose DrawImage will mask/skip unneeded pixels.
+After your edit (showing StretchDIBits), I guess a possible source of speed difference might come from the fact that StretchDIBits is hardware accelerated ("If the driver cannot support the JPEG or PNG file image" is a hint...) while DrawImage might be (I have no proof for that!) coded in C, relying on CPU power instead of GPU's one...
+If I recall correctly, DIB images are fast (despite being "device independent"). See High Speed Win32 Animation: "use CreateDIBSection to do high speed animation". OK, it applies to DIB vs. GDI, in old Windows version (1996!) but I think it is still true.
+[EDIT] Maybe Bitmap::GetHBITMAP function might help you to use StretchDIBits (not tested...).
+
+Just a thought; instead of retrieving the width and height of the image before drawing, why not cache these values when you load the image?
+
+Explore the impact of explicitly setting the interpolation mode to NearestNeighbor (where, in your example, it looks like interpolation is not actually needed!  But 300ms is the kind of cost of doing high-quality interpolation when no interpolation is needed, so its worth a try)
+Another thing to explore is changing the colour depth of the bitmap.
+
+If you're using GDI+, the TextureBrush class is what you need for rendering images fast. I've written a couple of 2d games with it, getting around 30 FPS or so.
+I've never written .NET code in C++, so here's a C#-ish example:
+Bitmap bmp = new Bitmap(...)
+TextureBrush myBrush = new TextureBrush(bmp)
+
+private void Paint(object sender, PaintEventArgs e):
+{
+    //Don't draw the bitmap directly. 
+    //Only draw TextureBrush inside the Paint event.
+    e.Graphics.FillRectangle(myBrush, ...)
+}
+
+
+Unfortunately when I had a similar problem, I found that GDI+ is known to be much slower than GDI and not generally hardware accelerated, but now Microsoft have moved on to WPF they will not come back to improve GDI+!
+All the graphics card manufacturers have moved onto 3D performance and don't seem interested in 2D acceleration, and there's no clear source of information on which functions are or can be hardware accelerated or not. Very frustrating because having written an app in .NET using GDI+, I am not happy to change to a completely different technology to speed it up to reasonable levels.
+
+i don't think they'll make much of a different, but since you're not actually needing to resize the image, try using the overload of DrawImage that doesn't (attempt) to resize:
+DrawImage(bitmap,0,0);
+
+Like i said, i doubt it will make any difference, because i'm sure that DrawImage checks the Width and Height of the bitmap, and if there's no resizing needed, just calls this overload. (i would hope it doesn't bother going through all 12 million pixels performing no actual work).
+Update: My ponderings are wrong. i had since found out, but guys comment reminded me of my old answer: you want to specify the destination size; even though it matches the source size:
+DrawImage(bitmap, 0, 0, bitmap.GetWidth, bitmap.GetHeight);
+
+The reason is because of dpi differences between the dpi of bitmap and the dpi of the destination. GDI+ will perform scaling to get the image to come out the right "size" (i.e. in inches)
+
+What i've learned on my own since last October is that you really want to draw a "cached" version of your bitmap. There is a CachedBitmap class in GDI+. There are some tricks to using it. But in there end i have a function bit of (Delphi) code that does it.
+The caveat is that the CachedBitmap can become invalid - meaning it can't be used to draw. This happens if the user changes resolutions or color depths (e.g. Remote Desktop). In that case the DrawImage will fail, and you have to re-created the CachedBitmap:
+class procedure TGDIPlusHelper.DrawCachedBitmap(image: TGPImage;
+      var cachedBitmap: TGPCachedBitmap;
+      Graphics: TGPGraphics; x, y: Integer; width, height: Integer);
+var
+   b: TGPBitmap;
+begin
+   if (image = nil) then
+   begin
+      //i've chosen to not throw exceptions during paint code - it gets very nasty
+      Exit;
+   end;
+
+   if (graphics = nil) then
+   begin
+      //i've chosen to not throw exceptions during paint code - it gets very nasty
+      Exit;
+   end;
+
+   //Check if we have to invalidate the cached image because of size mismatch
+   //i.e. if the user has "zoomed" the UI
+   if (CachedBitmap <> nil) then
+   begin
+      if (CachedBitmap.BitmapWidth <> width) or (CachedBitmap.BitmapHeight <> height) then
+         FreeAndNil(CachedBitmap); //nil'ing it will force it to be re-created down below
+   end;
+
+   //Check if we need to create the "cached" version of the bitmap
+   if CachedBitmap = nil then
+   begin
+      b := TGDIPlusHelper.ResizeImage(image, width, height);
+      try
+         CachedBitmap := TGPCachedBitmap.Create(b, graphics);
+      finally
+         b.Free;
+      end;
+end;
+
+    if (graphics.DrawCachedBitmap(cachedBitmap, x, y) <> Ok) then
+begin
+       //The calls to DrawCachedBitmap failed
+       //The API is telling us we have to recreate the cached bitmap
+       FreeAndNil(cachedBitmap);
+       b := TGDIPlusHelper.ResizeImage(image, width, height);
+       try
+          CachedBitmap := TGPCachedBitmap.Create(b, graphics);
+       finally
+          b.Free;
+       end;
+
+       graphics.DrawCachedBitmap(cachedBitmap, x, y);
+    end;
+ end;
+
+The cachedBitmap is passed in by reference. The first call to DrawCachedBitmap it cached version will be created. You then pass it in subsequent calls, e.g.:
+Image imgPrintInvoice = new Image.FromFile("printer.png");
+CachedBitmap imgPrintInvoiceCached = null;
+
+...
+
+int glyphSize = 16 * (GetCurrentDpi() / 96);
+
+DrawCachedBitmap(imgPrintInvoice , ref imgPrintInvoiceCached , graphics, 
+      0, 0, glyphSize, glyphSize);
+
+i use the routine to draw glyphs on buttons, taking into account the current DPI. The same could have been used by the Internet Explorer team to draw images when the user is running high dpi (ie is very slow drawing zoomed images, because they use GDI+).
+
+Try using copy of Bitmap from file. FromFile function on some files returns "slow" image, but its copy will draw faster.
+Bitmap *bitmap = Bitmap::FromFile("XXXX",...);
+
+Bitmap *bitmap2 = new Bitmap(bitmap); // make copy
+
+DrawImage(bitmap2,0,0,width,height);
+
+
+/*
+First sorry for ma English, and the code is partly in polish, but it's simple to understand.
+I had the same problem and I found the best solution. Here it is.
+Dont use: Graphics graphics(hdc); graphics.DrawImage(gpBitmap, 0, 0); It is slow.
+Use: GetHBITMAP(Gdiplus::Color(), &g_hBitmap) for HBITMAP and draw using my function ShowBitmapStretch().
+You can resize it and it is much faster!  Artur Czekalski / Poland
+*/
+//--------Global-----------
+Bitmap *g_pGDIBitmap; //for loading picture
+int gRozXOkna, gRozYOkna; //size of working window
+int gRozXObrazu, gRozYObrazu; //Size of picture X,Y
+HBITMAP g_hBitmap = NULL; //for displaying on window
+//------------------------------------------------------------------------------
+int ShowBitmapStretch(HDC hdc, HBITMAP hBmp, int RozX, int RozY, int RozXSkal, int RozYSkal, int PozX, int PozY) 
+{
+    if (hBmp == NULL) return -1;
+    HDC hdc_mem = CreateCompatibleDC(hdc); //utworzenie kontekstu pamiÄciowego
+    if (NULL == hdc_mem) return -2;
+    //Trzeba poÅÄczyÄ BMP z hdc_mem, tzn. umieÅciÄ bitmapÄ w naszym kontekÅcie pamiÄciowym
+    if (DeleteObject(SelectObject(hdc_mem, hBmp)) == NULL) return -3; 
+
+    SetStretchBltMode(hdc, COLORONCOLOR); //important! for smoothness
+    if (StretchBlt(hdc, PozX, PozY, RozXSkal, RozYSkal, hdc_mem, 0, 0, RozX, RozY, SRCCOPY) == 0) return -4;
+
+    if (DeleteDC(hdc_mem) == 0) return -5;
+    return 0; //OK
+}
+//---------------------------------------------------------------------------
+void ClearBitmaps(void)
+{
+    if (g_hBitmap) { DeleteObject(g_hBitmap);  g_hBitmap = NULL; }
+    if (g_pGDIBitmap) { delete g_pGDIBitmap;  g_pGDIBitmap = NULL; }
+}
+//---------------------------------------------------------------------------
+void MyOpenFile(HWND hWnd, szFileName)
+{
+    ClearBitmaps(); //Important!
+    g_pGDIBitmap = new Bitmap(szFileName); //load a picture from file
+
+    if (g_pGDIBitmap == 0) return;
+    //---Checking if picture was loaded
+    gRozXObrazu = g_pGDIBitmap->GetWidth();
+    gRozYObrazu = g_pGDIBitmap->GetHeight();
+    if (gRozXObrazu == 0 || gRozYObrazu == 0) return;
+
+    //---Uworzenie bitmapy do wyÅwiatlaia; DO IT ONCE HERE!
+    g_pGDIBitmap->GetHBITMAP(Gdiplus::Color(), &g_hBitmap); //creates a GDI bitmap from this Bitmap object
+    if (g_hBitmap == 0) return;
+
+    //---We need to force the window to redraw itself
+    InvalidateRect(hWnd, NULL, TRUE);
+    UpdateWindow(hWnd);
+}
+//---------------------------------------------------------------------------
+void MyOnPaint(HDC hdc, HWND hWnd) //in case WM_PAINT; DO IT MANY TIMES
+{
+    if (g_hBitmap)
+    {
+        double SkalaX = 1.0, SkalaY = 1.0; //scale
+        if (gRozXObrazu > gRozXOkna || gRozYObrazu > gRozYOkna || //too big picture, wiÄc zmniejsz; 
+           (gRozXObrazu < gRozXOkna && gRozYObrazu < gRozYOkna)) //too small picture, moÅ¼na powiÄkszyÄ 
+        {
+            SkalaX = (double)gRozXOkna / (double)gRozXObrazu; //np. 0.7 dla zmniejszania; FOR DECREASE
+            SkalaY = (double)gRozYOkna / (double)gRozYObrazu; //np. 1.7 dla powiÄkszania; FOR INCREASE
+            if (SkalaY < SkalaX) SkalaX = SkalaY; //ZAWSZE wybierz wiÄksze skalowanie, czyli mniejszÄ wartoÅÄ i utaw w SkalaX
+        }
+
+    if (ShowBitmapStretch(hdc, g_hBitmap, gRozXObrazu, gRozYObrazu, (int)(gRozXObrazu*SkalaX), (int)(gRozYObrazu*SkalaX), 0, 0, msg) < 0) return;
+

@@ -1,0 +1,131 @@
+In Ruby, can you perform string interpolation on data read from a file?
+ruby string interpolation
+In Ruby you can reference variables inside strings and they are interpolated at runtime.  
+For example if you declare a variable foo equals "Ted" and you declare a string "Hello, #{foo}" it interpolates to "Hello, Ted".  
+I've not been able to figure out how to perform the magic "#{}" interpolation on data read from a file.  
+In pseudo code it might look something like this:
+interpolated_string = File.new('myfile.txt').read.interpolate
+
+But that last interpolate method doesn't exist.
+
+
+Instead of interpolating, you could use erb. This blog gives simple example of ERB usage,
+require 'erb'
+name = "Rasmus"
+template_string = "My name is <%= name %>"
+template = ERB.new template_string
+puts template.result # prints "My name is Rasmus"
+
+Kernel#eval could be used, too. But most of the time you want to use a simple template system like erb.
+
+Well, I second stesch's answer of using erb in this situation. But you can use eval like this. If data.txt has contents:
+he #{foo} he
+
+Then you can load and interpolate like this:
+str = File.read("data.txt")
+foo = 3
+result = eval("\"" + str + "\"")
+
+And result will be:
+"he 3 he"
+
+
+The 2 most obvious answers have already been give, but if they don't to it for some reason, there's the format operator:
+>> x = 1
+=> 1
+>> File.read('temp') % ["#{x}", 'saddle']
+=> "The number of horses is 1, where each horse has a saddle\n"
+
+where instead of the #{} magic you have the older (but time-tested) %s magic ...
+
+I think this might be the easiest and safest way to do what you want in Ruby 1.9.x (sprintf doesn't support reference by name in 1.8.x): use Kernel.sprintf feature of "reference by name". Example:
+>> mystring = "There are %{thing1}s and %{thing2}s here."
+ => "There are %{thing1}s and %{thing2}s here."
+
+>> vars = {:thing1 => "trees", :thing2 => "houses"}
+ => {:thing1=>"trees", :thing2=>"houses"}
+
+>> mystring % vars
+ => "There are trees and houses here." 
+
+
+Ruby Facets provides a String#interpolate method:
+
+Interpolate. Provides a means of
+  extenally using Ruby string
+  interpolation mechinism.
+
+try = "hello"
+str = "\#{try}!!!"
+String.interpolate{ str }    #=> "hello!!!"
+
+
+NOTE: The block neccessary in order to
+  get then binding of the caller.
+
+
+You can read the file into a string using IO.read(filename), and then use the result as a format string (http://www.ruby-doc.org/core-2.0/String.html#method-i-25):
+myfile.txt:
+My name is %{firstname} %{lastname} and I am here to talk about %{subject} today.
+
+fill_in_name.rb:
+sentence = IO.read('myfile.txt') % {
+  :firstname => 'Joe',
+  :lastname => 'Schmoe',
+  :subject => 'file interpolation'
+}
+puts sentence
+
+result of running "ruby fill_in_name.rb" at the terminal:
+My name is Joe Schmoe and I am here to talk about file interpolation today.
+
+
+Using daniel-lucraft's answer as my base (as he seems to be the only one that answered the question) I decided to solve this problem in a robust manner.  Below you will find the code for this solution.
+# encoding: utf-8
+
+class String
+  INTERPOLATE_DELIMETER_LIST = [ '"', "'", "\x02", "\x03", "\x7F", '|', '+', '-' ]
+  def interpolate(data = {})
+    binding = Kernel.binding
+
+    data.each do |k, v|
+      binding.local_variable_set(k, v)
+    end
+
+    delemeter = nil
+    INTERPOLATE_DELIMETER_LIST.each do |k|
+      next if self.include? k
+      delemeter = k
+      break
+    end
+    raise ArgumentError, "String contains all the reserved characters" unless delemeter
+    e = s = delemeter
+    string = "%Q#{s}" + self + "#{e}"
+    binding.eval string
+  end
+end
+
+output =
+begin
+  File.read("data.txt").interpolate(foo: 3)
+rescue NameError => error
+  puts error
+rescue ArgumentError => error
+  puts error
+end
+
+p output
+
+for the input 
+he #{foo} he
+
+you get the output
+ "he 3 he"
+
+The input 
+"he #{bad} he\n"
+
+will raise a NameError exception.  And the input 
+"\"'\u0002\u0003\u007F|+-"
+
+will raise and ArgumentError exception complaining that the input contained all available delimiter characters.  

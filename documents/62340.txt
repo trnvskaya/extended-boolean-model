@@ -1,0 +1,124 @@
+Does pop_back() really invalidate *all* iterators on an std::vector?
+c++ stl
+std::vector<int> ints;
+
+// ... fill ints with random values
+
+for(std::vector<int>::iterator it = ints.begin(); it != ints.end(); )
+{
+    if(*it < 10)
+    {
+        *it = ints.back();
+        ints.pop_back();
+        continue;
+    }
+    it++;
+}
+
+This code is not working because when pop_back() is called, it is invalidated. But I don't find any doc talking about invalidation of iterators in std::vector::pop_back().
+Do you have some links about that?
+
+
+Iterators are only invalidated on reallocation of storage.  Google is your friend: see footnote 5.
+Your code is not working for other reasons.
+
+Check out the information here (cplusplus.com):
+
+Delete last element
+Removes the last element in the vector, effectively reducing the vector size by one and invalidating all iterators and references to it.
+
+
+Error is that when "it" points to the last element of vector and if this element is less than 10, this last element is removed. And now "it" points to ints.end(), next "it++" moves pointer to ints.end()+1, so now "it" running away from ints.end(), and you got infinite loop scanning all your memory :).
+
+The call to pop_back() removes the last element in the vector and so the iterator to that element is invalidated.  The pop_back() call does not invalidate iterators to items before the last element, only reallocation will do that.  From Josuttis' "C++ Standard Library Reference":
+
+Inserting or removing elements
+  invalidates references, pointers, and
+  iterators that refer to the following
+  element.  If an insertion causes
+  reallocation, it invalidates all
+  references, iterators, and pointers.
+
+
+Here is a quote from SGI's STL documentation (http://www.sgi.com/tech/stl/Vector.html):
+[5] A vector's iterators are invalidated when its memory is reallocated. Additionally, inserting or deleting an element in the middle of a vector invalidates all iterators that point to elements following the insertion or deletion point. It follows that you can prevent a vector's iterators from being invalidated if you use reserve() to preallocate as much memory as the vector will ever use, and if all insertions and deletions are at the vector's end. 
+I think it follows that pop_back only invalidates the iterator pointing at the last element and the end() iterator. We really need to see the data for which the code fails, as well as the manner in which it fails to decide what's going on.  As far as I can tell, the code should work - the usual problem in such code is that removal of element and ++ on iterator happen in the same iteration, the way @mikhaild points out. However, in this code it's not the case: it++ does not happen when pop_back is called.
+Something bad may still happen when it is pointing to the last element, and the last element is less than 10. We're now comparing an invalidated it and end(). It may still work, but no guarantees can be made.
+
+The "official specification" is the C++ Standard.  If you don't have access to a copy of C++03, you can get the latest draft of C++0x from the Committee's website: http://www.open-std.org/jtc1/sc22/wg21/docs/papers/2008/n2723.pdf
+The "Operational Semantics" section of container requirements specifies that pop_back() is equivalent to { iterator i = end(); --i; erase(i); }.  the [vector.modifiers] section for erase says "Effects: Invalidates iterators and references at or after the point of the erase."
+If you want the intuition argument, pop_back is no-fail (since destruction of value_types in standard containers are not allowed to throw exceptions), so it cannot do any copy or allocation (since they can throw), which means that you can guess that the iterator to the erased element and the end iterator are invalidated, but the remainder are not.
+
+Here is your answer, directly from The Holy Standard:
+
+23.2.4.2 A vector satisfies all of the requirements of a container and of a reversible container (given in two tables in 23.1) and of a sequence, including most of the optional sequence requirements (23.1.1).
+
+
+23.1.1.12 Table 68
+
+
+expressiona.pop_back()
+return typevoid
+operational semanticsa.erase(--a.end())
+containervector, list, deque
+
+
+Notice that a.pop_back is equivalent to a.erase(--a.end()).  Looking at vector's specifics on erase:
+
+23.2.4.3.3 - iterator erase(iterator position) - effects - Invalidates all the iterators and references after the point of the erase
+
+Therefore, once you call pop_back, any iterators to the previously final element (which now no longer exists) are invalidated.
+Looking at your code, the problem is that when you remove the final element and the list becomes empty, you still increment it and walk off the end of the list.
+
+(I use the numbering scheme as used in the C++0x working draft, obtainable here
+Table 94 at page 732 says that pop_back (if it exists in a sequence container) has the following effect:
+{ iterator tmp = a.end(); 
+--tmp; 
+a.erase(tmp); }
+
+23.1.1, point 12 states that:
+
+Unless otherwise speciï¬ed (either explicitly or by deï¬ning a function in terms of other functions), invoking a container 
+  member function or passing a container as an argument to a library function shall not invalidate iterators to, or change 
+  the values of, objects within that container.
+
+Both accessing end() as applying prefix-- have no such effect, erase() however:
+23.2.6.4 (concerning vector.erase() point 4):
+
+Effects: Invalidates iterators and references at or after the point of the erase. 
+
+So in conclusion: pop_back() will only invalidate an iterator to the last element, per the standard.
+
+pop_back() will only invalidate it if it was pointing to the last item in the vector. Your code will therefore fail whenever the last int in the vector is less than 10, as follows:
+*it = ints.back(); // Set *it to the value it already has
+   ints.pop_back(); // Invalidate the iterator
+   continue; // Loop round and access the invalid iterator  
+
+pop_back() invalidates only iterators that point to the last element. From C++ Standard Library Reference:
+
+Inserting or removing elements
+  invalidates references, pointers, and
+  iterators that refer to the following
+  element. If an insertion causes
+  reallocation, it invalidates all
+  references, iterators, and pointers.
+
+So to answer your question, no it does not invalidate all iterators.
+However, in your code example, it can invalidate it when it is pointing to the last element and the value is below 10. In which case Visual Studio debug STL will mark iterator as invalidated, and further check for it not being equal to end() will show an assert.
+If iterators are implemented as pure pointers (as they would in probably all non-debug STL vector cases), your code should just work. If iterators are more than pointers, then your code does not handle this case of removing the last element correctly.
+
+You might want to consider using the return value of erase instead of swapping the back element to the deleted position an popping back. For sequences erase returns an iterator pointing the the element one beyond the element being deleted. Note that this method may cause more copying than your original algorithm.
+for(std::vector<int>::iterator it = ints.begin(); it != ints.end(); )
+{
+    if(*it < 10)
+        it = ints.erase( it );
+    else
+        ++it;
+}
+
+std::remove_if could also be an alternative solution.
+struct LessThanTen { bool operator()( int n ) { return n < 10; } };
+
+ints.erase( std::remove_if( ints.begin(), ints.end(), LessThanTen() ), ints.end() );
+
+std::remove_if is (like my first algorithm) stable, so it may not be the most efficient way of doing this, but it is succinct.

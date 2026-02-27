@@ -1,0 +1,121 @@
+Converting SVG to PNG using C#
+c# .net png svg
+I've been trying to convert SVG images to PNG using C#, without having to write too much code. Can anyone recommend a library or example code for doing this?
+
+
+You can call the command-line version of inkscape to do this:
+http://harriyott.com/2008/05/converting-svg-images-to-png-in-c.aspx
+Also there is a C# SVG rendering engine, primarily designed to allow SVG files to be used on the web on codeplex that might suit your needs if that is your problem:
+Original Project
+http://www.codeplex.com/svg
+Fork with fixes and more activity: (added 7/2013)
+https://github.com/vvvv/SVG
+
+I'm using Batik for this. The complete Delphi code:
+procedure ExecNewProcess(ProgramName : String; Wait: Boolean);
+var
+  StartInfo : TStartupInfo;
+  ProcInfo : TProcessInformation;
+  CreateOK : Boolean;
+begin
+  FillChar(StartInfo, SizeOf(TStartupInfo), #0);
+  FillChar(ProcInfo, SizeOf(TProcessInformation), #0);
+  StartInfo.cb := SizeOf(TStartupInfo);
+  CreateOK := CreateProcess(nil, PChar(ProgramName), nil, nil, False,
+              CREATE_NEW_PROCESS_GROUP + NORMAL_PRIORITY_CLASS,
+              nil, nil, StartInfo, ProcInfo);
+  if CreateOK then begin
+    //may or may not be needed. Usually wait for child processes
+    if Wait then
+      WaitForSingleObject(ProcInfo.hProcess, INFINITE);
+  end else
+    ShowMessage('Unable to run ' + ProgramName);
+
+  CloseHandle(ProcInfo.hProcess);
+  CloseHandle(ProcInfo.hThread);
+end;
+
+procedure ConvertSVGtoPNG(aFilename: String);
+const
+  ExecLine = 'c:\windows\system32\java.exe -jar C:\Apps\batik-1.7\batik-rasterizer.jar ';
+begin
+  ExecNewProcess(ExecLine + aFilename, True);
+end;
+
+
+you can use altsoft xml2pdf lib for this
+
+When I had to rasterize svgs on the server, I ended up using P/Invoke to call librsvg functions (you can get the dlls from a windows version of the GIMP image editing program).
+[DllImport("kernel32.dll", SetLastError = true)]
+static extern bool SetDllDirectory(string pathname);
+
+[DllImport("libgobject-2.0-0.dll", SetLastError = true)]
+static extern void g_type_init(); 
+
+[DllImport("librsvg-2-2.dll", SetLastError = true)]
+static extern IntPtr rsvg_pixbuf_from_file_at_size(string file_name, int width, int height, out IntPtr error);
+
+[DllImport("libgdk_pixbuf-2.0-0.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+static extern bool gdk_pixbuf_save(IntPtr pixbuf, string filename, string type, out IntPtr error, __arglist);
+
+public static void RasterizeSvg(string inputFileName, string outputFileName)
+{
+    bool callSuccessful = SetDllDirectory("C:\\Program Files\\GIMP-2.0\\bin");
+    if (!callSuccessful)
+    {
+        throw new Exception("Could not set DLL directory");
+    }
+    g_type_init();
+    IntPtr error;
+    IntPtr result = rsvg_pixbuf_from_file_at_size(inputFileName, -1, -1, out error);
+    if (error != IntPtr.Zero)
+    {
+        throw new Exception(Marshal.ReadInt32(error).ToString());
+    }
+    callSuccessful = gdk_pixbuf_save(result, outputFileName, "png", out error, __arglist(null));
+    if (!callSuccessful)
+    {
+        throw new Exception(error.ToInt32().ToString());
+    }
+}
+
+
+There is a much easier way using the library http://svg.codeplex.com/ (Newer version @GIT, @NuGet).  Here is my code
+var byteArray = Encoding.ASCII.GetBytes(svgFileContents);
+using (var stream = new MemoryStream(byteArray))
+{
+    var svgDocument = SvgDocument.Open(stream);
+    var bitmap = svgDocument.Draw();
+    bitmap.Save(path, ImageFormat.Png);
+}
+
+
+To add to the response from @Anish, if you are having issues with not seeing the text when exporting the SVG to an image, you can create a recursive function to loop through the children of the SVGDocument, try to cast it to a SvgText if possible (add your own error checking) and set the font family and style.
+    foreach(var child in svgDocument.Children)
+    {
+        SetFont(child);
+    }
+
+    public void SetFont(SvgElement element)
+    {
+        foreach(var child in element.Children)
+        {
+            SetFont(child); //Call this function again with the child, this will loop
+                            //until the element has no more children
+        }
+
+        try
+        {
+            var svgText = (SvgText)parent; //try to cast the element as a SvgText
+                                           //if it succeeds you can modify the font
+
+            svgText.Font = new Font("Arial", 12.0f);
+            svgText.FontSize = new SvgUnit(12.0f);
+        }
+        catch
+        {
+
+        }
+    }
+
+Let me know if there are questions.

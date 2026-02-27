@@ -1,0 +1,488 @@
+How to generate sound effects in Java?
+java audio
+I'm looking for Java code that can be used to generate sound at runtime - NOT playback of existing sound files.
+For example, what's the best code for generating a sawtooth waveform at 440 Hz for a duration of 2 milliseconds? Source code appreciated!
+I remember my Commodore 128 had a simple Sound command that took as parameters voice, frequency, waveform, and duration to define a sound.  That worked great in a lot of simple cases (quick and dirty games, experiments with sound, etc).
+I am looking specifically for sound-effect like sounds, not music or MIDI (which the JFugue library covers quite well).
+
+
+What you want is probably not a sound API but some kind of synthesizer code, I'm pretty sure you need more low-level sound driver control than Java would allow (it being a interpreted language normally running in a "sandbox"). 
+But the good news is that a quick search for "java sound synthesizing" on google revealed a plugin called JSyn wich uses native C methods (wich I guessed was one way of doing it) to generate sound. It seems to be free for non-commercial use and available in commercial licenses as well. :)
+
+The Java media framework does both. You can play back recorded sounds or use the MIDI interface to synthesize your own sounds and music. It also provides a mixer API.
+Of course, if you know the details of the waveform you want to play, you can "sample" the function at regular intervals and pass the resulting samples to the playback API, as if it were a pre-recorded sound file.
+The JMF isn't actively maintained by Sun, but there are functioning distributions for various platforms.
+My first computer was the Commodore 64, and I remember Tears for Fears' "Everybody Wants to Rule the World" on pumping out of its SID chip. I can't tell if this pure Java SID emulator is open source or not, but it might give you some pointers on implementing higher-level Attack-Decay-Sustain-Release and waveform functionality.
+
+You can easily generate sampled sound data in Java and play it back without using native code. If you're talking MIDI things may get tricky, but I've not dabbled in that area.
+To generate sampled sound data, you have to thing of the process backwards. We're going to act like the A-to-D and sample a continuous sound function over time. Your sound card does the same thing for audio through a mic or line in. 
+First, choose a sample rate (NOT the freq of the tone we're generating). Let's go with 44100 hz since that's likely the sound card playback rate (thus no sample rate conversion, that's not easy unless hardware does it).
+// in hz, number of samples in one second
+sampleRate = 44100
+
+// this is the time BETWEEN Samples
+samplePeriod = 1.0 / sampleRate
+
+// 2ms
+duration = 0.002;
+durationInSamples = Math.ceil(duration * sampleRate);
+
+time = 0;
+for(int i = 0; i < durationInSamples; i++)
+{
+  // sample a sine wave at 440 hertz at each time tick
+  // substitute a function that generates a sawtooth as a function of time / freq
+  // rawOutput[i] = function_of_time(other_relevant_info, time);
+  rawOutput[i] = Math.sin(2 * Math.PI * 440 * time);
+  time += samplePeriod;
+}
+
+// now you can playback the rawOutput
+// streaming this may be trickier
+
+
+Here is a sample that might help. This generates sin waves:
+package notegenerator;
+
+import java.io.IOException;
+
+/**
+ * Tone generator and player.
+ * 
+ * @author Cesar Vezga vcesar@yahoo.com
+ */
+public class Main {
+
+public static void main(String[] args) throws IOException {
+
+    Player player = new Player();
+
+    player.play(BeachRock.getTack1(),BeachRock.getTack2());
+
+}
+
+ }
+
+
+ package notegenerator;
+
+ public class BeachRock {
+
+// GUITAR
+static String gs1 = "T332 A4-E4 F#5-C6 E5-A5 T166 G5 A5 F#5 A5 F5 A5 E5-A5 E3 G3 G#3 ";
+static String gs2 = "A3 A3 A3 G3 E3 E3 G3 G#3 ";
+static String gs3 = "A3 A3 A3 G3 E3 A3 C4 C#4 ";
+static String gs4 = gs2 + gs2 + gs2 + gs3;
+static String gs5 = "D4 D4 D4 C4 A3 A3 C4 D#4 ";
+static String gs6 = "D4 D4 D4 C4 A3 E3 G3 G#3 ";
+static String gs7 = gs4 + gs5 + gs6 + gs2 + "A3 A3 A3 G3 E3 B3 D3 D#3 ";
+static String gs8 = "E4 E4 E4 D4 B3 B3 E4 B3 " + gs6 + gs2;
+static String gs9 = "x E3-B3 E3-B3 E3-B3 E3-B3 E3 G3 G#3 ";
+static String gs10 = gs7 + gs8 + gs9;
+static String gs11 = "A3-D4 X*7 X*16 X*5 E3 G3 G#3 ";
+static String guitar = gs1 + gs10 + gs11 + gs10 + gs11 + "A3 A3 A3";
+
+// DRUMS
+static String ds1 = "D2 X D3 D3 X*2 D3 X ";
+static String ds2 = "D2 X D3 D3 X D3 D3 D3 ";
+static String ds3 = "D2 D3 D3 D3 D3 T83 D3 D3 T166 D3 ";
+static String ds4 = ds1 + ds1 + ds1 + ds2;
+static String ds5 = ds1 + ds1 + ds1 + ds3;
+static String ds6 = "D2*2 D3 D3 X*2 D3*2 ";
+static String ds7 = "D2*2 D3 D3 X D3 D3 D3 ";
+static String ds8 = ds6 + ds6 + ds6 + ds7;
+
+static String drums = "V25 T166 X*16 " + ds4 + ds4 + ds5 + ds8 + ds4 + ds4
+        + ds5 + ds8;
+
+public static String getTack1(){
+    return guitar;
+}
+
+public static String getTack2(){
+    return drums;
+}
+
+
+}
+
+
+package notegenerator;
+
+import java.util.HashMap;
+
+/**
+ * 
+ * Physics of Music - Notes
+ * 
+ * Frequencies for equal-tempered scale
+ * This table created using A4 = 440 Hz
+ * Speed of sound = 345 m/s = 1130 ft/s = 770 miles/hr
+ *  
+ *  ("Middle C" is C4 )
+ * 
+ * http://www.phy.mtu.edu/~suits/notefreqs.html
+ * 
+ * @author Cesar Vezga <vcesar@yahoo.com>
+ *
+ */
+ public class Notes {
+
+
+private static final Object[] notes = {
+"C0",16.35,
+"C#0/Db0",17.32,
+"D0",18.35,
+"D#0/Eb0",19.45,
+"E0",20.6,
+"F0",21.83,
+"F#0/Gb0",23.12,
+"G0",24.5,
+"G#0/Ab0",25.96,
+"A0",27.5,
+"A#0/Bb0",29.14,
+"B0",30.87,
+"C1",32.7,
+"C#1/Db1",34.65,
+"D1",36.71,
+"D#1/Eb1",38.89,
+"E1",41.2,
+"F1",43.65,
+"F#1/Gb1",46.25,
+"G1",49.00,
+"G#1/Ab1",51.91,
+"A1",55.00,
+"A#1/Bb1",58.27,
+"B1",61.74,
+"C2",65.41,
+"C#2/Db2",69.3,
+"D2",73.42,
+"D#2/Eb2",77.78,
+"E2",82.41,
+"F2",87.31,
+"F#2/Gb2",92.5,
+"G2",98.00,
+"G#2/Ab2",103.83,
+"A2",110.00,
+"A#2/Bb2",116.54,
+"B2",123.47,
+"C3",130.81,
+"C#3/Db3",138.59,
+"D3",146.83,
+"D#3/Eb3",155.56,
+"E3",164.81,
+"F3",174.61,
+"F#3/Gb3",185.00,
+"G3",196.00,
+"G#3/Ab3",207.65,
+"A3",220.00,
+"A#3/Bb3",233.08,
+"B3",246.94,
+"C4",261.63, // Middle C
+"C#4/Db4",277.18,
+"D4",293.66,
+"D#4/Eb4",311.13,
+"E4",329.63,
+"F4",349.23,
+"F#4/Gb4",369.99,
+"G4",392.00,
+"G#4/Ab4",415.3,
+"A4",440.00,
+"A#4/Bb4",466.16,
+"B4",493.88,
+"C5",523.25,
+"C#5/Db5",554.37,
+"D5",587.33,
+"D#5/Eb5",622.25,
+"E5",659.26,
+"F5",698.46,
+"F#5/Gb5",739.99,
+"G5",783.99,
+"G#5/Ab5",830.61,
+"A5",880.00,
+"A#5/Bb5",932.33,
+"B5",987.77,
+"C6",1046.5,
+"C#6/Db6",1108.73,
+"D6",1174.66,
+"D#6/Eb6",1244.51,
+"E6",1318.51,
+"F6",1396.91,
+"F#6/Gb6",1479.98,
+"G6",1567.98,
+"G#6/Ab6",1661.22,
+"A6",1760.00,
+"A#6/Bb6",1864.66,
+"B6",1975.53,
+"C7",2093.00,
+"C#7/Db7",2217.46,
+"D7",2349.32,
+"D#7/Eb7",2489.02,
+"E7",2637.02,
+"F7",2793.83,
+"F#7/Gb7",2959.96,
+"G7",3135.96,
+"G#7/Ab7",3322.44,
+"A7",3520.00,
+"A#7/Bb7",3729.31,
+"B7",3951.07,
+"C8",4186.01,
+"C#8/Db8",4434.92,
+"D8",4698.64,
+"D#8/Eb8",4978.03
+
+};
+
+private HashMap<String,Double> noteMap;
+
+public Notes(){
+    noteMap = new HashMap<String,Double>();
+    for(int i=0; i<notes.length; i=i+2){
+        String name = (String)notes[i];
+        double freq = (Double)notes[i+1];
+        String[] keys = name.split("/");
+        for(String key : keys){
+            noteMap.put(key,  freq);
+            System.out.println(key);
+        }
+    }
+}
+
+
+public byte[] getCordData(String keys, double duration){
+    int N = (int) (8000 * duration/1000);
+    byte[] a = new byte[N+1];
+    String[] key = keys.split(" ");
+    int count=0;
+    for(String k : key){
+        double freq = getFrequency(k);
+        byte[] tone = tone(freq,duration);
+            if(count==0){
+               a = tone;
+            }else{
+               a = addWaves(a,tone);
+            }
+        count++;
+    }
+
+    return a;
+}
+
+
+public byte[] addWaves(byte[] a, byte[] b){
+    int len = Math.max(a.length, b.length);
+    byte[] c = new byte[len];
+    for(int i=0; i<c.length; i++){
+        byte aa = ( i < a.length ? a[i] : 0);
+        byte bb = ( i < b.length ? b[i] : 0);
+
+           c[i] = (byte) (( aa + bb ) / 2);
+    }
+    return c;
+}
+
+
+public double getFrequency(String key){
+    Double f = noteMap.get(key);
+    if(f==null){
+        System.out.println("Key not found. "+key);
+        f = 0D;
+    }
+    return f;
+}
+
+public byte[] tone(String key, double duration) {
+    double freq = getFrequency(key);
+
+    return tone(freq,duration); 
+ } 
+
+ public byte[] tone(double hz, double duration) {
+        int N = (int) (8000 * duration/1000);
+        byte[] a = new byte[N+1];
+        for (int i = 0; i <= N; i++) {
+            a[i] = (byte) ( Math.sin(2 * Math.PI * i * hz / 8000) * 127 );
+        }
+        return a; 
+ } 
+
+
+}
+
+
+package notegenerator;
+
+import java.io.ByteArrayOutputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+
+import javax.sound.sampled.AudioFormat;
+import javax.sound.sampled.AudioSystem;
+import javax.sound.sampled.DataLine;
+import javax.sound.sampled.LineUnavailableException;
+import javax.sound.sampled.SourceDataLine;
+
+public class Player {
+
+private SourceDataLine line = null;
+
+private Notes notes = new Notes();
+
+private long time = 250;
+
+private double volumen = 1;
+
+public void play(String keys) {
+
+    byte[] data = parse(keys);
+
+    start();
+
+    line.write(data, 0, data.length);
+
+    stop();
+
+}
+
+public void play(String... track) {
+
+    byte[] data2 = parseAll(track);
+
+    if (data2 != null) {
+        start();
+
+        line.write(data2, 0, data2.length);
+
+        stop();
+    }
+
+}
+
+private byte[] parseAll(String... track) {
+
+    byte[] data2 = null;
+
+    for (String t : track) {
+        byte[] data1 = parse(t);
+        if (data2 == null) {
+            data2 = data1;
+        } else {
+            data2 = notes.addWaves(data1, data2);
+        }
+    }
+
+    return data2;
+
+}
+
+private byte[] parse(String song) {
+    time = 250;
+
+    volumen = 1;
+
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+    String[] key = song.split(" ");
+
+    byte[] data = null;
+
+    for (String k : key) {
+        int mult = 1;
+
+        if (k.indexOf("*") > -1) {
+            String keyAux = k.split("\\*")[0];
+            mult = Integer.parseInt(k.split("\\*")[1]);
+            k = keyAux;
+        } else if (k.startsWith("T")) {
+            time = Long.parseLong(k.substring(1));
+            continue;
+        } else if (k.startsWith("V")) {
+            volumen =  Double.parseDouble(k.substring(1)) / 100;
+
+            if(volumen>1) volumen = 1;
+            if(volumen<0) volumen = 0;
+
+            continue;
+        }
+
+        if (k.indexOf("-") > -1) {
+            k = k.replaceAll("-", " ").trim();
+            data = notes.getCordData(k, time * mult);
+        } else {
+            data = notes.tone(k, time * mult);
+        }
+
+        volumen(data);
+
+        try {
+            baos.write(data);
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
+    }
+
+    return baos.toByteArray();
+
+}
+
+
+
+private void volumen(byte[] data) {
+    for(int i=0; i<data.length; i++){
+        data[i] = (byte) (data[i] * volumen);
+    }
+
+}
+
+private void stop() {
+    line.drain();
+    line.stop();
+
+}
+
+private void start() {
+
+    AudioFormat format = new AudioFormat(8000.0F, 8, 1, true, false);
+
+    SourceDataLine.Info info = new DataLine.Info(SourceDataLine.class,
+            format); // format
+    // is
+    // an
+    // AudioFormat
+    // object
+    if (!AudioSystem.isLineSupported(info)) {
+        System.out.println("Format not supported");
+        System.exit(1);
+    }
+
+    // Obtain and open the line.
+    try {
+        line = (SourceDataLine) AudioSystem.getLine(info);
+        line.open(format);
+    } catch (LineUnavailableException ex) {
+        ex.printStackTrace();
+    }
+
+    // Assume that the TargetDataLine, line, has already
+    // been obtained and opened.
+    int numBytesRead;
+
+    line.start();
+
+}
+
+public void save(String track, String fname) throws IOException {
+    byte[] data = parse(track);
+
+    FileOutputStream fos = new FileOutputStream(fname);
+
+    fos.write(data);
+    fos.flush();
+    fos.close();
+
+}
+
+}
+

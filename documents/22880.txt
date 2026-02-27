@@ -1,0 +1,162 @@
+What is the best way to prevent session hijacking?
+security session cookies
+Specifically this is regarding when using a client session cookie to identify a session on the server.
+Is the best answer to use SSL/HTTPS encryption for the entire web site, and you have the best guarantee that no man in the middle attacks will be able to sniff an existing client session cookie?
+And perhaps second best to use some sort of encryption on the session value itself that is stored in your session cookie?
+If a malicious user has physical access to a machine, they can still look at the filesystem to retrieve a valid session cookie and use that to hijack a session?
+
+
+To reduce the risk you can also associate the originating IP with the session. That way an attacker has to be within the same private network to be able to use the session.
+Checking referer headers can also be an option but those are more easily spoofed.
+
+Encrypting the session value will have zero effect. The session cookie is already an arbitrary value, encrypting it will just generate another arbitrary value that can be sniffed.
+The only real solution is HTTPS. If you don't want to do SSL on your whole site (maybe you have performance concerns), you might be able to get away with only SSL protecting the sensitive areas. To do that, first make sure your login page is HTTPS. When a user logs in, set a secure cookie (meaning the browser will only transmit it over an SSL link) in addition to the regular session cookie. Then, when a user visits one of your "sensitive" areas, redirect them to HTTPS, and check for the presence of that secure cookie. A real user will have it, a session hijacker will not.
+EDIT: This answer was originally written in 2008. It's 2016 now, and there's no reason not to have SSL across your entire site. No more plaintext HTTP!
+
+The SSL only helps with sniffing attacks. If an attacker has access to your machine I will assume they can copy your secure cookie too.  
+At the very least, make sure old cookies lose their value after a while. Even a successful hijaking attack will be thwarted when the cookie stops working. If the user has a cookie from a session that logged in more than a month ago, make them reenter their password. Make sure that whenever a user clicks on your site's "log out" link, that the old session UUID can never be used again. 
+I'm not sure if this idea will work but here goes: Add a serial number into your session cookie, maybe a string like this:
+SessionUUID, Serial Num, Current Date/Time
+Encrypt this string and use it as your session cookie. Regularly change the serial num - maybe when the cookie is 5 minutes old and then reissue the cookie.  You could even reissue it on every page view if you wanted to. On the server side, keep a record of the last serial num you've issued for that session.  If someone ever sends a cookie with the wrong serial number it means that an attacker may be using a cookie they intercepted earlier so invalidate the session UUID and ask the user to reenter their password and then reissue a new cookie.
+Remember that your user may have more than one computer so they may have more than one active session. Don't do something that forces them to log in again every time they switch between computers.
+
+Ensure you don't use incremting integers for session IDs.  Much better to use a GUID, or some other long randomly generated character string.
+
+Try Secure Cookie protocol described in this paper by Liu, Kovacs, Huang, and Gouda:
+As stated in document:
+
+A secure
+  cookie protocol that runs between a client and a server
+  needs to provide the following four services: authentication, confidentiality, integrity and anti-replay.
+
+As for ease of deployment:
+
+In terms of efficiency, our protocol does not involve any database
+  lookup or public key cryptography. In terms of deployability, our protocol can be easily deployed on an existing web server, and it does not require any change to
+  the Internet cookie specication.
+
+In short: it is secure, lightweight, works for me just great.
+
+Protect by:
+$ip=$_SERVER['REMOTE_ADDER'];
+$_SESSEION['ip']=$ip;
+
+
+Have you considered reading a book on PHP security? Highly recommended.
+I have had much success with the following method for non SSL certified sites.
+
+Dis-allow multiple sessions under the same account, making sure you aren't checking this soely by IP address. Rather check by token generated upon login which is stored with the users session in the database, as well as IP address, HTTP_USER_AGENT and so forth
+Using Relation based hyperlinks
+Generates a link ( eg. http://mysite.com/secure.php?token=2349df98sdf98a9asdf8fas98df8 )
+The link is appended with a x-BYTE ( preferred size ) random salted MD5 string, upon page              redirection the randomly generated token corresponds to a requested page. 
+
+Upon reload, several checks are done. 
+Originating IP Address
+HTTP_USER_AGENT 
+Session Token
+you get the point.
+
+Short Life-span session authentication cookie.
+as posted above, a cookie containing a secure string, which is one of the direct references to the sessions validity is a good idea. Make it expire every x Minutes, reissuing that token, and re-syncing the session with the new Data. If any mis-matches in the data, either log the user out, or having them re-authenticate their session.
+
+I am in no  means an expert on the subject, I'v had a bit of experience in this particular topic, hope some of this helps anyone out there.  
+
+First of all sory for my bad english.
+There is no way to prevent session hijaking 100%, but with some aproach can we reduce the time for an attaker to hijaking the session.
+Method to prevent session hijaking:
+1 - always use session with ssl certificate;
+2 - send session cookie only with httponly set to true(prevent javascript to access session cookie)
+2 - use session regenerate id at login and logout(note: do not use session regenerate at each request because if you have consecutive ajax request then you have a chance to create multiple session.)
+3 - set a session timeout
+4 - store browser user agent in a $_SESSION variable an compare with $_SERVER['HTTP_USER_AGENT'] at each request
+5 - set a token cookie ,and set expiration time of that cookie to 0(until the browser is closed).
+Regenerate the cookie value for each request.(For ajax request do not regenerate token cookie).
+EX:
+    //set a token cookie if one not exist
+    if(!isset($_COOKIE['user_token'])){
+                    //generate a random string for cookie value
+        $cookie_token = bin2hex(mcrypt_create_iv('16' , MCRYPT_DEV_URANDOM));
+
+        //set a session variable with that random string
+        $_SESSION['user_token'] = $cookie_token;
+        //set cookie with rand value
+        setcookie('user_token', $cookie_token , 0 , '/' , 'donategame.com' , true , true);
+    }
+
+    //set a sesison variable with request of www.example.com
+    if(!isset($_SESSION['request'])){
+        $_SESSION['request'] = -1;
+    }
+    //increment $_SESSION['request'] with 1 for each request at www.example.com
+    $_SESSION['request']++;
+
+    //verify if $_SESSION['user_token'] it's equal with $_COOKIE['user_token'] only for $_SESSION['request'] > 0
+    if($_SESSION['request'] > 0){
+
+        // if it's equal then regenerete value of token cookie if not then destroy_session
+        if($_SESSION['user_token'] === $_COOKIE['user_token']){
+            $cookie_token = bin2hex(mcrypt_create_iv('16' , MCRYPT_DEV_URANDOM));
+
+            $_SESSION['user_token'] = $cookie_token;
+
+            setcookie('user_token', $cookie_token , 0 , '/' , 'donategame.com' , true , true);
+        }else{
+            //code for session_destroy
+
+
+        }
+
+    }
+
+            //prevent session hijaking with browser user agent
+    if(!isset($_SESSION['user_agent'])){
+        $_SESSION['user_agent'] = $_SERVER['HTTP_USER_AGENT'];
+    }
+
+    if($_SESSION['user_agent'] != $_SERVER['HTTP_USER_AGENT']){
+      die('session hijaking - user agent');
+    }
+
+note: do not regenerate token cookie with ajax request
+note: the code above is an example.
+note: if users logout then the cookie token must be destroyed as well as the session
+6 - it's not a good aproach to use user ip for preventing session hijaking because some users ip change with each request. THAT AFFECT VALID USERS
+7 - personaly i store session data in database , it's up to you what method you adopt
+If you find mistake in my aproch please correct me. If you have more ways to prevent session hyjaking plese tell me.
+
+// Collect this information on every request
+$aip = $_SERVER['REMOTE_ADDR'];
+$bip = $_SERVER['HTTP_X_FORWARDED_FOR'];
+$agent = $_SERVER['HTTP_USER_AGENT'];
+session_start();
+
+// Do this each time the user successfully logs in.
+$_SESSION['ident'] = hash("sha256", $aip . $bip . $agent);
+
+// Do this every time the client makes a request to the server, after authenticating
+$ident = hash("sha256", $aip . $bip . $agent);
+if ($ident != $_SESSION['ident'])
+{
+    end_session();
+    header("Location: login.php");
+    // add some fancy pants GET/POST var headers for login.php, that lets you
+    // know in the login page to notify the user of why they're being challenged
+    // for login again, etc.
+}
+
+What this does is capture 'contextual' information about the user's session, pieces of information which should not change during the life of a single session. A user isn't going to be at a computer in the US and in China at the same time, right? So if the IP address changes suddenly within the same session that strongly implies a session hijacking attempt, so you secure the session by ending the session and forcing the user to re-authenticate. This thwarts the hack attempt, the attacker is also forced to login instead of gaining access to the session. Notify the user of the attempt (ajax it up a bit), and vola, Slightly annoyed+informed user and their session/information is protected.
+We throw in User Agent and X-FORWARDED-FOR to do our best to capture uniqueness of a session for systems behind proxies/networks. You may be able to use more information then that, feel free to be creative.
+It's not 100%, but it's pretty damn effective.
+There's more you can do to protect sessions, expire them, when a user leaves a website and comes back force them to login again maybe. You can detect a user leaving and coming back by capturing a blank HTTP_REFERER (domain was typed in the URL bar), or check if the value in the HTTP_REFERER equals your domain or not (the user clicked an external/crafted link to get to your site).
+Expire sessions, don't let them remain valid indefinitely.
+Don't rely on cookies, they can be stolen, it's one of the vectors of attack for session hijacking.
+
+Let us consider that during the login phase the client and server can agree on a secret salt value. Thereafter the server provides a count value with each update and expects the client to respond with the hash of the (secret salt + count). The potential hijacker does not have any way to obtain this secret salt value and thus cannot generate the next hash.
+
+There are many ways to create protection against session hijack, however all of them are either reducing user satisfaction or are not secure.
+
+IP and/or X-FORWARDED-FOR checks. These work, and are pretty secure... but imagine the pain of users. They come to an office with WiFi, they get new IP address and lose the session. Got to log-in again.
+User Agent checks. Same as above, new version of browser is out, and you lose a session. Additionally, these are really easy to "hack". It's trivial for hackers to send fake UA strings.
+localStorage token. On log-on generate a token, store it in browser storage and store it to encrypted cookie (encrypted on server-side). This has no side-effects for user (localStorage persists through browser upgrades). It's not as secure - as it's just security through obscurity. Additionally you could add some logic (encryption/decryption) to JS to further obscure it.
+Cookie reissuing. This is probably the right way to do it. The trick is to only allow one client to use a cookie at a time. So, active user will have cookie re-issued every hour or less. Old cookie is invalidated if new one is issued. Hacks are still possible, but much harder to do - either hacker or valid user will get access rejected. 
+

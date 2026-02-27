@@ -1,0 +1,68 @@
+Deploying SQL Server Databases from Test to Live
+sql-server sql-server-2005 deployment release-management
+I wonder how you guys manage deployment of a database between 2 SQL Servers, specifically SQL Server 2005.
+Now, there is a development and a live one. As this should be part of a buildscript (standard windows batch, even do with current complexity of those scripts, i might switch to PowerShell or so later), Enterprise Manager/Management Studio Express do not count.
+Would you just copy the .mdf File and attach it? I am always a bit careful when working with binary data, as this seems to be a compatiblity issue (even though development and live should run the same version of the server at all time).
+Or - given the lack of "EXPLAIN CREATE TABLE" in T-SQL - do you do something that exports an existing database into SQL-Scripts which you can run on the target server? If yes, is there a tool that can automatically dump a given Database into SQL Queries and that runs off the command line? (Again, Enterprise Manager/Management Studio Express do not count).
+And lastly - given the fact that the live database already contains data, the deployment may not involve creating all tables but rather checking the difference in structure and ALTER TABLE the live ones instead, which may also need data verification/conversion when existing fields change.
+Now, i hear a lot of great stuff about the Red Gate products, but for hobby projects, the price is a bit steep.
+So, what are you using to automatically deploy SQL Server Databases from Test to Live?
+
+
+For my projects I alternate between SQL Compare from REd Gate and the Database Publishing Wizard from Microsoft which you can download free
+here.
+The Wizard isn't as slick as SQL Compare or SQL Data Compare but it does the trick. One issue is that the scripts it generates may need some rearranging and/or editing to flow in one shot.
+On the up side, it can move your schema and data which isn't bad for a free tool.
+I've taken to hand-coding all of my DDL (creates/alter/delete) statements, adding them to my .sln as text files, and using normal versioning (using subversion, but any revision control should work). This way, I not only get the benefit of versioning, but updating live from dev/stage is the same process for code and database - tags, branches and so on work all the same.
+Otherwise, I agree redgate is expensive if you don't have a company buying it for you. If you can get a company to buy it for you though, it really is worth it!
+If you have a company buying it, Toad from Quest Software has this kind of management functionality built in.  It's basically a two-click operation to compare two schemas and generate a sync script from one to the other.
+They have editions for most of the popular databases, including of course Sql Server.
+I work the same way Karl does, by keeping all of my SQL scripts for creating and altering tables in a text file that I keep in source control.  In fact, to avoid the problem of having to have a script examine the live database to determine what ALTERs to run, I usually work like this:
+
+On the first version, I place everything during testing into one SQL script, and treat all tables as a CREATE.  This means I end up dropping and readding tables a lot during testing, but that's not a big deal early into the project (since I'm usually hacking the data I'm using at that point anyway).
+On all subsequent versions, I do two things: I make a new text file to hold the upgrade SQL scripts, that contain just the ALTERs for that version.  And I make the changes to the original, create a fresh database script as well.  This way an upgrade just runs the upgrade script, but if we have to recreate the DB we don't need to run 100 scripts to get there.
+Depending on how I'm deploying the DB changes, I'll also usually put a version table in the DB that holds the version of the DB.  Then, rather than make any human decisions about which scripts to run, whatever code I have running the create/upgrade scripts uses the version to determine what to run.
+
+The one thing this will not do is help if part of what you're moving from test to production is data, but if you want to manage structure and not pay for a nice, but expensive DB management package, is really not very difficult.  I've also found it's a pretty good way of keeping mental track of your DB.
+I agree that scripting everything is the best way to go and is what I advocate at work.  You should script everything from DB and object creation to populating your lookup tables.
+Anything you do in UI only won't translate (especially for changes... not so much for first deployments) and will end up requiring a tools like what Redgate offers.
+Using SMO/DMO, it isn't too difficult to generate a script of your schema.  Data is a little more fun, but still doable.
+In general, I take "Script It" approach, but you might want to consider something along these lines:
+
+Distinguish between Development and Staging, such that you can Develop with a subset of data ... this I would create a tool to simply pull down some production data, or generate fake data where security is concerned.
+For team development, each change to the database will have to be coordinated amongst your team members.  Schema and data changes can be intermingled, but a single script should enable a given feature.  Once all your features are ready, you bundle these up in a single SQL file and run that against a restore of production.
+Once your staging has cleared acceptance, you run the single SQL file again on the production machine.
+
+I have used the Red Gate tools and they are great tools, but if you can't afford it, building the tools and working this way isn't too far from the ideal.
+Like Rob Allen, I use SQL Compare / Data Compare by Redgate. I also use the Database publishing wizard by Microsoft. I also have a console app I wrote in C# that takes a sql script and runs it on a server. This way you can run large scripts with 'GO' commands in it from a command line or in a batch script.
+I use Microsoft.SqlServer.BatchParser.dll and Microsoft.SqlServer.ConnectionInfo.dll libraries in the console application.
+
+I agree with keeping everything in source control and manually scripting all changes.  Changes to the schema for a single release go into a script file created specifically for that release.  All stored procs, views, etc should go into individual files and treated just like .cs or .aspx as far as source control goes.  I use a powershell script to generate one big .sql file for updating the programmability stuff.
+I don't like automating the application of schema changes, like new tables, new columns, etc.  When doing a production release, I like to go through the change script command by command to make sure each one works as expected.  There's nothing worse than running a big change script on production and getting errors because you forgot some little detail that didn't present itself in development.
+I have also learned that indexes need to be treated just like code files and put into source control.
+And you should definitely have more than 2 databases - dev and live.  You should have a dev database that everybody uses for daily dev tasks.  Then a staging database that mimics production and is used to do your integration testing.  Then maybe a complete recent copy of production (restored from a full backup), if that is feasible, so your last round of installation testing goes against something that is as close to the real thing as possible.
+
+Don't forget Microsoft's solution to the problem: Visual Studio 2008 Database Edition.  Includes tools for deploying changes to databases, producing a diff between databases for schema and/or data changes, unit tests, test data generation.
+It's pretty expensive but I used the trial edition for a while and thought it was brilliant.  It makes the database as easy to work with as any other piece of code.
+
+I do all my database creation as DDL and then wrap that DDL into a schema maintainence class. I may do various things to create the DDL in the first place but fundamentally I do all the schema maint in code. This also means that if one needs to do non DDL things that don't map well to SQL you can write procedural logic and run it between lumps of DDL/DML.
+My dbs then have a table which defines the current version so one can code a relatively straightforward set of tests:
+
+Does the DB exist? If not create it.
+Is the DB the current version? If not then run the methods, in sequence, that bring the schema up to date (you may want to prompt the user to confirm and - ideally - do backups at this point).
+
+For a single user app I just run this in place, for a web app we currently to lock the user out if the versions don't match and have a stand alone schema maint app we run. For multi-user it will depend on the particular environment.
+The advantage? Well I have a very high level of confidence that the schema for the apps that use this methodology is consistent across all instances of those applications. Its not perfect, there are issues, but it works...
+There are some issues when developing in a team environment but that's more or less a given anyway!
+Murph
+
+I'm using Subsonic's migrations mechanism so I just have a dll with classes in squential order that have 2 methods, up and down. There is a continuous integration/build script hook into nant, so that I can automate the upgrading of my database.
+Its not the best thign in the world, but it beats writing DDL.
+
+RedGate SqlCompare is a way to go in my opinion. We do DB deployment on a regular basis and since I started using that tool I have never looked back. 
+Very intuitive interface and saves a lot of time in the end.
+The Pro version will take care of scripting for the source control integration as well.
+
+I'm currently working the same thing to you. Not only deploying SQL Server databases from test to live but also include the whole process from Local -> Integration -> Test -> Production. So what can make me easily everyday is I do NAnt task with Red-Gate SQL Compare. I'm not working for RedGate but I have to say it is good choice.
+
+I also maintain scripts for all my objects and data. For deploying I wrote this free utility - http://www.sqldart.com. It'll let you reorder your script files and will run the whole lot within a transaction.

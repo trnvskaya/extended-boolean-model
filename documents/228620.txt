@@ -1,0 +1,175 @@
+Garbage Collection in C++ -- why?
+c++ garbage-collection c++11
+I keep hearing people complaining that C++ doesn't have garbage collection. I also hear that the C++ Standards Committee is looking at adding it to the language. I'm afraid I just don't see the point to it... using RAII with smart pointers eliminates the need for it, right?
+My only experience with garbage collection was on a couple of cheap eighties home computers, where it meant that the system would freeze up for a few seconds every so often. I'm sure it has improved since then, but as you can guess, that didn't leave me with a high opinion of it.
+What advantages could garbage collection offer an experienced C++ developer?
+
+
+The committee isn't adding garbage-collection, they are adding a couple of features that allow garbage collection to be more safely implemented. Only time will tell whether they actually have any effect whatsoever on future compilers. The specific implementations could vary widely, but will most likely involve reachability-based collection, which could involve a slight hang, depending on how it's done.
+One thing is, though, no standards-conformant garbage collector will be able to call destructors - only to silently reuse lost memory.
+
+The short answer is that garbage collection is very similar in principle to RAII with smart pointers.  If every piece of memory you ever allocate lies within an object, and that object is only referred to by smart pointers, you have something close to garbage collection (potentially better).  The advantage comes from not having to be so judicious about scoping and smart-pointering every object, and letting the runtime do the work for you.
+This question seems analogous to "what does C++ have to offer the experienced assembly developer?  instructions and subroutines eliminate the need for it, right?"
+
+With the advent of good memory checkers like valgrind, I don't see much use to garbage collection as a safety net "in case" we forgot to deallocate something - especially since it doesn't help much in managing the more generic case of resources other than memory (although these are much less common). Besides, explicitly allocating and deallocating memory (even with smart pointers) is fairly rare in the code I've seen, since containers are a much simpler and better way usually.
+But garbage collection can offer performance benefits potentially, especially if alot of short lived objects are being heap allocated. GC also potentially offers better locality of reference for newly created objects (comparable to objects on the stack).
+
+I, too, have doubts that C++ commitee is adding a full-fledged garbage collection to the standard.
+But I would say that the main reason for adding/having garbage collection in modern language is that there are too few good reasons against garbage collection. Since eighties there were several huge advances in the field of memory management and garbage collection and I believe there are even garbage collection strategies that could give you soft-real-time-like guarantees (like, "GC won't take more than .... in the worst case").
+
+I keep hearing people complaining that C++ doesn't have garbage collection.
+I am so sorry for them. Seriously.
+C++ has RAII, and I always complain to find no RAII (or a castrated RAII) in Garbage Collected languages.
+What advantages could garbage collection offer an experienced C++ developer?
+Another tool.
+Matt J wrote it quite right in his post (Garbage Collection in C++ -- why?): We don't need C++ features as most of them could be coded in C, and we don't need C features as most of them could coded in Assembly, etc.. C++ must evolve.
+As a developer: I don't care about GC. I tried both RAII and GC, and I find RAII vastly superior. As said by Greg Rogers in his post (Garbage Collection in C++ -- why?), memory leaks are not so terrible (at least in C++, where they are rare if C++ is really used) as to justify GC instead of RAII. GC has non deterministic deallocation/finalization and is just a way to write a code that just don't care with specific memory choices.
+This last sentence is important: It is important to write code that "juste don't care". In the same way in C++ RAII we don't care about ressource freeing because RAII do it for us, or for object initialization because constructor do it for us, it is sometimes important to just code without caring about who is owner of what memory, and what kind pointer (shared, weak, etc.) we need for this or this piece of code. There seems to be a need for GC in C++. (even if I personaly fail to see it)
+An example of good GC use in C++
+Sometimes, in an app, you have "floating data". Imagine a tree-like structure of data, but no one is really "owner" of the data (and no one really cares about when exactly it will be destroyed). Multiple objects can use it, and then, discard it. You want it to be freed when no one is using it anymore.
+The C++ approach is using a smart pointer. The boost::shared_ptr comes to mind. So each piece of data is owned by its own shared pointer. Cool. The problem is that when each piece of data can refer to another piece of data. You cannot use shared pointers because they are using a reference counter, which won't support circular references (A points to B, and B points to A). So you must know think a lot about where to use weak pointers (boost::weak_ptr), and when to use shared pointers.
+With a GC, you just use the tree structured data.
+The downside being that you must not care when the "floating data" will really be destroyed. Only that it will be destroyed.
+Conclusion
+So in the end, if done properly, and compatible with the current idioms of C++, GC would be a Yet Another Good Tool for C++.
+C++ is a multiparadigm language: Adding a GC will perhaps make some C++ fanboys cry because of treason, but in the end, it could  be a good idea, and I guess the C++ Standards Comitee won't let this kind of major feature break the language, so we can trust them to make the necessary work to enable a correct C++ GC that won't interfere with C++: As always in C++, if you don't need a feature, don't use it and it will cost you nothing.
+
+Garbage collection is really the basis for automatic resource management. And having GC changes the way you tackle problems in a way that is hard to quantify. For example when you are doing manual resource management you need to:
+
+Consider when an item can be freed (are all modules/classes finished with it?)
+Consider who's responsibility it is to free a resource when it is ready to be freed (which class/module should free this item?)
+
+In the trivial case there is no complexity. E.g. you open a file at the start of a method and close it at the end. Or the caller must free this returned block of memory.
+Things start to get complicated quickly when you have multiple modules that interact with a resource and it is not as clear who needs to clean up. The end result is that the whole approach to tackling a problem includes certain programming and design patterns which are a compromise.
+In languages that have garbage collection you can use a disposable pattern where you can free resources you know you've finished with but if you fail to free them the GC is there to save the day.
+
+Smart pointers which is actually a perfect example of the compromises I mentioned. Smart pointers can't save you from leaking cyclic data structures unless you have a backup mechanism. To avoid this problem you often compromise and avoid using a cyclic structure even though it may otherwise be the best fit.
+
+Garbage collection allows to postpone the decision about who owns an object.  
+C++ uses value semantics, so with RAII, indeed, objects are recollected when going out of scope.  This is sometimes referred to as "immediate GC".  
+When your program starts using reference-semantics (through smart pointers etc...), the language does no longer support you, you're left to the wit of your smart pointer library.
+The tricky thing about GC is deciding upon when an object is no longer needed.
+
+I don't understand how one can argue that RAII replaces GC, or is vastly superior. There are many cases handled by a gc that RAII simply cannot deal with at all. They are different beasts.
+First, RAII is not bullet proof: it works against some common failures which are pervasive in C++, but there are many cases where RAII does not help at all; it is fragile to asynchronous events (like signals under UNIX). Fundamentally, RAII relies on scoping: when a variable is out of scope, it is automatically freed (assuming the destructor is correctly implemented of course). 
+Here is a simple example where neither auto_ptr or RAII can help you:
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#include <memory>
+
+using namespace std;
+
+volatile sig_atomic_t got_sigint = 0;
+
+class A {
+        public:
+                A() { printf("ctor\n"); };
+                ~A() { printf("dtor\n"); };
+};
+
+void catch_sigint (int sig)
+{
+        got_sigint = 1;
+}
+
+/* Emulate expensive computation */
+void do_something()
+{
+        sleep(3);
+}
+
+void handle_sigint()
+{
+        printf("Caught SIGINT\n");
+        exit(EXIT_FAILURE);
+}
+
+int main (void)
+{
+        A a;
+        auto_ptr<A> aa(new A);
+
+        signal(SIGINT, catch_sigint);
+
+        while (1) {
+                if (got_sigint == 0) {
+                        do_something();
+                } else {
+                        handle_sigint();
+                        return -1;
+                }
+        }
+}
+
+The destructor of A will never be called. Of course, it is an artificial and somewhat contrived example, but a similar situation can actually happen; for example when your code is called by another code which handles SIGINT and which you have no control over at all (concrete example: mex extensions in matlab). It is the same reason why finally in python does not guarantee execution of something. Gc can help you in this case.
+Other idioms do not play well with this: in any non trivial program, you will need stateful objects (I am using the word object in a very broad sense here, it can be any construction allowed by the language); if you need to control the state outside one function, you can't easily do that with RAII (which is why RAII is not that helpful for asynchronous programming). OTOH, gc have a view of the whole memory of your process, that is it knows about all the objects it allocated, and can clean asynchronously. 
+It can also be much faster to use gc, for the same reasons: if you need to allocate/deallocate many objects (in particular small objects), gc will vastly outperform RAII, unless you write a custom allocator, since the gc can allocate/clean many objects in one pass. Some well known C++ projects use gc, even where performance matter (see for example Tim Sweenie about the use of gc in Unreal Tournament: http://lambda-the-ultimate.org/node/1277). GC basically increases throughput at the cost of latency.
+Of course, there are cases where RAII is better than gc; in particular, the gc concept is mostly concerned with memory, and that's not the only ressource. Things like file, etc... can be well handled with RAII. Languages without memory handling like python or ruby do have something like RAII for those cases, BTW (with statement in python). RAII is very useful when you precisely need to control when the ressource is freed, and that's quite often the case for files or locks for example.
+
+What advantages could garbage collection offer an experienced C++ developer?
+Not having to chase down resource leaks in your less-experienced colleagues' code.
+
+The motivating factor for GC support in C++ appears to be lambda programming, anonymous functions etc. It turns out that lambda libraries benefit from the ability to allocate memory without caring about cleanup. The benefit for ordinary developers would be simpler, more reliable and faster compiling lambda libraries. 
+GC also helps simulate infinite memory; the only reason you need to delete PODs is that you need to recycle memory. If you have either GC or infinite memory, there is no need to delete PODs anymore. 
+
+It's an all-to-common error to assume that because C++ does not have garbage collection baked into the language, you can't use garbage collection in C++ period. This is nonsense. I know of elite C++ programmers who use the Boehm collector as a matter of course in their work.
+
+Easier thread safety and scalability
+There is one property of GC which may be very important in some scenarios. Assignment of pointer is naturally atomic on most platforms, while creating thread-safe reference counted ("smart") pointers is quite hard and introduces significant synchronization overhead. As a result, smart pointers are often told "not to scale well" on multi-core architecture.
+
+Garbage collection makes RCU lockless synchronization much easier to implement correctly and efficiently.
+
+
+using RAII with smart pointers eliminates the need for it, right?
+
+Smart pointers can be used to implement reference counting in C++ which is a form of garbage collection (automatic memory management) but production GCs no longer use reference counting because it has some important deficiencies:
+
+Reference counting leaks cycles. Consider AâB, both objects A and B refer to each other so they both have a reference count of 1 and neither is collected but they should both be reclaimed. Advanced algorithms like trial deletion solve this problem but add a lot of complexity. Using weak_ptr as a workaround is falling back to manual memory management.
+Naive reference counting is slow for several reasons. Firstly, it requires out-of-cache reference counts to be bumped often (see Boost's shared_ptr up to 10Ã slower than OCaml's garbage collection). Secondly, destructors injected at the end of scope can incur unnecessary-and-expensive virtual function calls and inhibit optimizations such as tail call elimination.
+Scope-based reference counting keeps floating garbage around as objects are not recycled until the end of scope whereas tracing GCs can reclaim them as soon as they become unreachable, e.g. can a local allocated before a loop be reclaimed during the loop?
+
+
+What advantages could garbage collection offer an experienced C++ developer?
+
+Productivity and reliability are the main benefits. For many applications, manual memory management requires significant programmer effort. By simulating an infinite-memory machine, garbage collection liberates the programmer from this burden which allows them to focus on problem solving and evades some important classes of bugs (dangling pointers, missing free, double free). Furthermore, garbage collection facilitates other forms of programming, e.g. by solving the upwards funarg problem (1970).
+
+In a framework that supports GC, a reference to an immutable object such as a string may be passed around in the same way as a primitive.  Consider the class (C# or Java):
+public class MaximumItemFinder
+{
+  String maxItemName = "";
+  int maxItemValue = -2147483647 - 1;
+
+  public void AddAnother(int itemValue, String itemName)
+  {
+    if (itemValue >= maxItemValue)
+    {
+      maxItemValue = itemValue;
+      maxItemName = itemName;
+    }
+  }
+  public String getMaxItemName() { return maxItemName; }
+  public int getMaxItemValue() { return maxItemValue; }
+}
+
+Note that this code never has to do anything with the contents of any of the strings, and can simply treat them as primitives.  A statement like maxItemName = itemName; will likely generate two instructions: a register load followed by a register store.  The MaximumItemFinder will have no way of knowing whether callers of AddAnother are going to retain any reference to the passed-in strings, and callers will have no way of knowing how long MaximumItemFinder will retain references to them.  Callers of getMaxItemName will have no way of knowing if and when MaximumItemFinder and the original supplier of the returned string have abandoned all references to it.  Because code can simply pass string references around like primitive values, however, none of those things matter.
+Note also that while the class above would not be thread-safe in the presence of simultaneous calls to AddAnother, any call to GetMaxItemName would be guaranteed to return a valid reference to either an empty string or one of the strings that had been passed to AddAnother.  Thread synchronization would be required if one wanted to ensure any relationship between the maximum-item name and its value, but memory safety is assured even in its absence.
+I don't think there's any way to write a method like the above in C++ which would uphold memory safety in the presence of arbitrary multi-threaded usage without either using thread synchronization or else requiring that every string variable have its own copy of its contents, held in its own storage space, which may not be released or relocated during the lifetime of the variable in question.  It would certainly not be possible to define a string-reference type which could be defined, assigned, and passed around as cheaply as an int.
+
+Garbage Collection Can Make Leaks Your Worst Nightmare
+Full-fledged GC that handles things like cyclic references would be somewhat of an upgrade over a ref-counted shared_ptr. I would somewhat welcome it in C++, but not at the language level.
+One of the beauties about C++ is that it doesn't force garbage collection on you.
+I want to correct a common misconception: a garbage collection myth that it somehow eliminates leaks. From my experience, the worst nightmares of debugging code written by others and trying to spot the most expensive logical leaks involved garbage collection with languages like embedded Python through a resource-intensive host application.
+When talking about subjects like GC, there's theory and then there's practice. In theory it's wonderful and prevents leaks. Yet at the theoretical level, so is every language wonderful and leak-free since in theory, everyone would write perfectly correct code and test every single possible case where a single piece of code could go wrong.
+Garbage collection combined with less-than-ideal team collaboration caused the worst, hardest-to-debug leaks in our case.
+The problem still has to do with ownership of resources. You have to make clear design decisions here when persistent objects are involved, and garbage collection makes it all too easy to think that you don't.
+Given some resource, R, in a team environment where the developers aren't constantly communicating and reviewing each other's code carefully at alll times (something a little too common in my experience), it becomes quite easy for developer A to store a handle to that resource. Developer B does as well, perhaps in an obscure way that indirectly adds R to some data structure. So does C. In a garbage-collected system, this has created 3 owners of R.
+Because developer A was the one that created the resource originally and thinks he's the owner of it, he remembers to release the reference to R when the user indicates that he no longer wants to use it. After all, if he fails to do so, nothing would happen and it would be obvious from testing that the user-end removal logic did nothing. So he remembers to release it, as any reasonably competent developer would do. This triggers an event for which B handles it and also remembers to release the reference to R.
+However, C forgets. He's not one of the stronger developers on the team: a somewhat fresh recruit who has only worked in the system for a year. Or maybe he's not even on the team, just a popular third party developer writing plugins for our product that many users add to the software. With garbage collection, this is when we get those silent logical resource leaks. They're the worst kind: they do not necessarily manifest in the user-visible side of the software as an obvious bug besides the fact that over durations of running the program, the memory usage just continues to rise and rise for some mysterious purpose. Trying to narrow down these issues with a debugger can be about as fun as debugging a time-sensitive race condition.
+Without garbage collection, developer C would have created a dangling pointer. He may try to access it at some point and cause the software to crash. Now that's a testing/user-visible bug. C gets embarrassed a bit and corrects his bug. In the GC scenario, just trying to figure out where the system is leaking may be so difficult that some of the leaks are never corrected. These are not valgrind-type physical leaks that can be detected easily and pinpointed to a specific line of code.
+With garbage collection, developer C has created a very mysterious leak. His code may continue to access R which is now just some invisible entity in the software, irrelevant to the user at this point, but still in a valid state. And as C's code creates more leaks, he's creating more hidden processing on irrelevant resources, and the software is not only leaking memory but also getting slower and slower each time.
+So garbage collection does not necessarily mitigate logical resource leaks. It can, in less than ideal scenarios, make leaks far easier to silently go unnoticed and remain in the software. The developers might get so frustrated trying to trace down their GC logical leaks that they simply tell their users to restart the software periodically as a workaround. It does eliminate dangling pointers, and in a safety-obsessed software where crashing is completely unacceptable under any scenario, then I would prefer GC. But I'm often working in less safety-critical but resource-intensive, performance-critical products where a crash that can be fixed promptly is preferable to a really obscure and mysterious silent bug, and resource leaks are not trivial bugs there.
+In both of these cases, we're talking about persistent objects not residing on the stack, like a scene graph in a 3D software or the video clips available in a compositor or the enemies in a game world. When resources tie their lifetimes to the stack, both C++ and any other GC language tend to make it trivial to manage resources properly. The real difficulty lies in persistent resources referencing other resources.
+In C or C++, you can have dangling pointers and crashes resulting from segfaults if you fail to clearly designate who owns a resource and when handles to them should be released (ex: set to null in response to an event). Yet in GC, that loud and obnoxious but often easy-to-spot crash is exchanged for a silent resource leak that may never be detected.

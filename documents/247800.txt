@@ -1,0 +1,244 @@
+Override Default Constructor of Partial Class with Another Partial Class
+c# web-services wsdl override partial-classes
+I don't think this is possible, but if is then I need it :)
+I have a auto-generated proxy file from the wsdl.exe command line tool by Visual Studio 2008.
+The proxy output is partial classes. I want to override the default constructor that is generated. I would rather not modify the code since it is auto-generated.
+I tried making another partial class and redefining the default constructor, but that doesn't work. I then tried using the override and new keywords, but that doesn't work.
+I know I could inherit from the partial class, but that would mean I'd have to change all of our source code to point to the new parent class. I would rather not have to do this.
+Any ideas, work arounds, or hacks? 
+//Auto-generated class
+namespace MyNamespace {
+   public partial class MyWebService : System.Web.Services.Protocols.SoapHttpClientProtocol {
+      public MyWebService() {
+         string myString = "auto-generated constructor";
+         //other code...
+      }
+   }
+}
+
+//Manually created class in order to override the default constructor
+namespace MyNamespace {
+   public partial class MyWebService : System.Web.Services.Protocols.SoapHttpClientProtocol {
+      public override MyWebService() { //this doesn't work
+         string myString = "overridden constructor";
+         //other code...
+      }
+   }
+}
+
+
+
+Nothing that I can think of.  The "best" way I can come up with is to add a ctor with a dummy parameter and use that:
+public partial class MyWebService : System.Web.Services.Protocols.SoapHttpClientProtocol 
+{
+   public override MyWebService(int dummy) 
+   { 
+         string myString = "overridden constructor";
+         //other code...
+   }
+}
+
+
+MyWebService mws = new MyWebService(0);
+
+
+This is not possible.
+Partial classes are essentially parts of the same class; no method can be defined twice or overridden, and that includes the constructor.
+You could call a method in the constructor, and only implement it in the other part file.
+
+You can't do this.  I suggest using a partial method which you can then create a definition for.  Something like:
+public partial class MyClass{ 
+
+    public MyClass(){  
+        ... normal construction goes here ...
+        AfterCreated(); 
+    }
+
+    public partial void OnCreated();
+}
+
+The rest should be pretty self explanatory.
+EDIT: 
+I would also like to point out that you should be defining an interface for this service, which you can then program to, so you don't have to have references to the actual implementation.  If you did this then you'd have a few other options.
+
+I am thinking you might be able to do this with PostSharp, and it looks like someone has done just what you want for methods in generated partial classes.  I don't know if this will readily translate to the ability to write a method and have its body replace the constructor as I haven't given it a shot yet but it seems worth a shot.
+Edit: this is along the same lines and also looks interesting.
+
+I had a similar prolem, with my generated code being created by a dbml file (I'm usng Linq-to-SQL classes).
+In the generated class it calls a partial void called OnCreated() at the end of the constructor.
+Long story short, if you want to keep the important constructor stuff the generated class does for you (which you probably should do), then in your partial class create the following:
+partial void OnCreated()
+{
+    // Do the extra stuff here;
+}
+
+
+Hmmm,
+I think one elegant solution would be the following:
+//* AutogenCls.cs file
+//* Let say the file is auto-generated ==> it will be overridden each time when
+//* auto-generation will be triggered.
+//*
+//* Auto-generated class, let say via xsd.exe
+//*
+partial class AutogenCls
+{
+    public AutogenCls(...)
+    {
+    }
+}
+
+
+
+//* AutogenCls_Cunstomization.cs file
+//* The file keeps customization code completely separated from 
+//* auto-generated AutogenCls.cs file.
+//*
+partial class AutogenCls
+{
+    //* The following line ensures execution at the construction time
+    MyCustomization m_MyCustomizationInstance = new MyCustomization ();
+
+    //* The following inner&private implementation class implements customization.
+    class MyCustomization
+    {
+        MyCustomization ()
+        {
+            //* IMPLEMENT HERE WHATEVER YOU WANT TO EXECUTE DURING CONSTRUCTION TIME
+        }
+    }
+}
+
+This approach has some drawbacks (as everything):
+
+It is not clear when exactly will be executed the constructor of the MyCustomization inner class during whole construction procedure of the AutogenCls class.
+If there will be necessary to implement IDiposable interface for the MyCustomization class to correctly handle disposing of unmanaged resources of the MyCustomization class, I don't know (yet) how to trigger the MyCustomization.Dispose() method without touching the AutogenCls.cs file ... (but as I told 'yet' :)
+
+But this approach offers great separation from auto-generated code - whole customization is separated in different src code file.
+enjoy :)
+
+This is in my opinion a design flaw in the language. They should have allowed multiple implementations of one partial method, that would have provided a nice solution.
+In an even nicer way the constructor (also a method) can then also be simply be marked partial and multiple constructors with the same signature would run when creating an object.
+The most simple solution is probably to add one partial 'constructor' method per extra partial class:
+public partial class MyClass{ 
+
+    public MyClass(){  
+        ... normal construction goes here ...
+        OnCreated1(); 
+        OnCreated2(); 
+        ...
+    }
+
+    public partial void OnCreated1();
+    public partial void OnCreated2();
+}
+
+If you want the partial classes to be agnostic about each other, you can use reflection:
+// In MyClassMyAspect1.cs
+public partial class MyClass{ 
+
+    public void MyClass_MyAspect2(){  
+        ... normal construction goes here ...
+
+    }
+
+}
+
+// In MyClassMyAspect2.cs
+public partial class MyClass{ 
+
+    public void MyClass_MyAspect1(){  
+        ... normal construction goes here ...
+    }
+}
+
+// In MyClassConstructor.cs
+public partial class MyClass : IDisposable { 
+
+    public MyClass(){  
+       GetType().GetMethods().Where(x => x.Name.StartsWith("MyClass"))
+                             .ForEach(x => x.Invoke(null));
+    }
+
+    public void Dispose() {
+       GetType().GetMethods().Where(x => x.Name.StartsWith("DisposeMyClass"))
+                             .ForEach(x => x.Invoke(null));
+    }
+
+}
+
+But really they should just add some more language constructs to work with partial classes.
+
+For a Web service proxy generated by Visual Studio, you cannot add your own constructor in the partial class (well you can, but it does not get called). Instead, you can use the [OnDeserialized] attribute (or [OnDeserializing]) to hook in your own code at the point where the web proxy class is instantiated.
+using System.Runtime.Serialization;
+
+partial class MyWebService
+{
+     [OnDeserialized]
+     public void OnDeserialized(StreamingContext context)
+     {
+         // your code here
+     }
+}
+
+
+Actually, this is now possible, now that partial methods have been added.  Here's the doc: 
+http://msdn.microsoft.com/en-us/library/wa80x488.aspx
+Basically, the idea is that you can declare and call a method in one file where you are defining the partial class, but not actually define the method in that file.  In the other file, you can then define the method.  If you are building an assembly where the method is not defined, then the ORM will remove all calls to the function.
+So in the case above it would look like this:
+//Auto-generated class
+namespace MyNamespace {
+   public partial class MyWebService : System.Web.Services.Protocols.SoapHttpClientProtocol {
+      public MyWebService() {
+         string myString = "auto-generated constructor";
+         OtherCode();
+      }
+   }
+}
+
+partial void OtherCode();
+
+//Manually created class in order to override the default constructor
+partial void OtherCode()
+{
+   //do whatever extra stuff you wanted.
+}
+
+It is somewhat limited, and in this particular case, where you have a generated file that you'd need to alter, it might not be the right solution, but for others who stumbled on this trying to override functionality in partial classes, this can be quite helpful.
+
+Sometimes you don't have access or it's not allowed to change the default constructor, for this reason you cannot have the default constructor to call any methods.
+In this case you can create another constructor with a dummy parameter, and make this new constructor to call the default constructor using ": this()"
+public SomeClass(int x) : this()
+{
+    //Your extra initialization here
+}
+
+And when you create a new instance of this class you just pass dummy parameter like this:
+SomeClass objSomeClass = new SomeClass(0);
+
+
+The problem that the OP has got is that the web reference proxy doesn't generate any partial methods that you can use to intercept the constructor.
+I ran into the same problem, and I can't just upgrade to WCF because the web service that I'm targetting doesn't support it.
+I didn't want to manually amend the autogenerated code because it'll get flattened if anyone ever invokes the code generation.
+I tackled the problem from a different angle.  I knew my initialization needed doing before a request, it didn't really need to be done at construction time, so I just overrode the GetWebRequest method like so.
+protected override WebRequest GetWebRequest(Uri uri)
+{
+    //only perform the initialization once
+    if (!hasBeenInitialized)
+    {
+        Initialize();
+    }
+
+    return base.GetWebRequest(uri);
+}
+
+bool hasBeenInitialized = false;
+
+private void Initialize()
+{
+    //do your initialization here...
+
+    hasBeenInitialized = true;
+}
+
+This is a nice solution because it doesn't involve hacking the auto generated code, and it fits the OP's exact use case of performing initialization login for a SoapHttpClientProtocol auto generated proxy.

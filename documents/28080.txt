@@ -1,0 +1,59 @@
+How bad is dynamic casting?
+c++ casting rtti dynamic-cast
+We often hear/read that one should avoid dynamic casting. I was wondering what would be 'good use' examples of it, according to you?
+Edit:
+Yes, I'm aware of that other thread: it is indeed when reading one of the first answers there that I asked my question!
+
+
+My current toy project uses dynamic_cast twice; once to work around the lack of multiple dispatch in C++ (it's a visitor-style system that could use multiple dispatch instead of the dynamic_casts), and once to special-case a specific subtype.
+Both of these are acceptable, in my view, though the former at least stems from a language deficit.  I think this may be a common situation, in fact; most dynamic_casts (and a great many "design patterns" in general) are workarounds for specific language flaws rather than something that aim for.
+
+It can be used for a bit of run-time type-safety when exposing handles to objects though a C interface.  Have all the exposed classes inherit from a common base class.  When accepting a handle to a function, first cast to the base class, then dynamic cast to the class you're expecting.  If they passed in a non-sensical handle, you'll get an exception when the run-time can't find the rtti.  If they passed in a valid handle of the wrong type, you get a NULL pointer and can throw your own exception.  If they passed in the correct pointer, you're good to go.
+This isn't fool-proof, but it is certainly better at catching mistaken calls to the libraries than a straight reinterpret cast from a handle, and waiting until some data gets mysteriously corrupted when you pass the wrong handle in.
+
+Here's something I do often, it's not pretty, but it's simple and useful.
+I often work with template containers that implement an interface,
+imagine something like
+template<class T>
+class MyVector : public ContainerInterface
+...
+
+Where ContainerInterface has basic useful stuff, but that's all. If I want a specific algorithm on vectors of integers without exposing my template implementation, it is useful to accept the interface objects and dynamic_cast it down to MyVector in the implementation. Example:
+// function prototype (public API, in the header file)
+void ProcessVector( ContainerInterface& vecIfce );
+
+// function implementation (private, in the .cpp file)
+void ProcessVector( ContainerInterface& vecIfce)
+{
+    MyVector<int>& vecInt = dynamic_cast<MyVector<int> >(vecIfce); 
+    // the cast throws bad_cast in case of error but you could use a
+    // more complex method to choose which low-level implementation
+    // to use, basically rolling by hand your own polymorphism.
+
+    // Process a vector of integers
+    ...
+}
+
+I could add a Process() method to the ContainerInterface that would be polymorphically resolved, it would be a nicer OOP method, but I sometimes prefer to do it this way. When you have simple containers, a lot of algorithms and you want to keep your implementation hidden, dynamic_cast offers an easy and ugly solution.
+You could also look at double-dispatch techniques.
+HTH
+
+Well it would really be nice with extension methods in C#.
+For example let's say I have a list of objects and I want to get a list of all ids from them.  I can step through them all and pull them out but I would like to segment out that code for reuse.
+so something like
+List<myObject> myObjectList = getMyObjects();
+
+List<string> ids = myObjectList.PropertyList("id");
+
+would be cool except on the extension method you won't know the type that is coming in.
+So 
+public static List<string> PropertyList(this object objList, string propName) {
+    var genList = (objList.GetType())objList;
+}
+
+would be awesome.
+
+This recent thread gives an example of where it comes in handy. There is a base Shape class and classes Circle and Rectangle derived from it. In testing for equality, it is obvious that a Circle cannot be equal to a Rectangle and it would be a disaster to try to compare them. While iterating through a collection of pointers to Shapes, dynamic_cast does double duty, telling you if the shapes are comparable and giving you the proper objects to do the comparison on.
+http://stackoverflow.com/questions/301959/vector-iterator-not-dereferencable
+
+It is very useful, however, most of the times it is too useful: if for getting the job done the easiest way is to do a dynamic_cast, it's more often than not a symptom of bad OO design, what in turn might lead to trouble in the future in unforeseen ways.

@@ -1,0 +1,151 @@
+Can you allocate a very large single chunk of memory ( > 4GB ) in c or c++?
+c++ c memory malloc
+With very large amounts of ram these days I was wondering, it is possible to allocate a single chunk of memory that is larger than 4GB? Or would I need to allocate a bunch of smaller chunks and handle switching between them?
+Why???
+I'm working on processing some openstreetmap xml data and these files are huge. I'm currently streaming them in since I can't load them all in one chunk but I just got curious about the upper limits on malloc or new. 
+
+
+it depends on which C compiler you're using, and on what platform (of course) but there's no fundamental reason why you cannot allocate the largest chunk of contiguously available memory - which may be less than you need. And of course you may have to be using a 64-bit system to address than much RAM...
+see Malloc for history and details
+call HeapMax in alloc.h to get the largest available block size
+
+Short answer:  Not likely
+In order for this to work, you absolutely would have to use a 64-bit processor.
+Secondly, it would depend on the Operating System support for allocating more than 4G of RAM to a single process.
+In theory, it would be possible, but you would have to read the documentation for the memory allocator.  You would also be more susceptible to memory fragmentation issues.
+There is good information on Windows memory management.
+
+Have you considered using memory mapped files? Since you are loading in really huge files, it would seem that this might be the best way to go.
+
+This shouldn't be a problem with a 64-bit OS (and a machine that has that much memory).
+If malloc can't cope then the OS will certainly provide APIs that allow you to allocate memory directly.  Under Windows you can use the VirtualAlloc API.
+
+It depends on whether the OS will give you virtual address space that allows addressing memory above 4GB and whether the compiler supports allocating it using new/malloc.
+For 32-bit Windows you won't be able to get single chunk bigger than 4GB, as the pointer size is 32-bit, thus limiting your virtual address space to 4GB. (You could use Physical Address Extension to get more than 4GB memory; however, I believe you have to map that  memory into the virtualaddress space of 4GB yourself)
+For 64-bit Windows, the VC++ compiler supports 64-bit pointers with theoretical limit of the virtual address space to 8TB.
+I suspect the same applies for Linux/gcc - 32-bit does not allow you, whereas 64-bit allows you.
+
+The advantage of memory mapped files is that you can open a file much bigger than 4Gb (almost infinite on NTFS!) and have multiple <4Gb memory windows into it.
+It's much more efficent than opening a file and reading it into memory,on most operating systems it uses the built-in paging support.
+
+A Primer on physcal and virtual memory layouts
+You would need a 64-bit CPU and O/S build and almost certainly enough memory to avoid thrashing your working set.  A bit of background:
+A 32 bit machine (by and large) has registers that can store one of 2^32 (4,294,967,296) unique values.  This means that a 32-bit pointer can address any one of 2^32 unique memory locations, which is where the magic 4GB limit comes from.  
+Some 32 bit systems such as the SPARCV8 or Xeon have MMU's that pull a trick to allow more physical memory.  This allows multiple processes to take up memory totalling more than 4GB in aggregate, but each process is limited to its own 32 bit virtual address space.  For a single process looking at a virtual address space, only 2^32 distinct physical locations can be mapped by a 32 bit pointer.  
+I won't go into the details but This presentation (warning: powerpoint) describes how this works.  Some operating systems have facilities (such as those described Here - thanks to FP above) to manipulate the MMU and swap different physical locations into the virtual address space under user level control.
+The operating system and memory mapped I/O will take up some of the virtual address space, so not all of that 4GB is necessarily available to the process.  As an example, Windows defaults to taking 2GB of this, but can be set to only take 1GB if the /3G switch is invoked on boot.  This means that a single process on a 32 bit architecture of this sort can only build a contiguous data structure of somewhat less than 4GB in memory.
+This means you would have to explicitly use the PAE facilities on Windows or Equivalent facilities on Linux to manually swap in the overlays.  This is not necessarily that hard, but it will take some time to get working.
+Alternatively you can get a 64-bit box with lots of memory and these problems more or less go away.  A 64 bit architecture with 64 bit pointers can build a contiguous data structure with as many as 2^64 (18,446,744,073,709,551,616) unique addresses, at least in theory.  This allows larger contiguous data structures to be built and managed.  
+
+Like everyone else said, getting a 64bit machine is the way to go. But even on a 32bit machine intel machine, you can address bigger than 4gb areas of memory if your OS and your CPU support PAE. Unfortunately, 32bit WinXP does not do this (does 32bit Vista?). Linux lets you do this by default, but you will be limited to 4gb areas, even with mmap() since pointers are still 32bit.
+What you should do though, is let the operating system take care of the memory management for you. Get in an environment that can handle that much RAM, then read the XML file(s) into (a) data structure(s), and let it allocate the space for you. Then operate on the  data structure in memory, instead of operating on the XML file itself. 
+Even in 64bit systems though, you're not going to have a lot of control over what portions of your program actually sit in RAM, in Cache, or are paged to disk, at least in most instances, since the OS and the MMU handle this themselves.
+
+As Rob pointed out, VirtualAlloc for Windows is a good option for this, as is an anonymouse file mapping.  However, specifically with respect to your question, the answer to "if C or C++" can allocate, the answer is NO THIS IS NOT SUPPORTED EVEN ON WIN7 RC 64
+In the PE/COFF specification for exe files, the field which specifies the HEAP reserve and HEAP commit, is a 32 bit quantity.  This is in-line with the physical size limitations of the current heap implmentation in the windows CRT, which is just short of 4GB.  So, there is no way to allocate more than 4GB from C/C++ (technicall the OS support facilities of CreateFileMapping and VirtualAlloc/VirtualAllocNuma etc... are not C or C++).
+Also, BE AWARE that there are underlying x86 or amd64 ABI construct's known as the page table's.  This WILL in effect do what you are concerened about, allocating smaller chunks for your larger request, even though this is happining in kernel memory, there is an effect on the overall system, these tables are finite.  
+If you are allocating memory in such grandious purportions, you would be well advised to allocate based on the allocation granularity (which VirtualAlloc enforces) and also to identify optional flags's or methods to enable larger pages.  
+4kb pages were the initial page size for the 386, subsaquently the pentium added 4MB.  Today, the AMD64 (Software Optimization Guide for AMD Family 10h Processors) has a maximum page table entry size of 1GB. This mean's for your case here, let's say you just did 4GB, it would require only 4 unique entries in the kernel's directory to locate\assign and permission your process's memory.
+Microsoft has also released this manual that articulates some of the finer points of application memory and it's use for the Vista/2008 platform and newer.
+
+Contents
+
+Introduction. 4
+
+About the Memory Manager 4
+
+Virtual Address Space. 5
+
+Dynamic Allocation of Kernel Virtual
+Address Space. 5
+
+Details for x86 Architectures. 6
+
+Details for 64-bit Architectures. 7
+
+Kernel-Mode Stack Jumping in x86
+Architectures. 7
+
+Use of Excess Pool Memory. 8
+
+Security: Address Space Layout
+Randomization. 9
+
+Effect of ASLR on Image Load
+Addresses. 9
+
+Benefits of ASLR.. 11
+
+How to Create Dynamically Based
+Images. 11
+
+I/O Bandwidth. 11
+
+Microsoft SuperFetch. 12
+
+Page-File Writes. 12
+
+Coordination of Memory Manager and
+Cache Manager 13
+
+Prefetch-Style Clustering. 14
+
+Large File Management 15
+
+Hibernate and Standby. 16
+
+Advanced Video Model 16
+
+NUMA Support 17
+
+Resource Allocation. 17
+
+Default Node and Affinity. 18
+
+Interrupt Affinity. 19
+
+NUMA-Aware System Functions for
+Applications. 19
+
+NUMA-Aware System Functions for
+Drivers. 19
+
+Paging. 20
+
+Scalability. 20
+
+Efficiency and Parallelism.. 20
+
+Page-Frame Number and PFN Database. 20
+
+Large Pages. 21
+
+Cache-Aligned Pool Allocation. 21
+
+Virtual Machines. 22
+
+Load Balancing. 22
+
+Additional Optimizations. 23
+
+System Integrity. 23
+
+Diagnosis of Hardware Errors. 23
+
+Code Integrity and Driver Signing. 24
+
+Data Preservation during Bug Checks. 24
+
+What You Should Do. 24
+
+For Hardware Manufacturers. 24
+
+For Driver Developers. 24
+
+For Application Developers. 25
+
+For System Administrators. 25
+
+Resources. 25
+
+If size_t is greater than 32 bits on your system, you've cleared the first hurdle.  But the C and C++ standards aren't responsible for determining whether any particular call to new or malloc succeeds (except malloc with a 0 size).  That depends entirely on the OS and the current state of the heap.

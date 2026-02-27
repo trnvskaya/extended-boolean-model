@@ -1,0 +1,75 @@
+Linq to SQL update not working using Repository pattern
+asp.net-mvc linq linq-to-sql
+I am using asp.net mvc for an application.  I've taken some guidance from Rob Conery's series on the MVC storefront.  I am using a very similar data access pattern to the one that he used in the storefront.
+However, I have added a small difference to the pattern.  Each class I have created in my model has a property called IsNew.  The intention on this is to allow me to specify whether I should be inserting or updating in the database.
+Here's some code:
+In my controller:
+OrderService orderService = new OrderService();
+Order dbOrder = orderService.GetOrder(ID);
+
+if (ModelState.IsValid)
+{
+    dbOrder.SomeField1 = "Whatever1";
+    dbOrder.SomeField2 = "Whatever2";
+    dbOrder.DateModified = DateTime.Now;
+    dbOrder.IsNew = false;
+
+    orderService.SaveOrder(dbOrder);
+}
+
+And then in the SQLOrderRepository:
+public void SaveOrder(Order order)
+{
+    ORDER dbOrder = new ORDER();
+
+    dbOrder.O_ID = order.ID;
+    dbOrder.O_SomeField1 = order.SomeField1;
+    dbOrder.O_SomeField2 = order.SomeField2;
+    dbOrder.O_DateCreated = order.DateCreated;
+    dbOrder.O_DateModified = order.DateModified;
+
+    if (order.IsNew)
+        db.ORDERs.InsertOnSubmit(dbOrder);
+
+    db.SubmitChanges();
+}
+
+If I change the controller code so that the dbOrder.IsNew = true; then the code works, and the values are inserted correctly.
+However, if I set the dbOrder.IsNew = false; then nothing happens...there are no errors - it just doesn't update the order.
+I am using DebuggerWriter here: http://www.u2u.info/Blogs/Kris/Lists/Posts/Post.aspx?ID=11 to trace the SQL that is being generated, and as expected, when the IsNew value is true, the Insert SQL is generated and executed properly.  However, when IsNew is set to false, there appears to be no SQL generated, so nothing is executed.
+I've verified that the issue here (http://stackoverflow.com/questions/206532/linq-not-updating-on-submitchanges) is not the problem.
+Any help is appreciated.
+
+
+In your SaveOrder method you are always creating a new ORDER object.  You need to change this so that if order.IsNew is false, it retrieves the existing one from the DB and updates it instead.
+public void SaveOrder(Order order)
+{
+    ORDER dbOrder;
+    if (order.IsNew)
+    {
+        dbOrder = new ORDER();
+        dbOrder.O_ID = order.ID;
+    }
+    else
+    {
+        dbOrder = (from o in db.ORDERS where o.O_ID == order.ID select o).Single();
+    }
+
+    dbOrder.O_SomeField1 = order.SomeField1;
+    dbOrder.O_SomeField2 = order.SomeField2;
+    dbOrder.O_DateCreated = order.DateCreated;
+    dbOrder.O_DateModified = order.DateModified;
+
+    if (order.IsNew)
+        db.ORDERs.InsertOnSubmit(dbOrder);
+
+    db.SubmitChanges();
+}
+
+
+I think you have the problem that your entity is detached from your context.
+You should try to attach your entity back to your context if you want to update. The downside of LINQtoSQL is that for the re-attachment you'll need the original state of the object when it was detached...
+Another solution is to re-get your entity from the context and copy all the data from your entity in the parameter. This will do until you'll have more complex entities.
+
+What tvanfosson said.  
+I would just like to add that I use logic where if Id equals default(0 or Empty if using guids), then I assume it is new.  Otherwise if I have the id passed in, then I go get the existing object and update it.

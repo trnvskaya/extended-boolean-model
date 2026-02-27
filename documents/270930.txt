@@ -1,0 +1,135 @@
+Using Emacs to recursively find and replace in text files not already open
+emacs editor
+As a follow-up to this question, it's trying to find out how to do something like this which should be easy, that especially stops me from getting more used to using Emacs and instead starting up the editor I'm already familiar with. I use the example here fairly often in editing multiple files.
+In Ultraedit I'd do Alt+s then p to display a dialog box with the options: Find (includes using regular expressions across multiple lines), Replace with, In Files/Types, Directory, Match Case, Match Whole Word Only, List Changed Files and Search Sub Directories. Usually I'll first use the mouse to click-drag select the text that I want to replace.
+Using only Emacs itself (on Windows XP), without calling any external utility, how to replace all foo\nbar with bar\nbaz in *.c and *.h files in some folder and all folders beneath it. Maybe Emacs is not the best tool to do this with, but how can it be done easily with a minimal command?
+
+
+I generally use other tools to perform this task, and it seems like many of the approaches mentioned at EmacsWiki's Find and Replace Across Files entry shell out, but the Findr Package looks very promising.
+Stealing part of the source file:
+(defun findr-query-replace (from to name dir)
+  "Do `query-replace-regexp' of FROM with TO, on each file found by findr.
+
+
+
+M-x find-name-dired: you will be prompted for a root directory and a filename pattern.
+Press t to "toggle mark" for all files found.
+Press Q for "Query-Replace in Files...": you will be prompted for query/substitution regexps.
+Proceed as with query-replace-regexp: SPACE to replace and move to next match, n to skip a match, etc.
+
+
+Using dired to recurse down a deep directory tree is going to be a bit slow for this task.  You might consider using tags-query-replace.  This does mean shelling out to create a tags table, but that is often useful anyway, and it's quick.
+
+
+M-x find-name-dired RET
+
+it may take some time for all the files to appear in the list, scroll to bottom (M->) until "find finished" appears to make sure they all have loaded
+
+Press t to "toggle mark" for all files found
+Press Q for "Query-Replace in Files...": you will be prompted for query/substitution regexps.
+Proceed as with query-replace-regexp: SPACE or y to replace and move to next match, n to skip a match, etc.
+
+Type ! to replace all occurrences in current file without asking, N to skip all possible replacement for rest of the current file. (N is emacs 23+ only)
+To do the replacement on all files without further asking, type Y.
+
+Call âibufferâ (C-x C-b if bound to ibuffer, or M-x ibuffer RET) to list all opened files.
+Type * u to mark all unsaved files, type S to save all marked files
+* * RET to unmark all marks, or type D to close all marked files
+
+This answer is combined from this answer, from this site, and from my own notes. Using Emacs 23+.
+
+Another option is to use Icicles search.  This is a different kind of incremental search that uses completion of your minibuffer input against search hits.  As you modify your current input the set of matching hits is updated in buffer *Completions*.
+You can search any number of files, buffers, or bookmarked locations, which you can choose using minibuffer pattern (e.g. regexp) matching.
+When you visit a search hit you can replace on demand either the entire hit or just the part of it that matches your current minibuffer input.  Replacement on demand means you are not queried about each search hit in turn; you access the hits you want directly, in any order.  This approach can be more effective than query-replace if you have a limited number of replacements to make: you skip the exhaustive y/n prompting.
+Search is over search contexts that you define -- you are not limited to searching all of the text in the target files (e.g., you can skip comments or particular kinds of program sections).  A simple example of a search context is a line, as in grep, but a context can be any pattern-matched block of text you like.  Typically you define the search contexts using a regexp, but you can instead use a function. In addition to defining your own, there are predefined Icicles search commands for different kinds of contexts: blocks of text properties or overlay properties, thing-at-point things, etc.
+You can also sort the search hits in various sort orders for easier access/navigation.
+
+For open buffers, this is what I do :
+(defun px-query-replace-in-open-buffers (arg1 arg2)
+  "query-replace in all open files"
+  (interactive "sRegexp:\nsReplace with:")
+  (mapcar
+   (lambda (x)
+     (find-file x)
+     (save-excursion
+       (goto-char (point-min))
+       (query-replace-regexp arg1 arg2)))
+   (delq
+    nil
+    (mapcar
+     (lambda (x)
+       (buffer-file-name x))
+     (buffer-list)))))
+
+
+It's not Emacs, but xxdiff comes with a tool called xx-rename which will do that for multiple strings at a time (e.g. From To from to FROM TO), with interactive prompting, save backups of all the modified files, and produce a short log of changes made with context.  That's what I tend to use when I do large/global renamings.
+
+The answers provided are great, however I thought I'd add a slightly different approach.
+It's a more interactive method, and requires wgrep, rgrep and iedit. Both iedit and wgrep must be installed via MELPA or Marmalade (using M-x package-list-packages)
+First run M-x rgrep to find the string you're looking for. 
+You'll be able to specify file types/pattern and the folder to recurse. 
+Next you'll need to run wgrep start it with C-s C-p.
+Wgrep will let you edit the rgrep results, so set a region on the string to match and start iedit-mode with C-; (depending on your terminal you may need to re-bind this)
+All occurrences will be editable at once. C-x C-s to commit wgrep. Then C-x s ! to save the changed files.
+The main benefit of this method is that you can use iedit-mode to toggle off certain matches M-;. You can also use the results in rgrep to jump into the files, for example if you have an unexpected match.
+I find it very useful for doing source edits and renaming symbols (variables, function names etc.) across a project.
+If you don't already know/use iedit mode it's a very handy tool, I strongly recommend you give it a look.
+
+M-X Dired, and t to mark all files, and Q to query replace text in all of them.
+You can expand a sub directory by using the i command before the query-replace.
+They key info I'm adding is that if you give a prefix (control-u) to the i command,
+it will prompt you for arg, and -R argument will recursively expand all subdirs
+into the dired buffer.  So now you can query-search every file in an entire directory.
+
+Source of information: 1
+For emacs pro users:
+
+Call dired to list files in dir, or call find-dired if you need all subdirectories. 
+Mark the files you want. You can mark by regex by typing ã% mã.
+Type Q to call dired-do-query-replace-regexp.
+Type your find regex and replace string. ãâ common elisp regex patternã
+For each occurrence, type y to replace, n to skip. Type ãCtrl+gã to abort the whole operation.
+Type ! to replace all occurrences in current file without asking, N to skip all possible replacement for rest of the current file. (N is emacs 23 only)
+To do the replacement on all files without further asking, type Y. (Emacs 23 only)
+Call ibuffer to list all opened files. Type ã* uã to mark all unsaved files, type S to save all marked files, type D to close them all.
+
+Step-by-Step Guide for Emacs Beginners
+Select Target Files
+Start emacs by typing âemacsâ in the command line interface prompt. (Or, double click the Emacs icon if you are in a Graphics User Interface environment)
+Selecting Files in a Directory
+First you need to select the files you want to do the replace. Use the graphical menu ãFile â¸ Open Directoryã. Emacs will ask you for a directory path. Type the directory path, then press Enter.
+Now, you will be shown the list of files, and now you need to mark the files you want the regex find/replace to work on. You mark a file by moving the cursor to the file you want, then press m. Unmark it by pressing u. (To list subdirectories, move your cursor to the directory and press i. The sub-directory's content will be listed at the bottom.) To mark all files by a regex, type ã% mã, then type your regex pattern. For example, if you want to mark all HTML files, then type ã% mã then .html$. (You can find a list of the mark commands in the graphical menu âMarkâ (this menu appears when you are in the dired mode).)
+Selecting Files in a Directory and All Its Sub-Directories
+If you want to do find/replace on files inside a directory, including hundreds of subdirectories, here's a method to select all these files.
+Call find-dired. (you call a command by pressing ãAlt+xã) Then, type a directory name, â /Users/mary/myfiles
+Note: if you are using emacs on a unix non-graphical text terminal, and if ãAlt+xã does not work, the equivalent key stroke is ãEsc xã.
+Emacs will ask you with the prompt âRun find (with args): â. If you need to do the replacement on all HTML files, then type -name "*html". If you don't care about what kind of file but simply all files under that dir, then give â-type fâ.
+Now, mark the files as described above.
+Interactive Find/Replace
+Now, you are ready to do the interactive find replace. For simplicity, let's say you just want to replace the word âquickâ by âsuperâ. Now, call dired-do-query-replace-regexp. It will prompt you for the regex string and the replacement string. Type âquickâ, enter, then âsuperâ.
+Now, emacs will use your pattern and check the files, and stop and show you whenever a match occurred. When this happens, emacs will prompt you, and you have a choice of making the change or skip the change. To make the change, type y. To skip, type n. If you simply want emacs to go ahead and make all such changes to the current file, type !.
+If you want to cancel the whole operation without saving any changes you've made, type ãCtrl+gã, then exit emacs using the menu ãFile â¸ Exit Emacsã.
+Saving the Changed Files
+Now, after you went through the above ordeal, there is one more step you need to do, and that is saving the changed files.
+If you are using emacs version 22 or later, then call ibuffer to go into a buffer listing mode, then type ã* uã to mark all unsaved files, then type S to save them all. (that's shift-s)
+If you are using a emacs version 21, then you can do this: call list-buffers, then move the cursor to the file you want to save and type s. It will mark the file for later save action. Type u to unmark. Once you are done, type x to execute the saving of all files marked for save. (in emacs, opened file is called âbufferâ. Disregard other things there.)
+Alternative to the above options, you can also call save-some-buffers ãCtrl+x sã. Then emacs will display each unsaved file and ask if you want it saved.
+Note: emacs's regex is not the same as Perl or Python's, but similar. For a summary and common patterns, see: Emacs Regex.
+
+find-name-dired is OK, but:
+
+All of the files you get match the same, single regexp.
+find-dired is more flexible in that regard, but it too is made for using general rules (even if they can be arbitrarily complex).  And of course find has its own, complex language.
+if you then want to act on only some of the files whose names were collected in the find(-name)-dired buffer, you need to either mark them or delete/omit the lines of those you do not want to act on.
+
+An alternative is to use Dired+ commands that act on (a) the marked files and (b) all marked files (or all files, if none are marked) in the marked subdirectories ... found recursively.  This gives you both generality and easy control over file choice.  These "here-and-below" commands are all on prefix key M-+ in Dired mode.
+For example, M-+ Q is the same as Q --- query-replace, but the target files are all of those marked in the current dir and in any marked subdirs, down, down, down...
+Yes, an alternative to using such here-and-below commands is to insert all subdirs and their subdirs, recursively, and then use a top-level command such as Q.  But it can often be convenient not to bother with inserted subdirs.
+And to do that you anyway need a quick way to insert all such subdirs recursively.  Here too, Dired+ can help.  M-+ M-i inserts all marked subdirs and their own marked subdirs, recursively.  That is, it is like M-i (which inserts the marked subdirs in Dired+), but it acts recursively on subdirs.
+(All such "here-and-below" Dired+ commands are on menu Multiple > Marked Here and Below.)
+You can also perform Dired operations on an Emacs fileset, which is a saved set of names of files located anywhere.  And if you use Icicles then you can open a Dired buffer for just the files in a fileset or other types of saved file lists.
+You can also bookmark any Dired buffer, including one that you create using find(-name)-dired.  This gives you a quick way to return to such a set (e.g. a project set) later.  And if you use Bookmark+ then bookmarking a Dired buffer records (a) its ls switches, (b) which files are marked, (c) which subdirectories are inserted, and (d) which (sub)directories are hidden.  All of that is restored when you "jump" to the bookmark.  Bookmark+ also lets you bookmark an entire tree of Dired buffers --- jumping to the bookmark restores all of the buffers in the tree.
+
+I would like to suggest one more great tool which has not been mentioned yet, namely Helm. 
+It is a great replacement for many standard Emacs operations involving completion, searching etc. In particular, helm-find-files allows for performing query replace (including regexp) within multiple selected files. 
+Just open helm-find-files, mark the relevant files with M-SPC and then use F6 or F7 to run query replace or query replace regexp in the selected files.

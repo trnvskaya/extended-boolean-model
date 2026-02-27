@@ -1,0 +1,127 @@
+How to inflate a file with zlib.NET?
+c# .net compression zlib
+I'm using the zlib.NET library to try and inflate files that are compressed by zlib (on a Linux box, perhaps).  Here's what I'm doing:
+zlib.ZInputStream zinput =
+    new zlib.ZInputStream(File.Open(path, FileMode.Open, FileAccess.Read));
+
+while (stopByte != (data = zinput.ReadByte()))
+{
+  // check data here
+}
+
+zinput.Close();
+
+The data bytes match the compressed data bytes, so I must be doing something wrong.
+
+
+Other than failing to use a "using" statement to close the stream even in the face of an exception, that looks okay to me. Is the data definitely compressed? Are you able to decompress it with zlib on the linux box?
+Having looked at the source code, it's pretty ghastly - a call to int Read(buffer, offset, length) will end up calling its internal int Read() method length times for example. Given that sort of shaky start, I'm not sure I'd trust the code particularly heavily, but I'd have expected it to work at least slightly! Have you tried using SharpZipLib?
+
+Look at the sample code more closely, it is copying data from a regular Filestream to the ZOutputStream. The decompression must be happening through that layer.
+private void decompressFile(string inFile, string outFile)
+{
+    System.IO.FileStream outFileStream = new System.IO.FileStream(outFile, System.IO.FileMode.Create);
+    zlib.ZOutputStream outZStream = new zlib.ZOutputStream(outFileStream);
+    System.IO.FileStream inFileStream = new System.IO.FileStream(inFile, System.IO.FileMode.Open);			
+    try
+    {
+    	CopyStream(inFileStream, outZStream);
+    }
+    finally
+    {
+    	outZStream.Close();
+    	outFileStream.Close();
+    	inFileStream.Close();
+    }
+}
+
+
+It appears I made the mistake of assuming all virtual methods were overridden, which wasn't the case.  I was using zlib.ZInputStream.ReadByte(), which is just the inherited Stream.ReadByte(), which doesn't do any inflate.
+I used zlib.ZInputStream.Read() instead, and it worked like it should.
+
+The below code could help you guys. Instantiate the object and make use of the functions.
+public class FileCompressionUtility
+{
+    public FileCompressionUtility()
+    {
+    }
+
+    public static void CopyStream(System.IO.Stream input, System.IO.Stream output)
+    {
+        byte[] buffer = new byte[2000];
+        int len;
+        while ((len = input.Read(buffer, 0, 2000)) > 0)
+        {
+            output.Write(buffer, 0, len);
+        }
+        output.Flush();
+    }
+
+    public void compressFile(string inFile, string outFile)
+    {
+        System.IO.FileStream outFileStream = new System.IO.FileStream(outFile, System.IO.FileMode.Create);
+        zlib.ZOutputStream outZStream = new zlib.ZOutputStream(outFileStream, zlib.zlibConst.Z_DEFAULT_COMPRESSION);
+        System.IO.FileStream inFileStream = new System.IO.FileStream(inFile, System.IO.FileMode.Open);
+        try
+        {
+            CopyStream(inFileStream, outZStream);
+        }
+        finally
+        {
+            outZStream.Close();
+            outFileStream.Close();
+            inFileStream.Close();
+        }
+    }
+
+    public void uncompressFile(string inFile, string outFile)
+    {
+        int data = 0;
+        int stopByte = -1;
+        System.IO.FileStream outFileStream = new System.IO.FileStream(outFile, System.IO.FileMode.Create);
+        zlib.ZInputStream inZStream = new zlib.ZInputStream(System.IO.File.Open(inFile, System.IO.FileMode.Open, System.IO.FileAccess.Read));
+        while (stopByte != (data = inZStream.Read()))
+        {
+            byte _dataByte = (byte)data;
+            outFileStream.WriteByte(_dataByte);
+        }
+
+        inZStream.Close();
+        outFileStream.Close();
+    }
+}
+
+
+I recently had the misfortune of serving out docs previously zlib'd using php to a variety of browsers and platforms including IE7. Once I figured out that the docs were zlib'd and not gzip'd (as was thought at the time) I used SharpZipLib in the following way in .NET Framework v4 (taking advantage of Stream.CopyTo):
+public static byte[] DecompressZlib(Stream source)
+{
+    byte[] result = null;
+    using (MemoryStream outStream = new MemoryStream())
+    {
+        using (InflaterInputStream inf = new InflaterInputStream(source))
+        {
+            inf.CopyTo(outStream);
+        }
+        result = outStream.ToArray();
+    }
+    return result;
+}
+
+Thought I would put it here in case anyone needs help with the classes to use from SharpZipLib.
+
+Skipping the zlib header (first two bytes, 78 9C) and then using the DeflateStream built into .net worked for me.
+using(var input = File.OpenRead(...))
+using(var output = File.Create(...))
+{
+    // if there are additional headers before the zlib header, you can skip them:
+    // input.Seek(xxx, SeekOrigin.Current);
+
+    if (input.ReadByte() != 0x78 || input.ReadByte() != 0x9C)//zlib header
+        throw new Exception("Incorrect zlib header");
+
+    using (var deflateStream = new DeflateStream(decryptedData, CompressionMode.Decompress, true))
+    {
+        deflateStream.CopyTo(output);
+    }
+}
+

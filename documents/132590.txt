@@ -1,0 +1,97 @@
+Can a web service return a stream?
+java web-services cxf
+I've been writing a little application that will let people upload & download files to me.  I've added a web service to this applciation to provide the upload/download functionality that way but I'm not too sure on how well my implementation is going to cope with large files.
+At the moment the definitions of the upload & download methods look like this (written using Apache CXF):
+boolean uploadFile(@WebParam(name = "username") String username,
+    @WebParam(name = "password") String password,
+    @WebParam(name = "filename") String filename,
+    @WebParam(name = "fileContents") byte[] fileContents)
+    throws UploadException, LoginException;
+
+byte[] downloadFile(@WebParam(name = "username") String username,
+    @WebParam(name = "password") String password,
+    @WebParam(name = "filename") String filename) throws DownloadException,
+    LoginException;
+
+So the file gets uploaded and downloaded as a byte array.  But if I have a file of some stupid size (e.g. 1GB) surely this will try and put all that information into memory and crash my service.
+So my question is - is it possible to return some kind of stream instead?  I would imagine this isn't going to be terribly OS independent though.  Although I know the theory behind web services, the practical side is something that I still need to pick up a bit of information on.
+Cheers for any input,
+Lee
+
+
+Stephen Denne has a Metro implementation that satisfies your requirement. My answer is provided below after a short explination as to why that is the case.
+Most Web Service implementations that are built using HTTP as the message protocol are REST compliant, in that they only allow simple send-receive patterns and nothing more. This greatly improves interoperability, as all the various platforms can understand this simple architecture (for instance a Java web service talking to a .NET web service).
+If you want to maintain this you could provide chunking.
+boolean uploadFile(String username, String password, String fileName, int currentChunk, int totalChunks, byte[] chunk);
+
+This would require some footwork in cases where you don't get the chunks in the right order (Or you can just require the chunks come in the right order), but it would probably be pretty easy to implement.
+
+One way to do it is to add a uploadFileChunk(byte[] chunkData, int size, int offset, int totalSize) method  (or something like that)  that uploads parts of the file and the servers writes it the to disk. 
+
+Yes, it is possible with Metro. See the Large Attachments example, which looks like it does what you want.
+
+JAX-WS RI provides support for sending and receiving large attachments in a streaming fashion.
+
+Use MTOM and DataHandler in the programming model.
+Cast the DataHandler to StreamingDataHandler and use its methods.
+Make sure you call StreamingDataHandler.close() and also close the StreamingDataHandler.readOnce() stream.
+Enable HTTP chunking on the client-side.
+
+
+
+When you use a standardized web service the sender and reciever do rely on the integrity of the XML data send from the one to the other. This means that a web service request and answer only are complete when the last tag was sent. Having this in mind, a web service cannot be treated as a stream.
+This is logical because standardized web services do rely on the http-protocol. That one is "stateless", will say it works like "open connection ... send request ... receive data ... close request". The connection will be closed at the end, anyway. So something like streaming is not intended to be used here. Or he layers above http (like web services).
+So sorry, but as far as I can see there is no possibility for streaming in web services. Even worse: depending on the implementation/configuration of a web service, byte[] - data may be translated to Base64 and not the CDATA-tag and the request might get even more bloated.
+P.S.: Yup, as others wrote, "chuinking" is possible. But this is no streaming as such ;-) - anyway, it may help you.
+
+Keep in mind that a web service request basically boils down to a single HTTP POST.
+If you look at the output of a .ASMX file in .NET , it shows you exactly what the POST request and response will look like.
+Chunking, as mentioned by @Guvante, is going to be the closest thing to what you want.
+I suppose you could implement your own web client code to handle the TCP/IP and stream things into your application, but that would be complex to say the least.
+
+I think using a simple servlet for this task would be a much easier approach, or is there any reason you can not use a servlet? 
+For instance you could use the Commons open source library.
+
+The RMIIO library for Java provides for handing a RemoteInputStream across RMI - we only needed RMI, though you should be able to adapt the code to work over other types of RMI .  This may be of help to you - especially if you can have a small application on the user side.  The library was developed with the express purpose of being able to limit the size of the data pushed to the server to avoid exactly the type of situation you describe - effectively a DOS attack by filling up ram or disk.
+With the RMIIO library, the server side gets to decide how much data it is willing to pull, where with HTTP PUT and POSTs, the client gets to make that decision, including the rate at which it pushes.
+
+For WCF I think its possible to define a member on a message as stream and set the binding appropriately - I've seen this work with wcf talking to Java web service.
+You need to set the transferMode="StreamedResponse" in the httpTransport configuration and use mtomMessageEncoding (need to use a custom binding section in the config).
+I think one limitation is that you can only have a single message body member if you want to stream (which kind of makes sense).
+
+Apache CXF supports sending and receiving streams.
+
+Yes, a webservice can do streaming. I created a webservice using Apache Axis2 and MTOM to support rendering PDF documents from XML. Since the resulting files could be quite large, streaming was important because we didn't want to keep it all in memory. Take a look at Oracle's documentation on streaming SOAP attachments.
+Alternately, you can do it yourself, and tomcat will create the Chunked headers. This is an example of a spring controller function that streams.
+ @RequestMapping(value = "/stream")
+        public void hellostreamer(HttpServletRequest request, HttpServletResponse response) throws CopyStreamException, IOException  
+{
+
+            response.setContentType("text/xml");
+            OutputStreamWriter writer = new OutputStreamWriter (response.getOutputStream());
+            writer.write("this is streaming");
+            writer.close();
+
+    }
+
+
+I hate to break it to those of you who think a streaming web service is not possible, but in reality, all http requests are stream based.  Every browser doing a GET to a web site is stream based.  Every call to a web service is stream based.  Yes, all.  We don't notice this at the level where we are implementing services or pages because lower levels of the architecture are dealing with this for you - but it is being done.
+Have you ever noticed in a browser that sometimes it can take a while to fetch a page - the browser just keeps cranking away showing the hourglass?  That is because the browser is waiting on a stream.
+Streams are the reason mime/types have to be sent before the actual data - it's all just a byte stream to the browser, it wouldn't be able to identify a photo if you didn't tell it what it was first.  It's also why you have to pass the size of a binary before sending - the browser won't be able to tell where the image stops and the page picks up again.
+It's all just a stream of bytes to the client.  If you want to prove this for yourself, just get a hold of the output stream at any point in the processing of a request and close() it.  You will blow up everything.  The browser will immediately stop showing the hourglass, and will display a "cannot find" or "connection reset at server" or some other such message.
+That a lot of people don't know that all of this stuff is stream based shows just how much stuff has been layered on top of it.  Some would say too much stuff - I am one of those.
+Good luck and happy development - relax those shoulders!
+
+It's actually not that hard to "handle the TCP/IP and stream things into your application".  Try this...
+class MyServlet extends HttpServlet
+{
+    public void doGet(HttpServletRequest request, HttpServletResponse response)
+    {
+        response.getOutputStream().println("Hello World!");
+    }
+}
+
+And that is all there is to it.  You have, in the above code, responded to an HTTP GET request sent from a browser, and returned to that browser the text "Hello World!".
+Keep in mind that "Hello World!" is not valid HTML, so you may end up with an error on the browser, but that really is all there is to it.
+Good Luck in your development!
+Rodney

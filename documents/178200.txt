@@ -1,0 +1,163 @@
+IP subnet verification in JSP
+java ip-address netmask
+I have the following JSP code, that protects my web page and displays it only to know IP's
+String ip_h = request.getRemoteAddr();  
+String host_h = request.getRemoteHost();  
+String iplist[] = new String[1];  
+iplist[0] = "127.0.0.1";  
+iplist[1] = "10.217.106.248";  
+
+int count = iplist.length;  
+boolean flag = false;  
+int zz = 0;  
+//return;
+System.out.println(host_h);  
+while ( (flag==false) && ( zz < count) )  
+{  
+   if (ip_h.equals(iplist[zz]) || host_h.equals(iplist[zz]) )  
+   {  
+      flag = true;  
+   }  
+   zz++;  
+}
+
+However, I would to rather check for subnet ranges, i.e. all users belonging to 10.217.0.0/16 are allowed.
+How do I do this?
+
+
+IP addresses (at least, IPv4 addresses) are really intended to be represented as 32-bit integers. If you convert the IP address to an integer first, checking subnet ranges becomes a relatively simple matter of checking (in your example) whether the first 16 bits match the first 16 bits of the range. 
+
+wouldn't you rather use the application server to lock down the ip range? In apache you can create an alias for a directory, put your code in the directory, then in the alias directive only allow certain ip or ranges:
+Alias /mydir "/usr/local/mydir"
+
+    order deny,allow
+    deny from all
+    Allow from 10.217.106.248
+    Allow from 127.0.0.1
+    allow from 10.217.106 #this is a range
+
+this way you don't have to code this sort of "magic number"
+I am sure you can do this type of thing in other web servers
+
+Try the Subnet class from this bug report.
+
+You can use following piece of code, of course it assumes the input data are correct so it needs some beautifying (just in case)
+public class IPUtil
+{
+
+    private static int[] split(String ip)
+    {
+        int[] result = new int[4];
+        StringTokenizer st = new StringTokenizer(ip, ".");
+        for (int i = 0; i < 4; i++)
+        {
+            result[i] = Integer.parseInt(st.nextToken());
+        }
+        return result;
+    }
+
+    public static boolean matches(String visitorIpString, String ipString, String maskString)
+    {
+        int[] vip = split(visitorIpString);
+        int[] ip = split(ipString);
+        int[] mask = split(maskString);
+
+        for (int i = 0; i < 4; i++)
+        {
+            if ((vip[i] & mask[i]) != ip[i])
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public static void main(String[] args)
+    {
+
+        String ip = "192.168.12.0";
+        String mask = "255.255.255.0";
+        String visitorIP = "192.168.12.55";
+
+        System.out.println(matches(visitorIP, ip, mask));
+    }
+}
+
+
+Feel free to use this IpRangeFilter class.  See class comment for explanation.
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+import org.apache.commons.collections15.Predicate;
+import org.apache.commons.lang.builder.EqualsBuilder;
+import org.apache.commons.lang.builder.HashCodeBuilder;
+
+/**
+ * I am a filter used to determine if a given IP Address is covered by the IP range specified in 
+ * the constructor.  I accept IP ranges in the form of full single IP addresses, e.g. 10.1.0.23
+ * or network/netmask pairs in CIDR format e.g. 10.1.0.0/16
+ */
+public class IpRangeFilter implements Predicate<InetAddress> {
+
+    private final long network;
+    private final long netmask;
+
+    private final String ipRange;
+
+    private static final Pattern PATTERN = Pattern.compile("((?:\\d|\\.)+)(?:/(\\d{1,2}))?");
+
+    public IpRangeFilter(String ipRange) throws UnknownHostException {
+    	Matcher matcher = PATTERN.matcher(ipRange);
+    	if (matcher.matches()) {
+    		String networkPart = matcher.group(1);
+    		String cidrPart = matcher.group(2);
+
+    		long netmask = 0;
+    		int cidr = cidrPart == null ? 32 : Integer.parseInt(cidrPart);
+    		for (int pos = 0; pos < 32; ++pos) {
+    			if (pos >= 32-cidr) {
+    				netmask |= (1L << pos);
+    			}
+    		}
+
+    		this.network = netmask & toMask(InetAddress.getByName(networkPart));
+    		this.netmask = netmask;
+    		this.ipRange = ipRange;
+
+    	} else {
+    		throw new IllegalArgumentException("Not a valid IP range: " + ipRange);
+    	}
+    }
+
+    public String getIpRange() {
+    	return ipRange;
+    }
+
+    public boolean evaluate(InetAddress address) {
+    	return isInRange(address);
+    }
+
+    public boolean isInRange(InetAddress address) {
+    	return network == (toMask(address) & netmask);
+    }
+
+    /**
+     * Convert the bytes in the InetAddress into a bit mask stored as a long.
+     * We could use int's here, but java represents those in as signed numbers, which can be a pain 
+     * when debugging.
+     * @see http://www.captain.at/howto-java-convert-binary-data.php
+     */
+    static long toMask(InetAddress address) {
+    	byte[] data = address.getAddress();
+    	long accum = 0;
+    	int idx = 3;
+    	for ( int shiftBy = 0; shiftBy < 32; shiftBy += 8 ) {
+    		accum |= ( (long)( data[idx] & 0xff ) ) << shiftBy;
+    		idx--;
+    	}
+    	return accum;
+    }
+}
+

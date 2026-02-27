@@ -1,0 +1,51 @@
+Balanced Distribution Algorithm
+algorithm big-o load-balancing cluster-computing
+I'm working on some code for a loosely coupled cluster. To achieve optimal performance during jobs, I have the cluster remap its data each time a child enters or exits. This will eventually be made optional, but for now it performs its data balancing by default. My balancing is basically just making sure that each child never has more than the average number of files per machine, plus one. The plus one is for the remainder if the division isn't clean. And since the remainder will always be less than the number of children [except 0 case, but we can exclude that], children after a balancing will have at most avg + 1.
+Everything seems fine, until I realized my algorithm is O(n!). Go down the list of children, find out the avg, remainder, who has too many and who has too few. For each child in the too many list, go through list, send to each child who has too few.
+Is there a better solution to this? I feel there must be.
+Edit: Here is some psuedocode to show how i derived O(n!):
+foreach ( child in children ) {
+    if ( child.dataLoad > avg + 1 ) {
+        foreach ( child2 in children ) {
+            if ( child != child2 && child2.dataLoad < avg ) {
+                sendLoad(child, child2)
+            }
+        }
+    }
+}
+
+Edit: O(n^2). Foreach n, n => n*n => n^2. I guess I didn't have enough coffee this morning! ;)
+In the future I'd like to move to a more flexible and resilient distribution method[weights and hueristics], but for now, a uniform distribution of data works.
+
+
+I think that your analysis is incorrect:
+
+walking through the list to find out the average is O(n)
+making lists of children with too many or too few data chunks is also O(n)
+moving data is proportional to the amount of data
+
+How did you arrive to O(n!)?
+You can sort the list [O(n lg n) in the number of children], so that on the front you have children with too much work, and at the end children with too little work.  Then traverse the list from both ends simultaneously: one iterator points to a child with excess data, the other to a child with lack of data.  Transfer data, and move either one iterator forward, or the other backward.
+
+@zvrba: You do not even have to sort the list. When traversing the list the second time just move all items with less the average workload to the end of the list (you can keep a pointer to the last item at your first traversal). The order does not have to be perfect, it just changes when the iterators have to be augmented or decreased in your last step.
+See previous answer
+The last step would look something like:
+In the second step keep a pointer to the first item with less than average workload in child2 (to prevent the necessity to have a double link list).
+for each child in list {
+  if child2 == nil then assert("Error in logic");
+  while child.workload > avg + 1 {
+    sendwork(child, child2, min(avg + 1 - child2.workload, child.workload - (avg + 1)))
+    if child2.workload == avg + 1 then child2 = child2.next;
+  }
+}
+
+
+The code you have posted has complexity O(n^2). Still, it is possible to do it in linear time as malach has observed, where n is the number of items in the children list.
+Consider: the inner loop has n iterations, and it is executed at most n times. n*n = n^2.
+
+You may want to try a completely different approach, such as consistent hashing.
+See here for a relatively easy introduction to the topic:
+http://www8.org/w8-papers/2a-webserver/caching/paper2.html
+(There are deeper papers available as well, starting with Karger et al)
+I have created a working implementation of consistent hashing in Erlang that you can examine if you wish:
+http://distributerl.googlecode.com/svn/trunk/chash.erl

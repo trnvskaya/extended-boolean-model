@@ -1,0 +1,50 @@
+How to improve performance of an Abstract Factory when all the time appears to be spent in memory allocation
+c++ optimization
+The application de-serializes a stream into dynamically allocated objects and then keeps base type pointers in a linked list (i.e. abstract factory).  It's too slow.  Profiling says all the time is spent in operator new.
+Notes: The application already uses a custom memory allocator that does pooling.  The compiler is VC++ 6.0 and the code uses the old RogueWave collections rather than the STL.
+The only idea I have right now is to introduce Object Pooling.  I'd maintain large collections of pre-allocated objects for each type and re-use them.  But this will be a lot of work in this old code, and I'm not yet sure there's enough re-use that it would even help.  I was hoping someone smarter than me has an idea.
+
+
+I'll assume that most allocations relate to the list of objects you're talking about. If you're actually allocating a bunch of other objects as part of the parsing that's too slow, then you need more information to optimize.
+
+I don't know anything about the RogueWave collections, but if their linked list allocates an external node, then you should be able to halve the number of allocations by using an intrusive list - write your own container if necessary. This assumes that you don't need to put the same objects on multiple lists at once (or in the same list more than once).
+If your app is multi-threaded, then the memory allocator will likely be doing some synchronization. But if you can arrange for these objects to be freed in the same thread they're allocated, then they could be allocated off a per-thread heap by overloading operator new. This might be faster: synchronization isn't necessarily all that slow provided there isn't contention, but it takes more time than none, and if other threads in your process are allocating at the same time then there will be contention.
+For even more limited use-cases, if you find that you allocate a whole load of these things and then always free them all at once when you're done with the list, you can write an even faster "gc-style" allocator. 
+
+Operator new/delete would call functions like these (and size might be a constant rather than a parameter, if there's only one class you use the pool for):
+char *alloc(POOL *pool, size_t size) {
+    // if size is a parameter, and may be a non-multiple the max alignment 
+    // requirement on your system, and you want this to work in general:
+    // size = (size + MAX_ALIGNMENT - 1) % ALIGNMENT;
+    char *block = pool.current;
+    char *next = block + size;
+    if (next > pool.limit) throw std::bad_alloc();
+    pool.current = next;
+    return block;
+}
+
+void free(char *block) {
+    return;
+}
+
+void freeAll(POOL *pool) {
+    pool.current = pool.start;
+    return;
+}
+
+This should ensure that operator new takes trivial time compared with what you spend parsing the objects you're creating. But it does require the application to identify the times at which it should create, destroy, and clear pools, and to to use a suitable new operator taking the pool pointer as a parameter, so it's not a drop-in replacement.
+
+The only way is to reduce the number of memory allocations. Have you used a profiler that will tell you exactly what is doing the allocation?  Are you possibly doing some string manipulation?
+If all the time is spent allocating the objects the factory is creating, you may need to go to a pool. 
+
+Have you tried using a custom allocator for objects of known size? This is a good technique for speeding up allocations.
+
+Just some ideas...
+
+What are you doing in your ctors? Maybe they are slow? Large objects, file access, etc?
+How much memory is available for your application? Are you close to the physical limits so the OS busy is swapping?
+Be cache friendly by localizing your memory access patterns. If the RogueWave collections won't do that for you, maybe it's time to look for something else.
+Are you sure your custom allocator isn't the culprit?
+
+
+You can replace operator new, even per class. In your particular case, you'll be allocating and deallocatin many objects of a single class. That means you will have quite a few allocations with identical size. That's a pattern which is easy to optimize. Basically, keep a raw block of memory, N*sizeof(T) and a bitmap with N/8 bits to indicate free status. This refits quite easily; your old code doesn't need to change.

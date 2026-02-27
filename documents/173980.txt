@@ -1,0 +1,70 @@
+Is abstracting data type (sometimes) a good idea?
+c# design-patterns
+There are numerous times you have an interface that accepts similar type arguments that have a separate domain logic meaning:
+public static class Database
+{
+   public static bool HasAccess(string userId, string documentId) { return true; }
+}
+
+Now it's quite easy to have someone key documentId instead of userId and vice versa. One could prevent that by abstracting the data type of the arguments:
+public class UserId
+{
+   public string Value { get; internal set; }
+   public static implicit operator string(UserId id) { return id.Value; }
+}
+
+public class DocumentId
+{
+   public string Value { get; internal set; }
+   public static implicit operator string(DocumentId id) { return id.Value; }
+}
+
+public static class Database
+{
+    public static bool HasAccess(UserId userId, DocumentId documentId) { return true; }
+}
+
+This way you get a nice compiler warning if you type in arguments out of order:
+UserId e = new UserId() { Value = "a" };
+DocumentId d = new DocumentId() { Value = "b" };
+
+Database.HasAccess(d, e);
+
+You also get the ability to change abstracted type in without affecting the rest of the system but that's not very likely. Would abstracting type be a good idea to get more type safety?
+The question relates to C# solutions but short descriptions in other languages is welcome.
+EDIT: Removed the implicit cast from string and pointing finger at the C# tag.
+
+
+I think you answered your own question - better data integrity and validation, better system
+
+Yes, it is sometimes a good idea. But if you get too obsessed with this you become an architecture astronaut.
+As regards the type safety argument - it does increase type safety but lots of languages manage fine without it.
+In my opinion the best way to go is leave it as a String to start with, and then when you find yourself reusing the interface, make the refactoring to a more abstract type at that point.
+Predicting the future is too hard to waste time trying. 
+
+Seems to be a lot of overhead for something your unit tests ought to prevent anyway, at least in this case.
+
+Interesting, but I suspect that in many cases (particularly seialization / RPC APIs) this will only add confustion/overhead. Also - a minor implementation detail, but given this approach I'd make the wrappers fully immutable, not just "internal set" immutable.
+TBH - I'd probably rather use unit tests for most of this... sometimes simple is beautiful. The other problem is that since you have implicit operators, it won't stop you doing the much more likely:
+string user = "fred";
+SomeMethodThatWantsADocument(user);
+
+That should compile; the implicit operator undoes all your good work...
+
+This is where typedef becomes useful in C++. You can have UserID and DocumentID as typedeffed types and thus are not interchangable without a cast, but don't require anything more than a quick note to the compiler saying 'this should be a separate type distinct from other types even though it is really just type X'.
+
+In this case, it doesn't look worth it to me.
+You've added 12 lines, spread across two extra-classes. In some languages you're looking at having to manage two new files for that. (Not sure in C#). You've introduced a lot of extra cognitive load. Those classes appear whenever you navigate your class-list; they appear in your automatically generated documentation; they're there as something that newcomers to your codebase see whenever they're trying to learn their way around, they're in the dependency graph of the compiler etc. Programmers have to know the types and create two new objects whenever they call HasAccess.
+And for what? To prevent you accidentally mixing up the username and document id when checking if someone has a right to access the database. That check should probably be written two, maybe three times in a normal system. (If you're writing it a lot you probably haven't got enough reuse in your database access code)
+So, I'd say that this is excess astronautics. My rule of thumb is that classes or types should encapsulate variant behaviour, not variant use of passive data.
+
+What you don't ask and don't answer are the questions that best determine if the new types are important:
+
+What is the projected, realistic lifetime of this system?  If the answer is 2+ years, you should have at least one level of abstraction for the database and for the user id.  In other words, your database should be abstract and your user and credentials should be abstract.  Then you implement your database and userid in terms of the abstract definition.  That way, if the needs should change your changes will be local to the places that need it most.
+What are the gains and losses from having a userid data type?  This question should be answered in terms of usability, expressiveness, and type safety.  The number of created classes or extra lines are largely immaterial if there are clear gains in usability and expressiveness - hooray, you win.  Let me give you an example of a clear loss - I worked with a class hierarchy that contained an abstract base class with several concrete children types.  Rather than provide constructors for the child classes and appropriate accessors, they made a factory method that took an XML string or stream as an argument and constructed the appropriate concrete class from that.  It was such a loss in usability that it made this library painful - even their sample code reeked of lose.  While I could construct everything they offered, it felt heinous and generated runtime instead of compile time errors for typical issues.
+
+
+While at the end of the day, you may not care, the more abstraction the harder the maintenance (especially for other people).  If in six months you have to start digging through this code to find or fix a bug, or even add a new feature, it will take you that much longer to remember what you did and why.  If someone else is doing it, multiply that time.  Elegant code is always nice when you're writing new code, but I always like to weigh that with the needs of maintainers down the road.
+
+This feels like a YAGNI issue to me.  If you're just doing it because it MIGHT be useful, that's usually not a good enough reason for the extra complexity.  Also, as others have noted, this is the sort of thing that unit tests should catch.
+Another thing I try to keep in mind is whether an abstraction is meant to protect programmers from themselves.  Yes, it is theoretically easy to flip-flop two string arguments.  But in all seriousness, paying attention to argument ordering has been a fundamental aspect of programming in most languages for decades.  It's not something that should happen often, and it's certainly something that tests should be catching.  If this type of thing is a common problem in your organization, I'd say you have bigger problems to worry about.

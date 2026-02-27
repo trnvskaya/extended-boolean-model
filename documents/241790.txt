@@ -1,0 +1,56 @@
+Best way to access user/site settings
+c# asp.net settings
+There have been a couple of questions that sort of dealt with this but not covering my exact question so here we go.
+For site settings, if these are stored in a database do you:
+
+retrieve them from the db every time someone makes a request
+store them in a session variable on login
+???????
+
+For user specific settings do I do the same as site settings??
+Any guidance/best practice would be greatly appreciated.
+Cheers
+
+
+Generally I would put site settings in the web.config file, unless you are building an application that has multiple sites and gets changed by the application itself frequently, it usually wouldn't make sense to put it in the database at first.
+For user specific settings I would look into starting with the default asp.net Profile Provider which will store the settings in the database and manage the retrival of the user settings once per Request and save the updates to the end to minimize the number of DB calls. Once you start to hit performance problems you can consider extending the profile provider for caching and/or your specific needs.
+
+I suggest creating a module for retrieving preferences that could be implemented either way, and then for your first implementation hit the database every time since that's easier.  If you have performance problems, add caching to the module to reduce the database traffic.
+
+I prefer an approach like Glomek proposes...  Caching the settings in the WebCache will greatly enhance speed of access.  Consider the following:
+    #region Data Access
+
+private string GetSettingsFromDb(string settingName)
+{
+	return "";
+}
+private Dictionary<string,string> GetSettingsFromDb()
+{
+	return new Dictionary<string, string>();
+}
+
+#endregion
+
+private const string KEY_SETTING1 = "Setting1";
+public string Setting1
+{
+	get
+	{
+		if (Cache.Get(KEY_SETTING1) != null)
+			return Cache.Get(KEY_SETTING1).ToString();
+
+		Setting1 = GetSettingsFromDb(KEY_SETTING1);
+
+		return Setting1;
+
+	} 
+	set
+	{
+		Cache.Remove(KEY_SETTING1);
+		Cache.Insert(KEY_SETTING1, value, null, Cache.NoAbsoluteExpiration, TimeSpan.FromHours(2));
+	}
+}
+
+private Cache Cache { get { return HttpContext.Current.Cache; } }
+
+You'll get the dynamic loading goodness, memory conservation of tossing items out of Cache after 2 hours of non-use, and the flush and reload you need when the settings are modified.

@@ -1,0 +1,36 @@
+Unfiltering NSPasteboard
+cocoa filtering pasteboard
+Is there a way to unfilter an NSPasteboard for what the source application specifically declared it would provide?
+I'm attempting to serialize pasteboard data in my application.  When another application places an RTF file on a pasteboard and then I ask for the available types, I get eleven different flavors of said RTF, everything from the original RTF to plain strings to dyn.* values.  
+Saving off all that data into a plist or raw data on disk isn't usually a problem as it's  pretty small, but when an image of any considerable size is placed on the pasteboard, the resulting output can be tens of times larger than the source data (with multiple flavors of TIFF and PICT data being made available via filtering).
+I'd like to just be able to save off what the original app made available if possible.
+
+John, you are far more observant than myself or the gentleman I work with who's been doing Mac programming since dinosaurs roamed the earth.  Neither of us ever noticed the text you highlighted... and I've not a clue why.  Starting too long at the problem, apparently.
+And while I accepted your answer as the correct answer, it doesn't exactly answer my original question.  What I was looking for was a way to identify flavors that can become  other flavors simply by placing them on the pasteboard AND to know which of these types were originally offered by the provider.  While walking the types list will get me the preferred order for the application that provided them, it won't tell me which ones I can safely ignore as they'll be recreated when I refill the pasteboard later.
+I've come to the conclusion that there isn't a "good" way to do this.  [NSPasteboard declaredTypesFromOwner] would be fabulous, but it doesn't exist.
+
+
+-[NSPasteboard types] will return all the available types for the data on the clipboard, but it should return them "in the order they were declared."
+The documentation for -[NSPasteboard declareTypes:owner:] says that "the types should be ordered according to the preference of the source application."
+A properly implemented pasteboard owner should, therefore, declare the richest representation of the content (probably the original content) as the first type; so a reasonable single representation should be:
+[pb dataForType:[[pb types] objectAtIndex:0]]
+
+
+You may be able to get some use out of +[NSPasteboard typesFilterableTo:]. I'm picturing a snippet like this:
+NSArray *allTypes = [pb types];
+NSAssert([allTypes count] > 0, @"expected at least one type");
+
+// We always require the first declared type, as a starting point.
+NSMutableSet *requiredTypes = [NSMutableSet setWithObject:[allTypes objectAtIndex:0]];
+
+for (NSUInteger index = 1; index < [allTypes count]; index++) {
+    NSString *aType = [allTypes objectAtIndex:index];
+    NSSet *filtersFrom = [NSSet setWithArray:[NSPasteboard typesFilterableTo:aType]];
+
+    // If this type can't be re-created with a filter we already use, add it to the
+    // set of required types.
+    if (![requiredTypes intersectsSet:filtersFrom])
+        [requiredTypes addObject:aType];
+}
+
+I'm not sure how effective this would be at picking good types, however.

@@ -1,0 +1,33 @@
+bind Linux to Active Directory using kerberos
+active-directory ldap kerberos pam
+We are trying to bind a Linux machine (debian 4.0) to W2k3 AD.  We have configured kerberos properly so that we can get TGTs.  And users authenticate properly.  However, PAM seems to be the sticky wicket.  For example when we try to SSH to the linux machine as one of the AD users, the authentication succeeds (as per the auth.log) but I never get shell.  The default environment is configured properly and PAM even creates the Homedir properly.  As a reference we were loosely following:
+https://help.ubuntu.com/community/ActiveDirectoryHowto
+
+
+If you're confident everything but PAM works correctly, I suggest passing the debug option to pam_krb5.so to see if that gives a clue to what's happening.
+I'd also suggest verifying that nss-ldap is set up correctly using 
+getent passwd avalidusername
+
+
+I have used Likewise to do something similar on our servers.  Here is the process we use to configure it:
+Install Likewise:
+$ sudo apt-get update
+$ sudo apt-get install likewise-open
+
+Join the domain (Assuming the domain "domain.local")
+$ sudo domainjoin-cli join domain.local Administrator
+$ sudo update-rc.d likewise-open defaults
+$ sudo /etc/init.d/likewise-open start
+
+Assuming you are using sudo AND want AD users to be able to have sudoer powers, you need to edit the sudoers file. This can be done with following command:
+$ sudo visudo
+
+then add the following to the end of the file (this assumes the domain "DOMAIN" and all the users that should have sudo are in a group called "linux_admin" in active directory):
+%DOMAIN\\linux_admin ALL=(ALL) ALL
+
+
+POSIX accounts demand that you have a vaild shell set in the user account.  When using LDAP, this is referenced by the attribute loginShell.  You need to use PAM and map an appropriate attribute to loginShell in your configuration, or active MS services for UNIX on the DC, which will extend the AD schema to include the needed POSIX attributes.
+See http://www.ietf.org/rfc/rfc2307.txt as a reference to RFC2307, which defines this for LDAP.
+
+A simple solution.. pam_krb5+ldap project
+A fork of the pam_krb5 PAM module that provides a very easy to use configuration for utilizing linux client authentication against and existing Active directory domain and/or OpenLDAP server.

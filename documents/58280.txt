@@ -1,0 +1,56 @@
+UnhandledException handler in a .Net Windows Service
+.net vb.net exception-handling windows-services
+Is it possible to use an UnhandledException Handler in a Windows Service?
+Normally I would use a custom built Exception Handling Component that does logging, phone home, etc. This component adds a handler to System.AppDomain.CurrentDomain.UnhandledException but as far as I can tell this doesnât achieve anything win a Windows Service so I end up with this pattern in my 2 (or 4) Service entry points:
+
+
+    Protected Overrides Sub OnStart(ByVal args() As String)
+        ' Add code here to start your service. This method should set things
+        ' in motion so your service can do its work.
+        Try
+            MyServiceComponent.Start()
+        Catch ex As Exception
+            'call into our exception handler
+            MyExceptionHandlingComponent.ManuallyHandleException (ex)
+            'zero is the default ExitCode for a successfull exit, so if we set it to non-zero
+            ExitCode = -1
+            'So, we use Environment.Exit, it seems to be the most appropriate thing to use
+            'we pass an exit code here as well, just in case.
+            System.Environment.Exit(-1)
+        End Try
+    End Sub
+
+
+Is there a way my Custom Exception Handling component can deal with this better so I don't have to fill my OnStart with messy exception handling plumbing?
+
+
+You can subscribe to the AppDomain.UnhandledException event.  If you have a message loop, you can tie to the Application.ThreadException event.
+
+Ok, Iâve done  a little more research into this now.
+When you create a windows service in .Net, you create a class that inherits from System.ServiceProcess.ServiceBase (In VB this is hidden in the .Designer.vb file). You then override the OnStart and OnStop function, and OnPause and OnContinue if you choose to. 
+These methods are invoked from within the base class so I did a little poking around with reflector.
+OnStart is invoked by a method in System.ServiceProcess.ServiceBase called ServiceQueuedMainCallback.  The vesion on my machine "System.ServiceProcess, Version=2.0.0.0" decompiles like this:
+
+
+Private Sub ServiceQueuedMainCallback(ByVal state As Object)
+    Dim args As String() = DirectCast(state, String())
+    Try 
+        Me.OnStart(args)
+        Me.WriteEventLogEntry(Res.GetString("StartSuccessful"))
+        Me.status.checkPoint = 0
+        Me.status.waitHint = 0
+        Me.status.currentState = 4
+    Catch exception As Exception
+        Me.WriteEventLogEntry(Res.GetString("StartFailed", New Object() { exception.ToString }), EventLogEntryType.Error)
+        Me.status.currentState = 1
+    Catch obj1 As Object
+        Me.WriteEventLogEntry(Res.GetString("StartFailed", New Object() { String.Empty }), EventLogEntryType.Error)
+        Me.status.currentState = 1
+    End Try
+    Me.startCompletedSignal.Set
+End Sub
+
+
+So because Me.OnStart(args) is called from within the Try portion of a Try Catch block I assume that anything that happens within the OnStart method is effectively wrapped by that Try Catch block and therefore any exceptions that occur aren't technically unhandled as they are actually handled in the ServiceQueuedMainCallback Try Catch. So CurrentDomain.UnhandledException never actually happens at least during the startup routine. 
+The other 3 entry points (OnStop, OnPause and OnContinue) are all called from the base class in a similar way.
+So I âthinkâ that explains why my Exception Handling component canât catch UnhandledException on Start and Stop, but Iâm not sure if it explains why timers that are setup in OnStart canât cause an UnhandledException when they fire. 

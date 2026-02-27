@@ -1,0 +1,78 @@
+SQL Server: Dynamic where-clause
+c# sql-server performance
+Problem:
+Ajax suggest-search on [n] ingredients in recipes. That is: match recipes against multiple ingredients.
+For instance: SELECT Recipes using "flower", "salt" would produce: "Pizza", "Bread", "Saltwater" and so forth.
+Tables:
+Ingredients [
+    IngredientsID INT [PK],
+    IngredientsName VARCHAR
+]
+
+Recipes [
+    RecipesID INT [PK],
+    RecipesName VARCHAR
+]
+
+IngredientsRecipes [
+    IngredientsRecipesID INT [PK],
+    IngredientsID INT,
+    RecipesID INT
+]
+
+Query:
+SELECT
+    Recipes.RecipesID,
+    Recipes.RecipesName,
+    Ingredients.IngredientsID,
+    Ingredients.IngredientsName
+FROM
+    IngredientsRecipes
+
+    INNER JOIN Ingredients
+    ON IngredientsRecipes.IngredientsID = Ingredients.IngredientsID
+
+    INNER JOIN Recipes
+    ON IngredientsRecipes.RecipesID = Recipes.RecipesID
+WHERE
+    Ingredients.IngredientsName IN ('salt', 'water', 'flower')
+
+I am currently constructing my query using ASP.NET C# because of the dynamic nature of the WHERE clause.
+I bites that I have to construct the query in my code-layer instead of using a stored procedure/pure SQL, which in theory should be much faster.
+Have you guys got any thoughts on how I would move all of the logic from my code-layer to pure SQL, or at least how I can optimize the performance of what I'm doing?
+I am thinking along the lines of temporary tables:
+Step one: SELECT IngredientsID FROM Ingredients and INSERT INTO temp-table
+Step two: SELECT RecipesName FROM Recipes joined with IngredientsRecipes joined with temp-table.IngredientsID
+
+
+Depending on how you are processing the input ingredients I think this current method has some sql injection risks. 
+You could append the ingrediant name to the join conditions which may be quicker.
+You could also hash combinations of ingredients for receipes for a quick lookup.
+
+You have two options. If you're using SQL Server 2008 (or Oracle) you can pass in a table value parameter. 
+If you're using SQL Server 2005, you can use XML to simulate this capability
+If you're using something earlier than 2005, you need to concatenate the ids in a single string and create a UDF to parse them.
+
+You could at least parametrize the where clausule to avoid SQL injection, something alike:
+using System.Data;
+using System.Data.SqlClient;
+using System.Text;
+
+class Foo
+{
+    public static void Main ()
+    {
+        string[] parameters = {"salt", "water", "flower"};
+        SqlConnection connection = new SqlConnection ();
+        SqlCommand command = connection.CreateCommand ();
+        StringBuilder where = new StringBuilder ();
+        for (int i = 0; i < parametes.Length; i++)
+        {
+            if (i != 0)
+                where.Append (",");
+            where.AppendFormat ("@Param{0}", i);
+            command.Parameters.Add (new SqlParameter ("Param" + i, parameters [i]));
+        }
+    }
+}
+

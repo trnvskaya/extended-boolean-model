@@ -1,0 +1,306 @@
+Parallelize Bash Script with maximum number of processes
+bash
+Lets say I have a loop in bash:
+for foo in `some-command`
+do
+   do-something $foo
+done
+
+do-something is cpu bound and I have a nice shiny 4 core processor. I'd like to be able to run up to 4 do-something's at once.
+The naive approach seems to be:
+for foo in `some-command`
+do
+   do-something $foo &
+done
+
+This will run all do-somethings at once, but there are a couple downsides, mainly that do-something may also have some significant I/O which performing all at once might slow down a bit. The other problem is that this code block returns immediately, so no way to do other work when all the do-somethings are finished.
+How would you write this loop so there are always X do-somethings running at once?
+
+
+Instead of a plain bash, use a Makefile, then specify number of simultaneous jobs with make -jX where X is the number of jobs to run at once.
+Or you can use wait ("man wait"): launch several child processes, call wait - it will exit when the child processes finish.
+maxjobs = 10
+
+foreach line in `cat file.txt` {
+ jobsrunning = 0
+ while jobsrunning < maxjobs {
+  do job &
+  jobsrunning += 1
+ }
+wait
+}
+
+job ( ){
+...
+}
+
+If you need to store the job's result, then assign their result to a variable. After wait you just check what the variable contains.
+
+Maybe try a parallelizing utility instead rewriting the loop? I'm a big fan of xjobs. I use xjobs all the time to mass copy files across our network, usually when setting up a new database server.
+http://www.maier-komor.de/xjobs.html
+
+
+maxjobs=4
+parallelize () {
+        while [ $# -gt 0 ] ; do
+                jobcnt=(`jobs -p`)
+                if [ ${#jobcnt[@]} -lt $maxjobs ] ; then
+                        do-something $1 &
+                        shift  
+                else
+                        sleep 1
+                fi
+        done
+        wait
+}
+
+parallelize arg1 arg2 "5 args to third job" arg4 ...
+
+
+The project I work on uses the wait command to control parallel shell (ksh actually) processes.  To address your concerns about IO, on a modern OS, it's possible parallel execution will actually increase efficiency.  If all processes are reading the same blocks on disk, only the first process will have to hit the physical hardware.  The other processes will often be able to retrieve the block from OS's disk cache in memory.  Obviously, reading from memory is several orders of magnitude quicker than reading from disk.  Also, the benefit requires no coding changes.
+
+Here an alternative solution that can be inserted into .bashrc and used for everyday one liner:
+function pwait() {
+    while [ $(jobs -p | wc -l) -ge $1 ]; do
+        sleep 1
+    done
+}
+
+To use it, all one has to do is put & after the jobs and a pwait call, the parameter gives the number of parallel processes:
+for i in *; do
+    do_something $i &
+    pwait 10
+done
+
+It would be nicer to use wait instead of busy waiting on the output of jobs -p, but there doesn't seem to be an obvious solution to wait till any of the given jobs is finished instead of a all of them.
+
+While doing this right in bash is probably impossible, you can do a semi-right fairly easily.  bstark gave a fair approximation of right but his has the following flaws:
+
+Word splitting: You can't pass any jobs to it that use any of the following characters in their arguments: spaces, tabs, newlines, stars, question marks.  If you do, things will break, possibly unexpectedly.
+It relies on the rest of your script to not background anything.  If you do, or later you add something to the script that gets sent in the background because you forgot you weren't allowed to use backgrounded jobs because of his snippet, things will break.
+
+Another approximation which doesn't have these flaws is the following:
+scheduleAll() {
+    local job i=0 max=4 pids=()
+
+    for job; do
+        (( ++i % max == 0 )) && {
+            wait "${pids[@]}"
+            pids=()
+        }
+
+        bash -c "$job" & pids+=("$!")
+    done
+
+    wait "${pids[@]}"
+}
+
+Note that this one is easily adaptable to also check the exit code of each job as it ends so you can warn the user if a job fails or set an exit code for scheduleAll according to the amount of jobs that failed, or something.
+The problem with this code is just that:
+
+It schedules four (in this case) jobs at a time and then waits for all four to end.  Some might be done sooner than others which will cause the next batch of four jobs to wait until the longest of the previous batch is done.
+
+A solution that takes care of this last issue would have to use kill -0 to poll whether any of the processes have disappeared instead of the wait and schedule the next job.  However, that introduces a small new problem: you have a race condition between a job ending, and the kill -0 checking whether it's ended.  If the job ended and another process on your system starts up at the same time, taking a random PID which happens to be that of the job that just finished, the kill -0 won't notice your job having finished and things will break again.
+A perfect solution isn't possible in bash.
+
+Depending on what you want to do xargs also can help (here: converting documents with pdf2ps):
+cpus=$( ls -d /sys/devices/system/cpu/cpu[[:digit:]]* | wc -w )
+
+find . -name \*.pdf | xargs --max-args=1 --max-procs=$cpus  pdf2ps
+
+From the docs:
+--max-procs=max-procs
+-P max-procs
+       Run up to max-procs processes at a time; the default is 1.
+       If max-procs is 0, xargs will run as many processes as  possible  at  a
+       time.  Use the -n option with -P; otherwise chances are that only one
+       exec will be done.
+
+
+If you're familiar with the make command, most of the time you can express the list of commands you want to run as a a makefile. For example, if you need to run $SOME_COMMAND on files *.input each of which produces *.output, you can use the makefile
+
+INPUT  = a.input b.input
+OUTPUT = $(INPUT:.input=.output)
+
+%.output : %.input
+    $(SOME_COMMAND) $< $@
+
+all: $(OUTPUT)
+
+and then just run
+
+make -j<NUMBER>
+
+to run at most NUMBER commands in parallel.
+
+With GNU Parallel http://www.gnu.org/software/parallel/ you can write:
+some-command | parallel do-something
+
+GNU Parallel also supports running jobs on remote computers. This will run one per CPU core on the remote computers - even if they have different number of cores:
+some-command | parallel -S server1,server2 do-something
+
+A more advanced example: Here we list of files that we want my_script to run on. Files have extension (maybe .jpeg). We want the output of my_script to be put next to the files in basename.out (e.g. foo.jpeg -> foo.out). We want to run my_script once for each core the computer has and we want to run it on the local computer, too. For the remote computers we want the file to be processed transferred to the given computer. When my_script finishes, we want foo.out transferred back and we then want foo.jpeg and foo.out removed from the remote computer:
+cat list_of_files | \
+parallel --trc {.}.out -S server1,server2,: \
+"my_script {} > {.}.out"
+
+GNU Parallel makes sure the output from each job does not mix, so you can use the output as input for another program:
+some-command | parallel do-something | postprocess
+
+See the videos for more examples: https://www.youtube.com/playlist?list=PL284C9FF2488BC6D1
+
+This might be good enough for most purposes, but is not optimal.
+#!/bin/bash
+
+n=0
+maxjobs=10
+
+for i in *.m4a ; do
+    # ( DO SOMETHING ) &
+
+    # limit jobs
+    if (( $(($((++n)) % $maxjobs)) == 0 )) ; then
+        wait # wait until all have finished (not optimal, but most times good enough)
+        echo $n wait
+    fi
+done
+
+
+You can use a simple nested for loop (substitute appropriate integers for N and M below):
+for i in {1..N}; do
+  (for j in {1..M}; do do_something; done & );
+done
+
+This will execute do_something N*M times in M rounds, each round executing N jobs in parallel. You can make N equal the number of CPUs you have.
+
+function for bash:
+parallel ()
+{
+    awk "BEGIN{print \"all: ALL_TARGETS\\n\"}{print \"TARGET_\"NR\":\\n\\t@-\"\$0\"\\n\"}END{printf \"ALL_TARGETS:\";for(i=1;i<=NR;i++){printf \" TARGET_%d\",i};print\"\\n\"}" | make $@ -f - all
+}
+
+using:
+cat my_commands | parallel -j 4
+
+
+$DOMAINS = "list of some domain in commands"
+for foo in some-command
+do
+eval `some-command for $DOMAINS` &
+
+    job[$i]=$!
+
+    i=$(( i + 1))
+
+done
+Ndomains=echo $DOMAINS |wc -w
+for i in $(seq 1 1 $Ndomains)
+do
+  echo "wait for ${job[$i]}"
+  wait "${job[$i]}"
+done
+in this concept will work for the parallelize. important thing is last line of eval is '&'
+which will put the commands to backgrounds.
+
+Here is how I managed to solve this issue in a bash script:
+ #! /bin/bash
+
+ MAX_JOBS=32
+
+ FILE_LIST=($(cat ${1}))
+
+ echo Length ${#FILE_LIST[@]}
+
+ for ((INDEX=0; INDEX < ${#FILE_LIST[@]}; INDEX=$((${INDEX}+${MAX_JOBS})) ));
+ do
+     JOBS_RUNNING=0
+     while ((JOBS_RUNNING < MAX_JOBS))
+     do
+         I=$((${INDEX}+${JOBS_RUNNING}))
+         FILE=${FILE_LIST[${I}]}
+         if [ "$FILE" != "" ];then
+             echo $JOBS_RUNNING $FILE
+             ./M22Checker ${FILE} &
+         else
+             echo $JOBS_RUNNING NULL &
+         fi
+         JOBS_RUNNING=$((JOBS_RUNNING+1))
+     done
+     wait
+ done
+
+
+My solution to always keep a given number of processes running, keep tracking of errors and handle ubnterruptible / zombie processes:
+function log {
+    echo "$1"
+}
+
+# Take a list of commands to run, runs them sequentially with numberOfProcesses commands simultaneously runs
+# Returns the number of non zero exit codes from commands
+function ParallelExec {
+    local numberOfProcesses="${1}" # Number of simultaneous commands to run
+    local commandsArg="${2}" # Semi-colon separated list of commands
+
+    local pid
+    local runningPids=0
+    local counter=0
+    local commandsArray
+    local pidsArray
+    local newPidsArray
+    local retval
+    local retvalAll=0
+    local pidState
+    local commandsArrayPid
+
+    IFS=';' read -r -a commandsArray <<< "$commandsArg"
+
+    log "Runnning ${#commandsArray[@]} commands in $numberOfProcesses simultaneous processes."
+
+    while [ $counter -lt "${#commandsArray[@]}" ] || [ ${#pidsArray[@]} -gt 0 ]; do
+
+        while [ $counter -lt "${#commandsArray[@]}" ] && [ ${#pidsArray[@]} -lt $numberOfProcesses ]; do
+            log "Running command [${commandsArray[$counter]}]."
+            eval "${commandsArray[$counter]}" &
+            pid=$!
+            pidsArray+=($pid)
+            commandsArrayPid[$pid]="${commandsArray[$counter]}"
+            counter=$((counter+1))
+        done
+
+
+        newPidsArray=()
+        for pid in "${pidsArray[@]}"; do
+            # Handle uninterruptible sleep state or zombies by ommiting them from running process array (How to kill that is already dead ? :)
+            if kill -0 $pid > /dev/null 2>&1; then
+                pidState=$(ps -p$pid -o state= 2 > /dev/null)
+                if [ "$pidState" != "D" ] && [ "$pidState" != "Z" ]; then
+                    newPidsArray+=($pid)
+                fi
+            else
+                # pid is dead, get it's exit code from wait command
+                wait $pid
+                retval=$?
+                if [ $retval -ne 0 ]; then
+                    log "Command [${commandsArrayPid[$pid]}] failed with exit code [$retval]."
+                    retvalAll=$((retvalAll+1))
+                fi
+            fi
+        done
+        pidsArray=("${newPidsArray[@]}")
+
+        # Add a trivial sleep time so bash won't eat all CPU
+        sleep .05
+    done
+
+    return $retvalAll
+}
+
+Usage:
+cmds="du -csh /var;du -csh /tmp;sleep 3;du -csh /root;sleep 10; du -csh /home"
+
+# Execute 2 processes at a time
+ParallelExec 2 "$cmds"
+
+# Execute 4 processes at a time
+ParallelExec 4 "$cmds"
+

@@ -1,0 +1,168 @@
+Find a private field with Reflection?
+c# .net reflection .net-attributes
+Given this class
+class Foo
+{
+    // Want to find _bar with reflection
+    [SomeAttribute]
+    private string _bar;
+
+    public string BigBar
+    {
+        get { return this._bar; }
+    }
+}
+
+I want to find the private item _bar that I will mark with a attribute.  Is that possible?  
+I have done this with properties where I have looked for an attribute, but never a private member field.
+What are the binding flags that I need to set to get the private fields?
+
+
+Yes, however you will need to set your Binding flags to search for private fields (if your looking for the member outside of the class instance).
+The binding flag you will need is: System.Reflection.BindingFlags.NonPublic
+
+typeof(MyType).GetField("fieldName", BindingFlags.NonPublic | BindingFlags.Instance)
+
+
+You can do it just like with a property:
+FieldInfo fi = typeof(Foo).GetField("_bar", BindingFlags.NonPublic | BindingFlags.Instance);
+if (fi.GetCustomAttributes(typeof(SomeAttribute)) != null)
+    ...
+
+
+Use BindingFlags.NonPublic and BindingFlags.Instance flags
+FieldInfo[] fields = myType.GetFields(
+                         BindingFlags.NonPublic | 
+                         BindingFlags.Instance);
+
+
+One thing that you need to be aware of when reflecting on private members is that if your application is running in medium trust (as, for instance, when you are running on a shared hosting environment), it won't find them -- the BindingFlags.NonPublic option will simply be ignored.
+
+I came across this while searching for this on google so I realise I'm bumping an old post. However the GetCustomAttributes requires two params.
+typeof(Foo).GetFields(BindingFlags.NonPublic | BindingFlags.Instance)
+.Where(x => x.GetCustomAttributes(typeof(SomeAttribute), false).Length > 0);
+
+The second parameter specifies whether or not you wish to search the inheritance hierarchy
+
+Get private variable's value using Reflection:
+var _barVariable = typeof(Foo).GetField("_bar", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(objectForFooClass);
+
+Set value for private variable using Reflection:
+typeof(Foo).GetField("_bar", BindingFlags.NonPublic | BindingFlags.Instance).SetValue(objectForFoocClass, "newValue");
+
+Where objectForFooClass is a non null instance for the class type Foo.
+
+I use this method personally
+if (typeof(Foo).GetFields(BindingFlags.NonPublic | BindingFlags.Instance).Any(c => c.GetCustomAttributes(typeof(SomeAttribute), false).Any()))
+{ 
+    // do stuff
+}
+
+
+Here is some extension methods for simple get and set private fields and properties (properties with setter):
+usage example:
+
+    public class Foo
+    {
+        private int Bar = 5;
+    }
+
+    var targetObject = new Foo();
+    var barValue = targetObject.GetMemberValue("Bar");//Result is 5
+    targetObject.SetMemberValue("Bar", 10);//Sets Bar to 10
+
+
+Code:
+    /// <summary>
+    /// Extensions methos for using reflection to get / set member values
+    /// </summary>
+    public static class ReflectionExtensions
+    {
+        /// <summary>
+        /// Gets the public or private member using reflection.
+        /// </summary>
+        /// <param name="obj">The source target.</param>
+        /// <param name="memberName">Name of the field or property.</param>
+        /// <returns>the value of member</returns>
+        public static object GetMemberValue(this object obj, string memberName)
+        {
+            var memInf = GetMemberInfo(obj, memberName);
+
+            if (memInf == null)
+                throw new System.Exception("memberName");
+
+            if (memInf is System.Reflection.PropertyInfo)
+                return memInf.As<System.Reflection.PropertyInfo>().GetValue(obj, null);
+
+            if (memInf is System.Reflection.FieldInfo)
+                return memInf.As<System.Reflection.FieldInfo>().GetValue(obj);
+
+            throw new System.Exception();
+        }
+
+        /// <summary>
+        /// Gets the public or private member using reflection.
+        /// </summary>
+        /// <param name="obj">The target object.</param>
+        /// <param name="memberName">Name of the field or property.</param>
+        /// <returns>Old Value</returns>
+        public static object SetMemberValue(this object obj, string memberName, object newValue)
+        {
+            var memInf = GetMemberInfo(obj, memberName);
+
+
+            if (memInf == null)
+                throw new System.Exception("memberName");
+
+            var oldValue = obj.GetMemberValue(memberName);
+
+            if (memInf is System.Reflection.PropertyInfo)
+                memInf.As<System.Reflection.PropertyInfo>().SetValue(obj, newValue, null);
+            else if (memInf is System.Reflection.FieldInfo)
+                memInf.As<System.Reflection.FieldInfo>().SetValue(obj, newValue);
+            else
+                throw new System.Exception();
+
+            return oldValue;
+        }
+
+        /// <summary>
+        /// Gets the member info
+        /// </summary>
+        /// <param name="obj">source object</param>
+        /// <param name="memberName">name of member</param>
+        /// <returns>instanse of MemberInfo corresponsing to member</returns>
+        private static System.Reflection.MemberInfo GetMemberInfo(object obj, string memberName)
+        {
+            var prps = new System.Collections.Generic.List<System.Reflection.PropertyInfo>();
+
+            prps.Add(obj.GetType().GetProperty(memberName,
+                                               System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance |
+                                               System.Reflection.BindingFlags.FlattenHierarchy));
+            prps = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Where( prps,i => !ReferenceEquals(i, null)));
+            if (prps.Count != 0)
+                return prps[0];
+
+            var flds = new System.Collections.Generic.List<System.Reflection.FieldInfo>();
+
+            flds.Add(obj.GetType().GetField(memberName,
+                                            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance |
+                                            System.Reflection.BindingFlags.FlattenHierarchy));
+
+            //to add more types of properties
+
+            flds = System.Linq.Enumerable.ToList(System.Linq.Enumerable.Where(flds, i => !ReferenceEquals(i, null)));
+
+            if (flds.Count != 0)
+                return flds[0];
+
+            return null;
+        }
+
+        [System.Diagnostics.DebuggerHidden]
+        private static T As<T>(this object obj)
+        {
+            return (T)obj;
+        }
+    }
+

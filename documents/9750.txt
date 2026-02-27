@@ -1,0 +1,248 @@
+How can I reverse the ON bits in a byte?
+language-agnostic
+I was reading Joel's book where he was suggesting as interview question:
+
+Write a program to reverse the "ON" bits in a given byte.
+
+I only can think of a solution using C. 
+Asking here so you can show me how to do in a Non C way (if possible)
+
+
+What specifically does that question mean?
+Does reverse mean setting 1's to 0's and vice versa?
+Or does it mean 00001100 --> 00110000 where you reverse their order in the byte? Or perhaps just reversing the part that is from the first 1 to the last 1? ie. 00110101 --> 00101011?
+Assuming it means reversing the bit order in the whole byte, here's an x86 assembler version:
+; al is input register
+; bl is output register
+
+xor bl, bl      ; clear output
+
+; first bit
+rcl al, 1       ; rotate al through carry
+rcr bl, 1       ; rotate carry into bl
+
+; duplicate above 2-line statements 7 more times for the other bits
+
+not the most optimal solution, a table lookup is faster.
+
+Reversing the order of bits in C#:
+byte ReverseByte(byte b)
+{
+    byte r = 0;
+    for(int i=0; i<8; i++)
+    {
+        int mask = 1 << i;
+        int bit = (b & mask) >> i;
+        int reversedMask = bit << (7 - i);
+        r |= (byte)reversedMask;
+    }
+    return r;
+}
+
+I'm sure there are more clever ways of doing it but in that precise case, the interview question is meant to determine if you know bitwise operations so I guess this solution would work.
+In an interview, the interviewer usually wants to know how you find a solution, what are you problem solving skills, if it's clean or if it's a hack. So don't come up with too much of a clever solution because that will probably mean you found it somewhere on the Internet beforehand. Don't try to fake that you don't know it neither and that you just come up with the answer because you are a genius, this is will be even worst if she figures out since you are basically lying.
+
+The classic Bit Hacks page has several (really very clever) ways to do this, but it's all in C. Any language derived from C syntax (notably Java) will likely have similar methods. I'm sure we'll get some Haskell versions in this thread ;)
+
+
+byte ReverseByte(byte b)
+  {
+      return b ^ 0xff;
+  }
+
+That works if ^ is XOR in your language, but not if it's AND, which it often is.
+
+
+What specifically does that question mean?
+
+Good question.  If reversing the "ON" bits means reversing only the bits that are "ON", then you will always get 0, no matter what the input is.  If it means reversing all the bits, i.e. changing all 1s to 0s and all 0s to 1s, which is how I initially read it, then that's just a bitwise NOT, or complement.  C-based languages have a complement operator, ~, that does this.  For example:
+unsigned char b = 102;      /* 0x66, 01100110 */
+unsigned char reverse = ~b; /* 0x99, 10011001 */
+
+
+If you're talking about switching 1's to 0's and 0's to 1's, using Ruby:
+n = 0b11001100
+~n
+
+If you mean reverse the order:
+n = 0b11001100
+eval("0b" + n.to_s(2).reverse)
+
+If you mean counting the on bits, as mentioned by another user:
+n = 123
+count = 0
+0.upto(8) { |i| count = count + n[i] }
+
+â¥ Ruby
+
+I'm probably misremembering, but I thought that Joel's question was about counting the "on" bits rather than reversing them.
+
+Since the question asked for a non-C way, here's a Scheme implementation, cheerfully plagiarised from SLIB:
+(define (bit-reverse k n)
+  (do ((m (if (negative? n) (lognot n) n) (arithmetic-shift m -1))
+       (k (+ -1 k) (+ -1 k))
+       (rvs 0 (logior (arithmetic-shift rvs 1) (logand 1 m))))
+      ((negative? k) (if (negative? n) (lognot rvs) rvs))))
+
+(define (reverse-bit-field n start end)
+  (define width (- end start))
+  (let ((mask (lognot (ash -1 width))))
+    (define zn (logand mask (arithmetic-shift n (- start))))
+    (logior (arithmetic-shift (bit-reverse width zn) start)
+            (logand (lognot (ash mask start)) n))))
+
+Rewritten as C (for people unfamiliar with Scheme), it'd look something like this (with the understanding that in Scheme, numbers can be arbitrarily big):
+int
+bit_reverse(int k, int n)
+{
+    int m = n < 0 ? ~n : n;
+    int rvs = 0;
+    while (--k >= 0) {
+        rvs = (rvs << 1) | (m & 1);
+        m >>= 1;
+    }
+    return n < 0 ? ~rvs : rvs;
+}
+
+int
+reverse_bit_field(int n, int start, int end)
+{
+    int width = end - start;
+    int mask = ~(-1 << width);
+    int zn = mask & (n >> start);
+    return (bit_reverse(width, zn) << start) | (~(mask << start) & n);
+}
+
+
+And here's a version directly cut and pasted from OpenJDK, which is interesting because it involves no loop. On the other hand, unlike the Scheme version I posted, this version only works for 32-bit and 64-bit numbers. :-)
+32-bit version:
+public static int reverse(int i) {
+    // HD, Figure 7-1
+    i = (i & 0x55555555) << 1 | (i >>> 1) & 0x55555555;
+    i = (i & 0x33333333) << 2 | (i >>> 2) & 0x33333333;
+    i = (i & 0x0f0f0f0f) << 4 | (i >>> 4) & 0x0f0f0f0f;
+    i = (i << 24) | ((i & 0xff00) << 8) |
+        ((i >>> 8) & 0xff00) | (i >>> 24);
+    return i;
+}
+
+64-bit version:
+public static long reverse(long i) {
+    // HD, Figure 7-1
+    i = (i & 0x5555555555555555L) << 1 | (i >>> 1) & 0x5555555555555555L;
+    i = (i & 0x3333333333333333L) << 2 | (i >>> 2) & 0x3333333333333333L;
+    i = (i & 0x0f0f0f0f0f0f0f0fL) << 4 | (i >>> 4) & 0x0f0f0f0f0f0f0f0fL;
+    i = (i & 0x00ff00ff00ff00ffL) << 8 | (i >>> 8) & 0x00ff00ff00ff00ffL;
+    i = (i << 48) | ((i & 0xffff0000L) << 16) |
+        ((i >>> 16) & 0xffff0000L) | (i >>> 48);
+    return i;
+}
+
+
+
+I'm probably misremembering, but I
+  thought that Joel's question was about
+  counting the "on" bits rather than
+  reversing them.
+
+Here you go:
+#include <stdio.h>
+
+int countBits(unsigned char byte);
+
+int main(){
+  FILE* out = fopen( "bitcount.c" ,"w");
+
+  int i;
+  fprintf(out, "#include <stdio.h>\n#include <stdlib.h>\n#include <time.h>\n\n");
+
+  fprintf(out, "int bitcount[256] = {");
+  for(i=0;i<256;i++){
+    fprintf(out, "%i", countBits((unsigned char)i));
+    if( i < 255 ) fprintf(out, ", ");
+  }
+  fprintf(out, "};\n\n");
+
+  fprintf(out, "int main(){\n");
+
+  fprintf(out, "srand ( time(NULL) );\n");
+  fprintf(out, "\tint num = rand() %% 256;\n");
+  fprintf(out, "\tprintf(\"The byte %%i has %%i bits set to ON.\\n\", num, bitcount[num]);\n");
+
+  fprintf(out, "\treturn 0;\n");
+  fprintf(out, "}\n");
+  fclose(out);
+
+  return 0;
+}
+
+int countBits(unsigned char byte){
+  unsigned char mask = 1;
+  int count = 0;
+  while(mask){
+    if( mask&byte ) count++;
+    mask <<= 1;
+  }
+  return count;
+}
+
+
+Here's the obligatory Haskell soln for complementing the bits, it uses the library function, complement:
+import Data.Bits
+import Data.Int
+
+i = 123::Int
+i32 = 123::Int32
+i64 = 123::Int64
+var2 = 123::Integer
+
+test1 = sho i
+test2 = sho i32
+test3 = sho i64
+test4 = sho var2 -- Exception
+
+sho i = putStrLn $ showBits i ++ "\n" ++ (showBits $complement i)
+showBits  v = concatMap f (showBits2 v) where
+   f False = "0"
+   f True  = "1"
+showBits2 v = map (testBit v) [0..(bitSize v - 1)]
+
+
+I'd modify palmsey's second example, eliminating a bug and eliminating the eval:
+n = 0b11001100
+n.to_s(2).rjust(8, '0').reverse.to_i(2)
+
+The rjust is important if the number to be bitwise-reversed is a fixed-length bit field -- without it, the reverse of 0b00101010 would be 0b10101 rather than the correct 0b01010100.  (Obviously, the 8 should be replaced with the length in question.)  I just got tripped up by this one.
+
+If the question means to flip all the bits, and you aren't allowed to use C-like operators such as XOR and NOT, then this will work:
+bFlipped = -1 - bInput;
+
+
+I claim trick question. :) Reversing all bits means a flip-flop, but only the bits that are on clearly means:
+return 0;
+
+
+pseudo code..
+while (Read())
+  Write(0);
+
+
+
+Asking here so you can show me how to do in a Non C way (if possible)
+
+Say you have the number 10101010. To change 1s to 0s (and vice versa) you just use XOR:
+ 10101010
+^11111111
+ --------
+ 01010101
+
+Doing it by hand is about as "Non C" as you'll get.
+However from the wording of the question it really sounds like it's only turning off "ON" bits... In which case the answer is zero (as has already been mentioned) (unless of course the question is actually asking to swap the order of the bits).
+
+Reversing the bits.
+For example we have a number represented by 01101011 . Now if we reverse the bits then this number will become 11010110. Now to achieve this you should first know how to do swap two bits in a number.
+Swapping two bits in a  number:-
+XOR both the bits with one and see if results are different. If they are not then both the bits are same otherwise XOR both the bits with XOR and save it in its original number;
+Now for reversing the number 
+FOR I less than Numberofbits/2
+   swap(Number,I,NumberOfBits-1-I);

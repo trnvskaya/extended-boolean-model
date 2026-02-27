@@ -1,0 +1,68 @@
+JSTL forEach tag: problems with enumeration, and with understanding how it should work
+java jsp jstl
+
+I've experienced rather strange behavior of JSTL forEach tag.
+I have some bean called SessionBean:
+public class SessionBean {
+  private Collection<MyObject> objects;
+  public Collection<MyObject> getObjects() {return objects;}
+  ...
+}
+
+And a simple JSP page like that:
+<%@page contentType="text/html"%>
+<%@page pageEncoding="UTF-8"%>
+<%@taglib prefix="f" uri="http://java.sun.com/jsf/core"%>
+<%@taglib prefix="h" uri="http://java.sun.com/jsf/html"%>
+<%@taglib prefix="c" uri="http://java.sun.com/jsp/jstl/core" %>
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
+"http://www.w3.org/TR/html4/loose.dtd">
+<html>
+<body>
+    <f:view>
+        <h:form>
+            <c:forEach var="myObject" items="#{SessionBean.objects}">
+                <h:outputText value="#{myObject}" /> <br />
+            </c:forEach>
+        </h:form>
+    </f:view>
+</body>
+
+And, it doesn't work. Exeption thrown is
+
+javax.servlet.jsp.JspTagException: Don't know how to iterate over supplied "items" in <forEach>
+        at org.apache.taglibs.standard.tag.common.core.ForEachSupport.toForEachIterator(ForEachSupport.java:255)
+        at org.apache.taglibs.standard.tag.common.core.ForEachSupport.supportedTypeForEachIterator(ForEachSupport.java:219)
+   ....
+
+Why?
+And then I change items="#{SessionBean.objects}" to items="${SessionBean.objects}", and there's no exception. Except for MyObjects aren't printed.
+Then, I make the same change to <h:outputText value="#{myObject}" />, and it's invalid value for this attribute.
+Finally, replacing JSF outputText tag with just ${myObject} works as expected.
+Could somebody explain, what happens here on each phase, please?
+U: SessionBean is managed by JSF, and surely was created, for it performs some actions in the header.
+RESOLUTION: The problem proved to be due to incompatibility between JSTL and JSF in J2EE 1.4. Switching to J2EE 5 made the first variant work just fine.
+Thanks!
+
+
+This article explains the difference between the unified EL and the EL. Here is a snippet
+
+Evaluation of EL
+Evaluation of EL is categorized as immediate evaluation and deferred evaluation. Immediate evaluation means a JSP page evaluates the expression when the page is rendered. With immediate evaluation, all values are always read-only. JSP EL expressions take the form of ${imExpr}. JSP expressions are evaluated immediately.
+Deferred evaluation means that the technology using the unified EL takes over the responsibility of evaluating the expression from the JSP engine and evaluates the expression at the appropriate time during the page lifecycle. The EL takes control from the JSP container to evaluate the expression at the appropriate time. JSF EL expressions take the form of #{defExpr}. JSF expressions work in this way.
+The following example shows a JSF inputText tag, which represents a text field component into which a user enters a value. The inputText tag's value attribute references an expression that points to the name property of the book bean.
+
+<h:inputText id="name" value="#{student.name}"/>
+
+
+For an initial request of the page containing this tag, the JSF implementation evaluates the #{student.name} expression during the "render response" phase of the lifecycle. During this phase, the expression merely accesses the value of quantity from the book bean, as is done in immediate evaluation.
+For a postback, the implementation evaluates the expression during the "apply request values," "process validations," and "update model" phases, during which the value is retrieved from the request, validated, and propagated to the book bean.
+
+I am wondering if the problem is from the fact that an instance of SessionBean was not created?
+Try this:
+<jsp:useBean class="packagename.SessionBean" id="sb"/>
+<c:forEach var="myObject" items="${sb.objects}">
+            <h:outputText value="${myObject}" /> <br />
+</c:forEach>
+
+[Update] I wonder if this article might help then. It explains how the two EL's work together.

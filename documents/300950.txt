@@ -1,0 +1,119 @@
+How can i make a reusable labelFunction for Flex Datagrid?
+flex datagrid labelfunction
+I have a label function like :
+private function formatDate (item:Object, column:DataGridColumn):String
+{
+    var df:DateFormatter = new DateFormatter();
+    df.formatString = "MM/DD/YY";
+
+    if (column.dataField == "startDate") {
+    	return df.format(item.startDate);
+    }
+
+    return "ERR";
+}
+
+Which I use in a datacolumn by using labelFunction.
+This works just fine if my data field is called 'startDate'. I want to make this function generic so I can use it everywhere.
+How can I do this. i think i need to use some kind of 'reflection' - or perhaps another approach altogether?
+
+
+You can define another function, let's call it partial that binds some extra arguments to your function:
+function partial( func : Function, ...boundArgs ) : Function {
+  return function( ...dynamicArgs ) : * {
+    return func.apply(null, boundArgs.concat(dynamicArgs))
+  }
+}
+
+Then you change your function like this:
+private function formatDate( dataField : String, item : Object, column : DataGridColumn ) : String {
+  var df : DateFormatter = new DateFormatter();
+
+  df.formatString = "MM/DD/YY";
+
+  if ( column.dataField == dataField ) {
+    return df.format(item[dataField]);
+  }
+
+  return "ERR";
+}
+
+Notice that I have added a new argument called dataField first in the argument list, and replaced all references to "startDate" with that argument.
+And use it like this:
+var startDateLabelFunction : Function = partial(formatDate, "startDate");
+var endDateLabelFunction   : Function = partial(formatDate, "endDate");
+
+The partial function returns a new function that calls the original function with the parameters from the call to partial concatenated with the parameters to the new function... you with me? Another way of putting it is that it can return a new function where N of the arguments are pre-bound to specific values.
+Let's go through it step by step:
+partial(formatDate, "startDate") returns a function that looks like this:
+function( ...dynamicArgs ) : * {
+  return func.apply(null, boundArgs.concat(dynamicArgs));
+}
+
+but the func and boundArgs are what you passed as arguments to partial, so you could say that it looks like this:
+function( ...dynamicArgs ) : * {
+  return formatDate.apply(null, ["startDate"].concat(dynamicArgs));
+}
+
+which, when it is called, will be more or less the same as this
+function( item : Object, column : DataGridColumn ) : * {
+  return formatDate("startDate", item, column);
+}
+
+Tada!
+
+You can make the function generic using the dataField attribute of the column as the key into your item.
+private function formatDate (item:Object, column:DataGridColumn):String
+{
+    var df:DateFormatter = new DateFormatter();
+    df.formatString = "MM/DD/YY";
+
+    var value:object = item[column.dataField];
+
+    return df.format(value);
+}
+
+-Ben
+
+here is more generic way:
+public static function getDateLabelFunction(dateFormatString:String=null, mxFunction:Boolean = false) : Function {
+        var retf:Function;
+
+        // defaults
+        if(dateFormatString == null) dateFormatString = "MM/DD/YY";
+        if(mxFunction) {
+            retf = function  (item:Object, column:DataGridColumn):String
+            {
+                var df:DateFormatter = new DateFormatter();
+                df.formatString = dateFormatString;
+
+                var value:Object = item[column.dataField];
+
+                return df.format(value);
+            }
+        }else {
+            retf = function  (item:Object, column:GridColumn):String
+            {
+                var df:DateFormatter = new DateFormatter();
+                df.formatString = dateFormatString;
+
+                var value:Object = item[column.dataField];
+
+                return df.format(new Date(value));
+            }
+        }
+
+        return retf;
+
+    }
+
+Usage (Spark DataGrid)
+var labelFunction = getDateLabelFunction();
+
+or for MX Datagrid 
+var labelFunction = getDateLabelFunction(null,true);
+
+to pass custom Date Format String:
+var labelFunction = getDateLabelFunction("DD/MM/YYYY",true);
+
+Default is a "MM/DD/YYYY";

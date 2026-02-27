@@ -1,0 +1,194 @@
+Could a truly random number be generated using pings to psuedo-randomly selected IP addresses?
+algorithm theory random
+The question posed came about during a 2nd Year Comp Science lecture while discussing the impossibility of generating numbers in a deterministic computational device.
+This was the only suggestion which didn't depend on non-commodity-class hardware.
+Subsequently nobody would put their reputation on the line to argue definitively for or against it.  
+Anyone care to make a stand for or against.  If so, how about a mention as to a possible implementation?
+
+
+Eh, I find that this kind of question leads into discussions about the meaning of 'truly random' pretty quickly.
+I think that measuring pings would yield decent-quality random bits, but at an insufficient rate to be of much use (unless you were willing to do some serious DDOSing).
+And I don't see that it would be any more random than measuring analogue/mechanical properties of the computer, or the behaviour of the meatbag operating it.
+(edit) On a practical note, this approach opens you up to the possibility of someone on your network manipulating your 'random' number generator.
+
+Though i cant definitively site for or against, this implementation has its issues.
+Where are these IP Addresses coming from, if they are randomly selected, what happens when they do not reply or are late in replying, does that mean the random number will be slower to appear.
+Also, even if you would make a visual graph of 100.000 results and calculated that there are no or few correlations between the numbers, does not mean it is truly random. As explained by dilbert :)
+
+Part of a good random number generator is equal probabilities of all numbers as n -> infinity.
+So if you are planning to generate random bytes, then with sufficient data from a good rng, each byte should have an equal probability of being returned.  Further, there should be no pattern or predictibiltiy (spikes in probability during certain time periods) of certain numbers being returned.  
+I am not too sure with using ping what you would be measuring to get the random variable, is it response time?  If so, you can be pretty sure that some response times, or ranges of response times, will be more frequent than others and hence would make a potentially insecure random number generator.
+
+It doesn't strike me as a good source of randomness.  
+What metric would you use -- the obvious one is response time, but the range of values you can reasonably expect is small: a few tens of milliseconds to a few thousand.  The response times themselves will follow a bell curve and not be randomly distributed across any interval (how would you choose the interval?) so you would have to try and select a few 'random' bits from the numbers.  
+The LSB might give you a random bit stream, but you would have to consider clock granularity issues - maybe due to how interrupts work you would always get multiples of 2ms on some systems.
+There are probably much better 'interesting' ways of getting random bits -- maybe google for a random word, grab the first page and choose the Nth bit from the page.
+
+It's not as good as using atmospheric noise but it's still truly random since it depends on the characteristics of the network which is notorious for random non-repeatable behavior.
+See Random.org for more on randomness.
+Here's an attempt at an implementation:
+@ips  : list = getIpAddresses();
+@rnd         = PseudorandomNumberGenerator(0 to (ips.count - 1));
+
+@getTrueRandomNumber() { ping(ips[rnd.nextNumber()]).averageTime }
+
+
+I guess you could. A couple things to watch out for:
+
+Even if pinging random IP addresses, the first few hops (from you to the first real L3 router in the ISP network) will be the same for every packet. This puts a lower bound on the round trip time, even if you ping something in a datacenter in that first Point of Presence. So you have to be careful about normalizing the timing, there is a lower bound on the round trip.
+You'd also have to be careful about traffic shaping in the network. A typical leaky bucket implementation in a router releases N bytes every M microseconds, which effectively perturbs your timing into specific timeslots rather than a continuous range of times. So you might need to discard the low order bits of your timestamp.
+
+However I would disagree with the premise that there are not good sources of entropy in commodity hardware. Many x86 chipsets for the last few years have included random number generators. The ones I am familiar with use relatively sensitive ADCs to measure temperature in two different locations on the die, and subtract them. The low order bits of this temperature differential can be shown (via Chi-squared analysis) to be strongly random.  As you increase the processing load on the system the overall temperature goes up, but the differential between two areas of the die remains uncorrelated and unpredictable.
+
+The approach of measuring something to generate a random seed appears to be a pretty good one.  The O'Reilly book Practical Unix and Internet Security gives a few similar additional methods of determining a random seed, such as asking the user to type a few keystrokes, and then measuring the time between keystrokes.  (The book notes that this technique is used by PGP as a source of its randomness.)
+I wonder if the current temperature of a system's CPU (measured out to many decimal places) could be a viable component of a random seed.  This approach would have the advantage of not needing to access the network (so the random generator wouldn't become unavailable when the network connection goes down).  
+However, it's probably not likely that a CPU's internal sensor could accurately measure the CPU temperature out to enough decimal places to make the value truly viable as a random number seed; at least, not with "commodity-class hardware," as mentioned in the question!
+
+I'll put my rep on the line (at least, 2 points of it per downvote).
+No.
+A malicious machine on your network could use ARP spoofing (or a number of other techniques) to intercept your pings and reply to them after certain periods. They would then not only know what your random numbers are, they would control them.
+Of course there's still the question of how deterministic your local network is, so it might not be as easy as all that in practice. But since you get no benefit from pinging random IPs on the internet, you might just as well draw entropy from ethernet traffic. 
+Drawing entropy from devices attached to your machine is a well-studied principle, and the pros and cons of various kinds of devices and methods of measuring can be e.g. stolen from the implementation of /dev/random.
+[Edit: as a general principle, when working in the fundamentals of security (and the only practical needs for significant quantities of truly random data are security-related) you MUST assume that a fantastically well-resourced, determined attacker will do everything in their power to break your system.
+For practical security, you can assume that nobody wants your PGP key that badly, and settle for a trade-off of security against cost. But when inventing algorithms and techniques, you need to give them the strongest security guarantees that they could ever possibly face. Since I can believe that someone, somewhere, might want someone else's private key badly enough do build this bit of kit to defeat your proposal, I can't accept it as an advance over current best practice. AFAIK /dev/random follows fairly close to best practice for generating truly random data on a cheap home PC]
+[Another edit: it has suggested in comments that (1) it is true of any TRNG that the physical process could be influenced, and (2) that security concerns don't apply here anyway.
+The answer to (1) is that it's possible on any realistic hardware to do so much better than ping response times, and gather more entropy faster, that this proposal is a non-solution. In CS terms, obviously you can't generate random numbers on a deterministic machine, which is what provoked the question. But then in CS terms a machine with any external input stream is non-deterministic by definition, so if we're talking about ping then we aren't talking about deterministic machines. So it makes sense to look at the real inputs that real machines have, and consider them as sources of randomness. No matter what your machine, raw ping times are not high on the list of sources available, so they can be ruled out before worrying about good the better ones are. Assuming that a network is not subverted is a much bigger (and unnecessary) assumption than assuming that your own hardware is not subverted.
+The answer to (2) is philosophical. If you don't mind your random numbers having the property that they can be chosen at whim instead of by chance, then this proposal is OK. But that's not what I understand by the term 'random'. Just because something is inconsistent doesn't mean it's necessarily random.
+Finally, to address the implementation details of the proposal as requested: assuming you accept ping times as random, you still can't use the unprocessed ping times as RNG output. You don't know their probability distribution, and they certainly aren't uniformly distributed (which is normally what people want from an RNG). 
+So, you need to decide how many bits of entropy per ping you are willing to rely on. Entropy is a precisely-defined mathematical property of a random variable which can reasonably be considered a measure of how 'random' it actually is. In practice, you find a lower bound you're happy with. Then hash together a number of inputs, and convert that into a number of bits of output less than or equal to the total relied-upon entropy of the inputs. 'Total' doesn't necessarily mean sum: if the inputs are statistically independent then it is the sum, but this is unlikely to be the case for pings, so part of your entropy estimate will be to account for correlation. The sophisticated big sister of this hashing operation is called an 'entropy collector', and all good OSes have one.
+If you're using the data to seed a PRNG, though, and the PRNG can use arbitrarily large seed input, then you don't have to hash because it will do that for you. You still have to estimate entropy if you want to know how 'random' your seed value was - you can use the best PRNG in the world, but its entropy is still limited by the entropy of the seed.]
+
+Random numbers are too important to be left to chance.
+Or external influence/manipulation.
+
+It seems to me that true randomness is ineffable - there is no way to know whether a sequence is random, since by definition it can contain anything no matter how improbable. Guaranteeing a particular distribution pattern reduces the randomness. The word "pattern" is a bit of a giveaway.
+    I MADE U A RANDOM NUMBER
+           BUT I EATED IT
+
+
+Short answer
+Using ping timing data by itself would not be truly random, but it can be used as a source of entropy which can then be used to generate truly random data.
+Longer version
+How random are ping times?
+By itself, timing data from network operations (such as ping) would not be uniformly distributed.  (And the idea of selecting random hosts is not practical - many will not respond at all, and the differences between hosts can be huge, with gaps between ranges of response time - think satellite connections).
+However, while the timing will not be well distributed, there will be some level of randomness in the data.  Or to put it another way, a level of information entropy is present.  It is a fine idea to feed the timing data into a random number generator to seed it.  So what level of entropy is present?
+For network timing data of say around 50ms, measured to the nearest 0.1ms, with a spread of values of 2ms, you have about 20 values.  Rounding down to the nearest power of 2 (16 = 2^4) you have 4 bits of entropy per timing value.  If it is for any kind of secure application (such as generating cryptographic keys) then I would be conservative and say it was only 2 or 3 bits of entropy per reading.  (Note that I've done a very rough estimate here, and ignored the possibility of attack).
+How to generate truly random data
+For true random numbers, you need to send the data into something designed along the lines of /dev/random that will collect the entropy, distributing it within a data store (using some kind of hash function, usually a secure one).  At the same time the entropy estimate is increased.  So for a 128 bit AES key, 64 ping timings would be required before the entropy pool had enough entropy.  
+To be more robust, you could then add timing data from keyboard and mouse usage, hard disk response times, motherboard sensor data (eg temperature) etc.  It increases the rate of entropy collection, and makes it hard for an attacker to monitor all sources of entropy.  And indeed this is what is done with modern systems. The full list of MS Windows entropy sources is listed in the second comment of this post.
+More reading
+For discussion of the (computer security) attacks on random number generators, and the design of a cryptographically secure random number generator, you could do worse than read the yarrow paper by Bruce Schneier and John Kelsey.  (Yarrow is used by BSD and Mac OS X systems).
+
+The best source of randomness on commodity hardware I've seen, was a guy who removed a filter or something from his webcam, put opaque glue on the lens, and was then able to easily detect individual white pixels from cosmic rays striking the CCD.   These are as close to perfectly random as possible, and are protected from external snooping by quantum effects.
+
+I would sooner use something like ISAAC as a stronger PRNG before trusting round trip pings as entropy. As others have said, it would just be too easy for someone to not only guess your numbers, but also possibly control them to various degrees.
+Other great sources of entropy exist, which others have mentioned. One that was not mentioned (which might not be practical) is sampling noise from the on board audio device.. which is usually going to be a little noisy even if no microphone is connected to it.
+I went 9 rounds with trying to come up with a strong (and fast) PRNG for a client/server RPC mechanism I was writing. Both sides had an identical key, consisting of 1024 lines of 32 character ciphers. The client would send AUTH xx, the server would return AUTH yy .. and both sides knew which two lines of the key to use to produce the blowfish secret (+ salt). Server would then send a SHA-256 digest of the entire key (encrypted), client knew it was talking to something that had the correct key .. session continued. Yeah, very weak protection for man in the middle, but a public key was out of the question for how the device was being used.
+So, you had a non blocking server that had to handle up to 256 connections .. not only did the PRNG have to be strong, it had to be fast. It wasn't such a hardship to use slower methods to gather entropy in the client, but that could not be afforded in the server.
+So, I have to ask regarding your idea .. how practical would it be? 
+
+Randomness is not a binary property -- it's a value between 0 and 1 that describes how difficult it is to predict the next value in a stream.
+Asking "how random can my values be if I base them on pings?" is actually asking "how random are pings?". You can estimate that by gathering a large enough set of data (1 mln pings for example) and mapping their distribution curve and behavior in time. If the distribution is flat and the behavior is difficult to predict, the data seems more random. The more bumpy distribution or predictable behavior suggest lower randomness.
+You should also consider the sample resolution. I could imagine the results being rounded in some way to a milisecond, so with pings you could have integer values between 0 and 500. That's not a lot of resolution.
+On the practical side, I would recommend against it, since pings can be predicted and manipulated, further reducing their randomness.
+Generally, I suggest against "rolling your own" randomness generators, encryption methods and hashing algorithms. As fun as it seems, it's mostly a lot of very intimidating math.
+As to how to build a really good entropy generator -- I think that's probably going to have to be a sealed box that outputs some sort of result of interactions on atomic or sub-atomic level. I mean, if you're using a source of entropy that the enemy can easily read too, he only needs to find out your algorythm. Any form of connection is a possible attack vector, so you should place the source of entropy as close to the service that consumes it as possible.
+
+No.
+Unplug the network cable (or /etc/init.d/networking stop) and the entropy basically drops to zero.
+Perform a Denial-Of-Service attack on the machine it's pinging and you also get predictable results (the ping-timeout value)
+
+No mathmatical computation can produce a random result but in the "real world" computers don't exactly just crunch numbers... With a little bit of creativity it should be possible to produce random results of the kind where there is no known method of reproducing or predicting exact outcomes.
+One of the easiest to implement ideas I've seen which works universally on all systems is to use static from the computers sound card line in/mic port.
+Other ideas include thermal noise and low level timing of cache lines. Many modern PCs with TPM chips have encryption quality hardware random number generators already onboard.
+My kneejerk reaction to ping (esp if using ICMP) is that your cheating too blatently.  At that point you might as well whip out a giger counter and use background radiation as your random source.
+
+Yes, it's possible, but... the devil's in the details.
+If you're going to generate a 32-bit integer, you need to gather >32 bits of entropy (and use a sufficient mixing function to get that entropy spread around, but that's known and doable).  The big question that is:
+how much entropy do ping times have?
+The answer to this question depends on all sorts of assumptions about the network and your attack model, and there's different answers in different circumstances.  
+If attackers are able to totally control ping times, you get 0 bits of entropy per ping, and you can't ever total 32-bits of entropy, no matter how much you mix.  If they have less than perfect control over ping times, you'll get some entropy, and (if you don't overestimate the amount of entropy you're gathering) will get perfectly random 32-bit numbers.
+
+You can use the XKCD method:
+
+
+I got some code that creates random numbers with traceroute.  I also have a program that does it using ping.  I did it over a year ago for a class project.  All it does is run traceroute on and address and it takes the least sig digit of the ms times.  It works pretty well at getting random numbers but I really don't know how close it is to true random.
+Here is a list of 8 numbers that I got when I ran it.  
+
+455298558263758292242406192
+506117668905625112192115962
+805206848215780261837105742
+095116658289968138760389050
+465024754117025737211084163
+995116659108459780006127281
+814216734206691405380713492
+124216749135482109975241865
+
+#include <iostream>
+#include <string>
+#include <stdio.h>
+#include <cstdio>
+#include <stdlib.h>
+#include <vector>
+#include <fstream>
+
+using namespace std;
+
+int main()
+{
+system("traceroute -w 5 www.google.com >> trace.txt");
+
+string fname = "trace.txt";
+ifstream in;
+string temp;
+
+vector<string> tracer;
+vector<string> numbers;
+
+in.open(fname.c_str());
+while(in>>temp)
+tracer.push_back(temp);
+
+system("rm trace.txt");
+
+unsigned index = 0;
+
+string a = "ms";
+while(index<tracer.size())
+{
+if(tracer[index]== a)
+numbers.push_back(tracer[index-1]);
+++index;
+}
+
+
+std::string rand;
+
+for(unsigned i = 0 ; i < numbers.size() ; ++i)
+{
+std::string temp = numbers[i];
+int index = temp.size();
+rand += temp[index - 1];
+}
+
+cout<<rand<<endl;
+
+return 0;
+
+}
+
+
+Very simply, since networks obey prescribed rules, the results are not random.
+The webcam idea sounds (slightly) reasonable.  Linux people often recommend simply using the random noise from a soundcard which has no mic attached.
+
+If you want commodity hardware, your sound card should pretty much do it. Just turn up the volume on an analog input and you have a cheap white noise source. Cheap randomness without the need for a network. 
+
+YouTube shows a device in action: http://www.youtube.com/watch?v=7n8LNxGbZbs
+Random is, if nobody can predict the next state. 
+
+here is my suggestion :
+1- choose a punch of websites that are as far away from your location as possible. e.g. if you are in US try some websites that have their server IPs in malasia , china , russia , India ..etc . servers with high traffic are better.
+2- during times of high internet traffic in your country (in my country it is like 7 to 11 pm) ping those websites many many many times ,take each ping result (use only the integer value) and calculate modulus 2 of it ( i.e from each ping operation you get one bit : either 0 or 1).
+3- repeat the process for several days ,recording the results.
+4- collect all the bits you got from all your pings (probably you will get hundreds of thousands of bits ) and choose from them your bits . (maybe you wanna choose your bits by using some data from the same method mentioned above :)  )
+BE CAREFUL : in your code you should check for timeout ..etc

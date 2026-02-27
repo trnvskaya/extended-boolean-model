@@ -1,0 +1,50 @@
+Compiler could not choose an overload between interface and exception
+c# .net compiler-construction
+Trying to use an excpetion class which could provide location reference for XML parsing, found an interesting behavior - compiler could not choose between overload which consumes an interface and one which needs System.Exception when I trying to pass XmlReader as a parameter.
+Detais are following:
+//exception overloads:
+public FilterXmlParseException(string message, Exception innerException)
+		: base(message, innerException) { }
+public FilterXmlParseException(string message, IXmlLineInfo lineInfo) {...}
+
+//Usage:
+XmlReader reader = ...
+IXmlLineInfo lineinfo = (IXmlLineInfo)reader;
+
+//fails
+throw new FilterXmlParseException("<Filter> element expected", reader);
+
+//ok
+throw new FilterXmlParseException("<Filter> element expected", lineinfo);
+
+And it fails since it could not select correct overload.But why? We see that XmlReader supports an interface and it is not inherited from System.Exception
+
+
+The line:
+//fails
+throw new FilterXmlParseException("<Filter> element expected", reader);
+
+because XmlReader doesn't implement IXmlLineInfo. I am not sure if your cast works, but the casts are not checked statically. If it actually works, it is because the concrete class (that inherits from XmlReader) implements this interface, but the compiler has no way to know it.
+
+It couldn't choose an overload for the XmlReader call because neither overload is acceptable.  XmlReader does not inherit from Exception, so the first call is invalid.  XmlReader also does not Implement IXmlLineInfo.
+The reason why it works in the second case is that you are forcing the cast.  However, I believe that if you were to actually run that code, it would throw an InvalidCastException.  Read the documentation on XmlReader, and you'll see that the only interface it implements is IDispoable.
+http://msdn.microsoft.com/en-us/library/system.xml.xmlreader.aspx
+
+It looks like it's XmlTextReader that implements IXmlLineInfo, not XmlReader
+http://msdn.microsoft.com/en-us/library/system.xml.ixmllineinfo(VS.71).aspx
+
+You left out the critical part:
+XmlReader reader = XmlTextReader.Create(sreader, readerSettings);
+
+You call a method which returns an XmlTextReader, but the type of your variable is XmlReader.
+Casting happens at runtime, so the runtime value of reader can be cast to IXmlLineInfo, because XmlTextReader supports that interface, even though XmlReader doesnt.
+Overload resoution happens at compile time though, so because XmlReader doesnt support IXmlLineInfo, it cant be matched to the signature.
+You can fix it by writing:
+XmlTextReader reader = (XmlTextReader)XmlTextReader.Create(sreader, readerSettings);
+
+Note that you need a cast because the return type of Create is XmlReader, even if it actually returns a XmlTextReader.
+
+Thanks for the answers.
+I understood that base class does not implement IXmlLineInfo.
+But really i was using XmlTextReader.Create to get an instance of the actual reader.
+So I suppose actual solution is to use XmlTextReader constructor instead of factory method to prevent such confusion

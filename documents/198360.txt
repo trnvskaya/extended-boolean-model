@@ -1,0 +1,67 @@
+Silverlight Hosted in Winforms
+c# javascript wpf winforms silverlight
+I would like to host a silverlight control in winforms via a winforms browser, but for it to work I need some way for the forms to talk to the silverlight, and also the other way around.  Would it be possible to somehow have the two interact with each other using JavaScript as a middleman?  I.e., have the form speak to the browser's javascript, and have that speak to the silverlight control?  Is there a better way?  Or even a way at all?    (other than compiling the code as silverlight and wpf)
+
+
+Silverlight in a winform app just sounds like bad news. It would mean you are running to different CLR's in a single app and would have to deal with alot of added complexity to make it work. If possible consider using the full WPF within your app instead here is a link showing you how.
+
+Have a look at Desklighter. Not exactly what you are looking for but it does proof that it should be possible?
+
+I think using the Windows Forms WebBrowser control is your best bet.  To do this, you'll need your Silverlight app on a webpage, then you point your WebBrowser at the page's URI.
+To keep your WebBrowser control from acting like IE, I'd recommend setting the following:
+webBrowser.AllowNavigation = false;
+webBrowser.AllowWebBrowserDrop = false;
+webBrowser.IsWebBrowserContextMenuEnabled = false;
+webBrowser.WebBrowserShortcutsEnabled = false;
+
+Calling methods on your form from within Silverlight is easy enough to do.  To start, you need a class that has all the methods you want to call from Silverlight.  You can use your form itself or another object, but you need to mark the class with the [ComVisible(true)] attribute.  Then you assign your object to the WebBrowser.ObjectForScripting property.  This exposes your object as "window.external" on the webpage.
+[ComVisible(true)]
+public partial class Form1 : Form
+{
+    ......
+    webBrowser.ObjectForScripting = this;
+    ......
+    public void CallMeInForm(string something)
+    {
+        MessageBox.Show("Silverlight said: " + something);
+    }
+}
+
+That's it for inside your Windows Forms project.  Inside of your Silverlight app, you need to pick up this ObjectForScripting and invoke methods on it.  To call the method in my example above, use the following lines:
+using System.Windows.Browser;
+......
+ScriptObject myForm = (ScriptObject)HtmlPage.Window.GetProperty("external");
+myForm.Invoke("CallMeInForm", "testing 1 2 3");
+
+The Invoke command lets you pass any number and type of parameters to your function, although I suspect it wouldn't like it very much if you try passing complex datatypes around.  But if you needed to do so, you could always use serialization.
+Calling Silverlight functions from your form seems to be the tricker direction.  I haven't figured this one out completely yet.
+In your Silverlight app, you also expose functions to the webpage.  To do this, use the HtmlPage.RegisterScriptableObject() function.  Again, you can pass in any class with methods you want to expose.  For a method to be exposed, though, you have to mark it with the [ScriptableMember] attribute.
+HtmlPage.RegisterScriptableObject("Page", this);
+......
+[ScriptableMember]
+public void CallMeInSilverlight(string message)
+{
+    HtmlPage.Window.Alert("The form said: " + message);
+}
+
+At this point, your method is exposed to JavaScript on the page and you could call it like so, assuming you added id="silverlightControl" to your <object> element:
+document.getElementById('silverlightControl').Content.Page.CallMeInSilverlight("testing 1 2 3");
+
+Notice the Page property?  That's what the call to RegisterScriptableObject() gave us.  Now, let's wrap this into a tidy JavaScript method:
+<script type="text/javascript">
+    function CallMe(message) {
+        var control = document.getElementById('silverlightControl');
+        control.Content.Page.CallMeInSilverlight(message);
+    }
+</script>
+
+And now we can call the CallMe() method from the Windows Forms app like so:
+public void CallToSilverlight()
+{
+    webBrowser.InvokeScript("CallMe", new object[] { "testing 1 2 3" });
+}
+
+
+If all you really need to do is host Silverlight in a desktop app, I'd suggest you check out Jeremiah Morrill's SilverlightViewport project. It allows you to embed a Silverlight application in a WPF or XNA app. It's still very alpha, but you might find it useful.
+Here's a picture to wet your appetite:
+

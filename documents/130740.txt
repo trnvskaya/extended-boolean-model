@@ -1,0 +1,68 @@
+Link error when compiling gcc atomic operation in 32-bit mode
+gcc linker atomic
+I have the following program:
+~/test> cat test.cc
+int main()
+{
+  int i = 3;
+  int j = __sync_add_and_fetch(&i, 1);
+  return 0;
+}
+
+I'm compiling this program using GCC 4.2.2 on Linux running on a multi-cpu 64-bit Intel machine:
+~/test> uname --all
+Linux doom 2.6.9-67.ELsmp #1 SMP Wed Nov 7 13:56:44 EST 2007 x86_64 x86_64 x86_64 GNU/Linux
+
+When I compile the program in 64-bit mode, it compiles and links fine:
+~/test> /share/tools/gcc-4.2.2/bin/g++ test.cc
+~/test>
+
+When I compile it in 32-bit mode, I get the following error:
+~/test> /share/tools/gcc-4.2.2/bin/g++ -m32 test.cc
+/tmp/ccEVHGkB.o(.text+0x27): In function `main':
+: undefined reference to `__sync_add_and_fetch_4'
+collect2: ld returned 1 exit status
+~/test>
+
+Although I will never actually run on a 32-bit processor, I do need a 32-bit executable so I can link with some 32-bit libraries.
+My 2 questions are:
+
+Why do I get a link error when I compile in 32-bit mode?
+Is there some way to get the program to compile and link, while still being able to link with a 32-bit library?
+
+
+
+From the GCC page on Atomic Builtins:
+
+Not all operations are supported by
+  all target processors. If a particular
+  operation cannot be implemented on the
+  target processor, a warning will be
+  generated and a call an external
+  function will be generated. The
+  external function will carry the same
+  name as the builtin, with an
+  additional suffix `_n' where n is the
+  size of the data type.
+
+Judging from your compiler output, which refers to __sync_add_and_fetch_4, this is what's happening. For some reason, GCC is not generating the external function properly.
+This is likely why you're only getting an error in 32-bit mode - when compiling for 64-bit mode, it compiles for your processor more closely. When compiling for 32-bit, it may well be using a generic arch (i386, for example) which does not natively support those features. Try specifying a specific architecture for your chip family (Xeon, Core 2, etc.) via -mcpu and see if that works.
+If not, you'll have to figure out why GCC isn't including the appropriate function that it should be generating.
+
+The answer from Dan Udey was close, close enough in fact to allow me to find the real solution.
+According to the man page "-mcpu" is a deprecated synonym for "-mtune" and just means "optimize for a particular CPU (but still run on older CPUs, albeit less optimal)". I tried this, and it did not solve the issue.
+However, "-march=" means "generate code for a particular CPU (and don't run on older CPUs)". When I tried this it solved the problem: specifying a CPU of i486 or better got rid of the link error.
+~/test> /share/tools/gcc-4.2.2/bin/g++ -m32  test.cc
+/tmp/ccYnYLj6.o(.text+0x27): In function `main':
+: undefined reference to `__sync_add_and_fetch_4'
+collect2: ld returned 1 exit status
+
+~/test> /share/tools/gcc-4.2.2/bin/g++ -m32 -march=i386 test.cc
+/tmp/ccOr3ww8.o(.text+0x22): In function `main':
+: undefined reference to `__sync_add_and_fetch_4'
+collect2: ld returned 1 exit status
+
+~/test> /share/tools/gcc-4.2.2/bin/g++ -m32 -march=i486 test.cc
+
+~/test> /share/tools/gcc-4.2.2/bin/g++ -m32 -march=pentium test.cc
+

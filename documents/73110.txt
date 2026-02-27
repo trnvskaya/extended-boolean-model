@@ -1,0 +1,206 @@
+How can I show scrollbars on a System.Windows.Forms.TextBox only when the text doesn't fit?
+winforms textbox scrollbar
+For a System.Windows.Forms.TextBox with Multiline=True, I'd like to only show the scrollbars when the text doesn't fit.
+This is a readonly textbox used only for display.  It's a TextBox so that users can copy the text out. Is there anything built-in to support auto show of scrollbars? If not, should I be using a different control? Or do I need to hook TextChanged and manually check  for overflow (if so, how to tell if the text fits?)
+
+Not having any luck with various combinations of WordWrap and Scrollbars settings.  I'd like to have no scrollbars initially and have each appear dynamically only if the text doesn't fit in the given direction.
+
+@nobugz, thanks, that works when WordWrap is disabled. I'd prefer not to disable wordwrap, but it's the lesser of two evils.
+
+@AndrÃ© Neves, good point, and I would go that way if it was user-editable.  I agree that consistency is the cardinal rule for UI intuitiveness.
+
+
+I also made some experiments, and found that the vertical bar will always show if you enable it, and the horizontal bar always shows as long as it's enabled and WordWrap == false.
+I think you're not going to get exactly what you want here. However, I believe that users would like better Windows' default behavior than the one you're trying to force. If I were using your app, I probably would be bothered if my textbox real-estate suddenly shrinked just because it needs to accomodate an unexpected scrollbar because I gave it too much text!
+Perhaps it would be a good idea just to let your application follow Windows' look and feel.
+
+Play a bit with the combination of the Multiline, WordWrap and ScrollBars property and see what happens. Windows does normally just what I want.
+
+Add a new class to your project and paste the code shown below.  Compile.  Drop the new control from the top of the toolbox onto your form.  It's not quite perfect but ought to work for you.
+using System;
+using System.Drawing;
+using System.Windows.Forms;
+
+public class MyTextBox : TextBox {
+  private bool mScrollbars;
+  public MyTextBox() {
+    this.Multiline = true;
+    this.ReadOnly = true;
+  }
+  private void checkForScrollbars() {
+    bool scroll = false;
+    int cnt = this.Lines.Length;
+    if (cnt > 1) {
+      int pos0 = this.GetPositionFromCharIndex(this.GetFirstCharIndexFromLine(0)).Y;
+      if (pos0 >= 32768) pos0 -= 65536;
+      int pos1 = this.GetPositionFromCharIndex(this.GetFirstCharIndexFromLine(1)).Y;
+      if (pos1 >= 32768) pos1 -= 65536;
+      int h = pos1 - pos0;
+      scroll = cnt * h > (this.ClientSize.Height - 6);  // 6 = padding
+    }
+    if (scroll != mScrollbars) {
+      mScrollbars = scroll;
+      this.ScrollBars = scroll ? ScrollBars.Vertical : ScrollBars.None;
+    }
+  }
+
+  protected override void OnTextChanged(EventArgs e) {
+    checkForScrollbars();
+    base.OnTextChanged(e);
+  }
+
+  protected override void OnClientSizeChanged(EventArgs e) {
+    checkForScrollbars();
+    base.OnClientSizeChanged(e);
+  }
+}
+
+
+I came across this question when I wanted to solve the same problem. 
+The easiest way to do it is to change to System.Windows.Forms.RichTextBox. The ScrollBars property in this case can be left to the default value of RichTextBoxScrollBars.Both, which indicates "Display both a horizontal and a vertical scroll bar when needed." It would be nice if this functionality were provided on TextBox.
+
+There's an extremely subtle bug in nobugz's solution that results in a heap corruption, but only if you're using AppendText() to update the TextBox.
+Setting the ScrollBars property from OnTextChanged will cause the Win32 window (handle) to be destroyed and recreated. But OnTextChanged is called from the bowels of the Win32 edit control (EditML_InsertText), which immediately thereafter expects the internal state of that Win32 edit control to be unchanged. Unfortunately, since the window is recreated, that internal state has been freed by the OS, resulting in an access violation.
+So the moral of the story is: don't use AppendText() if you're going to use nobugz's solution.
+
+I had some success with the code below.
+  public partial class MyTextBox : TextBox
+  {
+    private bool mShowScrollBar = false;
+
+    public MyTextBox()
+    {
+      InitializeComponent();
+
+      checkForScrollbars();
+    }
+
+    private void checkForScrollbars()
+    {
+      bool showScrollBar = false;
+      int padding = (this.BorderStyle == BorderStyle.Fixed3D) ? 14 : 10;
+
+      using (Graphics g = this.CreateGraphics())
+      {
+        // Calcualte the size of the text area.
+        SizeF textArea = g.MeasureString(this.Text,
+                                         this.Font,
+                                         this.Bounds.Width - padding);
+
+        if (this.Text.EndsWith(Environment.NewLine))
+        {
+          // Include the height of a trailing new line in the height calculation        
+          textArea.Height += g.MeasureString("A", this.Font).Height;
+        }
+
+        // Show the vertical ScrollBar if the text area
+        // is taller than the control.
+        showScrollBar = (Math.Ceiling(textArea.Height) >= (this.Bounds.Height - padding));
+
+        if (showScrollBar != mShowScrollBar)
+        {
+          mShowScrollBar = showScrollBar;
+          this.ScrollBars = showScrollBar ? ScrollBars.Vertical : ScrollBars.None;
+        }
+      }
+    }
+
+    protected override void OnTextChanged(EventArgs e)
+    {
+      checkForScrollbars();
+      base.OnTextChanged(e);
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+      checkForScrollbars();
+      base.OnResize(e);
+    }
+  }
+
+
+What Aidan describes is almost exactly the UI scenario I am facing. As the text box is read only, I don't need it to respond to TextChanged. And I'd prefer the auto-scroll recalculation to be delayed so it's not firing dozens of times per second while a window is being resized.
+For most UIs, text boxes with both vertical and horizontal scroll bars are, well, evil, so I'm only interested in vertical scroll bars here.
+I also found that MeasureString produced a height that was actually bigger than what was required. Using the text box's PreferredHeight with no border as the line height gives a better result.
+The following seems to work pretty well, with or without a border, and it works with WordWrap on.
+Simply call AutoScrollVertically() when you need it, and optionally specify recalculateOnResize.
+public class TextBoxAutoScroll : TextBox
+{
+    public void AutoScrollVertically(bool recalculateOnResize = false)
+    {
+        SuspendLayout();
+
+        if (recalculateOnResize)
+        {
+            Resize -= OnResize;
+            Resize += OnResize;
+        }
+
+        float linesHeight = 0;
+        var   borderStyle = BorderStyle;
+
+        BorderStyle       = BorderStyle.None;
+
+        int textHeight    = PreferredHeight;
+
+        try
+        {
+            using (var graphics = CreateGraphics())
+            {
+                foreach (var text in Lines)
+                {
+                    var textArea = graphics.MeasureString(text, Font);
+
+                    if (textArea.Width < Width)
+                        linesHeight += textHeight;
+                    else
+                    {
+                        var numLines = (float)Math.Ceiling(textArea.Width / Width);
+
+                        linesHeight += textHeight * numLines;
+                    }
+                }
+            }
+
+            if (linesHeight > Height)
+                ScrollBars = ScrollBars.Vertical;
+            else
+                ScrollBars = ScrollBars.None;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(ex);
+        }
+        finally
+        {
+            BorderStyle = borderStyle;
+
+            ResumeLayout();
+        }
+    }
+
+    private void OnResize(object sender, EventArgs e)
+    {
+        m_timerResize.Stop();
+
+        m_timerResize.Tick    -= OnDelayedResize;
+        m_timerResize.Tick    += OnDelayedResize;
+        m_timerResize.Interval = 475;
+
+        m_timerResize.Start();
+    }
+
+    Timer m_timerResize = new Timer();
+
+    private void OnDelayedResize(object sender, EventArgs e)
+    {
+        m_timerResize.Stop();
+
+        Resize -= OnResize;
+
+        AutoScrollVertically();
+
+        Resize += OnResize;
+    }
+}
+

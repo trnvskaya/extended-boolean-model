@@ -1,0 +1,43 @@
+Sql Server Backup to UNC
+sql-server backup
+I've create a maintenance plan on my SQL Server 2005 server. The backup should be written to another server. I'm using a UNC path for this. The user running the SQL Agent jobs has full access to the other server. It's admin on both servers.
+The problem is that this statement fails ( has the correct server name ofcourse):
+
+EXECUTE master.dbo.xp_create_subdir
+  N'\\servername\c$\SqlServerBackup\Test'
+
+The error I get is: 
+Msg 22048, Level 16, State 1, Line 0
+xp_create_subdir() returned error 123, 'The filename, directory name, or volume label syntax is incorrect.'
+Does anyone know what could be the problem?
+
+
+Is it not the lack of a double-backslash before the server name?
+
+Check the he account SqlAgent is runs on. Usually it system\NetworkService ant it does not have access rights on other computers. 
+Either give temporarily write rights to everyone on the UNC path or in Control Panel/Services change the account used for SqlAgent.
+
+I've backed-up up to UNC's mmany times. Make sure it's not a permissions issue w/ the account that sql server and sql agent are running as. I wouldn't back up to the hidden admin share like that perhaps it's the $ that's causing the problem. Create a share and backup to that. \server\share NOT \server\c$\folder 
+
+After having this problem myself, with none of the above solutions being clear enough, I thought I'd post a clearer response. The error is in fact nothing to do with syntax - it is entirely to do with permissions. The important thing here is that it is the SQL Server service account, NOT the SQL Server Agent account, that attempts to log in to create the directory. You can check your Event Viewer on the target server and look at the security log to see the failed logins from the SQL Server account on the other machine (mine was running as a local administrator).
+To solve this, set your SQL Server service account to be a domain user that's allowed to write to the remote share. I would have expected SQL Server Agent to be able to use its own credentials to perform these backup operations, but apparently not!
+
+SQL Agent does not actually run backups, it is capable of executing commands in SQL Server which performs the backup.  Threfore, the SQL Server service account is the one that needs permissions to the UNC share.
+However, I think there is an actual issue with the xp_create_subdir procedure.  I am going to stop using maintenance plans because I get this exact same error every once in a while.  No permissions are changing and it "usually" works, but "usually" doesn't cut it.
+
+If you are running the SQL Server And/Or SQL Server Agent Service as 'LocalSystem' but are resistant to change the SQL Server and SQL Server Agent accounts to Domain Accounts, try this:
+
+If you are using a SQL Server Agent Proxy account/credentials to execute part of a task and backup using SQL Agent, on the UNC backup destination under the share and NTFS permissions, grant Full/Modify permissions (respectively) as they do get used at one point during the process of establishing connections or at least in the SQL backup jobs I've tried (at least according to the Security Logs).  Unfortunately, there either isn't a way or I haven't found a way to perform certain SQL Server Service tasks by using Proxy Accounts that you can do with a purely SQL Agent task (as noted in earlier posts by User55852 and ZaDDaZ).
+On the UNC backup destination server under the share and NTFS permissions, grant Full/Modify permissions (respectively) to the Computer account of the SQL server (source server).
+
+
+This does work for those cases where the SQL Services run as 'LocalSystem', but need to reach into another server to drop a backup.
+And of course, best practices state that for each SQL Service, they should have their own domain account with least privilage, which instead of adding the Computer account of the server which exposes much more access to the share than should be allowed - essentially anything executing as the Computer account or 'LocalSystem'.
+
+I saw this error in Maintenance plan history. 
+
+Operating system error 3(The system cannot find the path specified.).
+  BACKUP DATABASE is terminating abnormally.". Possible failure reasons: Problems with the query, "ResultSet" property not set correctly, parameters not set correctly, or connection not established correctly.
+
+I tried to run first piece of Backup step where it was creating directory on share. I got access denied error.
+Finally, I gave full permissions to service account under which SQL Agent runs and maintenance plan was successfully running.

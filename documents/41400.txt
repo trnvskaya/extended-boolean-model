@@ -1,0 +1,170 @@
+How to wrap a function with variable length arguments?
+c++ c variadic-functions
+I am looking to do this in C/C++.
+I came across Variable Length Arguments but this suggests a solution with Python & C using libffi.
+Now, if I want to wrap printf function with myprintf
+What I do is like below:
+void myprintf(char* fmt, ...)
+{
+    va_list args;
+    va_start(args,fmt);
+    printf(fmt,args);
+    va_end(args);
+}
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    int a = 9;
+    int b = 10;
+    char v = 'C';
+    myprintf("This is a number: %d and \nthis is a character: %c and \n another number: %d\n",a, v, b);
+    return 0;
+}
+
+But the results are not as expected!
+This is a number: 1244780 and
+this is a character: h and
+another number: 29953463
+
+Any point where did I miss??
+
+
+How do you mean a pure C/C++ solution?
+The rest parameter (...) is supported cross platform in the C runtime.
+http://msdn.microsoft.com/en-us/library/kb57fad8.aspx
+
+Are you using C or C++? The next C++ version, C++0x, will support variadic templates which provide a solution to that problem.
+Another workaround can be achieved by clever operator overloading to achieve a syntax like this:
+void f(varargs va) {
+    BOOST_FOREACH(varargs::iterator i, va)
+        cout << *i << " ";
+}
+
+f(args = 1, 2, 3, "Hello");
+
+In order to get this to work, the class varargs has to be implemented to override operator = that returns a proxy object which, in turn, overrides operator ,. However, making this variant type safe in current C++ isn't possible as far as I know since it would have to work by type erasure.
+
+I am also unsure what you mean by pure
+In C++ we use
+#include <cstdarg>
+#include <cstdio>
+
+class Foo
+{   void Write(const char* pMsg, ...);
+};
+
+void Foo::Write( const char* pMsg, ...)
+{
+    char buffer[4096];
+    std::va_list arg;
+    va_start(arg, pMsg);
+    std::vsnprintf(buffer, 4096, pMsg, arg);
+    va_end(arg);
+    ...
+}
+
+
+the problem is that you cannot use 'printf' with va_args.  You must use vprintf if you are using variable argument lists.  vprint, vsprintf, vfprintf, etc.  (there are also 'safe' versions in Microsoft's C runtime that will prevent buffer overruns, etc.)
+You sample works as follows:
+void myprintf(char* fmt, ...)
+{
+    va_list args;
+    va_start(args,fmt);
+    vprintf(fmt,args);
+    va_end(args);
+}
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    int a = 9;
+    int b = 10;
+    char v = 'C'; 
+    myprintf("This is a number: %d and \nthis is a character: %c and \n another number: %d\n",a, v, b);
+    return 0;
+}
+
+
+void myprintf(char* fmt, ...)
+{
+    va_ list args;
+    va_ start(args,fmt);
+    printf(fmt,args); ----> This is the fault. vprintf(fmt, args); should have been used.
+    va_ end(args);
+}
+If you're just trying to call printf, 
+there's a printf variant called vprintf that takes 
+the va_list directly :  vprintf(fmt, args);
+
+
+In C++11 this is one possible solution using Variadic templates:
+template<typename... Args>
+void myprintf(const char* fmt, Args... args )
+{
+    std::printf( fmt, args... ) ;
+}
+
+EDIT
+As @rubenvb points out there are trade-offs to consider, for example you will be generating code for each instance which will lead to code bloat.
+
+Actually, there's a way to call a function that has no va_list version from a wrapper. The idea is to use assembler, do not touch arguments in stack, and temporary replace the function return address.
+Example for Visual C x86. call addr_printf calls printf():
+__declspec( thread ) static void* _tls_ret;
+
+static void __stdcall saveret(void *retaddr) {
+    _tls_ret = retaddr;
+}
+
+static void* __stdcall _getret() {
+    return _tls_ret;
+}
+
+__declspec(naked)
+static void __stdcall restret_and_return_int(int retval) {
+    __asm {
+        call _getret
+        mov [esp], eax   ; /* replace current retaddr with saved */
+        mov eax, [esp+4] ; /* retval */
+        ret 4
+    }
+}
+
+static void __stdcall _dbg_printf_beg(const char *fmt, va_list args) {
+    printf("calling printf(\"%s\")\n", fmt);
+}
+
+static void __stdcall _dbg_printf_end(int ret) {
+    printf("printf() returned %d\n", ret);
+}
+
+__declspec(naked)
+int dbg_printf(const char *fmt, ...)
+{
+    static const void *addr_printf = printf;
+    /* prolog */
+    __asm {
+        push ebp
+        mov  ebp, esp
+        sub  esp, __LOCAL_SIZE
+        nop
+    }
+    {
+        va_list args;
+        va_start(args, fmt);
+        _dbg_printf_beg(fmt, args);
+        va_end(args);
+    }
+    /* epilog */
+    __asm {
+        mov  esp, ebp
+        pop  ebp
+    }
+    __asm  {
+        call saveret
+        call addr_printf
+        push eax
+        push eax
+        call _dbg_printf_end
+        call restret_and_return_int
+    }
+}
+

@@ -1,0 +1,51 @@
+How do you do an IN or CONTAINS in LINQ using LAMBDA expressions?
+sql linq-to-sql lambda
+I have the following Transact-Sql that I am trying to convert to LINQ ... and struggling.  
+SELECT * FROM Project
+WHERE Project.ProjectId IN (SELECT ProjectId FROM ProjectMember Where MemberId = 'a45bd16d-9be0-421b-b5bf-143d334c8155')
+
+Any help would be greatly appreciated ... I would like to do it with Lambda expressions, if possible.  
+Thanks in advance!
+
+
+In this context, you can just use .Contains(), something like this:
+var projects = 
+from p in db.Projects
+where db.ProjectMembers.Where(m => m.MemberId == "a45bd16d-9be0-421b-b5bf-143d334c8155").Select(pp => pp.ProjectID).Contains(p.ProjectID)
+select p;
+
+
+No need for a lambda, you've just got a simple LINQ join here:
+From p in db.Projects _
+Join m in db.ProjectMember On p.ProjectId Equals m.ProjectId _
+Where m.MemberId = "a45bd16d-9be0-421b-b5bf-143d334c8155" _
+Select p
+
+
+GFrizzle beat me to it. But here is a C# version
+var projectsMemberWorkedOn = from p in Projects
+                    join projectMember in ProjectMembers on
+                        p.ProjectId equals projectMember.ProjectId
+                    where projectMember.MemberId == "a45bd16d-9be0-421b-b5bf-143d334c8155"
+                    select p;
+
+And as a bonus a purely LINQ method chain version as well:
+var projectsMemberWorkedOn =
+            Projects.Join( ProjectMembers, p => p.ProjectId, projectMember => projectMember.ProjectId,
+                ( p, projectMember ) => new { p, projectMember } )
+                .Where( @t => @t.projectMember.MemberId == "a45bd16d-9be0-421b-b5bf-143d334c8155" )
+                .Select(@t => @t.p );
+
+
+You probably want the Any() operator:
+var q = db.Projects
+          .Where(p => db.ProjectMembers
+                        .Where(pm => pm.MemberId == memberId)
+                        .Any  (pm => p.ProjectId == pm.ProjectId));
+
+Since the result set of db.ProjectMembers.Where(...) will always be the same, you can split it up so that it's executed only once:
+var projectMembers = db.ProjectMembers.Where(pm => pm.MemberId == memberId);
+var q              = db.Projects
+                       .Where(p  => projectMembers
+                                    .Any(pm => p.ProjectId == pm.ProjectId));
+

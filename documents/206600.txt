@@ -1,0 +1,147 @@
+SetLimitText() in a CEdit in Vista does not work
+visual-c++ mfc windows-vista
+This is happening on Vista.
+I created a new dialog based MFC project to test this. I added a CEdit control to my dialog. I called SetLimitText to let my CEdit receive 100000 characters. I tried both:
+this->m_cedit1.SetLimitText(100000);
+UpdateData(FALSE);
+
+and 
+static_cast<CEdit*>(GetDlgItem(IDC_EDIT1))->LimitText(100000);
+
+I placed these calls on InitDialog.
+after I paste 5461 characters into my CEdit, it becomes empty and unresponsive. Any ideas as to what is causing this and workarounds to be able to paste long strings of text in a CEdit or any other control?
+note: 5461 is 0x1555 or 1010101010101 in binary, which i find quite odd.
+if I paste 5460 characters I have no problems.
+
+
+There shouldn't be any problems with only 6000 characters - maybe the problem is elsewhere? Do you have any handlers for changed events/notifications from the text box? Maybe they are hanging up?
+
+I contacted microsof support. 
+The goal was to have approximately
+ 240000 characters in one single
+ editable line of text.
+I am able to reproduce the issue on
+ Windows Vista (x64 and x32 both) but
+ not on Windows XP. 
+this code works fine in XP:
+ BOOL ClongeditXPDlg::OnInitDialog()
+ {
+     CDialog::OnInitDialog();
+
+     // Set the icon for this dialog.  The framework does this automatically
+     //  when the application's main window is not a dialog
+     SetIcon(m_hIcon, TRUE);            // Set big icon
+     SetIcon(m_hIcon, FALSE);        // Set small icon
+
+     // TODO: Add extra initialization here
+     UINT limit = m_longEdit.GetLimitText();
+     m_longEdit.SetLimitText(240000);
+     UINT limit2 = m_longEdit.GetLimitText();
+
+     CString str;
+     str = _T("");
+     for(int i = 0; i < 250000; i++)
+         str += _T("a");
+
+     m_longEdit.SetWindowText(str);
+
+     return TRUE;  // return TRUE  unless you set the focus to a control
+ }
+
+If I use a CRichEdit control instead,
+ when I press "end" key or "right
+ arrow" key after pasting a long string
+ inside, i cannot see all the
+ characters in the Rich Edit Control.
+ trying to scroll past the last visible
+ character produces a beep. The rest of
+ the characters are there, I know this
+ because if i double-click the Rich
+ Edit  Control and copy the text using
+ ctrl-c and then paste it on  a text
+ editor, I can see the 240000
+ characters. So the control  is holding
+ the right amount of characters, but
+ the last  characters are not viewable
+ except in an external editor, so  my
+ original problem remains.
+Here are the answers by microsoft
+ representatives:
+
+Problem here is that an edit control
+  with a large number of  characters in
+  it does not paint its text.
+I tried setting different characters,
+  and discovered that I  could fit more
+  'l's than 'x's than 'm's. The issue
+  isn't  directly the number of
+  characters, but is likely the number
+  of pixels.  Multiplying the number of
+  visible characters by  the pixel width
+  of the characters in the selected font
+  shows  that the limit is about 32k
+  pixels.
+
+another answer from microsoft:
+
+I did extensive research on this issue
+  and would like to update you about the
+  case progress.
+The primary difference between the
+  Edit control on Vista and on XP is
+  that the Edit control on Vista
+  pre-composes its glyphs for better
+  international support (internally, it
+  ends up calling ExtTextOut with
+  ETO_GLYPH_INDEX and an array of glyphs
+  rather than a string of characters. 
+  This ends up saving the glyph indices
+  into a metafile and so runs into the
+  32k pixel limit. When too many
+  characters are provided, ExtTextOut
+  fails and draws nothing.  The Edit
+  control on XP doesn't precompose the
+  glyphs and so doesn't have this
+  problem, but won't handle
+  international characters as well.
+The edit control on XP will clip at
+  32k, but since that is offscreen it
+  isn't obvious.  When scrolling to the
+  right, it starts with the first
+  visible character so the visible part
+  of the control is always earlier than
+  32k pixels.
+The RichEdit control draws the
+  beginning, but after hitting End,
+  edits occur mostly offscreen. 
+  RichEdit 3.0 and 4.1 gives similar
+  behavior.  This appears to be the 32k
+  pixel limit of RichEdit control, as
+  the it draws its text on an offscreen
+  bitmap before displaying it to the
+  screen.
+Considering these points, the behavior
+  is by design. You would need to create
+  your own control to get the behavior
+  of displaying as big string as 240000
+  in a single line.
+
+and the last one: 
+
+I did further research on this issue
+  for finding any light weight
+  workaround for overcoming 32k pixels
+  limit, but unfortunately it seems that
+  there is no workaround for this.
+Couple of alternatives that we tried
+  are RichEdit 3.0,  RichEdit
+  4.1, using UniScribe, using different fonts etc., but none of them seems to
+  suffice your requirement.
+Possibly, you would need to create
+  your own custom control if you wish to
+  display an editable single-line string
+  which exceeds 32k pixel limit in
+  Windows Vista.
+
+
+FYI -- if the text is read-only/dsiplay only, you can add some CR-LFs to the string to fix the display of the text.  It appears that the ExtTextOut function works slightly different when the newlines. Since it is a single-line edit box the newlines are stripped so the text looks the same -- unless you copy and paste it, then the linefeeds will be in the string... 

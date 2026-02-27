@@ -1,0 +1,116 @@
+Incoming poplib refactoring using windows python 2.3
+python email refactoring poplib
+Hi Guys could you please help me refactor this so that it is sensibly pythonic.
+import sys
+import poplib
+import string
+import StringIO, rfc822
+import datetime
+import logging
+
+def _dump_pop_emails(self):
+    self.logger.info("open pop account %s with username: %s" % (self.account[0], self.account[1]))
+    self.popinstance = poplib.POP3(self.account[0])
+    self.logger.info(self.popinstance.getwelcome()) 
+    self.popinstance.user(self.account[1])
+    self.popinstance.pass_(self.account[2])
+    try:
+        (numMsgs, totalSize) = self.popinstance.stat()
+        for thisNum in range(1, numMsgs+1):
+            (server_msg, body, octets) = self.popinstance.retr(thisNum)
+            text = string.join(body, '\n')
+            mesg = StringIO.StringIO(text)                               
+            msg = rfc822.Message(mesg)
+            name, email = msg.getaddr("From")
+            emailpath = str(self._emailpath + self._inboxfolder + "\\" + email + "_" + msg.getheader("Subject") + ".eml")
+            emailpath = self._replace_whitespace(emailpath)
+            file = open(emailpath,"wb")
+            file.write(text)
+            file.close()
+            self.popinstance.dele(thisNum)
+    finally:
+        self.logger.info(self.popinstance.quit())
+
+def _replace_whitespace(self,name):
+    name = str(name)
+    return name.replace(" ", "_")
+
+Also in the _replace_whitespace method I would like to have some kind of cleaning routine which takes out all illegal characters which could cause processing.
+Basically I want to write the email to the inbox directory in a standard way.
+Am i doing something wrong here?
+
+
+I don't see anything significant wrong with that code -- is it behaving incorrectly, or are you just looking for general style guidelines?
+A few notes:
+
+Instead of logger.info ("foo %s %s" % (bar, baz)), use "foo %s %s", bar, baz. This avoids the overhead of string formatting if the message won't be printed.
+Put a try...finally around opening emailpath.
+Use '\n'.join (body), instead of string.join (body, '\n').
+Instead of msg.getaddr("From"), just msg.From.
+
+
+Further to my comment on John's answer
+I found out what the issue was, there were illegal characters in the name field and Subject field, which caused python to get the hiccups, as it tried to write the email as a directory, after seeing ":" and "/".
+John point number 4 doesnt work! so I left it as before.
+Also is point no 1 correct, have I implemented your suggestion correctly?
+def _dump_pop_emails(self):
+    self.logger.info("open pop account %s with username: %s", self.account[0], self.account[1])
+    self.popinstance = poplib.POP3(self.account[0])
+    self.logger.info(self.popinstance.getwelcome()) 
+    self.popinstance.user(self.account[1])
+    self.popinstance.pass_(self.account[2])
+    try:
+        (numMsgs, totalSize) = self.popinstance.stat()
+        for thisNum in range(1, numMsgs+1):
+            (server_msg, body, octets) = self.popinstance.retr(thisNum)
+            text = '\n'.join(body)
+            mesg = StringIO.StringIO(text)                               
+            msg = rfc822.Message(mesg)
+            name, email = msg.getaddr("From")
+            emailpath = str(self._emailpath + self._inboxfolder + "\\" + self._sanitize_string(email + " " + msg.getheader("Subject") + ".eml"))
+            emailpath = self._replace_whitespace(emailpath)
+            print emailpath
+            file = open(emailpath,"wb")
+            file.write(text)
+            file.close()
+            self.popinstance.dele(thisNum)
+    finally:
+        self.logger.info(self.popinstance.quit())
+
+def _replace_whitespace(self,name):
+    name = str(name)
+    return name.replace(" ", "_")   
+
+def _sanitize_string(self,name):
+    illegal_chars = ":", "/", "\\"
+    name = str(name)
+    for item in illegal_chars:
+        name = name.replace(item, "_")
+    return name
+
+
+This isn't refactoring (it doesn't need refactoring as far as I can see), but some suggestions:
+You should use the email package rather than rfc822.  Replace rfc822.Message with email.Message, and use email.Utils.parseaddr(msg["From"]) to get the name and email address, and msg["Subject"] to get the subject.
+Use os.path.join to create the path.  This:
+emailpath = str(self._emailpath + self._inboxfolder + "\\" + email + "_" + msg.getheader("Subject") + ".eml")
+
+Becomes:
+emailpath = os.path.join(self._emailpath + self._inboxfolder, email + "_" + msg.getheader("Subject") + ".eml")
+
+(If self._inboxfolder starts with a slash or self._emailpath ends with one, you could replace the first + with a comma also).
+It doesn't really hurt anything, but you should probably not use "file" as a variable name, since it shadows a built-in type (checkers like pylint or pychecker would warn you about that).
+If you're not using self.popinstance outside of this function (seems unlikely given that you connect and quit within the function), then there's no point making it an attribute of self.  Just use "popinstance" by itself.
+Use xrange instead of range.
+Instead of just importing StringIO, do this:
+try:
+    import cStringIO as StringIO
+except ImportError:
+    import StringIO
+
+If this is a POP mailbox that can be accessed by more than one client at a time, you might want to put a try/except around the RETR call to continue on if you can't retrieve one message.
+As John said, use "\n".join rather than string.join, use try/finally to only close the file if it is opened, and pass the logging parameters separately.
+The one refactoring issue I could think of would be that you don't really need to parse the whole message, since you're just dumping a copy of the raw bytes, and all you want is the From and Subject headers.  You could instead use popinstance.top(0) to get the headers, create the message (blank body) from that, and use that for the headers.  Then do a full RETR to get the bytes.  This would only be worth doing if your messages were large (and so parsing them took a long time).  I would definitely measure before I made this optimisation.
+For your function to sanitise for the names, it depends how nice you want the names to be, and how certain you are that the email and subject make the filename unique (seems fairly unlikely).  You could do something like:
+emailpath = "".join([c for c in emailpath if c in (string.letters + string.digits + "_ ")])
+
+And you'd end up with just alphanumeric characters and the underscore and space, which seems like a readable set.  Given that your filesystem (with Windows) is probably case insensitive, you could lowercase that also (add .lower() to the end).  You could use emailpath.translate if you want something more complex.

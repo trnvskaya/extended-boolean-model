@@ -1,0 +1,75 @@
+Invalid postback or callback argument
+asp.net exception
+I have an ASP.net application that works fine in the development environment but in the production environment throws the following exception when clicking a link that performs a postback.  Any ideas?
+
+Invalid postback or callback argument.
+  Event validation is enabled using
+  
+  in configuration or <%@ Page
+  EnableEventValidation="true" %> in a
+  page.  For security purposes, this
+  feature verifies that arguments to
+  postback or callback events originate
+  from the server control that
+  originally rendered them.  If the data
+  is valid and expected, use the
+  ClientScriptManager.RegisterForEventValidation
+  method in order to register the
+  postback or callback data for
+  validation.
+
+Edit: This seems to only be happening when viewed with IE6 but not with IE7, any ideas?
+
+
+It seems that the data/controls on the page are changed when the postback occurs. What happens if you turn off the event validation in the page directive. 
+<%@ Page ... EnableEventValidation = "false" />
+
+
+This can happen if you're posting what appears to be possibly malicious things; such as a textbox that has html in it, but is not encoded prior to postback. If you are allowing html or script to be submitted, you need to encode it so that the characters, such as <, are passed as & lt;.
+
+I only ever get this when I have nested <form> tags in my pages.  IE6 will look at the nested form tags and try to post the values in those forms as well as the main ASP.NET form, causing the error.  Other browsers don't post the nested forms (since it's invalid HTML) and don't get the error.
+You can certainly solve this by doing an EnableEventValidation = "false", but that can mean problems for your posted values and viewstate.  It's better to weed out the nested <form> tags first.
+There are other spots where this can come up, like HTML-esque values in form fields, but I think the error messages for those were more specific.  On a generic postback that throws this, I'd just check the rendered page for extra <form> tags.
+
+Problem description:
+ This is one the common issues that a lot of ASP.NET beginners face, post, and ask about. Typically, they post the error message as below and seek for resolution without sharing much about what they were trying to do.
+[ArgumentException: Invalid postback or callback argument. Event validation is enabled using in configuration or <%@ Page EnableEventValidation="true" %> in a page. For security purposes, this feature verifies that arguments to postback or callback events originate from the server control that originally rendered them. If the data is valid and expected, use the ClientScriptManager.RegisterForEventValidation method in order to register the postback or callback data for validation.]
+Though, error stack trace itself suggests a quick resolution by setting eventvalidation off, it is not a recommended solution as it opens up a security hole. It is always good to know why it happened and how to solve/handle that root problem.
+Assessment:
+ Event validation  is done to validate if the origin of the event is the related rendered control (and not some cross site script or so). Since control registers its events during rendering, events can be validated during postback or callback (via arguments of __doPostBack). This reduces the risk of unauthorized or malicious postback requests and callbacks.
+Refer: MSDN: Page.EnableEventValidation Property
+Based on above, possible scenarios that I have faced or heard that raises the issue in discussion are:
+ Case #1: If we have angular brackets in the request data, it looks like some script tag is being passed to server.
+Possible Solution:
+ HTML encode the angular brackets with help of JavaScript before submitting the form, i.e., replace â<â with â<â and â>â with â>â
+function HTMLEncodeAngularBrackets(someString)
+{
+var modifiedString = someString.replace("<","&lt;");
+modifiedString = modifiedString.replace(">","&gt;");
+return modifiedString;
+}
+
+Case #2: If we write client script that changes a control in the client at run time, we might have a dangling event. An example could be having embedded controls where an inner control registers for postback but is hidden at runtime because of an operation done on outer control. This I read about on MSDN blog written by Carlo, when looking for same issue because of multiple form tags.
+Possible Solution:
+ Manually register control for event validation within Render method of the page.
+protected override void Render(HtmlTextWriter writer)
+{
+ClientScript.RegisterForEventValidation(myButton.UniqueID.ToString());
+base.Render(writer);
+}
+
+As said, one of the other common scenario reported (which looks like falls in the this same category) is building a page where one form tag is embedded in another form tag that runs on server. Removing one of them corrects the flow and resolves the issue.
+Case #3: If we re-define/instantiate controls or commands at runtime on every postback, respective/related events might go for a toss. A simple example could be of re-binding a datagrid on every pageload (including postbacks). Since, on rebind all the controls in grid will have a new ID, during an event triggered by datagrid control, on postback the control IDâs are changed and thus the event might not connect to correct control raising the issue.
+Possible Solution:
+ This can be simply resolved by making sure that controls are not re-created on every postback (rebind here). Using Page property IsPostback can easily handle it. If you want to create a control on every postback, then it is necessary to make sure that the IDâs are not changed.
+protected void Page_Load(object sender, EventArgs e)
+{
+if(!Page.IsPostback)
+{
+// Create controls
+// Bind Grid
+}
+}
+
+Conclusion:
+ As said, an easy/direct solution can be adding enableEventValidation=âfalseâ in the Page directive or Web.config file but is not recommended. Based on the implementation and cause, find the root cause and apply the resolution accordingly.

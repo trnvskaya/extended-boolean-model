@@ -1,0 +1,392 @@
+Auto Font Size For Text (GD via PHP)
+php gd
+There is a space of x*y for text to go on $im (GD Image Resource) how can I choose a font size (or write text such that) it does not overflow over that area?
+
+
+I think you look for the imagettfbbox function.
+I used that some years ago for a script generating localized buttons for a Web interface. I actually resized buttons if the text didn't fit in the template, to keep text size consistent, but you can try to reduce the text size until the text fits.
+If you are interested, I can paste some snippets of my code (or give it right away).
+[EDIT] OK, here is some extracts of my code, someday I will clean it up (make it independent of target app, give samples) and make it public as a whole.
+I hope the snippets make sense.
+// Bounding boxes: ImageTTFBBox, ImageTTFText:
+// Bottom-Left: $bb[0], $bb[1]
+// Bottom-Right: $bb[2], $bb[3]
+// Top-Right: $bb[4]; $bb[5]
+// Top-Left: $bb[6], $bb[7]
+define('GDBB_TOP', 5);
+define('GDBB_LEFT', 0);
+define('GDBB_BOTTOM', 1);
+define('GDBB_RIGHT', 2);
+
+#[ In class constructor ]#
+// Get size in pixels, must convert to points for GD2.
+// Because GD2 assumes 96 pixels per inch and we use more "standard" 72.
+$this->textSize *= 72/96;
+$this->ComputeTextDimensions($this->textSize, FONT, $this->text);
+
+#[ Remainder of the class (extract) ]
+/**
+ * Compute the dimensions of the text.
+ */
+function ComputeTextDimensions($textSize, $fontFile, $text)
+{
+    $this->textAreaWidth = $this->imageHSize - $this->marginL - $this->marginR;
+    $this->textAreaHeight = $this->imageVSize - $this->marginT - $this->marginB;
+
+    // Handle text on several lines
+    $this->lines = explode(NEWLINE_CHAR, $text);
+    $this->lineNb = count($this->lines);
+    if ($this->lineNb == 1)
+    {
+        $bb = ImageTTFBBox($textSize, 0, $fontFile, $text);
+        $this->textWidth[0] = $bb[GDBB_RIGHT] - $bb[GDBB_LEFT];
+        $this->maxTextWidth = $this->textWidth[0];
+        $this->textHeight[0] = $bb[GDBB_BOTTOM] - $bb[GDBB_TOP];
+    }
+    else
+    {
+        for ($i = 0; $i < $this->lineNb; $i++)
+        {
+            $bb = ImageTTFBBox($textSize, 0, $fontFile, $this->lines[$i]);
+            $this->textWidth[$i] = $bb[GDBB_RIGHT] - $bb[GDBB_LEFT];
+            $this->maxTextWidth = max($this->maxTextWidth, $this->textWidth[$i]);
+            $this->textHeight[$i] = $bb[GDBB_BOTTOM] - $bb[GDBB_TOP];
+        }
+    }
+    // Is the given text area width too small for asked text?
+    if ($this->maxTextWidth > $this->textAreaWidth)
+    {
+        // Yes! Increase button size
+        $this->textAreaWidth = $this->maxTextWidth;
+        $this->imageHSize = $this->textAreaWidth + $this->marginL + $this->marginR;
+    }
+    // Now compute the text positions given the new (?) text area width
+    if ($this->lineNb == 1)
+    {
+        $this->ComputeTextPosition(0, $textSize, $fontFile, $text, false);
+    }
+    else
+    {
+        for ($i = 0; $i < $this->lineNb; $i++)
+        {
+            $this->ComputeTextPosition($i, $textSize, $fontFile, $this->lines[$i], false);
+        }
+    }
+}
+
+/**
+ * Compute xText and yText (text position) for the given text.
+ */
+function ComputeTextPosition($index, $textSize, $fontFile, $text, $centerAscDesc)
+{
+    switch ($this->textAlign)
+    {
+    case 'L':
+        $this->xText[$index] = $this->marginL;
+        break;
+    case 'R':
+        $this->xText[$index] = $this->marginL + 
+                $this->textAreaWidth - $this->textWidth[$index];
+        break;
+    case 'C':
+    default:
+        $this->xText[$index] = $this->marginL + 
+                ($this->textAreaWidth - $this->textWidth[$index]) / 2;
+        break;
+    }
+
+    if ($centerAscDesc)
+    {
+        // Must compute the difference between baseline and bottom of BB.
+        // I have to use a temporary image, as ImageTTFBBox doesn't use coordinates
+        // providing offset from the baseline.
+        $tmpBaseline = 5;
+        // Image size isn't important here, GD2 still computes correct BB
+        $tmpImage = ImageCreate(5, 5);
+        $bbt = ImageTTFText($tmpImage, $this->textSize, 0, 0, $tmpBaseline,
+                $this->color, $fontFile, $text);
+        // Bottom to Baseline
+        $baselinePos = $bbt[GDBB_BOTTOM] - $tmpBaseline;
+        ImageDestroy($tmpImage);
+        $this->yText[$index] = $this->marginT + $this->textAreaHeight -
+                ($this->textAreaHeight - $this->textHeight) / 2 - $baselinePos + 0.5;
+    }
+    else
+    {
+        // Actually, we want to center the x-height, ie. to keep the baseline at same pos.
+        // whatever the text is really, ie. independantly of ascenders and descenders.
+        // This provide better looking buttons, as they are more consistent.
+        $bbt = ImageTTFBBox($textSize, 0, $fontFile, "moxun");
+        $tmpHeight = $bbt[GDBB_BOTTOM] - $bbt[GDBB_TOP];
+        $this->yText[$index] = $this->marginT + $this->textAreaHeight -
+                ($this->textAreaHeight - $tmpHeight) / 2 + 0.5;
+    }
+}
+
+/**
+ * Add the text to the button.
+ */
+function DrawText()
+{
+    for ($i = 0; $i < $this->lineNb; $i++)
+    {
+        // Increase slightly line height
+        $yText = $this->yText[$i] + $this->textHeight[$i] * 1.1 * 
+                ($i - ($this->lineNb - 1) / 2);
+        ImageTTFText($this->image, $this->textSize, 0,
+                $this->xText[$i], $yText, $this->color, FONT, $this->lines[$i]);
+    }
+}
+
+
+I've taken the class  by PhiLho above and expanded it to dynamically scale individual lines of text to fit within the bounding box. Also I wrapped it with a call so you can see how it functions. This is pretty much copy-pasta, just change your variables and it should work out of the box.
+      <? 
+
+header("Content-type: image/png"); 
+
+define('GDBB_TOP', 5);
+define('GDBB_LEFT', 0);
+define('GDBB_BOTTOM', 1);
+define('GDBB_RIGHT', 2);
+
+
+class DrawFont {
+
+    function DrawFont($details) {
+    // Get size in pixels, must convert to points for GD2.
+    // Because GD2 assumes 96 pixels per inch and we use more "standard" 72.
+    $this->textSizeMax = $details['size'];
+    $this->font = $details['font'];
+    $this->text = $details['text'];
+    $this->image = $details['image']; 
+    $this->color = $details['color'];
+    $this->shadowColor = $details['shadowColor'];
+    $this->textAlign = "C";
+
+    $this->imageHSize = $details['imageHSize'];
+    $this->imageVSize = $details['imageVSize'];
+
+    $this->marginL = $details['marginL'];
+    $this->marginR = $details['marginR'];
+
+    $this->marginT = $details['marginT'];
+    $this->marginB = $details['marginB'];
+
+    $this->ComputeTextDimensions($this->font, $this->text);
+
+    }
+
+
+    /**
+     * Compute the dimensions of the text.
+     */
+    function ComputeTextDimensions($fontFile, $text)
+    {
+        $this->textAreaWidth = $this->imageHSize - $this->marginL - $this->marginR;
+        $this->textAreaHeight = $this->imageVSize - $this->marginT - $this->marginB;
+
+        // Handle text on several lines
+        $this->lines = explode(' ', $text);
+        $this->lineNb = count($this->lines);
+
+
+
+
+        if ($this->lineNb == 1)
+        {
+
+            $this->textSize[0] = $this->textSizeMax;
+
+            $bb = ImageTTFBBox($this->textSize[0], 0, $fontFile, $text);
+            $this->textWidth[0] = $bb[GDBB_RIGHT] - $bb[GDBB_LEFT];
+            $this->maxTextWidth = $this->textWidth[0];
+            $this->textHeight[0] = $bb[GDBB_BOTTOM] - $bb[GDBB_TOP];
+
+
+            $this->textSize[0] = $this->textSizeMax;
+              while ($this->textWidth[0] > $this->textAreaWidth && $this->textSize[0] > 1) {
+
+                $this->textSize[0]--;
+
+                $bb = ImageTTFBBox($this->textWidth[$i], 0, $fontFile, $text);
+                $this->textWidth[0] = $bb[GDBB_RIGHT] - $bb[GDBB_LEFT];
+                $this->maxTextWidth = $this->textWidth[0];
+                $this->textHeight[0] = $bb[GDBB_BOTTOM] - $bb[GDBB_TOP];    
+
+              }
+
+
+        }
+        else
+        {
+            for ($i = 0; $i < $this->lineNb; $i++)
+            {
+                $this->textSize[$i] = $this->textSizeMax;
+
+                $bb = ImageTTFBBox($this->textSize[$i], 0, $fontFile, $this->lines[$i]);
+                $this->textWidth[$i] = $bb[GDBB_RIGHT] - $bb[GDBB_LEFT];
+                $this->maxTextWidth = max($this->maxTextWidth, $this->textWidth[$i]);
+                $this->textHeight[$i] = $bb[GDBB_BOTTOM] - $bb[GDBB_TOP];
+
+
+
+                while ($this->textWidth[$i] > $this->textAreaWidth && $this->textSize[$i] > 1) {
+
+                  $this->textSize[$i]--;
+
+                  $bb = ImageTTFBBox($this->textSize[$i], 0, $fontFile, $this->lines[$i]);
+                  $this->textWidth[$i] = $bb[GDBB_RIGHT] - $bb[GDBB_LEFT];
+                  $this->maxTextWidth = max($this->maxTextWidth, $this->textWidth[$i]);
+                  $this->textHeight[$i] = $bb[GDBB_BOTTOM] - $bb[GDBB_TOP];      
+
+
+                }
+
+
+
+
+            }
+        }
+
+        /*
+        // Is the given text area width too small for asked text?
+        if ($this->maxTextWidth > $this->textAreaWidth)
+        {
+            // Yes! Increase button size
+            $this->textAreaWidth = $this->maxTextWidth;
+            $this->imageHSize = $this->textAreaWidth + $this->marginL + $this->marginR;
+
+
+        }
+        */
+
+        // Now compute the text positions given the new (?) text area width
+        if ($this->lineNb == 1)
+        {
+            $this->ComputeTextPosition(0, $this->textSize[0], $fontFile, $text, false);
+        }
+        else
+        {
+            for ($i = 0; $i < $this->lineNb; $i++)
+            {
+                $this->ComputeTextPosition($i, $this->textSize[$i], $fontFile, $this->lines[$i], false);
+            }
+        }
+    }
+
+    /**
+     * Compute xText and yText (text position) for the given text.
+     */
+    function ComputeTextPosition($index, $textSize, $fontFile, $text, $centerAscDesc)
+    {
+        switch ($this->textAlign)
+        {
+        case 'L':
+            $this->xText[$index] = $this->marginL;
+            break;
+        case 'R':
+            $this->xText[$index] = $this->marginL + 
+                    $this->textAreaWidth - $this->textWidth[$index];
+            break;
+        case 'C':
+        default:
+            $this->xText[$index] = $this->marginL + 
+                    ($this->textAreaWidth - $this->textWidth[$index]) / 2;
+            break;
+        }
+
+        if ($centerAscDesc)
+        {
+            // Must compute the difference between baseline and bottom of BB.
+            // I have to use a temporary image, as ImageTTFBBox doesn't use coordinates
+            // providing offset from the baseline.
+            $tmpBaseline = 5;
+            // Image size isn't important here, GD2 still computes correct BB
+            $tmpImage = ImageCreate(5, 5);
+            $bbt = ImageTTFText($tmpImage, $this->textSizeMax, 0, 0, $tmpBaseline,
+                    $this->color, $fontFile, $text);
+            // Bottom to Baseline
+            $baselinePos = $bbt[GDBB_BOTTOM] - $tmpBaseline;
+            ImageDestroy($tmpImage);
+            $this->yText[$index] = $this->marginT + $this->textAreaHeight -
+                    ($this->textAreaHeight - $this->textHeight) / 2 - $baselinePos + 0.5;
+        }
+        else
+        {
+            // Actually, we want to center the x-height, ie. to keep the baseline at same pos.
+            // whatever the text is really, ie. independantly of ascenders and descenders.
+            // This provide better looking buttons, as they are more consistent.
+            $bbt = ImageTTFBBox($textSize, 0, $fontFile, "moxun");
+            $tmpHeight = $bbt[GDBB_BOTTOM] - $bbt[GDBB_TOP];
+            $this->yText[$index] = $this->marginT + $this->textAreaHeight -
+                    ($this->textAreaHeight - $tmpHeight) / 2 + 0.5;
+        }
+    }
+
+    /**
+     * Add the text to the button.
+     */
+    function DrawText()
+    {
+
+        $this->maxTextHeight = 0;
+
+        // find maxTextHeight
+        for ($i = 0; $i < $this->lineNb; $i++)
+        {
+          if ($this->textHeight[$i] > $this->maxTextHeight) {
+            $this->maxTextHeight = $this->textHeight[$i];
+          }
+        }
+
+        for ($i = 0; $i < $this->lineNb; $i++)
+        {
+            // Increase slightly line height
+            $yText = $this->yText[$i] + $this->maxTextHeight * 1.1 * 
+                    ($i - ($this->lineNb - 1) / 2);
+
+            ImageTTFText($this->image, $this->textSize[$i], 0,
+                    $this->xText[$i]+2, $yText+2, $this->shadowColor, $this->font, $this->lines[$i]);
+
+            ImageTTFText($this->image, $this->textSize[$i], 0,
+                    $this->xText[$i], $yText, $this->color, $this->font, $this->lines[$i]);
+
+
+        }
+    }
+
+}
+
+
+
+
+
+// Script starts here
+
+$im = imagecreatefromjpeg("/home/cvgcfjpq/public_html/fb/img/page_template.jpg"); 
+
+$color = imagecolorallocate($im, 235, 235, 235);
+$shadowColor = imagecolorallocate($im, 90, 90, 90);
+
+$details = array("image" => $im, 
+                 "font" => "OldSansBlack.ttf", 
+                 "text" => $_GET['name'],
+                 "color" => $color,
+                 "shadowColor" => $shadowColor,
+                 "size" => 40,
+                 "imageHSize" => 200,
+                 "imageVSize" =>  250,
+                 "marginL" => 5,
+                 "marginR" => 5,
+                 "marginT" => 5,
+                 "marginB" => 5);
+
+$dofontobj =& new DrawFont($details);
+$dofontobj->DrawText();
+
+imagepng($im); 
+imagedestroy($im); 
+unset($px); 
+
+?>  
+

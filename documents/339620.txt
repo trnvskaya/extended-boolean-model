@@ -1,0 +1,94 @@
+How do I remove minimize and maximize from a resizable window in WPF?
+wpf user-interface resize pinvoke
+WPF doesn't provide the ability to have a window that allows resize but doesn't have maximize or minimize buttons. I'd like to able to make such a window so I can have resizable dialog boxes.
+I'm aware the solution will mean using pinvoke but I'm not sure what to call and how. A search of pinvoke.net didn't turn up any thing that jumped out at me as what I needed, mainly I'm sure because Windows Forms does provide the CanMinimize and CanMaximize properties on its windows.
+Could someone point me towards or provide code (C# preferred) on how to do this?
+
+
+I've stolen some code I found on the MSDN forums and made an extension method on the Window class, like this:
+internal static class WindowExtensions
+{
+    // from winuser.h
+    private const int GWL_STYLE      = -16,
+                      WS_MAXIMIZEBOX = 0x10000,
+                      WS_MINIMIZEBOX = 0x20000;
+
+    [DllImport("user32.dll")]
+    extern private static int GetWindowLong(IntPtr hwnd, int index);
+
+    [DllImport("user32.dll")]
+    extern private static int SetWindowLong(IntPtr hwnd, int index, int value);
+
+    internal static void HideMinimizeAndMaximizeButtons(this Window window)
+    {
+        IntPtr hwnd = new System.Windows.Interop.WindowInteropHelper(window).Handle;
+        var currentStyle = GetWindowLong(hwnd, GWL_STYLE);
+
+        SetWindowLong(hwnd, GWL_STYLE, (currentStyle & ~WS_MAXIMIZEBOX & ~WS_MINIMIZEBOX));
+    }
+}
+
+The only other thing to remember is that for some reason this doesn't work from a window's constructor. I got around that by chucking this into the constructor:
+this.SourceInitialized += (x, y) =>
+{
+    this.HideMinimizeAndMaximizeButtons();
+};
+
+Hope this helps!
+
+
+Don't know if this works for your req. visually.. This is 
+<Window x:Class="DataBinding.MyWindow" ...Title="MyWindow" Height="300" Width="300" 
+    WindowStyle="ToolWindow" ResizeMode="CanResizeWithGrip">
+
+
+You can set the ResizeMode="NoResize" of the window if you want to remove Minimize and Maximize button
+
+Here's a solution I'm using. Note that maximize button is still displayed.
+Markup:
+<Window x:Class="Example"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Example"
+        StateChanged="Window_StateChanged">
+
+Code behind:
+// Disable maximizing this window
+private void Window_StateChanged(object sender, EventArgs e)
+{
+    if (this.WindowState == WindowState.Maximized)
+        this.WindowState = WindowState.Normal;
+}
+
+
+One way is to set your ResizeMode="NoResize". It will behave like this.
+
+I hope this helps!
+
+If anyone use Devexpress window (DXWindow) accepted answer doesn't work. One ugly approach is 
+public partial class MyAwesomeWindow : DXWindow
+{
+    public MyAwesomeWIndow()
+    {
+       Loaded += OnLoaded;
+    }
+
+    private void OnLoaded(object sender, RoutedEventArgs routedEventArgs)
+    {
+        // hides maximize button            
+        Button button = (Button)DevExpress.Xpf.Core.Native.LayoutHelper.FindElementByName(this, DXWindow.ButtonParts.PART_Maximize.ToString());
+        button.IsHitTestVisible = false;
+        button.Opacity = 0;
+
+        // hides minimize button
+        button = (Button)DevExpress.Xpf.Core.Native.LayoutHelper.FindElementByName(this, DXWindow.ButtonParts.PART_Minimize.ToString());
+        button.IsHitTestVisible = false;
+        button.Opacity = 0;
+
+        // hides close button
+        button = (Button)DevExpress.Xpf.Core.Native.LayoutHelper.FindElementByName(this, DXWindow.ButtonParts.PART_CloseButton.ToString());
+        button.IsHitTestVisible = false;
+        button.Opacity = 0;
+    } 
+}
+

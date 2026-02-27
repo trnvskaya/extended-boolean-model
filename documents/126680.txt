@@ -1,0 +1,63 @@
+Algorithm for counting the number of unique colors in an image
+c# algorithm image-processing
+Looking for one that is fast enough and still graceful with memory. The image is a 24bpp  System.Drawing.Bitmap.
+
+
+If you need an exact number, then you are going to have to loop over all of the pixels.  Probably storing the color and a count in a hash is the best way to go because of the sparseness of the colors.  
+Using the Color.ToArgb() in the hash instead of the color object would probably be a good idea too.
+Also, if speed is a major concern, you don't want to use a function like GetPixel(x, y) -- instead try to process chunks at a time (row a time).  If you can, get a pointer to the beginning of the image memory and do it unsafe.
+
+Before modern graphics cards when most machines ran in 256 color palette mode this was an area of quite some considerable interest.  The limits on processing power and memory imposed just the sort of constraint which might be useful to you - so a search on algorithms for handling palettes is likely to turn up something of use.
+
+That depends on what types of images you want to analyse. For 24 Bit images you will need up to 2MB of memory (since in the worst case you have to process each color). For this a bitmap would be the best idea (you have a 2 MB bitmap, where each bit corresponds to an color). This would be a good solution for pictues with a high color count which can be realized in O(#pixels). For 16 Bit images you would only need 8 kB for this bitmap using this technique.
+However if you have pictures with not much colors it would be better to use something else. But then you would need some kind of check to indicate which algorithm you should use...
+
+Never implemented something like this before, but as I see it, a primitive implementation:
+For a 24-bit image, the maximum number of colours the image could have is the minimum of (2^24, pixel count of image).
+You only need to record whether a particular colour has been counted, not how many times it has been counted. That means you need 1 bit to record whether each colour is counted. That's 2MB of memory. Iterate through the pixels, set the relevant bit in your 2MB colour set map. At the end iterate through the colour set map counting the set bits (if you are lucky you will have a POPCNT instruction to aid in this).
+For smaller images and certainly lower colour depths you might be better off keeping a colour table and count for each colour that is in the image.
+
+var cnt = new HashSet<System.Drawing.Color>();
+
+foreach (Color pixel in image)
+    cnt.Add(pixel);
+
+Console.WriteLine("The image has {0} distinct colours.", cnt.Count);
+
+/EDIT: as Lou said, using .GetArgb() instead of the Color value itself might be slightly faster because of the way Color implements GetHashCode.
+
+The maximum number of unique colours in an image is equal to the number of pixels, so this is predictable from the very start of the process.
+Using the HashSet method proposed, by Konrad, would then seem to be a reasonable solution, as the size of the hash should be no greater than the number of pixels, whereas using the bitmap approach suggested by JeeBee would required 512 MB for a 32 bit image (If there's an Alpha channel, and this is determined to contribute to the uniqueness of the colour)
+The performance of the HashSet approach, though, is likely to be worse than that of the 'bit-per-colour' approach - you might want to try both and do some benchmarks, using lots of differnt images
+
+You didn't exactly define unique colors. If you actually mean truly unique code values (as opposed to visually the same), then the only exact solution is to actually count them up using one of the techniques described in other answers.
+If you are looking for visually similar colors, this does quickly distill down to a palette mapping problem where you are looking for say the 256 best unique colors to use to most closely represent the original full dynamic color range image. For most images, it is amazing how good an image reduced from 24-bits and up to 16-million different colors to start with can be mapped to an image with only 256 unique colors when those 256 colors are well chosen. The optimal selection of those right 256 colors (for this example) has been proven to be NP-complete, but there are practical solutions that can come very close. Search for papers by a guy named Shijie Wan and stuff built on his work.
+If you are looking for an approximation to the number of the code value colors in an image, I would compress the image using a loss-less compression scheme. The compression ratio will directly relate to the number of unique code values in the image. You don't even have to keep the compressed output, just accumulate the number of bytes along the way and throw away the actual output data. Using a set of sample images as a reference, you could build a lookup table between compression ratio and number of different code values in the image. Again, this last technique while quite fast will definitely be an approximation, but it should correlate reasonably well.
+
+Most people here have suggested solutions that will probably be fast (actually the one that only uses 2 MB is probably acceptable regarding memory usage and very fast; the one with the hash might be even faster, but it will definitely use more than 2 MB of memory). Programming is always a trade off between memory usage and CPU time. You can usually get results faster if you are willing to "waste" more memory or you can get results slower by "wasting" more computation time, however this usually safes you a lot of memory.
+Here's one solution nobody has suggested so far. It is probably the one that costs least memory (you can optimize it, so it will hardly use more memory than is necessary to keep the image in memory, however, the image will be altered, though you might have to copy it first). I doubt it can beat the hash or bit-mask solution in speed, it's just interesting if memory is your highest concern.
+
+Sort the pixels in the image by color. You can easily convert every pixel to a 32 bit number and 32 bit numbers can be compared to each other, one number being smaller than another one, bigger or equal. If you use Quicksort, no extra storage space is needed for sorting, other than additional stack space. If you use Shellsort, no extra memory is needed at all (though Shellsort will be much slower than Quicksort).
+int num = (RED << 16) + (GREEN << 8) + BLUE;
+Once you have sorted the pixels like that (which means you have re-arranged them within the image), all pixels of equal color are always next to each other. So you can just once iterate over the image and look how often the color changes. E.g. you store the current color of the pixel at (0, 0) and you init a counter with the value 1. Next step is you go to (0, 1). If it is the same color as before, nothing to do, continue with the next pixel (0, 2). However, if it is not the same, increase the counter by one and remember the color of that pixel for the next iteration.
+Once you have looked at the last pixel (and possibly increased the counter again, if it was not the same as the second last pixel), the counter contains the number of unique colors.
+
+Iterating over all pixels at least once is something you must do in any case, regardless of solution, so it has no impact on this solution being slower or faster than other solutions. The speed of this algorithm depends on how fast you can sort the pixels of the image by color.
+As I said, this algorithm is easily beaten when speed is your main concert (other solutions here are probably all faster), but I doubt it can be beaten when memory usage is your main concern, since other than the counter, enough storage space to store one color, and storage space for the image itself, it will only need additional memory if your chosen sorting algorithm needs any.
+
+Most of the other implementations here are going to be slow. For this to be fast, you need direct scanline access and some kind of sparse matrix to store the color data in. 
+First I will describe the 32bpp case, it's much easier:
+
+HashSet: Sparse Matrix of colors
+ImageData: Use a
+BitmapData object to directly
+access the underlying memory
+PixelAccess: Use a int* to reference
+the memory as ints which you can
+iterate through
+
+For each iteration just do a hashset.add of that integer. At the end just see how many keys are in HashSet and that's the total number of colors. It is important to note that resizing a HashSet is really painful (O(n) where n is the number of items in the set) and so you may want to construct a reasonably sized HashSet to begin with, maybe something like imageHeight*imageWidth/4 would be good.
+In the 24bpp case PixelAccess needs to be a byte* and you need to iterate over 3 bytes for each color in order to construct an int. For each byte in the set of 3 first bitshift to the left by 8 (one byte) and add it to an integer. You now have a 24bpp Color represented by an 32bit int, the rest is all the same.
+
+The modern popular implementation of color quantization uses the octree data structure.  Note the wikipedia pages, the content is pretty good.  The octree has the advantage of being as memory-limited as you want, so you can sample the whole image and decide on your palette without much additional memory.  Once you understand the concept, follow the link to the 1996 Dr Dobb's journal article's source code.
+Since this is a C# question, see the May 2003 MSDN article Optimizing Color Quantization for ASP.NET Images, which includes some source code.

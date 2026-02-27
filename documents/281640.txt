@@ -1,0 +1,371 @@
+How do I get a human-readable file size in bytes abbreviation using .NET?
+c# .net vb.net
+How do I get a human-readable file size in bytes abbreviation using .NET?
+Example:
+Take input 7,326,629 and display 6.98 MB
+
+
+int size = new FileInfo( filePath ).Length / 1024;
+string humanKBSize = string.Format( "{0} KB", size );
+string humanMBSize = string.Format( "{0} MB", size / 1024 );
+string humanGBSize = string.Format( "{0} GB", size / 1024 / 1024 );
+
+
+I assume you're looking for "1.4 MB" instead of "1468006 bytes"?
+I don't think there is a built-in way to do that in .NET. You'll need to just figure out which unit is appropriate, and format it.
+Edit: Here's some sample code to do just that:
+http://www.codeproject.com/KB/cpp/formatsize.aspx
+
+This is not the most efficient way to do it, but it's easier to read if you are not familiar with log maths, and should be fast enough for most scenarios.
+string[] sizes = { "B", "KB", "MB", "GB" };
+double len = new FileInfo(filename).Length;
+int order = 0;
+while (len >= 1024 && ++order < sizes.Length) {
+    len = len/1024;
+}
+
+// Adjust the format string to your preferences. For example "{0:0.#}{1}" would
+// show a single decimal place, and no space.
+string result = String.Format("{0:0.##} {1}", len, sizes[order]);
+
+
+string[] suffixes = { "B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB" };
+int s = 0;
+long size = fileInfo.Length;
+
+while (size >= 1024)
+{
+    s++;
+    size /= 1024;
+}
+
+string humanReadable = String.Format("{0} {1}", size, suffixes[s]);
+
+
+[DllImport ( "Shlwapi.dll", CharSet = CharSet.Auto )]
+public static extern long StrFormatByteSize ( 
+        long fileSize
+        , [MarshalAs ( UnmanagedType.LPTStr )] StringBuilder buffer
+        , int bufferSize );
+
+
+/// <summary>
+/// Converts a numeric value into a string that represents the number expressed as a size value in bytes, kilobytes, megabytes, or gigabytes, depending on the size.
+/// </summary>
+/// <param name="filelength">The numeric value to be converted.</param>
+/// <returns>the converted string</returns>
+public static string StrFormatByteSize (long filesize) {
+     StringBuilder sb = new StringBuilder( 11 );
+     StrFormatByteSize( filesize, sb, sb.Capacity );
+     return sb.ToString();
+}
+
+From: http://www.pinvoke.net/default.aspx/shlwapi/StrFormatByteSize.html
+
+One more way to skin it, without any kind of loops and with negative size support (makes sense for things like file size deltas):
+public static class Format
+{
+    static string[] sizeSuffixes = {
+        "B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB" };
+
+    public static string ByteSize(long size)
+    {
+        Debug.Assert(sizeSuffixes.Length > 0);
+
+        const string formatTemplate = "{0}{1:0.#} {2}";
+
+        if (size == 0)
+        {
+            return string.Format(formatTemplate, null, 0, sizeSuffixes[0]);
+        }
+
+        var absSize = Math.Abs((double)size);
+        var fpPower = Math.Log(absSize, 1000);
+        var intPower = (int)fpPower;
+        var iUnit = intPower >= sizeSuffixes.Length
+            ? sizeSuffixes.Length - 1
+            : intPower;
+        var normSize = absSize / Math.Pow(1000, iUnit);
+
+        return string.Format(
+            formatTemplate,
+            size < 0 ? "-" : null, normSize, sizeSuffixes[iUnit]);
+    }
+}
+
+And here is the test suite:
+[TestFixture] public class ByteSize
+{
+    [TestCase(0, Result="0 B")]
+    [TestCase(1, Result = "1 B")]
+    [TestCase(1000, Result = "1 KB")]
+    [TestCase(1500000, Result = "1.5 MB")]
+    [TestCase(-1000, Result = "-1 KB")]
+    [TestCase(int.MaxValue, Result = "2.1 GB")]
+    [TestCase(int.MinValue, Result = "-2.1 GB")]
+    [TestCase(long.MaxValue, Result = "9.2 EB")]
+    [TestCase(long.MinValue, Result = "-9.2 EB")]
+    public string Format_byte_size(long size)
+    {
+        return Format.ByteSize(size);
+    }
+}
+
+
+using Log to solve the problem....
+static String BytesToString(long byteCount)
+{
+    string[] suf = { "B", "KB", "MB", "GB", "TB", "PB", "EB" }; //Longs run out around EB
+    if (byteCount == 0)
+        return "0" + suf[0];
+    long bytes = Math.Abs(byteCount);
+    int place = Convert.ToInt32(Math.Floor(Math.Log(bytes, 1024)));
+    double num = Math.Round(bytes / Math.Pow(1024, place), 1);
+    return (Math.Sign(byteCount) * num).ToString() + suf[place];
+}
+
+Also in c#, but should be a snap to convert. Also I rounded to 1 decimal place for readability. 
+Basically Determine the number of decimal places in Base 1024 and then divide by 1024^decimalplaces.
+And some samples of use and output:
+Console.WriteLine(BytesToString(9223372036854775807));  //Results in 8EB
+Console.WriteLine(BytesToString(0));                    //Results in 0B
+Console.WriteLine(BytesToString(1024));                 //Results in 1KB
+Console.WriteLine(BytesToString(2000000));              //Results in 1.9MB
+Console.WriteLine(BytesToString(-9023372036854775807)); //Results in -7.8EB
+
+Edit:
+ Was pointed out that I missed a math.floor, so I incorporated it. (Convert.ToInt32 uses rounding, not truncating and that's why Floor is necessary.) Thanks for the catch.
+Edit2: 
+ There were a couple of comments about negative sizes and 0 byte sizes, so I updated to handle those 2 cases. 
+
+Mixture of all solutions :-)
+    /// <summary>
+    /// Converts a numeric value into a string that represents the number expressed as a size value in bytes,
+    /// kilobytes, megabytes, or gigabytes, depending on the size.
+    /// </summary>
+    /// <param name="fileSize">The numeric value to be converted.</param>
+    /// <returns>The converted string.</returns>
+    public static string FormatByteSize(double fileSize)
+    {
+        FileSizeUnit unit = FileSizeUnit.B;
+        while (fileSize >= 1024 && unit < FileSizeUnit.YB)
+        {
+            fileSize = fileSize / 1024;
+            unit++;
+        }
+        return string.Format("{0:0.##} {1}", fileSize, unit);
+    }
+
+    /// <summary>
+    /// Converts a numeric value into a string that represents the number expressed as a size value in bytes,
+    /// kilobytes, megabytes, or gigabytes, depending on the size.
+    /// </summary>
+    /// <param name="fileInfo"></param>
+    /// <returns>The converted string.</returns>
+    public static string FormatByteSize(FileInfo fileInfo)
+    {
+        return FormatByteSize(fileInfo.Length);
+    }
+}
+
+public enum FileSizeUnit : byte
+{
+    B,
+    KB,
+    MB,
+    GB,
+    TB,
+    PB,
+    EB,
+    ZB,
+    YB
+}
+
+
+A tested and significantly optimized version of the requested function is posted here:
+C# Human Readable File Size - Optimized Function
+Source code:
+// Returns the human-readable file size for an arbitrary, 64-bit file size 
+// The default format is "0.### XB", e.g. "4.2 KB" or "1.434 GB"
+public string GetBytesReadable(long i)
+{
+    // Get absolute value
+    long absolute_i = (i < 0 ? -i : i);
+    // Determine the suffix and readable value
+    string suffix;
+    double readable;
+    if (absolute_i >= 0x1000000000000000) // Exabyte
+    {
+        suffix = "EB";
+        readable = (i >> 50);
+    }
+    else if (absolute_i >= 0x4000000000000) // Petabyte
+    {
+        suffix = "PB";
+        readable = (i >> 40);
+    }
+    else if (absolute_i >= 0x10000000000) // Terabyte
+    {
+        suffix = "TB";
+        readable = (i >> 30);
+    }
+    else if (absolute_i >= 0x40000000) // Gigabyte
+    {
+        suffix = "GB";
+        readable = (i >> 20);
+    }
+    else if (absolute_i >= 0x100000) // Megabyte
+    {
+        suffix = "MB";
+        readable = (i >> 10);
+    }
+    else if (absolute_i >= 0x400) // Kilobyte
+    {
+        suffix = "KB";
+        readable = i;
+    }
+    else
+    {
+        return i.ToString("0 B"); // Byte
+    }
+    // Divide by 1024 to get fractional value
+    readable = (readable / 1024);
+    // Return formatted number with suffix
+    return readable.ToString("0.### ") + suffix;
+}
+
+
+My 2 cents:
+
+The prefix for kilobyte is kB (lowercase K)
+Since these functions are for presentation purposes, one should supply a culture, for example: string.Format(CultureInfo.CurrentCulture, "{0:0.##} {1}", fileSize, unit);
+Depending on the context a kilobyte can be either 1000 or 1024 bytes. The same goes for MB, GB, etc.
+
+
+One more approach, for what it's worth. I liked @humbads optimized solution referenced above, so have copied the principle, but I've implemented it a little differently.
+I suppose it's debatable as to whether it should be an extension method (since not all longs are necessarily byte sizes), but I like them, and it's somewhere I can find the method when I next need it!
+Regarding the units, I don't think I've ever said 'Kibibyte' or 'Mebibyte' in my life, and while I'm skeptical of such enforced rather than evolved standards, I suppose it'll avoid confusion in the long term.
+public static class LongExtensions
+{
+    private static readonly long[] numberOfBytesInUnit;
+    private static readonly Func<long, string>[] bytesToUnitConverters;
+
+    static LongExtensions()
+    {
+        numberOfBytesInUnit = new long[6]    
+        {
+            1L << 10,    // Bytes in a Kibibyte
+            1L << 20,    // Bytes in a Mebibyte
+            1L << 30,    // Bytes in a Gibibyte
+            1L << 40,    // Bytes in a Tebibyte
+            1L << 50,    // Bytes in a Pebibyte
+            1L << 60     // Bytes in a Exbibyte
+        };
+
+        // Shift the long (integer) down to 1024 times its number of units, convert to a double (real number), 
+        // then divide to get the final number of units (units will be in the range 1 to 1023.999)
+        Func<long, int, string> FormatAsProportionOfUnit = (bytes, shift) => (((double)(bytes >> shift)) / 1024).ToString("0.###");
+
+        bytesToUnitConverters = new Func<long,string>[7]
+        {
+            bytes => bytes.ToString() + " B",
+            bytes => FormatAsProportionOfUnit(bytes, 0) + " KiB",
+            bytes => FormatAsProportionOfUnit(bytes, 10) + " MiB",
+            bytes => FormatAsProportionOfUnit(bytes, 20) + " GiB",
+            bytes => FormatAsProportionOfUnit(bytes, 30) + " TiB",
+            bytes => FormatAsProportionOfUnit(bytes, 40) + " PiB",
+            bytes => FormatAsProportionOfUnit(bytes, 50) + " EiB",
+        };
+    }
+
+    public static string ToReadableByteSizeString(this long bytes)
+    {
+        if (bytes < 0)
+            return "-" + Math.Abs(bytes).ToReadableByteSizeString();
+
+        int counter = 0;
+        while (counter < numberOfBytesInUnit.Length)
+        {
+            if (bytes < numberOfBytesInUnit[counter])
+                return bytesToUnitConverters[counter](bytes);
+            counter++;
+        }
+        return bytesToUnitConverters[counter](bytes);
+    }
+}
+
+
+Checkout the ByteSize library. It's the System.TimeSpan for bytes!
+It handles the conversion and formatting for you.
+var maxFileSize = ByteSize.FromKiloBytes(10);
+maxFileSize.Bytes;
+maxFileSize.MegaBytes;
+maxFileSize.GigaBytes;
+
+It also does string representation and parsing.
+// ToString
+ByteSize.FromKiloBytes(1024).ToString(); // 1 MB
+ByteSize.FromGigabytes(.5).ToString();   // 512 MB
+ByteSize.FromGigabytes(1024).ToString(); // 1 TB
+
+// Parsing
+ByteSize.Parse("5b");
+ByteSize.Parse("1.55B");
+
+
+There is one open source project which can do that and much more. 
+7.Bits().ToString();         // 7 b
+8.Bits().ToString();         // 1 B
+(.5).Kilobytes().Humanize();   // 512 B
+(1000).Kilobytes().ToString(); // 1000 KB
+(1024).Kilobytes().Humanize(); // 1 MB
+(.5).Gigabytes().Humanize();   // 512 MB
+(1024).Gigabytes().ToString(); // 1 TB
+
+http://humanizr.net/#bytesize
+https://github.com/MehdiK/Humanizer
+
+I like to use the following method (it supports up to terabytes, which is enough for most cases, but it can easily be extended):
+private string GetSizeString(long length)
+{
+    long B = 0, KB = 1024, MB = KB * 1024, GB = MB * 1024, TB = GB * 1024;
+    double size = length;
+    string suffix = nameof(B);
+
+    if (length >= TB) {
+        size = Math.Round((double)length / TB, 2);
+        suffix = nameof(TB);
+    }
+    else if (length >= GB) {
+        size = Math.Round((double)length / GB, 2);
+        suffix = nameof(GB);
+    }
+    else if (length >= MB) {
+        size = Math.Round((double)length / MB, 2);
+        suffix = nameof(MB);
+    }
+    else if (length >= KB) {
+        size = Math.Round((double)length / KB, 2);
+        suffix = nameof(KB);
+    }
+
+    return $"{size} {suffix}";
+}
+
+Please keep in mind that this is written for C# 6.0 (2015), so it might need a little editing for earlier versions.
+
+If you are trying to match the size as shown in Windows Explorer's detail view, this is the code you want:
+[DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
+private static extern long StrFormatKBSize(
+    long qdw,
+    [MarshalAs(UnmanagedType.LPTStr)] StringBuilder pszBuf,
+    int cchBuf);
+
+public static string BytesToString(long byteCount)
+{
+    var sb = new StringBuilder(32);
+    StrFormatKBSize(byteCount, sb, sb.Capacity);
+    return sb.ToString();
+}
+
+This will not only match Explorer exactly but will also provide the strings translated for you and match differences in Windows versions (for example in Win10, K = 1000 vs. previous versions K = 1024).

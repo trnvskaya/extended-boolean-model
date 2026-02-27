@@ -1,0 +1,141 @@
+Why is my stored procedure receiving a null parameter?
+sql-server delphi stored-procedures
+Ok, this is a curly one. I'm working on some Delphi code that I didn't write, and I'm encountering a very strange problem. One of my stored procedures' parameters is coming through as null, even though it's definitely being sent 1.
+The Delphi code uses a TADOQuery to execute the stored procedure (anonymized):
+ ADOQuery1.SQL.Text := "exec MyStoredProcedure :Foo,:Bar,:Baz,:Qux,:Smang,:Jimmy";
+ ADOQuery1.Parameters.ParamByName("Foo").Value := Integer(someFunction()); 
+ // other parameters all set similarly
+ ADOQuery1.ExecSQL;
+
+Integer(SomeFunction()) currently always returns 1 - I checked with the debugger.
+However, in my stored proc ( altered for debug purposes ):
+create procedure MyStoredProcedure (
+    @Foo int, @Bar int, @Baz int,
+    @Qux int, @Smang int, @Jimmy varchar(20) 
+) as begin
+    -- temp debug
+    if ( @Foo is null ) begin
+        insert into TempLog values ( "oh crap" )
+    end
+    -- do the rest of the stuff here..
+end
+
+TempLog does indeed end up with "oh crap" in it (side question: there must be a better way of debugging stored procs: what is it?).
+Here's an example trace from profiler:
+exec [MYDB]..sp_procedure_params_rowset N'MyStoredProcedure',1,NULL,NULL
+
+declare @p3 int
+set @p3=NULL
+exec sp_executesql 
+    N'exec MyStoredProcedure @P1,@P2,@P3,@P4,@P5,@P6',
+    N'@P1 int OUTPUT,@P2 int,@P3 int,@P4 int,@P5 int,@P6 int',
+    @p3 output,1,1,1,0,200
+select @p3
+
+This looks a little strange to me. Notice that it's using @p3 and @P3 - could this be causing my issue?    
+The other strange thing is that it seems to depend on which TADOConnection I use.    
+The project is a dll which is passed a TADOConnection from another application. It calls all the stored procedures using this connection.
+If instead of using this connection, I first do this:
+ConnectionNew := TADOQuery.Create(ConnectionOld.Owner);
+ConnectionNew.ConnectionString := ConnectionOld.ConnectionString;
+TADOQuery1.Connection := ConnectionNew;
+
+Then the issue does not occur! The trace from this situation is this:
+exec [MYDB]..sp_procedure_params_rowset N'MyStoredProcedure',1,NULL,NULL
+
+declare @p1 int
+set @p1=64
+exec sp_prepare @p1 output,
+    N'@P1 int,@P2 int,@P3 int,@P4 int,@P5 int,@P6 varchar(20)',
+    N'exec MyStoredProcedure @P1,@P2,@P3,@P4,@P5,@P6',
+    1
+select @p1
+
+SET FMTONLY ON exec sp_execute 64,0,0,0,0,0,' ' SET FMTONLY OFF
+
+exec sp_unprepare 64
+
+SET NO_BROWSETABLE OFF
+
+exec sp_executesql 
+    N'exec MyStoredProcedure @P1,@P2,@P3,@P4,@P5,@P6',
+    N'@P1 int,@P2 int,@P3 int,@P4 int,@P5 int,@P6 varchar(20)',
+    1,1,1,3,0,'400.00'
+
+Which is a bit much for lil ol' me to follow, unfortunately. What sort of TADOConnection options could be influencing this?
+Does anyone have any ideas?
+Edit: Update below (didn't want to make this question any longer :P)
+
+
+caveat: i don't know delphi, but this issue rings a faint bell and so i'm interested in it
+do you get the same result if you use a TADOStoredProc instead of a TADOQuery? see delphi 5 developers guide
+also, it looks like the first trace does no prepare call and thinks @P1 is an output paramer in the execute, while the second trace does a prepare call with @P1 as an output but does not show @P1 as an output in the execute step - is this significant? it does seem odd, and so may be a clue
+you might also try replacing the function call with a constant 1
+good luck, and please let us know what you find out!
+
+In my programs, I have lots of code very similar to your first snippet, and I haven't encountered this problem.
+Is that actually your code, or is that how you've represented the problem for us to understand? Is the text for the SQL stored in your DFM or populated dynamically? 
+I was wondering if perhaps somehow the Params property of the query had already got a list of parameters defined/cached, in the IDE, and that might explain why P1 was being seen as output (which is almost certainly causing your NULL problem).
+Just before you set the ParamByName.Value, try
+
+ParamByName("Foo").ParamType=ptInput;
+
+I'm not sure why you changing the connection string would also fix this, unless it's resetting the internal sense of the parameters for that query.
+Under TSQLQuery, the Params property of a query gets reset/recreated whenever the SQL.Text value is changed (I'm not sure if that's true for a TADOQuery mind you), so that first snippet of yours ought to have caused any existing Params information to have been dropped.
+If the 'ParamByname.ParamType' suggestion above does fix it for you, then surely there's something happening to the query elsewhere (at create-time? on the form?) that is causing it to think Foo is an output parameter...
+does that help at all? :-)
+
+I suspect you have some parameters mismatch left over from the previous use of your ADOQuery.
+Have you tried to reset your parameters after changing the SQL.Text:  
+  ADOQuery1.Parameters.Refresh;
+
+Also you could try to clear the parameters and explicitly recreate them:  
+  ADOQuery1.Parameters.Clear;
+  ADOQuery1.Parameters.CreateParameter('Foo', ftInteger, pdInput, 0, 1);
+  [...]
+
+I think changing the connection actually forces an InternalRefresh of the parameters.
+
+ ADOQuery1.Parameters.ParamByName("Foo").Value = Integer(someFunction());
+
+Don't they use := for assignment in Object Pascal?
+
+@Constantin
+It must be a typo from the Author of the question.
+@Blorgbeard
+Hmmm... When you change SQL of a TADOQuery, is good use to 
+clear the parameters and recreate then using CreateParameter.
+I would not rely on ParamCheck in runtime - since it leaves 
+the parameters' properties mostly undefined.
+I've had such type of problem when relying on ParamCheck to
+autofill the parameters - is rare but occurs.
+Ah, if you go the CreateParameter route, create as first 
+parameter the @RETURN_VALUE one, since it'll catch the returned
+value of the MSSQL SP.
+
+The only time I've had a problem like this was when the DB Provider couldn't distinguish between Output (always sets it to null) and InputOutput (uses what you provide) parameters.
+
+Ok, progress is made.. sort of.
+@Robsoft was correct, setting the parameter direction to pdInput fixed the issue.
+I traced into the VCL code, and it came down to TParameters.InternalRefresh.RefreshFromOleDB. This function is being called when I set the SQL.Text. Here's the (abridged) code:
+function TParameters.InternalRefresh: Boolean;
+  procedure RefreshFromOleDB;
+    // ..
+        if OLEDBParameters.GetParameterInfo(ParamCount, PDBPARAMINFO(ParamInfo), @NamesBuffer) = S_OK then
+          for I := 0 to ParamCount - 1 do
+            with ParamInfo[I] do
+            begin
+              // ..
+              Direction := dwFlags and $F;       // here's where the wrong value comes from
+              // ..
+            end;
+     // ..
+  end;
+  // ..
+end;
+
+So, OLEDBParameters.GetParameterInfo is returning the wrong flags for some reason. 
+I've verified that with the original connection, (dwFlags and $F) is 2 (DBPARAMFLAGS_ISOUTPUT), and with the new connection, it's 1 (DBPARAMFLAGS_ISINPUT).
+I'm not really sure I want to dig any deeper than that, for now at least.
+Until I have more time and inclination, I'll just make sure all parameters are set to pdInput before I open the query. Unless anyone has any more bright ideas now..?
+Anyway, thanks everyone for your suggestions so far.

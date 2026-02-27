@@ -1,0 +1,88 @@
+Ignore ObsoleteAttribute Compiler Error
+c#
+I have an enumeration value marked with the following attribute.  The second parameter instructs the compiler to error whenever the value is used.  I want this behavior for anyone that implements my library, but I need to use this enumeration value within my library.  How do I tell the compiler to ignore the Obsolete error for the couple of uses in my library.
+public enum Choices
+{
+    One,
+    Two,
+    [ObsoleteAttribute("don't use me", true)] 
+    Three,
+    Four
+}
+
+
+Solution (Thanks everyone)
+public class EnumHack
+{
+  static EnumHack()
+  {
+    // Safety check
+    if (Choices!= (Choices)Enum.Parse(typeof(Choices), "Three"))
+      throw new Exception("Choices.Three != 3; Who changed my Enum!");
+  }
+
+  [Obsolete("Backwards compatible Choices.Three", false)]
+  public const Choices ChoicesThree = (Choices)3;
+}
+
+
+
+Private a separate constant somewhere like this:
+private const Choices BackwardsCompatibleThree = (Choices) 3;
+
+Note that anyone else will be able to do the same thing.
+
+What I see is that you're using this public enum for private logic, and after obsoleting it, you still need that logic internally.  
+I see 2 options:
+
+Map it to a private Enum when you use it for your branching logic.  You should be able to straight cast from one to the other.
+Cast it from an int, thus never using the actual Enum value in your code.
+
+As Jon points out above, anyone using your library can, and WILL (I know where you work), just hack through it anyhow.
+
+TheSoftwareJedi correctly notes that this won't work with obsolete attribute set to be an error.  The following "answer" only works when the obsolete notification is raised as a warning.
+
+From Visual Studio you can do this on a per-project basis:
+
+Go to the Project Properties page for the project you want to be able to suppress the obsolete warning on.
+Go to the Build tab: Errors and Warnings : Suppress Warnings
+Enter the warning number, 0612 in this case.
+
+Other projects will continue to get the obsolete warning but this project will not.  Note that this will disable ALL obsolete warnings.
+
+It may not be the prettiest solution in the world, but you can try to trick the compiler by assigning values to the enum and then casting on your internal calls. For example this app runs:
+namespace ConsoleApplication
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            TestMethod((Choices)3);
+        }
+
+        private static int TestMethod(Choices choice) {
+            return 1;
+        }
+    }
+
+    public enum Choices
+    {
+        One = 1,
+        Two = 2,
+        [ObsoleteAttribute("don't use me", true)]
+        Three = 3,
+        Four = 4
+    }
+}
+
+I thought that Enum.Parse would work but it gets a run-time error, so don't do this:
+(Choices)Enum.Parse(typeof(Choices), "Choices.Three")
+
+I don't have experience with obsolete enums so I would recommend some pretty good testing around this.
+
+What about using #pragma to disable the warning around the specfic code?
+#pragma warning disable 0612
+    // Call obsolete type/enum member here
+#pragma warning restore 0612
+
+A note to visitors, this only works with types and enum members. As far as I am aware, this will not work with other type members (e.g. methods, properties, etc).

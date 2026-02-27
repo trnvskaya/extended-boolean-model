@@ -1,0 +1,69 @@
+Thread synchronization question (in java)
+java multithreading concurrency synchronization
+my java application has a loading task which requires two server calls which can be parallelized. So I launch a Thread t1 (doing task1) and a Thread t2 (for task2).
+I want then to do a specific task, task3 when both other tasks (1 & 2) are over. Naturally I can't tell which of task1 and task2 will finish first...
+Which would be for you the simplest (and safest) way to code this ?
+Thank you for your help
+
+
+You can join both t1 and t2 (in either order), then run task3 after the join.
+
+Implement a listener interface in your task3, and register it to both task1 & task2. Task1 and Task2 will have to call their listener just before ending. Doing so, you can record in task3 which task has already finished, and when both have finished, you can perform your third task.
+Of course, if on of your task1/2 can exit with an exception, don't forget to put task3 as its UncaughtExceptionHandler
+
+I you don't want to terminate the 2 worker threads (task1 and task2) when they finish their job, then you can wait on a condition in task3 until the other two finish. Something like this:
+public class Master {
+
+    private Object monitor_ = new Object();
+    private boolean task1Finished_;
+    private boolean task2Finished_;
+
+    class Task1 extends Thread {
+
+        public void run() {
+            // do stuff
+            synchronized (monitor_) {
+                task1Finished_ = true;
+                monitor_.notifyAll();
+            }
+            // keep on working
+        }
+    }
+
+    class Task2 extends Thread {
+
+        public void run() {
+            // do stuff
+            synchronized (monitor_) {
+                task1Finished_ = true;
+                monitor_.notifyAll();
+            }
+            // keep on working
+        }
+    }
+
+    class Task3 extends Thread {
+
+        public void run() {
+            synchronized (monitor_) {
+                while (!task1Finished_ || !task2Finished_) {
+                    try {
+                        monitor_.wait();
+                    }
+                    catch (InterruptedException ignored) {
+                    }
+                }
+            }
+            // do stuff
+        }
+    }
+    // start tasks1, task2 and task3...
+}
+
+
+You've got several options:
+
+If task3 is on a separate thread AND task1 and task2 threads are exclusive to their tasks (no thread pooling) and finish when the task finish, you can use {T1.join(); T2.join();} to wait for both threads. Pros: Easy. Cons: The situation is rarely that simple.
+If task3 is on a separate thread, you could use java.util.concurrent.CountDownLatch shared between all threads. Task 3 will wait for the latch while task1 and task2 will decrease it. Pros: quite easy, oblivious to the environment. Cons: require T3 to be created before it's really needed.
+If task3 should only be created AFTER task1 and task2 are finished (no separate thread for it until after task1 and task2 finishes), you'd have to build something a bit more complex. I'd recommend either creating your own ExecutorService that take a condition n addition to the future and only executes the future when the condition changes, or creating a management service that will check conditions and submit given futures based on these conditions. Mind, this is of the top of my head, there might be simpler solutions. Pros: resources-friendly. Cons: complex.
+

@@ -1,0 +1,72 @@
+When does System.gc() do anything
+java garbage-collection
+I know that garbage collection is automated in Java. But I understood that if you write System.gc() in your code the Java VM may or may not decide at runtime to do a garbage collection at that point. How does this work precisely? On what basis/parameters exactly does the VM decide to do (or not do) a GC when it sees a System.gc()? Are there maybe examples in which case it is a good idea to put this in your code?
+
+
+In practice, it usually decides to do a garbage collection.  The answer varies depending on lots of factors, like which JVM you're running on, which mode it's in, and which garbage collection algorithm it's using.  
+I wouldn't depend on it in your code.  If the JVM is about to throw an OutOfMemoryError, calling System.gc() won't stop it, because the garbage collector will attempt to free as much as it can before it goes to that extreme.  The only time I've seen it used in practice is in IDEs where it's attached to a button that a user can click, but even there it's not terribly useful.
+
+System.gc() is implemented by the VM, and what it does is implementation specific. The implementer could simply return and do nothing, for instance. 
+As for when to issue a manual collect, the only time when you may want to do this is when you abandon a large collection containing loads of smaller collections--a 
+Map<String,<LinkedList>>   for instance--and you want to try and take the perf hit then and there, but for the most part, you shouldn't worry about it. The GC knows better than you--sadly--most of the time.
+
+You have no control over GC in java -- the VM decides.  I've never run across a case where System.gc() is needed.  Since a System.gc() call simply SUGGESTS that the VM do a garbage collection and it also does a FULL garbage collection (old and new generations in a multi-generational heap), then it can actually cause MORE cpu cycles to be consumed than necessary.
+In some cases, it may make sense to suggest to the VM that it do a full collection NOW as you may know the application will be sitting idle for the next few minutes before heavy lifting occurs.  For example, right after the initialization of a lot of temporary object during application startup (i.e., I just cached a TON of info, and I know I won't be getting much activity for a minute or so).  Think of an IDE such as eclipse starting up -- it does a lot to initialize, so perhaps immediately after initialization it makes sense to do a full gc at that point.
+
+In short:
+Parameters is VM dependent.
+Example usage- can't think of one for runtime/production apps, but it is useful to run it for some profiling harnesses, like calling 
+// test run #1
+test();
+for (int i=0; i<10; i++) { 
+// calling repeatedly to increase chances of a clean-up
+  System.gc(); 
+}
+// test run #2
+test();
+
+
+I can't think of a specific example when it is good to run explicit GC. 
+In general, running explicit GC can actually cause more harm than good, because an explicit gc will trigger a full collection, which takes significantly longer as it goes through every object.  If this explicit gc ends up being called repeatedly it could easily lead to a slow application as a lot of time is spent running full GCs.
+Alternatively if going over the heap with a heap analyzer and you suspect a library component to be calling explicit GC's you can turn it off adding: gc=-XX:+DisableExplicitGC  to the JVM parameters.
+
+You need to be very careful if you call System.gc(). Calling it can add unnecessary performance issues to your application, and it is not guaranteed to actually perform a collection. It is actually possible to disable explicit System.gc() via the java argument -XX:+DisableExplicitGC.
+I'd highly recommend reading through the documents available at Java HotSpot Garbage Collection for more in depth details about garbage collection.
+
+The only example I can think of where it makes sense to call System.gc() is when profiling an application to search for possible memory leaks. I believe the profilers call this method just before taking a memory snapshot.
+
+Most JVMs will kick off a GC (depending on the -XX:DiableExplicitGC and -XX:+ExplicitGCInvokesConcurrent switch). But the specification is just less well defined in order to allow better implementations later on.
+The spec needs clarification: Bug #6668279: (spec) System.gc() should indicate that we don't recommend use and don't guarantee behaviour
+Internally the gc method is used by RMI and NIO, and they require synchronous execution, which: this is currently in discussion:
+Bug #5025281: Allow System.gc() to trigger concurrent (not stop-the-world) full collections
+
+Normally, the VM would do a garbage collection automatically before throwing an OutOfMemoryException, so adding an explicit call shouldn't help except in that it perhaps moves the performance hit to an earlier moment in time.
+However, I think I encountered a case where it might be relevant. I'm not sure though, as I have yet to test whether it has any effect:
+When you memory-map a file, I believe the map() call throws an IOException when a large enough block of memory is not available. A garbage collection just before the map() file might help prevent that, I think. What do you think?
+
+If you use direct memory buffers, the JVM doesn't run the GC for you even if you are running low on direct memory.
+If you call ByteBuffer.allocateDirect() and you get an OutOfMemoryError you can find this call is fine after triggering a GC manually.
+
+we can never force garbage collection. System.gc is only suggesting vm for garbage collection, however, really what time the mechanism runs, nobody knows, this is as stated by JSR specifications.
+
+There is a LOT to be said in taking the time to test out the various garbage collection settings, but as was mentioned above it usually not useful to do so.
+I am currently working on a project involving a memory-limited environment and a relatively large amounts of data--there are a few large pieces of data that push my environment to its limit, and even though I was able to bring memory usage down so that in theory it should work just fine, I would still get heap space errors---the verbose GC options showed me that it was trying to garbage collect, but to no avail. In the debugger, I could perform System.gc() and sure enough there would be "plenty" of memory available...not a lot of extra, but enough.
+Consequently, The only time my application calls System.gc() is when it is about to enter the segment of code where large buffers necessary for processing the data will be allocated, and a test on the free memory available indicates that I'm not guaranteed to have it.  In particular, I'm looking at a 1gb environment where at least 300mb is occupied by static data, with the bulk of the non-static data being execution-related except when the data being processed happens to be at least 100-200 MB at the source.  It's all part of an automatic data conversion process, so the data all exists for relatively short periods of time in the long run.
+Unfortunately, while information about the various options for tuning the garbage collector is available, it seems largely an experimental process and the lower level specifics needed to understand how to handle these specific situations are not easily obtained.  
+All of that being said, even though I am using System.gc(), I still continued to tune using command line parameters and managed to improve the overall processing time of my application by a relatively significant amount, despite being unable to get over the stumbling block posed by working with the larger blocks of data.   That being said, System.gc() is a tool....a very unreliable tool, and if you are not careful with how you use it, you will wish that it didn't work more often than not.
+
+Accroding to Thinking in Java by Bruce Eckel, one use case for explicit System.gc() call is when you want to force finalization, i.e. the call to finalize method.
+
+while system.gc works,it will stop the world:all respones are stopped so garbage collector can scan every object to check if it is needed deleted. if the application is a web project, all request are stopped until gc finishes,and this will cause your web project can not work in a monent.
+
+If you want to know if your System.gc() is called, you can with the new Java 7 update 4 get notification when the JVM performs Garbage Collection.
+I am not 100% sure that the GarbageCollectorMXBean class was introduces in Java 7 update 4 though, because I couldn't find it in the release notes, but I found the information in the javaperformancetuning.com site 
+
+Garbage Collection is Good in Java, if we are executing Software coded in java in Desktop/laptop. Because it will be having very high performing Heavy Duty RAM, you can Call System.GC() or Runtime.c() in Java.
+But don't use Garbage collection explicitly in Android because it slow downs your activity. In fact Context to Context Android implicitly Calls System.gc().
+
+The Java Language Specification does not guarantee that the JVM will start a GC when you call System.gc(). This is the reason of this "may or may not decide to do a GC at that point".
+Now, if you look at OpenJDK source code, which is the backbone of Oracle JVM, you will see that a call to System.gc() does start a GC cycle. If you use another JVM, such as J9, you have to check their documentation to find out the answer. For instance, Azul's JVM has a garbage collector that runs continuously, so a call to System.gc() won't do anything
+Some other answer mention starting a GC in JConsole or VisualVM. Basically, these tools make a remote call to System.gc().
+Usually, you don't want to start a garbage collection cycle from your code, as it messes up with the semantics of your application. Your application does some business stuff, the JVM takes care of memory management. You should keep those concerns separated (don't make your application do some memory management, focus on business).
+However, there are few cases where a call to System.gc() might be understandable. Consider, for example, microbenchmarks. No-one wants to have a GC cycle to happen in the middle of a microbenchmark. So you may trigger a GC cycle between each measurement to make sure every measurement starts with an empty heap.

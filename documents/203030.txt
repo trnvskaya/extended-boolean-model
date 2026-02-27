@@ -1,0 +1,154 @@
+Best way to list files in Java, sorted by Date Modified?
+java file sorting
+I want to get a list of files in a directory, but I want to sort it such that the oldest files are first.  My solution was to call File.listFiles and just resort the list based on File.lastModified, but I was wondering if there was a better way.
+Edit: My current solution, as suggested, is to use an anonymous Comparator:
+File[] files = directory.listFiles();
+
+Arrays.sort(files, new Comparator<File>(){
+    public int compare(File f1, File f2)
+    {
+        return Long.valueOf(f1.lastModified()).compareTo(f2.lastModified());
+    } });
+
+
+
+I think your solution is the only sensible way.  The only way to get the list of files is to use File.listFiles() and the documentation states that this makes no guarantees about the order of the files returned.  Therefore you need to write a Comparator that uses File.lastModified() and pass this, along with the array of files, to Arrays.sort().
+
+You might also look at apache commons IO, it has a built in last modified comparator and many other nice utilities for working with files.
+
+This might be faster if you have many files. This uses the decorate-sort-undecorate pattern so that the last-modified date of each file is fetched only once rather than every time the sort algorithm compares two files. This potentially reduces the number of I/O calls from O(n log n) to O(n).
+It's more code, though, so this should only be used if you're mainly concerned with speed and it is measurably faster in practice (which I haven't checked).
+class Pair implements Comparable {
+    public long t;
+    public File f;
+
+    public Pair(File file) {
+        f = file;
+        t = file.lastModified();
+    }
+
+    public int compareTo(Object o) {
+        long u = ((Pair) o).t;
+        return t < u ? -1 : t == u ? 0 : 1;
+    }
+};
+
+// Obtain the array of (file, timestamp) pairs.
+File[] files = directory.listFiles();
+Pair[] pairs = new Pair[files.length];
+for (int i = 0; i < files.length; i++)
+    pairs[i] = new Pair(files[i]);
+
+// Sort them by timestamp.
+Arrays.sort(pairs);
+
+// Take the sorted pairs and extract only the file part, discarding the timestamp.
+for (int i = 0; i < files.length; i++)
+    files[i] = pairs[i].f;
+
+
+public String[] getDirectoryList(String path) {
+    String[] dirListing = null;
+    File dir = new File(path);
+    dirListing = dir.list();
+
+    Arrays.sort(dirListing, 0, dirListing.length);
+    return dirListing;
+}
+
+
+You can try guava Ordering:
+Function<File, Long> getLastModified = new Function<File, Long>() {
+    public Long apply(File file) {
+        return file.lastModified();
+    }
+};
+
+List<File> orderedFiles = Ordering.natural().onResultOf(getLastModified).
+                          sortedCopy(files);
+
+
+If the files that you are sorting are being modified / updated while the sort is being performed you will be violating the transitivity requirement of the comparator's general contract. To avoid this potential bug, you'll want to build up a static lookup table of last modified values to use in the comparator for each file, something like the following:
+    Collection<File> files = ...
+    final Map<File, Long> staticLastModifiedTimes = new HashMap<File,Long>();
+    for(final File f : files) {
+        staticLastModifiedTimes.put(f, f.lastModified());
+    }
+    Collections.sort(files, new Comparator<File>() {
+        @Override
+        public int compare(final File f1, final File f2) {
+            return staticLastModifiedTimes.get(f1).compareTo(staticLastModifiedTimes.get(f2));
+        }
+    });
+
+
+What's about similar approach, but without boxing to the Long objects:
+File[] files = directory.listFiles();
+
+Arrays.sort(files, new Comparator<File>() {
+    public int compare(File f1, File f2) {
+        return Long.compare(f1.lastModified(), f2.lastModified());
+    }
+});
+
+
+You can use Apache LastModifiedFileComparator  library
+ import org.apache.commons.io.comparator.LastModifiedFileComparator;  
+
+
+File[] files = directory.listFiles();
+        Arrays.sort(files, LastModifiedFileComparator.LASTMODIFIED_COMPARATOR);
+        for (File file : files) {
+            Date lastMod = new Date(file.lastModified());
+            System.out.println("File: " + file.getName() + ", Date: " + lastMod + "");
+        }
+
+
+Imports :
+org.apache.commons.io.comparator.LastModifiedFileComparator
+
+Apache Commons
+Code :
+public static void main(String[] args) throws IOException {
+        File directory = new File(".");
+        // get just files, not directories
+        File[] files = directory.listFiles((FileFilter) FileFileFilter.FILE);
+
+        System.out.println("Default order");
+        displayFiles(files);
+
+        Arrays.sort(files, LastModifiedFileComparator.LASTMODIFIED_COMPARATOR);
+        System.out.println("\nLast Modified Ascending Order (LASTMODIFIED_COMPARATOR)");
+        displayFiles(files);
+
+        Arrays.sort(files, LastModifiedFileComparator.LASTMODIFIED_REVERSE);
+        System.out.println("\nLast Modified Descending Order (LASTMODIFIED_REVERSE)");
+        displayFiles(files);
+
+    }
+
+
+In Java 8:
+Arrays.sort(files, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+
+I came to this post when i was searching for the same issue but in android.
+I don't say this is the best way to get sorted files by last modified date, but its the easiest way I found yet.
+Below code may be helpful to someone-
+File downloadDir = new File("mypath");    
+File[] list = downloadDir.listFiles();
+    for (int i = list.length-1; i >=0 ; i--) {
+        //use list.getName to get the name of the file
+    }
+
+Thanks
+
+private static List<File> sortByLastModified(String dirPath) {
+    List<File> files = listFilesRec(dirPath);
+    Collections.sort(files, new Comparator<File>() {
+        public int compare(File o1, File o2) {
+            return Long.compare(o1.lastModified(), o2.lastModified());
+        }
+    });
+    return files;
+}
+

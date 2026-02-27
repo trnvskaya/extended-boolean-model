@@ -1,0 +1,69 @@
+Updating an associative table in MySQL
+sql mysql database
+Below is my (simplified) schema (in MySQL ver. 5.0.51b) and my strategy for updating it. There has got to be a better way. Inserting a new item requires 4 trips to the database and editing/updating an item takes up to 7!
+items: itemId, itemName
+categories: catId, catName
+map: mapId*, itemId, catId
+* mapId (varchar) is concat of itemId + | + catId
+1) If inserting: insert item. Get itemId via MySQL API.
+Else updating: just update the item table. We already have the itemId.
+2) Conditionally batch insert into categories.
+INSERT IGNORE INTO categories (catName)
+VALUES ('each'), ('category'), ('name');
+
+3) Select IDs from categories.
+SELECT catId FROM categories
+WHERE catName = 'each' OR catName = 'category' OR catName = 'name';
+
+4) Conditionally batch insert into map.
+INSERT IGNORE INTO map (mapId, itemId, catId)
+VALUES ('1|1', 1, 1), ('1|2', 1, 2), ('1|3', 1, 3);
+
+If inserting: we're done. Else updating: continue.
+5) It's possible that we no longer associate a category with this item that we did prior to the update. Delete old categories for this itemId.
+DELETE FROM MAP WHERE itemId = 2
+AND catID <> 2 AND catID <> 3 AND catID <> 5;
+
+6) If we have disassociated ourselves from a category, it's possible that we left it orphaned. We do not want categories with no items. Therefore, if affected rows > 0, kill orphaned categories. I haven't found a way to combine these in MySQL, so this is #6 & #7.
+SELECT categories.catId
+FROM categories
+LEFT JOIN map USING (catId)
+GROUP BY categories.catId
+HAVING COUNT(map.catId) < 1;
+
+7) Delete IDs found in step 6.
+DELETE FROM categories
+WHERE catId = 9
+  AND catId = 10;
+
+Please tell me there's a better way that I'm not seeing.
+
+
+Steps 6 & 7 can be combined easily enough:
+DELETE categories.*
+FROM categories
+LEFT JOIN map USING (catId)
+WHERE map.catID IS NULL;
+
+Steps 3 & 4 can also be combined:
+INSERT IGNORE INTO map (mapId, itemId, catId)
+    SELECT CONCAT('1|', c.catId), 1, c.catID
+    FROM categories AS c
+    WHERE c.catName IN('each','category','name');
+
+Otherwise, your solution is pretty standard, unless you want to use triggers to maintain the map table.
+
+There are a number of things you can do to make a bit easier:
+
+Read about [INSERT...ON DUPLICATE KEY UPDATE][1]
+Delete old categories before you insert new categories. This may benefit from an index better.
+DELETE FROM map WHERE itemId=2;
+You probably don't need map.mapID.  Instead, declare a compound primary key over (itemID, catID).
+As Peter says in his answer, use MySQL's multi-table delete:
+DELETE categories.* FROM categories LEFT JOIN map USING (catId) 
+WHERE map.catID IS NULL
+
+http://dev.mysql.com/doc/refman/5.0/en/insert-on-duplicate.html
+
+
+Also, if you are worried about trips to the db, make steps into a stored procedure.  Then you have one trip.

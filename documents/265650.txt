@@ -1,0 +1,61 @@
+Paths and CreateProcess
+c++ winapi
+I have a question regarding a symptom of my misuse of CreateProcess. I'm using the lpcommandline parameter to feed the path to my executable and parameters.  My misuse is that I have not surrounded the path to the exe with quotes.  
+My question is, why does the CreateProcess work just fine on most computers and not others? I know that the path will have a space in most of the time, yet on 90% of XP machines it works.  I of course found out my issue on those 10% where it did not.  But I'm wondering what is different on the machines where it does not work?  Is there a setting or a policy that any of you folks know about.  And yes, I am going to fix the quote issue. Just curious about why something like this would not have just failed off the bat.  
+So the code would look something like below and the szCommandLine Parameter would be something like below. Notice no quotes around the path to the exe.
+"C:\Program Files\My Company\doit.exe  parameter1 parameter2"
+CreateProcess(
+	NULL,			
+	szCommandLine,  
+	NULL,			
+	NULL,			
+	FALSE,			
+	NULL, 
+	NULL,  
+	NULL,			
+	&si,			
+	&pi )
+
+
+
+You should read this page:
+http://msdn.microsoft.com/en-us/library/ms682425.aspx
+
+If the application name is NULL (first parameter).
+It uses the first space separated word in the command line (second parameter) as the application name.
+If the application name contains a space it must be quoted.
+
+Again code is worth a million words:
+Does it look like this:
+char commandline[] = "C:\Program Files\My Company\doit.exe parameter1 parameter2";
+CreateProcess(NULL,commandline, .... );
+
+Or are you generating the path name somwhere?
+Remember generic questions will only get you generic answers.
+You have to be specific before you get a specific answer on why there is just too much speculation otherwise.
+
+A good way to diagnose something like that is to build in to your application error and reporting mechanism.  This helps for so many purposes- mainly for bugs that you may never see yourself and which some users may just ignore and not report to you.  This way you can diagnose what these parameters were when the command was called and the failure occurred.
+Additionally, you can try exploring further the MSDN site and the advanced features associated with this method.  You left most of them NULL.  By exploring these extended features you will learn and maybe able to find out yourself why there may be that discrepency.
+Another generic answer but I hope this helps you to evaluate your particular situation.
+
+As the document Martin York linked to hinted, CreateProcess() has some behaviour for back-compat with pre-long-name programs.
+"c:\program files\sub dir\program name arg1 arg2" will look for:
+
+"c:\program.exe" files\sub dir\program name arg1 arg2
+"c:\program files\sub.exe" dir\program name arg1 arg2
+"c:\program files\sub dir\program.exe" name arg1 arg2
+"c:\program files\sub dir\program name.exe" arg1 arg2
+
+
+So if any of these files exist, Windows will to call them, not your program. Also, I would assume if you did not have read access to any of the folders these possible matches are in, CreateProcess() may fail out immediatly, instead of checking if you have read to the later possible matches. (Windows by default checks read access only the final folder.)
+
+I just struggled with the same problem for quite some time. So even if this question was raised a long time ago, just for the record, here is what the problem was in my case:
+If the command line is not quoted and contains spaces, CreateProcess will try to resolve the ambiguity as described in Simon's answer. 
+If any of the tested parts up to a space character also resolves to an existing file with no or a .exe extension, this file will be used instead of the intended complete path.
+Example:
+char cmdline[] = "C:\Program Files\App One\bin\app.exe param1 param2";
+CreateProcess(NULL, cmdline, ...);
+
+Unfortunately there actually was an existing file called "C:\Program Files\App" (no extension) in my case.
+CreateProcess found this file, assumed it was an executable with no .exe extension and tried to execute it. Result: error 193 "%1 is not a valid Win32 application".
+Bottom line: use quotes or even better, the first argument to CreateProcess, or go looking for any other file which might match part of the offending path.

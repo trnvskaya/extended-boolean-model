@@ -1,0 +1,82 @@
+How can I/O priority of a process be increased?
+.net file-io windows-vista
+I want to increase the I/O priority of a process. Answers for both .NET and Windows Vista would be nice. processexplorer is ok as well.
+
+
+The relevant information seems to be a bit scattered compared to the usual MS documentation. There is this white paper that discusses I/O Prioritization in windows. This doc seems to have beta flags all over it but I guess it's probably mostly pretty accurate.
+Two important things to note:
+
+You can only reduce the priority of IO requests below normal.
+The driver can ignore any such request and treat it as normal anyway.
+
+The useful APIs for client applications are SetFileInformationByHandle:
+FILE_IO_PRIORITY_HINT_INFO priorityHint;
+priorityHint.PriorityHint = IoPriorityHintLow;
+result = SetFileInformationByHandle( hFile,
+                                     FileIoPriorityHintInfo,
+                                     &priorityHint,
+                                     sizeof(PriorityHint));
+
+SetPriorityClass:
+// reduce CPU, page and IO priority for the whole process
+result = SetPriorityClass( GetCurrentProcess(),
+                           PROCESS_MODE_BACKGROUND_BEGIN);
+// do stuff
+result = SetPriorityClass( GetCurrentProcess(),
+                           PROCESS_MODE_BACKGROUND_END);
+
+SetThreadPriority which is similar:
+// reduce CPU, page and IO priority for the current thread
+SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);
+// do stuff
+SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_END);
+
+SetFileBandwithReservation:
+// reserve bandwidth of 200 bytes/sec
+result = SetFileBandwidthReservation( hFile,
+                                  1000,
+                                  200,
+                                  FALSE,
+                                  &transferSize,
+                                  &outstandingRequests );
+
+For .Net do the usual stuff with P/Invoke.
+
+It looks like the "real" way to set the IO priority of a process is using NtSetInformationProcess with the ProcessIoPriority information class. Unfortunately this API is undocumented, but you can see it in action by attaching a debugger to taskeng.exe and breaking in ExeTask::GetYourPrioritiesStraight.
+I believe the PROCESS_INFORMATION_CLASS value for ProcessIoPriority is 33 (0x21), and the priority values are as follows:
+Very Low: 0
+Low: 1
+Normal: 2
+High: 3 or above?
+
+The values above are a best-guess based on what I can tell from the debugger; the task scheduler seems to use a value of 1 for tasks with priority 7, and a value of 2 for tasks with priority 5 (see this question and this MSDN article for more on task scheduler priorities). Calling SetPriorityClass with PROCESS_MODE_BACKGROUND_BEGIN uses a value of 0.
+I have unfortunately not found any public API that can be used for this, other than the SetPriorityClass method in @1800 INFORMATION's answer, which sets the priority to Very Low.
+Edit: I've written a utility that can be used to query or set the IO prority of a process, available here.
+
+Just an update for this - it can all be done via .NET without resorting to WinAPI ...
+// Set the current process to run at 'High' Priority
+System.Diagnostics.Process process = System.Diagnostics.Process.GetCurrentProcess();
+process.PriorityClass = System.Diagnostics.ProcessPriorityClass.High;
+
+// Set the current thread to run at 'Highest' Priority
+Thread thread = System.Threading.Thread.CurrentThread;
+thread.Priority = ThreadPriority.Highest;
+
+I've tried the above setting the process priority in a WPF application and it works fine. Haven't needed to set thread priority.
+EDIT: this above relates to CPU priority of a process, as opposed to I/O priority, however there may be some correlation / connection between a process's CPU priority and its I/O priority.
+
+The proper way to do this is to call SetProcessPriorityClass with PROCESS_BACKGROUND_MODE_BEGIN to initiate a background mode. This causes a Very Low (background) I/O priority and Idle CPU priority. When done, call SetProcessPriorityClass again, supplying PROCESS_BACKGROUND_MODE_END. The same can be done at the thread level via SetThreadPriority and THREAD_BACKGROUND_MODE_BEGIN/END.
+If you want to directly set the I/O priority, independently of the CPU priority, you must use the NT native APIs. I documented it here, but did not include code examples as we all know they get ripped verbatim. 
+The API you want is the NT Native API NtSetInformationProcess. Using this API you can change the I/O priority. This API accepts a 'class' variable telling it what type of information about the process you want to change, that class variable must be set to ProcessIoPriority. You can then set the entire process's I/O priority in this manner.
+Similarly, the I/O priority can be retrieved via NtQueryInformationProcess.
+The bad news is that the priority levels are a bit limited. Critical is reserved for system paging operations. That leaves you with Normal and Very Low (Background). Low and High may or may not be implemented in newer editions of Windows. There seems to be partial support, at the very least.
+If you have no experience with the NT Native APIs, the first thing to do is understand them. Once you do, you'll see it is as simple as a single API call.
+
+Be sure to align FILE_IO_PRIORITY_HINT_INFO structure properly when calling SetFileInformationByHandle.
+Otherwise, you will get a ERROR_NOACCESS (error 998, 0x000003E6).
+_declspec(align(8)) FILE_IO_PRIORITY_HINT_INFO priorityHint;
+priorityHint.PriorityHint = IoPriorityHintLow;
+
+BOOL ret = SetFileInformationByHandle(hFile, FileIoPriorityHintInfo, &priorityHint, sizeof(FILE_IO_PRIORITY_HINT_INFO));
+DWORD err = GetLastError();
+

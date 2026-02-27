@@ -1,0 +1,251 @@
+Explode that doesn't return empty strings?
+php
+PHP's explode function returns an array of strings split on some provided substring. It will return empty strings like this:
+var_dump(explode('/', '1/2//3/'));
+array(5) {
+  [0]=>
+  string(1) "1"
+  [1]=>
+  string(1) "2"
+  [2]=>
+  string(0) ""
+  [3]=>
+  string(1) "3"
+  [4]=>
+  string(0) ""
+}
+
+Is there some different function or option or anything that would return everything except the empty strings?
+var_dump(different_explode('/', '1/2//3/'));
+array(3) {
+  [0]=>
+  string(1) "1"
+  [1]=>
+  string(1) "2"
+  [2]=>
+  string(1) "3"
+}
+
+
+
+function not_empty_string($s) {
+  return $s !== "";
+}
+
+array_filter(explode('/', '1/2//3/'), 'not_empty_string');
+
+
+Try preg_split.
+$exploded = preg_split('@/@', '1/2//3/', NULL, PREG_SPLIT_NO_EMPTY);
+
+array_filter will remove the blank fields, here is an example without the filter:
+print_r(explode('/', '1/2//3/'))
+
+prints:
+Array
+(
+    [0] => 1
+    [1] => 2
+    [2] =>
+    [3] => 3
+    [4] =>
+)
+
+With the filter:
+php> print_r(array_filter(explode('/', '1/2//3/')))
+
+Prints:
+Array
+(
+    [0] => 1
+    [1] => 2
+    [3] => 3
+)
+
+You'll get all values that resolve to "false" filtered out.  
+see  http://uk.php.net/manual/en/function.array-filter.php
+
+Write a wrapper function to strip them
+function MyExplode($sep, $str)
+{
+    $arr = explode($sep, $str);
+    foreach($arr as $item)
+        if(item != "")
+            $out[] = $item;
+    return $out;
+}
+
+
+I usually wrap it in a call to array_filter, e.g.
+var_dump(array_filter(explode('/', '1/2//3/'))
+=>
+array(3) {
+  [0]=>
+  string(1) "1"
+  [1]=>
+  string(1) "2"
+  [3]=>
+  string(1) "3"
+}
+
+Be aware, of course, that array keys are maintained; if you don't want this behaviour, remember to add an outer wrapper call to array_values().
+
+PHP's split function is similar to the explode function, except that it allows you to enter a regex pattern as the delimiter.  Something to the effect of:
+$exploded_arr = split('/\/+/', '1/2//3/');
+
+
+I haven't tested the other suggestions here, but this works:
+function different_explode($mypattern,$mystring){
+    $array1 = explode($mypattern,$mystring);
+    $retArray = Array();
+    foreach($array1 as $myval){
+    	if($myval != ''){
+    		array_push($retArray,$myval);
+    	}
+    }
+    return $retArray;
+}
+
+
+Use this function to filter the output of the explode function
+  function filter_empty(&$arrayvar) {
+        $newarray = array();
+        foreach ($arrayvar as $k => $value)
+            if ($value !== "")
+                $newarray[$k] = $value;
+
+        $arrayvar = $newarray;
+    }
+
+
+Just for variety:
+array_diff(explode('/', '1/2//3/'), array(''))
+
+This also works, but does mess up the array indexes unlike preg_split. Some people might like it better than having to declare a callback function to use array_filter.
+
+Regular expression solutions tend to be much slower than basic text replacement, so i'd replace double seperators with single seperators, trim the string of any whitespace and then use explode:
+// assuming $source = '1/2//3/';
+$source = str_replace('//', '/', $source);
+$source = trim($source);
+$parts = explode('/', $source);
+
+
+I have used this in TYPO3, look at the $onlyNonEmptyValues parameter:
+function trimExplode($delim, $string, $onlyNonEmptyValues=0){
+    $temp = explode($delim,$string);
+    $newtemp=array();
+    while(list($key,$val)=each($temp))      {
+        if (!$onlyNonEmptyValues || strcmp("",trim($val)))      {
+            $newtemp[]=trim($val);
+        }
+    }
+    reset($newtemp);
+    return $newtemp;
+}
+
+It doesn't mess up the indexes:
+var_dump(trimExplode('/', '1/2//3/',1));
+
+Result:
+array(3) {
+  [0]=>
+  string(1) "1"
+  [1]=>
+  string(1) "2"
+  [2]=>
+  string(1) "3"
+}
+
+
+Here is a solution that should output a newly indexed array.
+$result = array_deflate( explode( $delim, $array) );
+
+function array_deflate( $arr, $emptyval='' ){
+    $ret=[];
+    for($i=0,$L=count($arr); $i<$L; ++$i)
+        if($arr[$i] !== $emptyval) $ret[]=$arr[$i];
+    return $ret;
+}
+
+While fairly similar to some other suggestion, this implementation has the benefit of generic use. For arrays with non-string elements, provide a typed empty value as the second argument. 
+array_deflate( $objArray, new stdClass() );
+array_deflate( $databaseArray, NULL );
+array_deflate( $intArray, NULL );
+array_deflate( $arrayArray, [] );
+array_deflate( $assocArrayArray, [''=>NULL] );
+array_deflate( $processedArray, new Exception('processing error') );
+.
+.
+.
+With an optional filter argument..
+function array_deflate( $arr, $trigger='', $filter=NULL, $compare=NULL){
+    $ret=[];
+    if ($filter === NULL) $filter = function($el) { return $el; };
+    if ($compare === NULL) $compare = function($a,$b) { return $a===$b; };
+
+    for($i=0,$L=count($arr); $i<$L; ++$i)
+        if( !$compare(arr[$i],$trigger) ) $ret[]=$arr[$i];
+        else $filter($arr[$i]);
+    return $ret;
+}
+
+With usage..
+function targetHandler($t){ /* .... */ }    
+array_deflate( $haystack, $needle, targetHandler );
+
+Turning array_deflate into a way of processing choice elements and removing them from your array. Also nicer is to turn the if statement into a comparison function that is also passed as an argument in case you get fancy.
+array_inflate being the reverse, would take an extra array as the first parameter which matches are pushed to while non-matches are filtered.
+function array_inflate($dest,$src,$trigger='', $filter=NULL, $compare=NULL){
+    if ($filter === NULL) $filter = function($el) { return $el; };
+    if ($compare === NULL) $compare = function($a,$b) { return $a===$b; };
+
+    for($i=0,$L=count($src); $i<$L; ++$i)
+        if( $compare(src[$i],$trigger) ) $dest[]=$src[$i];
+        else $filter($src[$i]);
+    return $dest;
+}
+
+With usage..
+$smartppl=[];    
+$smartppl=array_inflate( $smartppl,
+                         $allppl,
+                         (object)['intelligence'=>110],
+                         cureStupid,
+                         isSmart);
+
+function isSmart($a,$threshold){
+    if( isset($a->intellgence) )    //has intelligence?
+        if( isset($threshold->intellgence) )    //has intelligence?
+            if( $a->intelligence >= $threshold->intelligence )
+                return true;
+            else return INVALID_THRESHOLD; //error
+        else return INVALID_TARGET; //error
+    return false;
+}
+
+function cureStupid($person){
+    $dangerous_chemical = selectNeurosteroid();
+    applyNeurosteroid($person, $dangerous_chemical);
+
+    if( isSmart($person,(object)['intelligence'=>110]) ) 
+        return $person;
+    else 
+        lobotomize($person);
+
+    return $person;
+}
+
+Thus providing an ideal algorithm for the world's educational problems. Aaand I'll stop there before I tweak this into something else..
+
+No regex overhead - should be reasonably efficient, strlen just counts the bytes
+Drop the array_values() if you don't care about indexes
+Make it into function explode_interesting( $array, $fix_index = 0 ) if you want
+$interesting = array_values( 
+                 array_filter(
+                   explode('/', '/1//2//3///4/0/false' ),
+                   function ($val) { return strlen($val); }
+               ));
+
+echo "<pre>", var_export( $interesting, true ), "</pre>";
+
+enjoy, Jeff

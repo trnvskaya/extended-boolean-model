@@ -1,0 +1,61 @@
+Why does NSSet objectEnumerator increment the retain count?
+objective-c cocoa
+After getting the objectEnumerator in the following code, the set1 retain count goes to 3. I was surprised to see that because I didn't expect it to change. I searched the documentation and can't find where this effect is explained.
+I assume the extra retains are probably set to autorelease by the Cocoa enumeration logic and won't really have any effect in the current event loop. It makes sense the objectEnumerator logic would need a reference to set1 but I'd like to know why they were made. Here is the reason: if I assume set1 has retain count zero after the release in the code then I could try to reuse it another new set. Wouldn't that cause problems since set1 is now pointing at a completely different object/address?
+For "bonus" points, is there a way of enumerating the autorelease pool see what it actually contains? TIA
+#import <Foundation/NSObject.h>
+#import <Foundation/NSSet.h>
+#import <Foundation/NSValue.h>
+#import <Foundation/NSEnumerator.h>
+#import <Foundation/NSAutoreleasePool.h>
+#import <Foundation/NSString.h>
+
+#import <stdio.h>;
+
+// macro to create an integer number:
+#define INTOBJ(v) [NSNumber numberWithInt: v]
+
+int main (int argc, char *argv[])
+{
+    NSAutoreleasePool *pool = [NSAutoreleasePool new];
+
+    //Make set
+    NSMutableSet *set1 = [[NSMutableSet alloc] initWithObjects:
+        INTOBJ(1), INTOBJ(2), INTOBJ(5), INTOBJ(10), nil];
+
+    printf("set1 #%lu\n", [set1 retainCount]);
+
+    //Get enumerator of the set. This is where the retain count goes to 3:
+    NSEnumerator *setEnum = [set1 objectEnumerator];
+    printf("setEnum #%lu\n", [setEnum retainCount]);
+    printf("set1 #%lu\n", [set1 retainCount]);
+
+    //Iterate through the collection:
+    printf("[");
+
+    NSNumber *element;
+    while ((element = [setEnum nextObject]) != nil)
+    	//do some this with item. printf is just for debugging:
+    	printf(" %i ", [element intValue]);
+
+    printf("]\n");
+    printf("set1 #%lu\n", [set1 retainCount]);
+
+    [set1 release];
+    printf("set1 after release #%lu\n", [set1 retainCount]);
+
+    //More logic could go here reusing variable set1 since I assumed retain count = 0
+
+    [pool release];
+
+    return 0;
+}
+
+
+
+Reusing set1 after the release won't cause problems, because the retain count is on the Object referenced by the variable set1, not on the variable itself.
+
+It's generally not a good idea to rely on the retain count of objects, as it's an internal detail of the framework. Instead make sure your code adheres to the memory management principles, particularly ensuring that retain/new/copy and release/autorelease are balanced.
+
+Presumably, the enumerator is retaining the collection so that it doesn't get deallocated during enumeration. An enumerator without a valid collection to enumerate wouldn't work very well. In fact, the only way for the enumerator to be sure that it will work is to retain the collection it enumerates.
+That said, there's really no reason to ever look at the retain count of any object except for debugging a memory leak/double-release problem. As long as you follow the memory management conventions, you should never need to worry about an object's retain count.

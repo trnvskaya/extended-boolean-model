@@ -1,0 +1,104 @@
+How to invoke a C# web service through PHP?
+c# php web-services nusoap
+I've written a web service using ASP.NET (in C#) and I'm attempting to write an example PHP client using NuSOAP.  Where I'm tripped up on are examples of how to do this; some show soapval being used (and I don't quite understand the parameters - for example passing false as string types, etc.), while others are just using straight arrays.  Let's say the WSDL for my web service as reported by http://localhost:3333/Service.asmx?wsdl looks something like:
+POST /Service.asmx HTTP/1.1
+Host: localhost
+Content-Type: text/xml; charset=utf-8
+Content-Length: length
+SOAPAction: "http://tempuri.org/webservices/DoSomething"
+
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+	<DoSomething xmlns="http://tempuri.org/webservices">
+	  <anId>int</anId>
+	  <action>string</action>
+	  <parameters>
+		<Param>
+		  <Value>string</Value>
+		  <Name>string</Name>
+		</Param>
+		<Param>
+		  <Value>string</Value>
+		  <Name>string</Name>
+		</Param>
+	  </parameters>
+	</DoSomething>
+  </soap:Body>
+</soap:Envelope>
+
+My first PHP attempt looks like:
+<?php
+require_once('lib/nusoap.php');
+$client = new nusoap_client('http://localhost:3333/Service.asmx?wsdl');
+
+$params = array(
+	'anId' => 3, //new soapval('anId', 'int', 3),
+	'action' => 'OMNOMNOMNOM',
+	'parameters' => array(
+		'firstName' => 'Scott',
+		'lastName' => 'Smith'
+	)
+);
+$result = $client->call('DoSomething', $params, 'http://tempuri.org/webservices/DoSomething', 'http://tempuri.org/webservices/DoSomething');
+print_r($result);
+?>
+
+Now aside from the Param type being a complex type which I'm pretty sure my simple $array attempt will not automagically work with, I'm breakpointing in my web service and seeing the method I've marked as WebMethod (without renaming it, its literally DoSomething) and seeing the arguments are all default values (the int is 0, the string is null, etc.).
+What should my PHP syntax look like, and what do I have to do to pass the Param type correctly?
+
+
+You have to wrap things in tons of nested arrays.
+<?php
+require_once('lib/nusoap.php');
+$client = new nusoap_client('http://localhost:3333/Service.asmx?wsdl');
+
+$params = array(
+      'anId' => 3,
+      'action' => 'OMNOMNOMNOM',
+      'parameters' => array(
+              'Param' => array(
+                  array('Name' => 'firstName', 'Value' => 'Scott'),
+                  array('Name' => 'lastName', 'Value' => 'Smith')
+                       )
+      )
+);
+$result = $client->call('DoSomething', array($params), 
+                'http://tempuri.org/webservices/DoSomething', 
+                'http://tempuri.org/webservices/DoSomething');
+print_r($result);
+?>
+
+
+Sort of unrelated but since PHP5 you have native support for SOAP.
+
+$client = new SoapClient("some.wsdl");
+$client->DoSomething($params);
+
+That might be a little more convenient.
+http://se.php.net/soap
+
+Here the sample with native SOAP support:
+    // Create a new soap client based on the service's metadata (WSDL)
+    $client = new SoapClient("http://some.wsdl",
+        array('location' => 'http://127.0.0.100:80/IntegrationService/php'));
+
+    $params = array();
+    $params['lead']['Firstname']    = $user->firstname;
+    $params['lead']['Lastname']     = $user->lastname;
+    $params['lead']['Product']      = $product;
+    $params['lead']['JobTitle']     = $user->job_title;
+    $params['lead']['Email']        = $user->mail;
+    $params['lead']['Phone']        = $user->phone;
+    $params['lead']['CompanyName']  = $user->company_name;
+    $params['lead']['City']         = $user->city;
+    $params['lead']['Industry']     = $user->industry;
+
+    $client->SubmitLead($params);
+
+Where '.../IntegrationService/php' in SoapClient description is endpoint in WCF:
+<endpoint
+            address="php"
+            binding="basicHttpBinding"
+            contract="Integration.Service.IDrupalIntegrationService" />
+

@@ -1,0 +1,108 @@
+Vim errorformat for Visual Studio
+visual-studio vim errorformat
+I want to use Vim's quickfix features with the output from Visual Studio's devenv build process or msbuild.
+I've created a batch file called build.bat which executes the devenv build like this:
+devenv MySln.sln /Build Debug
+
+In vim I've pointed the :make command to that batch file:
+:set makeprg=build.bat
+
+When I now run :make, the build executes successfully, however the errors don't get parsed out.  So if I run :cl or :cn I just end up seeing all the output from devenv /Build.  I should see only the errors.
+I've tried a number of different errorformat settings that I've found on various sites around the net, but none of them have parsed out the errors correctly.  Here's a few I've tried:
+set errorformat=%*\\d>%f(%l)\ :\ %t%[A-z]%#\ %m
+set errorformat=\ %#%f(%l)\ :\ %#%t%[A-z]%#\ %m
+set errorformat=%f(%l,%c):\ error\ %n:\ %f
+
+And of course I've tried Vim's default.
+Here's some example output from the build.bat:
+C:\TFS\KwB Projects\Thingy>devenv Thingy.sln /Build Debug 
+
+Microsoft (R) Visual Studio Version 9.0.30729.1.
+Copyright (C) Microsoft Corp. All rights reserved.
+------ Build started: Project: Thingy, Configuration: Debug Any CPU ------
+c:\WINDOWS\Microsoft.NET\Framework\v3.5\Csc.exe /noconfig /nowarn:1701,1702 /errorreport:prompt /warn:4 /define:DEBUG;TRACE /reference:"C:\Program Files\Reference Assemblies\Microsoft\Framework\v3.0\PresentationCore.dll" /reference:"C:\Program Files\Reference Assemblies\Microsoft\Framework\v3.0\PresentationFramework.dll" /reference:"C:\Program Files\Reference Assemblies\Microsoft\Framework\v3.5\System.Core.dll" /reference:"C:\Program Files\Reference Assemblies\Microsoft\Framework\v3.5\System.Data.DataSetExtensions.dll" /reference:c:\WINDOWS\Microsoft.NET\Framework\v2.0.50727\System.Data.dll /reference:"C:\Program Files\Reference Assemblies\Microsoft\Framework\v3.5\System.Data.Linq.dll" /reference:c:\WINDOWS\Microsoft.NET\Framework\v2.0.50727\System.dll /reference:c:\WINDOWS\Microsoft.NET\Framework\v2.0.50727\System.Xml.dll /reference:"C:\Program Files\Reference Assemblies\Microsoft\Framework\v3.5\System.Xml.Linq.dll" /reference:"C:\Program Files\Reference Assemblies\Microsoft\Framework\v3.0\UIAutomationProvider.dll" /reference:"C:\Program Files\Reference Assemblies\Microsoft\Framework\v3.0\WindowsBase.dll" /debug+ /debug:full /filealign:512 /optimize- /out:obj\Debug\Thingy.exe /resource:obj\Debug\Thingy.g.resources /resource:obj\Debug\Thingy.Properties.Resources.resources /target:winexe App.xaml.cs Controller\FieldFactory.cs Controller\UserInfo.cs Data\ThingGatewaySqlDirect.cs Data\ThingListFetcher.cs Data\UserListFetcher.cs Gui\FieldList.xaml.cs Interfaces\IList.cs Interfaces\IListFetcher.cs Model\ComboBoxField.cs Model\ListValue.cs Model\ThingType.cs Interfaces\IThingGateway.cs Model\Field.cs Model\TextBoxField.cs Model\Thing.cs Gui\MainWindow.xaml.cs Gui\ThingWindow.xaml.cs Interfaces\IField.cs Properties\AssemblyInfo.cs Properties\Resources.Designer.cs Properties\Settings.Designer.cs RequiredValidation.cs "C:\TFS\KwB Projects\Thingy\Thingy\obj\Debug\Gui\FieldList.g.cs" "C:\TFS\KwB Projects\Thingy\Thingy\obj\Debug\Gui\MainWindow.g.cs" "C:\TFS\KwB Projects\Thingy\Thingy\obj\Debug\Gui\ThingWindow.g.cs" "C:\TFS\KwB Projects\Thingy\Thingy\obj\Debug\App.g.cs" "C:\TFS\KwB Projects\Thingy\Thingy\obj\Debug\GeneratedInternalTypeHelper.g.cs"
+C:\TFS\KwB Projects\Thingy\Thingy\Controller\FieldFactory.cs(14,19): error CS0246: The type or namespace name 'IFieldNothing' could not be found (are you missing a using directive or an assembly reference?)
+
+Compile complete -- 1 errors, 0 warnings
+========== Build: 0 succeeded or up-to-date, 1 failed, 0 skipped ==========
+
+UPDATE:
+It looks like using msbuild instead of devenv is probably the right way to go (as per Jay's comment).
+Using msbuild the makeprg would be:
+:set makeprg=msbuild\ /nologo\ /v:q
+
+Sample output whould be:
+Controller\FieldFactory.cs(14,19): error CS0246: The type or namespace name 'IFieldNothing' could not be found (are you missing a using directive or an assembly reference?)
+
+It looks like the tricky part here may lie in the fact that the path is relative to the .csproj file, not the .sln file which is the current directory in Vim and lies one directory above the .csproj file.
+ANSWER:
+I figured it out...
+set errorformat=\ %#%f(%l\\\,%c):\ %m
+
+This will capture the output for both devenv /Build and msbuild.
+However, msbuild has one catch.  By default, it's output doesn't include full paths.  To fix this you have to add the following line to your csproj file's main PropertyGroup:
+<GenerateFullPaths>True</GenerateFullPaths>
+
+
+
+Try running msbuild instead of devenv.  This will open up a ton of power in how the build runs.
+Open a Visual Studio Command Prompt to get your path set up.  Then do msbuild MySln.sln /Configuration:Debug.
+See msbuild /? for help.
+
+Copy from question to remove from 'unanswered' list
+set errorformat=\ %#%f(%l\\\,%c):\ %m
+
+This will capture the output for both devenv /Build and msbuild. However, msbuild has one catch. By default, it's output doesn't include full paths. To fix this you have to add the following line to your csproj file's main PropertyGroup:
+<GenerateFullPaths>True</GenerateFullPaths>
+
+
+I found this question when looking for errorformat for compiling c++ in Visual Studio. The above answers don't work for me (I'm not using MSBuild either).
+I figured out this from this Vim Tip and :help errorformat:
+" filename(line) : error|warning|fatal error C0000: message
+set errorformat=\ %#%f(%l)\ :\ %#%t%[A-z]%#\ %[A-Z\ ]%#%n:\ %m
+
+Which will give you a quickfix looking like this:
+stats.cpp|604 error 2039| 'getMedian' : is not a member of 'Stats'
+
+(with error highlighted) from
+c:\p4\main\stats.cpp(604) : error C2039: 'getMedian' : is not a member of 'Stats'
+
+
+I found an even better answer: use :compiler to use built-in efm settings.
+" Microsoft C#
+compiler cs
+" Microsoft Visual C++
+compiler msvc
+" mono
+compiler mcs
+" gcc
+compiler gcc
+
+Note: It also sets the default makeprg. See $VIMRUNTIME/compiler/
+
+None of these errorformats worked in Visual studio 2009 v9.0.21022.8 professional edition.  Using cygwin, had to call devenv from bash which made setting makeprg a little tricky (screw batch files).  Also had to tweak my errorformat when devenv splits into multiple processes and proceeds error message with "1>" or "2>" etc:
+set autowrite
+"2>c:\cygwin\home\user\proj/blah.cpp(1657) : error C2065: 'blah' : undeclared identifier
+
+set errorformat=%.%#>\ %#%f(%l)\ :\ %#%t%[A-z]%#\ %[A-Z\ ]%#%n:\ %m
+let prg="devenv"
+let makepath=$MAKEPATH
+let &makeprg='cmd /c "'.prg.' '.makepath.'"'
+
+My .bashrc sets the MAKEPATH environment variable using cygpath to convert to a DOS compatible path:
+export MAKEPATH="$(cygpath -d "proj/VC9/some.sln") /build \"Debug\""
+
+If you have vim 6.x you can use :cw which is SO much better than clist (try searching for errors among hundreds of warnings and you know what I mean).  Looking at vim tweaks makes me want to vomit but I'm in vim heaven!!!  Good bye visual studio!  Thanks for the base to tweak pydave +1.
+
+As Simon Buchan mentioned you can use this in your project to generate the full paths in the output:
+<GenerateFullPaths>True</GenerateFullPaths>
+
+But you can make it more portable by adding /property:GenerateFullPaths=true  to you makeprg instead of adding the above to your project files.
+:set makeprg=msbuild\ /nologo\ /v:q\ /property:GenerateFullPaths=true\
+
+
+I have a blog post which walks through all the details of getting C# projects building in Vim, including the error format.  You can find it here: http://kevin-berridge.blogspot.com/2008/09/vim-c-compiling.html
+In short you need the following:
+:set errorformat=\ %#%f(%l\\\,%c):\ %m
+:set makeprg=msbuild\ /nologo\ /v:q\ /property:GenerateFullPaths=true
+

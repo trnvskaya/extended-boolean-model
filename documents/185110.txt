@@ -1,0 +1,88 @@
+SQL Date Range Split
+sql date-range
+Can you please let me know the SQL to split date ranges when they overlap?
+Data (sample data with a date range and possibly other columns):
+    Col1 FromDate ToDate
+ 1. 1    1/1/2008 31/12/2010
+ 2. 1    1/1/2009 31/12/2012
+ 3. 1    1/1/2009 31/12/2014
+
+Output:
+   Col1  From Date ToDate
+1. 1     1/1/2008 31/12/2008 (from row 1 above)
+2. 1     1/1/2009 31/12/2010 (from rows 1,2 and 3 above)
+3. 1     1/1/2011 31/12/2012 (from rows 2 and 3 above)
+4. 1     1/1/2013 31/12/2014 (from row 3 above)
+
+
+
+This should do the trick (MySQL dialect, but easily adaptable)
+Initial setup
+SQL query: SELECT * FROM `test` LIMIT 0, 30 ;
+Rows: 3
+start       end
+2008-01-01  2010-12-31
+2009-01-01  2012-12-31
+2009-01-01  2014-12-31
+
+Query
+SELECT 
+  `start` , min( `end` )
+FROM (
+  SELECT t1.start, t2.end
+  FROM test t1, test t2
+  WHERE t1.start < t2.end
+  UNION
+  SELECT t1.end + INTERVAL 1 DAY , t2.end
+  FROM test t1, test t2
+  WHERE t1.end + INTERVAL 1 DAY < t2.end
+  UNION
+  SELECT t1.start, t2.start - INTERVAL 1 DAY
+  FROM test t1, test t2
+  WHERE t1.start < t2.start - INTERVAL 1 DAY
+) allRanges
+GROUP BY `start`
+
+Result
+start       min( `end` )
+2008-01-01  2008-12-31
+2009-01-01  2010-12-31
+2011-01-01  2012-12-31
+2013-01-01  2014-12-31
+
+
+Skliwz's answer adapted for SQL Server:
+DECLARE @DateTest TABLE 
+(
+    FromDate datetime,
+    ToDate datetime 
+)
+
+insert into @DateTest (FromDate, ToDate)
+(
+select cast('1/1/2008' as datetime), cast('12/31/2010' as datetime)
+union
+select cast('1/1/2009' as datetime), cast('12/31/2012' as datetime)
+union
+select cast('1/1/2009' as datetime), cast('12/31/2014' as datetime)
+)
+
+SELECT 
+  FromDate , min(ToDate)
+FROM (
+  SELECT t1.FromDate, t2.ToDate
+  FROM 
+    @DateTest t1, 
+    @DateTest t2
+  WHERE t1.FromDate < t2.ToDate
+
+  UNION
+
+  SELECT dateadd(DAY, 1, t1.ToDate), t2.ToDate
+  FROM 
+    @DateTest t1, 
+    @DateTest t2
+  WHERE dateadd(DAY, 1, t1.ToDate) < t2.ToDate
+) allRanges
+group by FromDate
+

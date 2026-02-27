@@ -1,0 +1,46 @@
+What's the best way to read and parse a large text file over the network?
+c# .net multithreading parsing networking
+I have a problem which requires me to parse several log files from a remote machine.
+There are a few complications:
+1) The file may be in use
+2) The files can be quite large (100mb+)
+3) Each entry may be multi-line
+To solve the in-use issue, I need to copy it first. I'm currently copying it directly from the remote machine to the local machine, and parsing it there. That leads to issue 2. Since the files are quite large copying it locally can take quite a while.
+To enhance parsing time, I'd like to make the parser multi-threaded, but that makes dealing with multi-lined entries a bit trickier. 
+The two main issues are:
+1) How do i speed up the file transfer (Compression?, Is transferring locally even neccessary?, Can I read an in use file some other way?)
+2) How do i deal with multi-line entries when splitting up the lines among threads?
+UPDATE: The reason I didnt do the obvious parse on the server reason is that I want to have as little cpu impact as possible. I don't want to affect the performance of the system im testing.
+
+
+If you are reading a sequential file you want to read it in line by line over the network.  You need a transfer method capable of streaming.  You'll need to review your IO streaming technology to figure this out.
+Large IO operations like this won't benefit much by multithreading since you can probably process the items as fast as you can read them over the network.
+Your other great option is to put the log parser on the server, and download the results.
+
+The easiest way considering you are already copying the file would be to compress it before copying, and decompress once copying is complete.  You will get huge gains compressing text files because zip algorithms generally work very well on them.  Also your existing parsing logic could be kept intact rather than having to hook it up to a remote network text reader.
+The disadvantage of this method is that you won't be able to get line by line updates very efficiently, which are a good thing to have for a log parser.
+
+I've used SharpZipLib to compress large files before transferring them over the Internet. So that's one option.
+Another idea for 1) would be to create an assembly that runs on the remote machine and does the parsing there. You could access the assembly from the local machine using .NET remoting. The remote assembly would need to be a Windows service or be hosted in IIS. That would allow you to keep your copies of the log files on the same machine, and in theory it would take less time to process them.
+
+i think using compression (deflate/gzip) would help
+
+I guess it depends on how "remote" it is. 100MB on a 100Mb LAN would be about 8 secs...up it to gigabit, and you'd have it in around 1 second. $50 * 2 for the cards, and $100 for a switch would be a very cheap upgrade you could do.
+But, assuming it's further away than that, you should be able to open it with just read mode (as you're reading it when you're copying it). SMB/CIFS supports file block reading, so you should be streaming the file at that point (of course, you didn't actually say how you were accessing the file - I'm just assuming SMB). 
+Multithreading won't help, as you'll be disk or network bound anyway.
+
+Use compression for transfer.
+If your parsing is really slowing you down, and you have multiple processors, you can break the parsing job up, you just have to do it in a smart way -- have a deterministic algorithm for which workers are responsible for dealing with incomplete records. Assuming you can determine that a line is part of a middle of a record, for example, you could break the file into N/M segments, each responsible for M lines; when one of the jobs determines that its record is not finished, it just has to read on until it reaches the end of the record. When one of the jobs determines that it's reading a record for which it doesn't have a beginning, it should skip the record.  
+
+The better option, from the perspective of performance, is going to be to perform your parsing at the remote server. Apart from exceptional circumstances the speed of your network is always going to be the bottleneck, so limiting the amount of data that you send over your network is going to greatly improve performance.
+This is one of the reasons that so many databases use stored procedures that are run at the server end.
+Improvements in parsing speed (if any) through the use of multithreading are going to be swamped by the comparative speed of your network transfer.
+If you're committed to transferring your files before parsing them, an option that you could consider is the use of on-the-fly compression while doing your file transfer.
+There are, for example, sftp servers available that will perform compression on the fly.
+At the local end you could use something like libcurl to do the client side of the transfer, which also supports on-the-fly decompression.
+
+If you can copy the file, you can read it. So there's no need to copy it in the first place.
+EDIT: use the FileStream class to have more control over the access and sharing modes.
+new FileStream("logfile", FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
+
+should do the trick.

@@ -1,0 +1,152 @@
+Does XSLT have a Split() function?
+.net xml vb.net xslt split
+I have a string in a node and I'd like to split the string on '?' and return the last item in the array.
+For example, in the block below:
+<a>
+    <xsl:attribute name="href">
+        /newpage.aspx?<xsl:value-of select="someNode"/>
+    </xsl:attribute>
+    Link text
+</a>
+
+I'd like to split the someNode value.
+Edit: 
+Here's the VB.Net that I use to load the Xsl for my Asp.Net page:
+Dim xslDocPath As String = HttpContext.Current.Server.MapPath("~/App_Data/someXslt.xsl")
+Dim myXsltSettings As New XsltSettings()
+Dim myXMLResolver As New XmlUrlResolver()
+
+myXsltSettings.EnableScript = True
+myXsltSettings.EnableDocumentFunction = True
+
+myXslDoc = New XslCompiledTransform(False)
+myXslDoc.Load(xslDocPath, myXsltSettings, myXMLResolver)
+
+Dim myStringBuilder As New StringBuilder()
+Dim myXmlWriter As XmlWriter = Nothing
+
+Dim myXmlWriterSettings As New XmlWriterSettings()
+myXmlWriterSettings.ConformanceLevel = ConformanceLevel.Auto
+myXmlWriterSettings.Indent = True
+myXmlWriterSettings.OmitXmlDeclaration = True
+
+myXmlWriter = XmlWriter.Create(myStringBuilder, myXmlWriterSettings)
+
+myXslDoc.Transform(xmlDoc, argumentList, myXmlWriter)
+
+Return myStringBuilder.ToString()
+
+Update: here's an example of splitting XML on a particular node
+
+
+If you can use XSLT 2.0 or higher, you can use tokenize(string, separator): 
+tokenize("XPath is fun", "\s+")
+Result: ("XPath", "is", "fun")
+
+See the w3schools XPath function reference.
+By default, .NET does not support XSLT 2.0, let alone XSLT 3.0. The only known 2.0+ processors for .NET are Saxon for .NET with IKVM, Exselt, a .NET XSLT 3.0 processor currently in beta, and XMLPrime XSLT 2.0 processor.
+
+XSLT 1.0 doesn't have a split function per se, but you could potentially achieve what you're trying to do with the substring-before and substring-after functions.
+Alternatively, if you're using a Microsoft XSLT engine, you could use inline C#.
+
+I ended up using the substring-after() function. Here's what worked for me:
+<a>
+    <xsl:attribute name="href">
+    	/newpage.aspx?<xsl:value-of select="substring-after(someNode, '?')"/>
+    </xsl:attribute>
+    Link text
+</a>
+
+Even after setting the version of my XSLT to 2.0, I still got a "'tokenize()' is an unknown XSLT function." error when trying to use tokenize().
+
+Just for the record, if you're doing this with 1.0, and you really need a split/tokenise, you need the xslt extensions.
+
+Use a recursive method:
+<xsl:template name="output-tokens">
+    <xsl:param name="list" /> 
+    <xsl:variable name="newlist" select="concat(normalize-space($list), ' ')" /> 
+    <xsl:variable name="first" select="substring-before($newlist, ' ')" /> 
+    <xsl:variable name="remaining" select="substring-after($newlist, ' ')" /> 
+    <id>
+    	<xsl:value-of select="$first" /> 
+    </id>
+    <xsl:if test="$remaining">
+    	<xsl:call-template name="output-tokens">
+    		<xsl:with-param name="list" select="$remaining" /> 
+    	</xsl:call-template>
+    </xsl:if>
+</xsl:template>
+
+
+.NET doesn't support XSLT 2.0, unfortunately.  I'm pretty sure that it supports EXSLT, which has a split() function.  Microsoft has an older page on its implementation of EXSLT.  
+
+Adding another possibility, if your template engine supports EXSLT, then you could use tokenize() from that.
+For example:
+<xsl:stylesheet version="1.0"
+                xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
+                xmlns:str="http://exslt.org/strings"
+                extension-element-prefixes="str">
+
+...
+  <a>
+    <xsl:attribute name="href">
+      <xsl:text>/newpage.aspx?</xsl:text>
+      <xsl:value-of select="str:tokenize(someNode)[2]"/>
+    </xsl:attribute>              
+  </a>
+...
+</xsl:stylesheet>
+
+
+You can write a template using string-before and string-after functions and use it across. I wrote a blog on this.
+Finally came up with a xslt template that would split a delimited string into substrings.
+I donât claim itâs the smartest script, but surely solves my problem.
+Stylesheet:
+<?xml version="1.0" encoding="iso-8859-1"?>
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+<xsl:template match="/">
+<xsl:for-each select="Paths/Item">
+<xsl:call-template name="SplitText">
+<xsl:with-param name="inputString" select="Path"/>
+<xsl:with-param name="delimiter" select="Delimiter"/>
+</xsl:call-template>
+<br/>
+</xsl:for-each>
+</xsl:template>
+<xsl:template name="SplitText">
+<xsl:param name="inputString"/>
+<xsl:param name="delimiter"/>
+<xsl:choose>
+<xsl:when test="contains($inputString, $delimiter)">
+<xsl:value-of select="substring-before($inputString,$delimiter)"/>
+<xsl:text disable-output-escaping = "no"> </xsl:text>
+<xsl:call-template name="SplitText">
+<xsl:with-param name="inputString" select="substring-after($inputString,$delimiter)"/>
+<xsl:with-param name="delimiter" select="$delimiter"/>
+</xsl:call-template>
+</xsl:when>
+<xsl:otherwise>
+<xsl:choose>
+<xsl:when test="$inputString = ''">
+<xsl:text></xsl:text>
+</xsl:when>
+<xsl:otherwise>
+<xsl:value-of select="$inputString"/>
+<xsl:text> </xsl:text>
+</xsl:otherwise>
+</xsl:choose>
+</xsl:otherwise>
+</xsl:choose>
+</xsl:template>
+</xsl:stylesheet>
+
+XML file (to be transformed) :
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/xsl" href="textSpliter.xslt"?>
+<Paths>
+  <Item>
+    <Path>C:\ProgramFiles\SomeWierdSoftware</Path>
+    <Delimiter>\</Delimiter>
+  </Item>
+</Paths> 
+

@@ -1,0 +1,336 @@
+How to sanity check a date in java
+java validation calendar date
+I find it curious that the most obvious way to create Date objects in Java has been deprecated and appears to have been "substituted" with not so obvious to use lenient calendar. So...
+How do you check that a date given as a combination of day, month and year is a valid date? For instance a date 2008-02-31 (as in yyyy-mm-dd) would be invalid date. 
+
+
+The current way is to use the calendar class.  It has the setLenient method that will validate the date and throw and exception if it is out of range as in your example.  
+Forgot to add:
+If you get a calendar instance and set the time using your date, this is how you get the validation.
+Calendar cal = Calendar.getInstance();
+cal.setLenient(false);
+cal.setTime(yourDate);
+try {
+    cal.getTime();
+}
+catch (Exception e) {
+  System.out.println("Invalid date");
+}
+
+
+You can use SimpleDateFormat
+For example something like:
+boolean isLegalDate(String s) {
+    SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+    sdf.setLenient(false);
+    return sdf.parse(s, new ParsePosition(0)) != null;
+}
+
+
+As shown by @Maglob, the basic approach is to test the conversion from string to date using SimpleDateFormat.parse. That will catch invalid day/month combinations like 2008-02-31.
+However, in practice that is rarely enough since SimpleDateFormat.parse is exceedingly liberal. There are two behaviours you might be concerned with:
+Invalid characters in the date string
+Surprisingly, 2008-02-2x will "pass" as a valid date with locale format = "yyyy-MM-dd" for example. Even when isLenient==false.
+Years: 2, 3 or 4 digits?
+You may also want to enforce 4-digit years rather than allowing the default SimpleDateFormat behaviour (which will interpret "12-02-31" differently depending on whether your format was "yyyy-MM-dd" or "yy-MM-dd")
+A Strict Solution with the Standard Library
+So a complete string to date test could look like this: a combination of regex match, and then a forced date conversion. The trick with the regex is to make it locale-friendly.
+  Date parseDate(String maybeDate, String format, boolean lenient) {
+    Date date = null;
+
+    // test date string matches format structure using regex
+    // - weed out illegal characters and enforce 4-digit year
+    // - create the regex based on the local format string
+    String reFormat = Pattern.compile("d+|M+").matcher(Matcher.quoteReplacement(format)).replaceAll("\\\\d{1,2}");
+    reFormat = Pattern.compile("y+").matcher(reFormat).replaceAll("\\\\d{4}");
+    if ( Pattern.compile(reFormat).matcher(maybeDate).matches() ) {
+
+      // date string matches format structure, 
+      // - now test it can be converted to a valid date
+      SimpleDateFormat sdf = (SimpleDateFormat)DateFormat.getDateInstance();
+      sdf.applyPattern(format);
+      sdf.setLenient(lenient);
+      try { date = sdf.parse(maybeDate); } catch (ParseException e) { }
+    } 
+    return date;
+  } 
+
+  // used like this:
+  Date date = parseDate( "21/5/2009", "d/M/yyyy", false);
+
+Note that the regex assumes the format string contains only day, month, year, and separator characters. Aside from that, format can be in any locale format: "d/MM/yy", "yyyy-MM-dd", and so on. The format string for the current locale could be obtained like this:
+Locale locale = Locale.getDefault();
+SimpleDateFormat sdf = (SimpleDateFormat)DateFormat.getDateInstance(DateFormat.SHORT, locale );
+String format = sdf.toPattern();
+
+Joda Time - Better Alternative?
+I've been hearing about joda time recently and thought I'd compare. Two points:
+
+Seems better at being strict about invalid characters in the date string, unlike SimpleDateFormat
+Can't see a way to enforce 4-digit years with it yet (but I guess you could create your own DateTimeFormatter for this purpose)
+
+It's quite simple to use:
+import org.joda.time.format.*;
+import org.joda.time.DateTime;
+
+org.joda.time.DateTime parseDate(String maybeDate, String format) {
+  org.joda.time.DateTime date = null;
+  try {
+    DateTimeFormatter fmt = DateTimeFormat.forPattern(format);
+    date =  fmt.parseDateTime(maybeDate);
+  } catch (Exception e) { }
+  return date;
+}
+
+
+Two comments on the use of SimpleDateFormat.
+
+it should be declared as a static instance
+  if declared as static access should be synchronized as it is not thread safe
+
+IME that is better that instantiating an instance for each parse of a date.
+
+An alternative strict solution using the standard library is to perform the following:
+1) Create a strict SimpleDateFormat using your pattern
+2) Attempt to parse the user entered value using the format object
+3) If successful, reformat the Date resulting from (2) using the same date format (from (1))
+4) Compare the reformatted date against the original, user-entered value. If they're equal then the value entered strictly matches your pattern.
+This way, you don't need to create complex regular expressions - in my case I needed to support all of SimpleDateFormat's pattern syntax, rather than be limited to certain types like just days, months and years.
+
+Assuming that both of those are Strings (otherwise they'd already be valid Dates), here's one way:
+package cruft;
+
+import java.text.DateFormat;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+
+public class DateValidator
+{
+    private static final DateFormat DEFAULT_FORMATTER;
+
+    static
+    {
+        DEFAULT_FORMATTER = new SimpleDateFormat("dd-MM-yyyy");
+        DEFAULT_FORMATTER.setLenient(false);
+    }
+
+    public static void main(String[] args)
+    {
+        for (String dateString : args)
+        {
+            try
+            {
+                System.out.println("arg: " + dateString + " date: " + convertDateString(dateString));
+            }
+            catch (ParseException e)
+            {
+                System.out.println("could not parse " + dateString);
+            }
+        }
+    }
+
+    public static Date convertDateString(String dateString) throws ParseException
+    {
+        return DEFAULT_FORMATTER.parse(dateString);
+    }
+}
+
+Here's the output I get:
+java cruft.DateValidator 32-11-2010 31-02-2010 04-01-2011
+could not parse 32-11-2010
+could not parse 31-02-2010
+arg: 04-01-2011 date: Tue Jan 04 00:00:00 EST 2011
+
+Process finished with exit code 0
+
+As you can see, it does handle both of your cases nicely.
+
+Key is df.setLenient(false);. This is more than enough for simple cases. If you are looking for a more robust (I doubt) and/or alternate libraries like joda-time then look here (not the accepted answer but the answer from the user named "tardate"): How to sanity check a date in java
+final static String DATE_FORMAT = "dd-MM-yyyy";
+
+public static boolean isDateValid(String date) 
+{
+        try {
+            DateFormat df = new SimpleDateFormat(DATE_FORMAT);
+            df.setLenient(false);
+            df.parse(date);
+            return true;
+        } catch (ParseException e) {
+            return false;
+        }
+}
+
+
+Above methods of date parsing are nice , i just added new check in existing methods that double check the converted date  with original date using formater, so it works for almost each case as i verified. e.g. 02/29/2013 is invalid date.
+Given function parse the date according to current acceptable date formats. It returns true if date is not parsed successfully.
+ public final boolean validateDateFormat(final String date) {
+        String[] formatStrings = {"MM/dd/yyyy"};
+        boolean isInvalidFormat = false;
+        Date dateObj;
+        for (String formatString : formatStrings) {
+            try {
+                SimpleDateFormat sdf = (SimpleDateFormat) DateFormat.getDateInstance();
+                sdf.applyPattern(formatString);
+                sdf.setLenient(false);
+                dateObj = sdf.parse(date);
+                System.out.println(dateObj);
+                if (date.equals(sdf.format(dateObj))) {
+                    isInvalidFormat = false;
+                    break;
+                }
+            } catch (ParseException e) {
+                isInvalidFormat = true;
+            }
+        }
+        return isInvalidFormat;
+    }
+
+
+I suggest you to use org.apache.commons.validator.GenericValidator class from apache.
+GenericValidator.isDate(String value, String datePattern, boolean strict);
+Note: strict - Whether or not to have an exact match of the datePattern.
+
+This is working great for me. Approach suggested above by Ben.    
+private static boolean isDateValid(String s) {
+    SimpleDateFormat sdf = new SimpleDateFormat("dd/MM/yyyy");
+    try {
+        Date d = asDate(s);
+        if (sdf.format(d).equals(s)) {
+            return true;
+        } else {
+            return false;
+        }
+    } catch (ParseException e) {
+        return false;
+    }
+}
+
+
+java.time
+With the Date and Time API (java.time classes) built into Java 8 and later, you can use the LocalDate class.
+public static boolean isDateValid(int year, int month, int day) {
+    boolean dateIsValid = true;
+    try {
+        LocalDate.of(year, month, day);
+    } catch (DateTimeException e) {
+        dateIsValid = false;
+    }
+    return dateIsValid;
+}
+
+
+Building on answer of @Pangea to fix the problem pointed out by @ceklock, I added a method to verify that the dateString doesn't contain any invalid character.
+Here is how I do:
+private boolean isDateCorrect(String dateString) {
+    try {
+        Date date = mDateFormatter.parse(dateString);
+        Calendar calendar = Calendar.getInstance();
+        calendar.setTime(date);
+        return matchesOurDatePattern(dateString);    //added my method
+    }
+    catch (ParseException e) {
+        return false;
+    }
+}
+
+/**
+ * This will check if the provided string matches our date format
+ * @param dateString
+ * @return true if the passed string matches format 2014-1-15 (YYYY-MM-dd)
+ */
+private boolean matchesDatePattern(String dateString) {
+    return dateString.matches("^\\d+\\-\\d+\\-\\d+");
+}
+
+
+I think the simpliest is just to convert a string into a date object and convert it back to a string. The given date string is fine if both strings still match.
+public boolean isDateValid(String dateString, String pattern)
+{   
+    try
+    {
+        SimpleDateFormat sdf = new SimpleDateFormat(pattern);
+        if (sdf.format(sdf.parse(dateString)).equals(dateString))
+            return true;
+    }
+    catch (ParseException pe) {}
+
+    return false;
+}
+
+
+Here's what I did for Node environment using no external libraries:
+Date.prototype.yyyymmdd = function() {
+   var yyyy = this.getFullYear().toString();
+   var mm = (this.getMonth()+1).toString(); // getMonth() is zero-based
+   var dd  = this.getDate().toString();
+   return zeroPad([yyyy, mm, dd].join('-'));  
+};
+
+function zeroPad(date_string) {
+   var dt = date_string.split('-');
+   return dt[0] + '-' + (dt[1][1]?dt[1]:"0"+dt[1][0]) + '-' + (dt[2][1]?dt[2]:"0"+dt[2][0]);
+}
+
+function isDateCorrect(in_string) {
+   if (!matchesDatePattern) return false;
+   in_string = zeroPad(in_string);
+   try {
+      var idate = new Date(in_string);
+      var out_string = idate.yyyymmdd();
+      return in_string == out_string;
+   } catch(err) {
+      return false;
+   }
+
+   function matchesDatePattern(date_string) {
+      var dateFormat = /[0-9]+-[0-9]+-[0-9]+/;
+      return dateFormat.test(date_string); 
+   }
+}
+
+And here is how to use it:
+isDateCorrect('2014-02-23')
+true
+
+
+tl;dr
+Use the strict mode on java.time.DateTimeFormatter to parse a LocalDate. Trap for the DateTimeParseException.
+LocalDate.parse( "31/02/2000" , 
+                 DateTimeFormatter.ofPattern ( "dd/MM/uuuu" )
+                                  .withResolverStyle ( ResolverStyle.STRICT ) 
+               )
+
+After parsing, you might check for reasonable value. For example, a birth date within last one hundred years.
+birthDate.isAfter( LocalDate.now().minusYears( 100 ) )
+
+Avoid legacy date-time classes
+Avoid using the troublesome old date-time classes shipped with the earliest versions of Java. Now supplanted by the java.time classes.
+LocalDate & DateTimeFormatter & ResolverStyle
+The LocalDate class represents a date-only value without time-of-day and without time zone.
+String input = "31/02/2000";
+DateTimeFormatter f = DateTimeFormatter.ofPattern ( "dd/MM/uuuu" );
+try {
+    LocalDate ld = LocalDate.parse ( input , f );
+    System.out.println ( "ld: " + ld );
+} catch ( DateTimeParseException e ) {
+    System.out.println ( "ERROR: " + e );
+}
+
+The java.time.DateTimeFormatter class can be set to parse strings with any of three leniency modes defined in the ResolverStyle enum. We insert a line into the above code to try each of the modes.
+f = f.withResolverStyle ( ResolverStyle.LENIENT );
+
+The results:
+
+ResolverStyle.LENIENTld: 2000-03-02
+ResolverStyle.SMARTld: 2000-02-29
+ResolverStyle.STRICTERROR: java.time.format.DateTimeParseException: Text '31/02/2000' could not be parsed: Invalid date 'FEBRUARY 31'
+
+We can see that in ResolverStyle.LENIENT mode, the invalid date is moved forward an equivalent number of days. In ResolverStyle.SMART mode (the default), a logical decision is made to keep the date within the month and going with the last possible day of the month, Feb 29 in a leap year, as there is no 31st day in that month. The ResolverStyle.STRICT mode throws an exception complaining that there is no such date.
+All three of these are reasonable depending on your business problem and policies. Sounds like in your case you want the strict mode to reject the invalid date rather than adjust it.
+About java.time
+The java.time framework is built into Java 8 and later. These classes supplant the troublesome old date-time classes such as java.util.Date, .Calendar, & java.text.SimpleDateFormat.
+The Joda-Time project, now in maintenance mode, advises migration to java.time.
+To learn more, see the Oracle Tutorial. And search Stack Overflow for many examples and explanations.
+Much of the java.time functionality is back-ported to Java 6 & 7 in ThreeTen-Backport and further adapted to Android in ThreeTenABP (see How to useâ¦).
+The ThreeTen-Extra project extends java.time with additional classes. This project is a proving ground for possible future additions to java.time. You may find some useful classes here such as Interval, YearWeek, YearQuarter, and more.

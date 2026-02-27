@@ -1,0 +1,98 @@
+Stateful PHP Web Service Using SOAP
+c# php .net web-services stateful
+I'm trying to implement a stateful web service in PHP using the SOAP extension. (Yes I know that web services are supposed to be stateless; all I really care to persist is some form of a session ID so I don't need to authenticate with every call to the service).  PHP.net's API documentation is somewhat lacking on this, and there isn't much else written on it.
+I found one page that discusses it (http://bytes.com/forum/thread160816.html) and implemented the code as a test.  I built a small .NET application that consumes the web service and calls each function and displays the result.  From what I've read, the PHP SOAP extension will persist class variables between calls as long as the functionality is encapsulated in a class using the setClass() function and the setPersistence() function is passed SOAP_PERSISTENCE_SESSION.
+Here is my code:
+<?php
+
+class User 
+{
+    var $name = "Initial value";
+
+    function setName($name) 
+    {
+    	$this->name = $name;
+
+    	// Tried this too.
+    	// $this->name = "Set to string constant" ;
+    }
+
+    function getName() 
+    {
+    	// This always returns "Initial value"
+    	return $this->name;
+    }
+}
+
+
+// Tried placing session_start() in several places
+// before $server->handle()...
+// One guy says this doesn't need to be called.
+// I assume it depends on if session autostart is on.
+session_start();
+
+$server = new SoapServer(null, array('uri' => 'http://localhost/'));
+$server->setClass('User');
+$server->setPersistence(SOAP_PERSISTENCE_SESSION);
+$server->handle();
+
+?>
+
+The problem I run into is that $name is not persisted between calls -- I always get the initialized value and not the value I assign to setName().  As I stated, I'm trying to persist a session ID after authenticating against a database -- if anyone has a better way to do this I'm open to suggestions; however, I would still like to solve the general case.  Anyone have any ideas?
+
+
+Most soap clients start a new connection for each request so there is no "session".
+If its your SOAP service you could send the session id somewhere inside in the SOAP envelope on every reply and ask the client to pass the session id on every subsequent request. 
+This is much nicer as your client now has clue and control over the beheaviour.
+
+I actually solved my own problem.
+I was working under the assumptions that: 1) .NET handles cookies automatically; and 2) my problem was with the PHP.  Neither was the case.  My PHP code was fine but I needed to add one more element to my .NET code to handle the session cookie.
+After instantiating the web service object, I needed to assign an instance of the  CookieContainer class to the web service object.  My final client side code is below:
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Text;
+using System.Windows.Forms;
+
+namespace WsTest
+{
+    public partial class PhpWsForm : Form
+    {
+        private localhost.MyWebService ws;
+
+        public PhpWsForm()
+        {
+            InitializeComponent();
+            ws = new WsTest.localhost.MyWebService();
+
+            // The line below is the part that I forgot!
+            ws.CookieContainer = new System.Net.CookieContainer();
+        }
+
+        private void butSetVal_Click(object sender, EventArgs e)
+        {
+            ws.setName(txtSetVal.Text);
+        }
+
+        private void butGetVal_Click(object sender, EventArgs e)
+        {
+            txtGetVal.Text = ws.getName();
+        }
+    }
+}
+
+Thanks anyway!
+
+For consuming the stateful web service, you need to set the session ID of the server session in the SOAP cookie on client side. By default each time SOAP request is sent, the server generates a unique session ID. To prevent that just set the session ID got from first request in SOAP cookie. That cookie will be sent with your all subsequent soap calls.
+FOr example if you are consuming an ASP.net webservice using SOAP, then after the first WS call, get the response headers like this:
+$client = SoapClient("some.wsdl", array('trace' => 1));
+$result = $client->SomeFunction();
+$headers = $client->__getLastResponseHeaders();
+
+Now $headers must contain the session ID with a name like 'ASP.NET_SessionId'. Get the ID from the $headers and create a cookie as follows:
+//$client->__setCookie($cookieName, $cookieValue);
+$client->__setCookie('ASP.NET_SessionId', $cookieValue);
+
+Now all the SOAP requests from your client will contain this session ID and your state will persist on the server.

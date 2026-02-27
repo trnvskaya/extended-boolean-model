@@ -1,0 +1,27 @@
+How to best prevent CSRF attacks in a GAE app?
+google-app-engine csrf
+So, what is the best way to prevent an XSRF attack for a GAE application?  Imagine the following:
+
+Anyone can see a user's public object, and the db.Model id is used in the request to figure out which object to show.  Malicious user now has the id.
+Malicious user creates their own object and checks out the delete form.  They now know how to delete an object with a certain id.
+Malicious user gets innocent user to submit a delete request for that user's object.
+
+What steps can I add to prevent #3?  Note that when I say ID, I am using the actual ID part of the key.  One idea I had was to use the full key value in delete requests, but would that prevent a malicious user from being able to figure this out?  As far as I know, the key is some combination of the model class type, the app id, and the object instance id, so they could probably derive the key from the id if they wanted to.
+Any other ideas?  Jeff wrote a post about this, and suggested a couple methods - a hidden form value that would change on each request, and a cookie value written via js to the form.  I won't want to exclude non-javascript users, so the cookie solution is no good - for the hidden form value, I would have to do a datastore write on every request that displayed a deletable object - not an ideal situation for a scalable app!
+Any other ideas out there?
+
+
+Simple: Check the referer. It's (deliberately) impossible to set this using Javascript, HTML forms, etc. If it's blank (some proxies and browsers strip referers) or from your own site - or more specifically from the expected source - allow it. Otherwise, deny it and log it.
+Edit: Jeff wrote a followup article with a couple of ways to prevent CSRF attacks.
+
+In server's response displaying the form create a magic hash (based on client ip + date/time + random salt, whatever). Put it into a cookie and store somewhere on the server. During submit action handling check the cookie hash against the database entry.
+If there's no such hash or it's different, reject the submission.
+After successful submit you can remove the hash entry, change it's state to submitted - whatever suits you.
+That method should protect you in many cases, but surely is still not 100% bulletproof.
+Do a search for articles on CSRF, maybe you'll find some good answers on this Stack Overflow thing. ;)
+Don't do any referrer checks or client ip validations - it's too error-prone (the referrer information might be cleared by the user agent, a proxy or by user's preferences) and client's IP might change between the form creation and submission - don't punish the user for dynamic IP address allocation.
+
+When you generate the page that lets the user delete an object, generate a random token and include it in a hidden form field. Also set a HTTP-only cookie with that value. When you receive a delete request, check that the random token from the form and the value from the cookie match.
+Your random token shouldn't just be a random number. You should encrypt the combination of a random number and the user's identity, to make it difficult for attackers to forge their own tokens. You should also use different encryption keys for the value stored in the form and the value stored in the cookie, so if one of the tokens does leak, it is still difficult for an attacker to forge the other token.
+This approach verifies that the delete request originates from your form, by the presence of the security token in the form; and doesn't require writing to the datastore.
+This approach is still vulnerable to cross-site scripting attacks, where an attacker could retrieve the hidden value from the form or submit the form, so thoroughly test your site for cross-site scripting vulnerabilities. This approach is also vulnerable to "clickjacking" attacks.

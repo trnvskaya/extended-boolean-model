@@ -1,0 +1,139 @@
+What are the advantages of dynamic scoping?
+scope lexical-scope dynamic-scope
+I've learned that static scoping is the only sane way to do things, and that dynamic scoping is the tool of the devil, and results only from poor implementations of interpreters/compilers. 
+Then I saw this snippet from a Common Lisp vs. Scheme article:
+
+Both Lexically and Dynamically    Lexical scope only, per the standard.
+scoped special vars.  Common      Dynamically scoped vars are provided
+Lisp just wins on this point.     by some implementations as an extension
+                                  but code using them is not portable.
+
+     (I have heard the arguments about whether Dynamic scoping
+      is or is not a Bad Idea in the first place.  I don't care. 
+      I'm just noting that you can do things with it that you 
+      can't easily do without it.)
+
+Why does Common Lisp "just win on this point"? What things are easier to do with dynamic scoping? I really can't justify ever needing it / seeing it as a good thing.
+
+
+Dynamic scoping is useful in some domain-specific languages. In particular, it can be handly in stylesheet languages. My experience is from the GNU TeXmacs stylesheet language.
+In this language display parameters are stored in dynamically scoped variables. Those variables affect the rendering of every atom in their scope, including atoms that are produced by functions called in the scope.
+Dynamic scoping in TeXmacs is also used, among other things, for labeling cross-references. Anchors used for cross references get their label from their environment. For example, an anchor included in a formula block will use the formula number as label, instead of the section number for an anchor located after the formula.
+Come to think of it, unix environment variables are also dynamically scoped variables. Albeit inner scopes cannot alter the value of variables in outer scopes.
+As Barry Kelly noted, dynamic scoping can also be useful to implement language features that care about the call scope, such as exception handling, or context-dependent permission handling. In the presence of continuations, scopes can be entered and exit without walking through the call stack.
+
+The primary risk with dynamic scope is unintended consequences. Dynamic scoping makes scope follow the runtime stack, which means that the set of symbols in scope is much larger and far from obvious at the point of any symbol usage. Dynamically scoped variables are a lot like global variables, only there may be more than one version of each variable with only the latest definition visible, hiding all the others.
+Dynamic scope, in so far as it is useful, it is useful for behaviour that needs to be sensitive to the runtime stack. For example (and speaking generally, not specific to Lisp or variants):
+
+exception handling - the top-most catch block is the one that is "in scope" when an exception occurs
+security - .NET code-based security makes decisions on the accessibility of certain privileged APIs based on what code called it.
+
+The problem with relying on it for other uses is that it creates implicit dependencies and coupling between lexically distant pieces of code. In this way, it's also similar to global variables, only it can be worse (due to dynamically overridden definitions).
+
+Like everything else, Dynamic Scoping is merely a tool.  Used well it can make certain tasks easier.  Used poorly it can introduce bugs and headaches.
+I can certainly see some uses for it.  One can eliminate the need to pass variables to some functions.
+For instance, I might set the display up at the beginning of the program, and every graphic operation just assumes this display.
+If I want to set up a window inside that display, then I can 'add' that window to the variable stack that otherwise specifies the display, and any graphic operations performed while in this state will go to the window rather than the display as a whole.
+It's a contrived example that can be done equally well by passing parameters to functions, but when you look at some of the code this sort of task generates you realize that global variables are really a much easier way to go, and dynamic scoping gives you a lot of the sanity of global variables with the flexibility of function parameters.
+
+Dynamic scope allows for definition of contextual functions.  In that sense, it is quite similar to dependency injection in modern frameworks.  (For example, consider when you annotate a Java class with dependency injection definitions to allow transparent initialization of various references.  (cf spring, or JPA, etc.))
+Obviously, dynamic scoping makes certain assumptions regarding the runtime characteristics of the invocation site for a given function which can not be guaranteed at compile (or design) time.  Again, following the example of a modern (Java) framework component, if you instantiate such a class outside of the controlled (runtime) environment of a container, it is easily possible that the class will not be able to function given that its required dependencies will not have been initialized (aka injected).  
+But equally obviously, component systems (as just one example) clearly benefit from dynamic binding mechanisms.  Dependency injection is a framework level means of achieving this.  Dynamic scoping is a language level means of the same. 
+
+Dynamically scoped variables are a powerful, but also sometimes unintuive and dangerous tool.
+Imagine you want to have thread specific global variables, i.e. every thread has its own set of global variables. This can easily be done with dynamic scope. Just change the references to this variables at thread initialization.
+Or think about exceptions: they are dynamically scoped in most languages. If you had to build an exceptions system from scratch, you could easily do that with dynamically scoped variables.
+
+Dynamic Scoping breaks Referential Transparency, which means you cannot reason about the program any more. DS is basically global variables on steroids.
+
+Also note that combining
+
+the concept of lexical scope (which--we feel--is a nice thing for a programming language, as opposed to dynamic scope)
+with function definitions (lambda expressions) embedded deeply in the code (one could also call such definitions "nested functions" to be short)
+
+can turn out to be a complex endeavor, both from the point of view of language implementation, and from the point of view of the programmer. There is even a special name for this complex thing: closure.
+As Wikipedia writes:
+
+Correct implementation of static scope
+  in languages with first-class nested
+  functions is not trivial, as it
+  requires each function value to carry
+  with it a record of the values of the
+  variables that it depends on (the pair
+  of the function and this environment
+  is called a closure).
+
+This is not only non-trivial to implement in a langauge with global and/or mutable variables (like C or Java; think of ensuring a correct access at the moment of evaluation of a closure to the mutable state that was in scope at the place of the nested function definition! Just one thing: the used objects shouldn't have been destructed and garbage-collected when you evaluate the closure some time in the future), but also it is not trivial conceptually for a programmer to think about how the closure will work in a complex situation and which (side)-effects it will exactly have (for the same reason: you need to think about the interaction of the closure with all the mutable state that was in scope when you defined the closure, e.g.: When you refer inside a closure definition to an outer mutable variable that is in-scope, do you really want to access the value the variable had at the time of the definition of the closure, i.e., you want to have a read-only copy of the variable, or you want a full-blown access to the mutable state of the variable in the future at the time of an evaluation of the closure?).
+In pure functional languages, it's much simpler to think about nested function definitions and their uses, and so having only lexical scope is not a problem for them at all. But if your language is not functional, it's not so trivial. (I believe it's one of the reason why it has been debated for a long time how to add closures to Java: they didn't seem to be trivial enough for a programmer to understand, although they just build upon the nice concept of lexical scope.)
+Thinking about nested functions in non-purely functional languages is simpler with dynamic scope (although dynamic scope is not nice: you get less compile-time checks and guarantees about the correct behavior of your program with dynamic scope).
+So I think the advantage of having dynamic scoping available in a language can also be the possibility to program some things in a simple way if one wants to and dares to do this given all the dangers of dynamic scope.
+Notes
+Regarding the long history of (no) closures in Java (and that the programmers didn't like the concept) -- http://people.csail.mit.edu/gregs/ll1-discuss-archive-html/msg04030.html:
+
+Date: Thu, 14 Aug 2003 08:05:44 -0700 
+From: Michael Vanier
+Subject: Re: bindings and assignments (was: Re: continuations)
+
+Date: Thu, 14 Aug 2003 10:45:34 -0400
+From: "David B. Tucker" 
+
+I imagine, though I don't have statistical evidence, that the
+      requirement of declaring local variables to be final in order to
+      reference them within anonymous inner classes (closures) is almost
+      entirely unknown and unused in practice.
+
+Out of curiosity, does anyone know why Java only allows final
+    variables
+    to be referenced from within anonymous classes?
+Dave
+
+   <cynic>Otherwise you'd have the equivalent of true closures,
+and if you had that    java would be a
+*really* powerful and useful language, so they obviously    couldn't do that.
+</cynic>
+
+Actually, the prototype implementation
+  did allow non-final variables to be referenced from within inner classes. 
+  There was an outcry from users,
+  complaining that they did not want
+  this! The reason was interesting: in
+  order to support such variables, it
+  was necessary to heap-allocate them,
+  and (at that time, at least) the
+  average Java programmer was still
+  pretty skittish about heap allocation
+  and garbage collection and all that. 
+  They disapproved of the language
+  performing heap allocation "under the
+  table" when there was no occurrence of
+  the "new" keyword in sight.
+
+So, in the early days--apparently--a "third" approach (as opposed to the two I have mentioned in my text above) was to be taken in Java: neither "read-only copies", nor real access at the time of the evaluation to the enclosing (at the time of the definition of the closure) mutable state, but rather mutable copies of the state (at least, I understand the quoted passage this way; or no, is he talking about heap-allocating just the references?.. Then it's the second option. Good. The third option really looks not sensible to me.). Not sure how they are implementing closures nowadays in Java, I haven't been following the new recent stuff about Java.
+
+This classic article by Richard Stallman (of GNU/Linux, Emacs, FSF) explains why dynamic scoping is important to the Emacs editor and the Emacs Lisp language.  In sum, it is useful for customizing.
+http://www.gnu.org/software/emacs/emacs-paper.html#SEC17
+See also this page on the Emacs wiki, for more info about the use of dynamic scoping in Emacs Lisp:
+
+An example whats convenient for me at the Emacs way of binding - 
+not sure if lexical or dynamic is the right term BTW.
+A variable bound inside a let is seen downward, no explicit hand-over as argument needed, which saves a lot of keystrokes.
+(defun foo1 ()
+  (message "%s" a))
+
+(defun foo2 ()
+  (let ((a 2))
+  (message "%s" a)))
+
+(defun foo3 ()
+  (let ((a 1))
+    (foo1)
+    (foo2)))
+
+==>
+1
+2
+
+Binding inside foo2 is of interest, as a usage of default values might be installed here
+(let ((a (if (eq something a) assign otherwise...
+
+I think dynamic scope in Common LISP is analogy of Global Variable in C. Using them in a functional functions is problematic. 

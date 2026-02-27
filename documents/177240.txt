@@ -1,0 +1,124 @@
+How to use a function-based index on a column that contains NULLs in Oracle 10+?
+sql oracle
+Lets just say you have a table in Oracle:
+CREATE TABLE person (
+  id NUMBER PRIMARY KEY,
+  given_names VARCHAR2(50),
+  surname VARCHAR2(50)
+);
+
+with these function-based indices:
+CREATE INDEX idx_person_upper_given_names ON person (UPPER(given_names));
+CREATE INDEX idx_person_upper_last_name ON person (UPPER(last_name));
+
+Now, given_names has no NULL values but for argument's sake last_name does.  If I do this:
+SELECT * FROM person WHERE UPPER(given_names) LIKE 'P%'
+
+the explain plan tells me its using the index but change it to:
+SELECT * FROM person WHERE UPPER(last_name) LIKE 'P%'
+
+it doesn't.  The Oracle docs say that to use the function-based index will only be used when several conditions are met, one of which is ensuring there are no NULL values since they aren't indexed.
+I've tried these queries:
+SELECT * FROM person WHERE UPPER(last_name) LIKE 'P%' AND UPPER(last_name) IS NOT NULL
+
+and
+SELECT * FROM person WHERE UPPER(last_name) LIKE 'P%' AND last_name IS NOT NULL
+
+In the latter case I even added an index on last_name but no matter what I try it uses a full table scan.  Assuming I can't get rid of the NULL values, how do I get this query to use the index on UPPER(last_name)?
+
+
+In your example you've created the same index twice - this would give an error so I'm assuming that was a mistake in pasting, not the actual code you tried.
+I tried it with
+CREATE INDEX idx_person_upper_surname ON person (UPPER(surname));
+
+SELECT * FROM person WHERE UPPER(surname) LIKE 'P%';
+
+and it produced the expected query plan:
+Execution Plan
+----------------------------------------------------------
+   0      SELECT STATEMENT Optimizer=ALL_ROWS (Cost=1 Card=1 Bytes=67)
+   1    0   TABLE ACCESS (BY INDEX ROWID) OF 'PERSON' (TABLE) (Cost=1
+          Card=1 Bytes=67)
+
+   2    1     INDEX (RANGE SCAN) OF 'IDX_PERSON_UPPER_SURNAME' (INDEX)
+           (Cost=1 Card=1)
+
+To answer your question, yes it should work. Try double checking that you do have the second index created correctly.
+Also try an explicit hint:
+SELECT /*+INDEX(PERSON IDX_PERSON_UPPER_SURNAME)*/ * 
+FROM person 
+WHERE UPPER(surname) LIKE 'P%';
+
+If that works, but only with the hint, then it is likely related to CBO statistics gone wrong, or CBO related init parameters.
+
+Are you sure you want the index to be used?  Full table scans are not bad.  Depending on the size of the table, it might be more efficient to do a table scan than use an index.  It also depends on the density and distribution of the data, which is why statistics are gathered.  The cost based optimizer can usually be trusted to make the right choice.  Unless you have a specific performance problem, I wouldn't worry too much about it.
+
+The index can be used, though the optimiser may have chosen not to use it for your particular example:
+SQL> create table my_objects
+  2  as select object_id, object_name
+  3  from all_objects;
+
+Table created.
+
+SQL> select count(*) from my_objects;
+  2  /
+
+  COUNT(*)
+----------
+     83783
+
+
+SQL> alter table my_objects modify object_name null;
+
+Table altered.
+
+SQL> update my_objects
+  2  set object_name=null
+  3  where object_name like 'T%';
+
+1305 rows updated.
+
+SQL> create index my_objects_name on my_objects (lower(object_name));
+
+Index created.
+
+SQL> set autotrace traceonly
+
+SQL> select * from my_objects
+  2  where lower(object_name) like 'emp%';
+
+29 rows selected.
+
+
+Execution Plan
+----------------------------------------------------------
+
+------------------------------------------------------------------------------------
+| Id  | Operation                   | Name            | Rows  | Bytes | Cost (%CPU)|
+------------------------------------------------------------------------------------
+|   0 | SELECT STATEMENT            |                 |    17 |   510 |   355   (1)|
+|   1 |  TABLE ACCESS BY INDEX ROWID| MY_OBJECTS      |    17 |   510 |   355   (1)|
+|*  2 |   INDEX RANGE SCAN          | MY_OBJECTS_NAME |   671 |       |     6   (0)|
+------------------------------------------------------------------------------------
+
+The documentation you read was presumably pointing out that, just like any other index, all-null keys are not stored in the index.
+
+You can circumvent the problem of null values being unindexed in this or other situations by also indexing based on a literal value:
+CREATE INDEX idx_person_upper_surname ON person (UPPER(surname),0);
+
+This allows you to use the index for such queries as:
+Select *
+From   person
+Where  UPPER(surname) is null;
+
+This query would normally not usa an index, except for bitmap indexes or indexes including a nonnullable real column other than surname.
+
+Oracle will still use a function-based indexes with columns that contain null - I think you misinterpreted the documentation.
+You need to put a nvl in the function index if you want to check for this though.
+Something like...
+create index idx_person_upper_surname on person (nvl(upper(surname),'N/A'));
+
+You can then query using the index with
+select * from person where nvl(upper(surname),'N/A') = 'PIERPOINT'
+
+Although, all a bit ugly. Since most people have surnames, perhaps a "not null" is appropriate :-).

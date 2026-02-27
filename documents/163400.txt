@@ -1,0 +1,72 @@
+Database Design Issues with relationships
+php mysql database-design foreign-keys relational-database
+I'm working on an upgrade for an existing database that was designed without any of the code to implement the design being considered. Now I've hit a brick wall in terms of implementing the database design in code. I'm certain whether its a problem with the design of the database or if I'm simply not seeing the correct solution on how to what needs to be done. 
+The basic logic stipulates the following:
+
+Users access the online trainings by way of Seats. Users can have multiple Seats.
+Seats are purchased by companies and have a many-to-many relationship with Products.
+A Product has a many-to-many relationship with Modules.
+A Module has a many-to-many relationship with Lessons.
+Lessons are the end users access for their training.
+To muddy the waters, for one reason or another some Users have multiple Seats that contain the same Products. 
+Certification takes place on a per Product basis, not on a per Seat basis.
+Users have a many-to-many relationship with lessons that stores their current status or score for the lesson.
+Users certify for a Product when they complete all of the Lessons in all of the Modules for the Product.
+It is also significant to know when all Lessons for a particular Module are completed by a User.
+Some Seats will be for ReCertification meaning that Users that previously certified for a Product can sign up and take a recertification exam.
+Due to Rule 11, Users can and will have multiple Certification records.
+Edit: When a User completes a Lesson (scores better than 80%) then the User has (according to the current business logic) completed the Lesson for all Products and all Seats that contain the Lesson.
+
+The trouble that I keep running into with the current design and the business logic as I've more or less described it is that I can't find a way to effectively tie whether a user has certified for a particular product and seat vs when they have not. I keep hitting snags trying to establish which Products under which Seats have been certified for the User and which haven't. Part of the problem is because if they are currently registered for multiple of the same Product under different Seats, then I have to count the Product only once.
+Below is a copy of the portion of the schema that's involved. Any suggestions on how to improve the design or draw the association in code would be appreciated. In case it matters, this site is built on the LAMPP stack.
+You can view the relevant portion of the database schema here: http://lpsoftware.com/problem_db_structure.png
+
+
+What you're looking for is relational division
+Not implemented directly in SQL, but it can be done.  Search google for other examples.
+
+After a quick look at the schema I think one of the things you can do is create a 'to_be_certified' table. Populate it with user_id, product_id and seat_id when a product is assigned to a seat (when product_seat_rtab is populated).
+On adding a record to the certification_rtab table, delete the corresponding record in the 'to_be_certified' table. This will give you an easy access to all the products which are certified for a users and the ones that are not.
+To get rid of duplicate product_ids, you can group by product_id.
+
+You need to make changes to the lessonstatus_rtab table:
+CREATE TABLE lessonstatus_rtab (
+  user_id    INT NOT NULL,
+  seat_id    INT NOT NULL,
+  lesson_id  INT NOT NULL REFERENCES lesson_rtab,
+  accessdate TIMESTAMP,
+  score      NUMERIC(5,2) NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, seat_id, lesson_id),
+  FOREIGN KEY (user_id, seat_id) REFERENCES user_seat_rtab (user_id, seat_id)
+);
+
+Then you can query for each product that a user has a seat for, is he certified?  This presumes that the number of lessons he has scored, say, 50% or higher is the same as the number of lessons in all modules for the product.
+SELECT p.name, us.user_id, us.seat_id, COUNT(l.id) = COUNT(lu.lesson_id) AS is_certified
+FROM user_seat_rtab AS us
+ JOIN seat_rtab AS s ON (s.id = us.seat_id)
+ JOIN product_seat_rtab AS ps ON (ps.seat_id = s.id)
+ JOIN product_rtab AS p ON (p.id = ps.product_id)
+ JOIN product_module_rtab AS pm ON (pm.product_id = p.id)
+ JOIN module_rtab AS m ON (m.id = pm.module_id)
+ JOIN module_lesson_rtab AS ml ON (ml.module_id = m.id)
+ JOIN lesson_rtab AS l ON (l.id = ml.lesson_id)
+ LEFT OUTER JOIN lessonstatus_rtab AS lu 
+   ON (lu.lesson_id = l.id AND lu.user_id = us.user_id 
+     AND lu.seat_id = us.seat_id AND lu.score > 0.50)
+GROUP BY p.id, us.user_id, us.seat_id;
+
+
+UPDATE:
+I have considering this issue further and have considered whether it would allow things to work better to simply remove the user_seat_rtab table and then use the equivalent certification_rtab table (probably renamed) to hold all of the information regarding the status of a user's seat. This way there is a direct relationship established between a User, their Seat, each Product within the Seat, and whether the User has certified for the particular Product and Seat.
+So I would apply the following changes to the schema posted with the question:
+DROP TABLE user_seat_rtab;
+RENAME TABLE certification_rtab TO something_different;
+
+An alternative to further normalize this new structure would be to do something like this:
+ALTER TABLE user_seat_rtab 
+    DROP PRIMARY KEY;
+    ADD COLUMN product_id int(10) unsigned NOT NULL;
+    ADD CONSTRAINT pk_user_seat_product PRIMARY KEY (user_id, seat_id, product_id);
+    ADD CONSTRAINT fk_product_user_seat FOREIGN KEY (product_id) REFERENCES product_rtab(id) ON DELETE RESTRICT;
+
+I'm not really certain whether this would solve the problem or if it will just change the nature of the problem slightly while introducing new ones. So, does anyone have any other criticisms or suggestions? 

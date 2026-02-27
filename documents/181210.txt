@@ -1,0 +1,82 @@
+Database Null
+c# asp.net sql-server web-services
+I have an asp.net text form that contains numerous decimal fields that are optional. I want to selectively update the database but not inserting a "0" for fields that do not have data (maintaining the null status). 
+Typically, I would create multiple functions, each with a different signature to handle this. However, I am inserting the data through a webservice which does not allow a function with the same name to have multiple signatures. I can think of a couple ways to work around this, but none "pragmatically".
+Thanks!
+
+
+You could use the DBNull class to represent a null value on your web service code. 
+While you would still have to use a surrogate value (e.g., 0 or -1), and then just evaluate that value to convert it into the DBNull object.
+
+Nullable Types are meant for the same purpose. They represent value types with the possibility of having no data in them. Presence of value can be checked using HasValue property of these types.
+Pseudo code to read the fields:
+decimal? dValue; // default value is null
+ if(decimalValueExists)
+{
+  dValue = <value read from text file>
+}
+
+When you say multiple methods - I assume these are overloaded methods to be able to add optional fields (so n optional fields means n more methods)
+You can avoid writing those methods by writing single method. Suppose you have one required field and one optional field:
+public class MyFields
+{
+    decimal  req1;
+    decimal? opt1; // optional field 1  
+}
+
+Then define the web service method to use it:
+[WebMethod]
+void MyWSMethod(MyFields myFields)
+{/* code here will ultimately call InsertMyFields */}
+
+void InsertMyFields(MyFields myFields)
+{
+    using (SqlConnection connection = new SqlConnection(connectionString))
+    {
+    	// Create the command and set its properties.
+    	SqlCommand command = new SqlCommand();
+    	command.Connection = connection;
+    	command.CommandText = "AddMyFields";
+    	command.CommandType = CommandType.StoredProcedure;
+
+    	// Add the required input parameter
+    	SqlParameter parameter1 = new SqlParameter();
+    	parameter1.ParameterName = "@ReqField1";
+    	parameter1.SqlDbType = SqlDbType.NVarChar;
+    	parameter1.Direction = ParameterDirection.Input;
+    	parameter1.Value = myFields.req1;
+
+    	// Add the parameter to the Parameters collection. 
+    	command.Parameters.Add(parameter1);
+
+    	// Add the optional parameter and set its properties.
+    	SqlParameter parameter2 = new SqlParameter();
+    	parameter2.ParameterName = "@OptField1";
+    	parameter2.SqlDbType = SqlDbType.NVarChar;
+    	parameter2.Direction = ParameterDirection.Input;
+    	parameter2.Value = myFields.opt1 ?? DBNull.Value; //null coalescing operator
+
+    	// Add the parameter to the Parameters collection. 
+    	command.Parameters.Add(parameter2);
+
+    	//.. rest of the code
+    }
+
+}
+
+If the nullable type has a value, Null Coalescing Operator will set the value or else it will set the other value that you specify (DBNull.Value in our case).
+
+You may be able to define your parameters as nullable decimals. The C# syntax for a nullable value type like this:
+decimal? rebateAmountOrWhatever;
+
+You can then store nulls in the variable and compare the variable to null.
+new SqlParameter("@RebateAmount", 
+  rebateAmountOrWhatever == null ? (object)DBNull.Value : (object)rebateAmountOrWhatever)
+
+There is also great fun to be had using the ?? operator like this:
+new SqlParameter("@RebateAmount", 
+ (object)rebateAmountOrWhatever ?? (object)DBNull.Value)
+
+An equivalent way to declare the variable is with the Nullable<> generic type like this:
+Nullable<decimal> currentIraBalance = null;
+

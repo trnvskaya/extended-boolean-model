@@ -1,0 +1,61 @@
+Generating a globally unique identifier in Java
+java persistence uuid uniqueidentifier
+Summary: I'm developing a persistent Java web application, and I need to make sure that all resources I persist have globally unique identifiers to prevent duplicates.
+The Fine Print:
+
+I'm not using an RDBMS, so I don't have any fancy sequence generators (such as the one provided by Oracle)
+I'd like it to be fast, preferably all in memory - I'd rather not have to open up a file and increment some value
+It needs to be thread safe (I'm anticipating that only one JVM at a time will need to generate IDs)
+There needs to be consistency across instantiations of the JVM.  If the server shuts down and starts up, the ID generator shouldn't re-generate the same IDs it generated in previous instantiations (or at least the chance has to be really, really slim - I anticipate many millions of presisted resources)
+I have seen the examples in the EJB unique ID pattern article.  They won't work for me (I'd rather not rely solely on System.currentTimeMillis() because we'll be persisting multiple resources per millisecond).
+I have looked at the answers proposed in this question.  My concern about them is, what is the chance that I will get a duplicate ID over time?  I'm intrigued by the suggestion to use java.util.UUID for a UUID, but again, the chances of a duplicate need to be infinitesimally small.
+I'm using JDK6
+
+
+
+Pretty sure UUIDs are "good enough". There are 340,282,366,920,938,463,463,374,607,431,770,000,000 UUIDs available.
+http://www.wilybeagle.com/guid_store/guid_explain.htm
+"To put these numbers into perspective, one's annual risk of being hit by a meteorite is estimated to be one chance in 17 billion, that means the probability is about 0.00000000006 (6 Ã 10â11), equivalent to the odds of creating a few tens of trillions of UUIDs in a year and having one duplicate. In other words, only after generating 1 billion UUIDs every second for the next 100 years, the probability of creating just one duplicate would be about 50%. The probability of one duplicate would be about 50% if every person on earth owns 600 million UUIDs"
+http://en.wikipedia.org/wiki/Universally_Unique_Identifier
+
+If it needs to be unique per PC: you could probably use (System.currentTimeMillis() << 4) | (staticCounter++ & 15) or something like that.
+That would allow you to generate 16 per ms.  If you need more, shift by 5 and and it with 31...
+if it needs to be unique across multiple PCs, you should also combine in your primary network card's MAC address.
+edit: to clarify
+private static int staticCounter=0;
+private final int nBits=4;
+public long getUnique() {
+    return (currentTimeMillis() << nBits) | (staticCounter++ & 2^nBits-1);
+}
+
+and change nBits to the square root of the largest number you should need to generate per ms.
+It will eventually roll over.  Probably 20 years or something with nBits at 4.
+
+Java UUID Generator also provides a good quality UUID generator. It can generate UUID's using method 1 (MAC address + time) which is good if you need furthur assurance that UUID's are unique between multiple machines. It includes a JNI library to retrieve the MAC address or a mechanism to specify/generate a random MAC.
+For others who may not be using Java 6, it is also backwards compatible with older versions of Java that don't include UUID.
+
+From memory the RMI remote packages contain a UUID generator. I don't know whether thats worth looking into.
+When I've had to generate them I typically use a MD5 hashsum of the current date time, the user name and the IP address of the computer. Basically the idea is to take everything that you can find out about the computer/person and then generate a MD5 hash of this information.
+It works really well and is incredibly fast (once you've initialised the MessageDigest for the first time).
+
+public class UniqueID {
+    private static long startTime = System.currentTimeMillis();
+    private static long id;
+
+    public static synchronized String getUniqueID() {
+        return "id." + startTime + "." + id++;
+    }
+}
+
+
+why not do like this
+String id = Long.toString(System.currentTimeMillis()) + 
+    (new Random()).nextInt(1000) + 
+    (new Random()).nextInt(1000);
+
+
+if you want to use a shorter and faster implementation that java UUID take a look at:
+https://code.google.com/p/spf4j/source/browse/trunk/spf4j-core/src/main/java/org/spf4j/concurrent/UIDGenerator.java
+see the implementation choices and limitations in the javadoc.
+here is a  unit test on how to use:
+https://code.google.com/p/spf4j/source/browse/trunk/spf4j-core/src/test/java/org/spf4j/concurrent/UIDGeneratorTest.java

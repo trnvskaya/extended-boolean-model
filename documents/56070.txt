@@ -1,0 +1,32 @@
+DELETE Statement hangs on SQL Server for no apparent reason
+sql sql-server sql-server-2005
+Edit: Solved, there was a trigger with a loop on the table (read my own answer further below).
+
+We have a simple delete statement that looks like this:
+DELETE FROM tablename WHERE pk = 12345
+
+This just hangs, no timeout, no nothing.
+We've looked at the execution plan, and it consists of many lookups on related tables to ensure no foreign keys would trip up the delete, but we've verified that none of those other tables have any rows referring to that particular row.
+There is no other user connected to the database at this time.
+We've run DBCC CHECKDB against it, and it reports 0 errors.
+Looking at the results of sp_who and sp_lock while the query is hanging, I notice that my spid has plenty of PAG and KEY locks, as well as the occasional TAB lock.
+The table has 1.777.621 rows, and yes, pk is the primary key, so it's a single row delete based on index. There is no table scan in the execution plan, though I notice that it contains something that says Table Spool (Eager Spool), but says Estimated number of rows 1. Can this actually be a table-scan in disguise? It only says it looks at the primary key column.
+Tried DBCC DBREINDEX and UPDATE STATISTICS on the table. Both completed within reasonable time.
+There is unfortunately a high number of indexes on this particular table. It is the core table in our system, with plenty of columns, and references, both outgoing and incoming. The exact number is 48 indexes + the primary key clustered index.
+What else should we look at?
+Note also that this table did not have this problem before, this problem occured suddently today. We also have many databases with the same table setup (copies of customer databases), and they behave as expected, it's just this one that is problematic.
+
+
+Try recreating the index on that table, and try regenerating the statistics.
+DBCC REINDEX
+UPDATE STATISTICS
+
+One piece of information missing is the number of indices on the table you are deleting the data from. As SQL Server uses the Primary Key as a pointer in every index, any change to the primary index requires updating every index. Though, unless we are talking a high number, this shouldn't be an issue.
+I am guessing, from your description, that this is a primary table in the database, referenced by many other tables in FK relationships.  This would account for the large number of locks as it checks the rest of the tables for references. And, if you have cascading deletes turned on, this could lead to a delete in table a requiring checks several tables deep.
+
+Ok, this is embarrasing.
+A collegue had added a trigger to that table a while ago, and the trigger had a bug. Although he had fixed the bug, the trigger had never been recreated for that table.
+So the server was actually doing nothing, it just did it a huge number of times.
+Oh well...
+Thanks for the eyeballs to everyone who read this and pondered the problem.
+I'm going to accept Josef's answer, as his was the closest, and indirectly thouched upon the issue with the cascading deletes.

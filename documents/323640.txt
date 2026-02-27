@@ -1,0 +1,308 @@
+Can I convert a C# string value to an escaped string literal
+c# string escaping
+In C#, can I convert a string value to a string literal, the way I would see it in code? I would like to replace tabs, newlines, etc. with their escape sequences.
+If this code:
+Console.WriteLine(someString);
+
+produces:
+Hello
+World!
+
+I want this code:
+Console.WriteLine(ToLiteral(someString));
+
+to produce:
+\tHello\r\n\tWorld!\r\n
+
+
+
+Interesting question.
+If you can't find a better method, you can always replace.
+If you go that way, you could use this:
+Listing of the C# Escape sequences
+
+EDIT: A more structured approach, including all escape sequences for strings and chars. 
+Doesn't replace unicode characters with their literal equivalent.
+Doesn't cook eggs, either.
+public class ReplaceString
+{
+    static readonly IDictionary<string, string> m_replaceDict 
+        = new Dictionary<string, string>();
+
+    const string ms_regexEscapes = @"[\a\b\f\n\r\t\v\\""]";
+
+    public static string StringLiteral(string i_string)
+    {
+        return Regex.Replace(i_string, ms_regexEscapes, match);
+    }
+
+    public static string CharLiteral(char c)
+    {
+        return c == '\'' ? @"'\''" : string.Format("'{0}'", c);
+    }
+
+    private static string match(Match m)
+    {
+        string match = m.ToString();
+        if (m_replaceDict.ContainsKey(match))
+        {
+            return m_replaceDict[match];
+        }
+
+        throw new NotSupportedException();
+    }
+
+    static ReplaceString()
+    {
+        m_replaceDict.Add("\a", @"\a");
+        m_replaceDict.Add("\b", @"\b");
+        m_replaceDict.Add("\f", @"\f");
+        m_replaceDict.Add("\n", @"\n");
+        m_replaceDict.Add("\r", @"\r");
+        m_replaceDict.Add("\t", @"\t");
+        m_replaceDict.Add("\v", @"\v");
+
+        m_replaceDict.Add("\\", @"\\");
+        m_replaceDict.Add("\0", @"\0");
+
+        //The SO parser gets fooled by the verbatim version 
+        //of the string to replace - @"\"""
+        //so use the 'regular' version
+        m_replaceDict.Add("\"", "\\\""); 
+    }
+
+    static void Main(string[] args){
+
+        string s = "here's a \"\n\tstring\" to test";
+        Console.WriteLine(ReplaceString.StringLiteral(s));
+        Console.WriteLine(ReplaceString.CharLiteral('c'));
+        Console.WriteLine(ReplaceString.CharLiteral('\''));
+
+    }
+}
+
+
+Code:
+string someString1 = "\tHello\r\n\tWorld!\r\n";
+string someString2 = @"\tHello\r\n\tWorld!\r\n";
+
+Console.WriteLine(someString1);
+Console.WriteLine(someString2);
+
+Output:
+    Hello
+    World!
+
+\tHello\r\n\tWorld!\r\n
+
+Is this what you want?
+
+public static class StringHelpers
+{
+    private static Dictionary<string, string> escapeMapping = new Dictionary<string, string>()
+    {
+        {"\"", @"\\\"""},
+        {"\\\\", @"\\"},
+        {"\a", @"\a"},
+        {"\b", @"\b"},
+        {"\f", @"\f"},
+        {"\n", @"\n"},
+        {"\r", @"\r"},
+        {"\t", @"\t"},
+        {"\v", @"\v"},
+        {"\0", @"\0"},
+    };
+
+    private static Regex escapeRegex = new Regex(string.Join("|", escapeMapping.Keys.ToArray()));
+
+    public static string Escape(this string s)
+    {
+        return escapeRegex.Replace(s, EscapeMatchEval);
+    }
+
+    private static string EscapeMatchEval(Match m)
+    {
+        if (escapeMapping.ContainsKey(m.Value))
+        {
+            return escapeMapping[m.Value];
+        }
+        return escapeMapping[Regex.Escape(m.Value)];
+    }
+}
+
+
+I found this:
+private static string ToLiteral(string input)
+{
+    using (var writer = new StringWriter())
+    {
+        using (var provider = CodeDomProvider.CreateProvider("CSharp"))
+        {
+            provider.GenerateCodeFromExpression(new CodePrimitiveExpression(input), writer, null);
+            return writer.ToString();
+        }
+    }
+}
+
+This code:
+var input = "\tHello\r\n\tWorld!";
+Console.WriteLine(input);
+Console.WriteLine(ToLiteral(input));
+
+Produces:
+    Hello
+    World!
+"\tHello\r\n\tWorld!"
+
+
+try:
+var t = HttpUtility.JavaScriptStringEncode(s);
+
+
+Fully working implementation, including escaping of Unicode and ASCII non printable characters. Does not insert "+" signs like Hallgrim's answer.
+    static string ToLiteral(string input) {
+        StringBuilder literal = new StringBuilder(input.Length + 2);
+        literal.Append("\"");
+        foreach (var c in input) {
+            switch (c) {
+                case '\'': literal.Append(@"\'"); break;
+                case '\"': literal.Append("\\\""); break;
+                case '\\': literal.Append(@"\\"); break;
+                case '\0': literal.Append(@"\0"); break;
+                case '\a': literal.Append(@"\a"); break;
+                case '\b': literal.Append(@"\b"); break;
+                case '\f': literal.Append(@"\f"); break;
+                case '\n': literal.Append(@"\n"); break;
+                case '\r': literal.Append(@"\r"); break;
+                case '\t': literal.Append(@"\t"); break;
+                case '\v': literal.Append(@"\v"); break;
+                default:
+                    // ASCII printable character
+                    if (c >= 0x20 && c <= 0x7e) {
+                        literal.Append(c);
+                    // As UTF16 escaped character
+                    } else {
+                        literal.Append(@"\u");
+                        literal.Append(((int)c).ToString("x4"));
+                    }
+                    break;
+            }
+        }
+        literal.Append("\"");
+        return literal.ToString();
+    }
+
+
+What about Regex.Escape(String) ?
+
+Regex.Escape escapes a minimal set of characters (\, *, +, ?, |, {, [,
+  (,), ^, $,., #, and white space) by replacing them with their escape
+  codes.
+
+
+Here is a little improvement for Smilediver's answer, it will not escape all no-ASCII chars but only these are really needed.
+using System;
+using System.Globalization;
+using System.Text;
+
+public static class CodeHelper
+{
+    public static string ToLiteral(this string input)
+    {
+        var literal = new StringBuilder(input.Length + 2);
+        literal.Append("\"");
+        foreach (var c in input)
+        {
+            switch (c)
+            {
+                case '\'': literal.Append(@"\'"); break;
+                case '\"': literal.Append("\\\""); break;
+                case '\\': literal.Append(@"\\"); break;
+                case '\0': literal.Append(@"\0"); break;
+                case '\a': literal.Append(@"\a"); break;
+                case '\b': literal.Append(@"\b"); break;
+                case '\f': literal.Append(@"\f"); break;
+                case '\n': literal.Append(@"\n"); break;
+                case '\r': literal.Append(@"\r"); break;
+                case '\t': literal.Append(@"\t"); break;
+                case '\v': literal.Append(@"\v"); break;
+                default:
+                    if (Char.GetUnicodeCategory(c) != UnicodeCategory.Control)
+                    {
+                        literal.Append(c);
+                    }
+                    else
+                    {
+                        literal.Append(@"\u");
+                        literal.Append(((ushort)c).ToString("x4"));
+                    }
+                    break;
+            }
+        }
+        literal.Append("\"");
+        return literal.ToString();
+    }
+}
+
+
+Hallgrim's answer is excellent, but the "+", newline and indent additions were breaking functionality for me.  An easy way around it is:
+private static string ToLiteral(string input)
+{
+    using (var writer = new StringWriter())
+    {
+        using (var provider = CodeDomProvider.CreateProvider("CSharp"))
+        {
+            provider.GenerateCodeFromExpression(new CodePrimitiveExpression(input), writer, new CodeGeneratorOptions {IndentString = "\t"});
+            var literal = writer.ToString();
+            literal = literal.Replace(string.Format("\" +{0}\t\"", Environment.NewLine), "");
+            return literal;
+        }
+    }
+}
+
+
+I submit my own implementation, which handles null values and should be more performant on account of using array lookup tables, manual hex conversion, and avoiding switch statements.
+using System;
+using System.Text;
+using System.Linq;
+
+public static class StringLiteralEncoding {
+  private static readonly char[] HEX_DIGIT_LOWER = "0123456789abcdef".ToCharArray();
+  private static readonly char[] LITERALENCODE_ESCAPE_CHARS;
+
+  static StringLiteralEncoding() {
+    // Per http://msdn.microsoft.com/en-us/library/h21280bw.aspx
+    var escapes = new string[] { "\aa", "\bb", "\ff", "\nn", "\rr", "\tt", "\vv", "\"\"", "\\\\", "??", "\00" };
+    LITERALENCODE_ESCAPE_CHARS = new char[escapes.Max(e => e[0]) + 1];
+    foreach(var escape in escapes)
+      LITERALENCODE_ESCAPE_CHARS[escape[0]] = escape[1];
+  }
+
+  /// <summary>
+  /// Convert the string to the equivalent C# string literal, enclosing the string in double quotes and inserting
+  /// escape sequences as necessary.
+  /// </summary>
+  /// <param name="s">The string to be converted to a C# string literal.</param>
+  /// <returns><paramref name="s"/> represented as a C# string literal.</returns>
+  public static string Encode(string s) {
+    if(null == s) return "null";
+
+    var sb = new StringBuilder(s.Length + 2).Append('"');
+    for(var rp = 0; rp < s.Length; rp++) {
+      var c = s[rp];
+      if(c < LITERALENCODE_ESCAPE_CHARS.Length && '\0' != LITERALENCODE_ESCAPE_CHARS[c])
+        sb.Append('\\').Append(LITERALENCODE_ESCAPE_CHARS[c]);
+      else if('~' >= c && c >= ' ')
+        sb.Append(c);
+      else
+        sb.Append(@"\x")
+          .Append(HEX_DIGIT_LOWER[c >> 12 & 0x0F])
+          .Append(HEX_DIGIT_LOWER[c >>  8 & 0x0F])
+          .Append(HEX_DIGIT_LOWER[c >>  4 & 0x0F])
+          .Append(HEX_DIGIT_LOWER[c       & 0x0F]);
+    }
+
+    return sb.Append('"').ToString();
+  }
+}
+

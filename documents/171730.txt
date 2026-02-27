@@ -1,0 +1,56 @@
+Interface "recursion" and reference counting
+delphi oop interface
+I have a small problem with interfaces. Here it is in Pseudo code :
+type
+  Interface1 = interface
+  end;
+
+  Interface2 = interface
+  end;
+
+  TParentClass = class(TInterfacedObject, Interface1)
+  private
+    fChild : Interface2;
+  public
+    procedure AddChild(aChild : Interface2);
+  end;
+
+  TChildClass = class(TInterfacedObject, Interface2)
+  private
+    fParent : Interface2;
+  public
+    constructor Create(aPArent : Interface1);
+  end;
+
+Can anyone see the flaw? I need the child to have a reference to it's parent, but the reference counting doesn't work in this situation. If I create a ParentClass instance, and add a child, then the parent class is never released. I can see why. How do I get round it?
+
+
+You must make a method that explicitly unlinks the right references. There is no way to get the automatic reference counting working properly in this case.
+
+Well, the reference counting of course does work in this situation - it just doesn't solve the problem.
+That's the biggest problem with reference counting - when you have a circular reference, you have to explicitely 'break' it (set one interface reference to 'nil', for example). That's also why reference counting is not really a replacement for garbage collection - garbage collectors are aware that cycles may exist and can release such cyclic structures when they are not referenced from the 'outside'.
+
+A reference-counted reference has two semantics: it acts as a share of ownership as well as a means of navigating the object graph.
+Typically, you don't need both of these semantics on all links in a cycle in the graph of references. Perhaps only parents own children, and not the other way around? If that is the case, you can make the child references to the parent weak links, by storing them as pointers, like this:
+TChildClass = class(TInterfacedObject, Interface2)
+private
+  fParent : Pointer;
+  function GetParent: Interface1;
+public
+  constructor Create(aPArent : Interface1);
+  property Parent: Interface1 read GetParent;
+end;
+
+function TChildClass.GetParent: Interface1;
+begin
+  Result := Interface1(fParent);
+end;
+
+constructor TChildClass.Create(AParent: Interface1);
+begin
+  fParent := Pointer(AParent);
+end;
+
+This is safe if the root of the tree of instances is guaranteed to be kept alive somewhere, i.e. you are not relying on only keeping a reference to a branch of the tree and still being able to navigate the whole of it.
+
+With the use of a function pointer in the first example then the cyclic reference problem doesn't exist. .NET uses delegates, and VB6 uses events.  All of which have the benefit of not incrementing the reference count of the object being pointed too.

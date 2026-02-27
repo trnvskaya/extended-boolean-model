@@ -1,0 +1,274 @@
+Trip time calculation in relational databases?
+sql mysql sql-server oracle postgresql
+I had this question in mind and since I just discovered this site I decided to post it here.
+Let's say I have a table with a timestamp and a state for a given "object" (generic meaning, not OOP object); is there an optimal way to calculate the time between a state and the next occurrence of another (or same) state (what I call a "trip") with a single SQL statement (inner SELECTs and UNIONs aren't counted)?
+Ex: For the following, the trip time between Initial and Done would be 6 days, but between Initial and Review it would be 2 days.  
+
+2008-08-01 13:30:00 - Initial
+  2008-08-02 13:30:00 - Work
+  2008-08-03 13:30:00 - Review
+  2008-08-04 13:30:00 - Work
+  2008-08-05 13:30:00 - Review
+  2008-08-06 13:30:00 - Accepted
+  2008-08-07 13:30:00 - Done
+
+No need to be generic, just say what SGBD your solution is specific to if not generic.
+
+
+I don't think you can get that answer with one SQL statement as you are trying to obtain one result from many records. The only way to achieve that in SQL is to get the timestamp field for two different records and calculate the difference (datediff). Therefore, UNIONS or Inner Joins are needed.
+
+I'm not sure I understand the question exactly, but you can do something like the following which reads the table in one pass then uses a derived table to calculate it. SQL Server code:
+CREATE TABLE #testing
+(
+    eventdatetime datetime NOT NULL,
+    state varchar(10) NOT NULL
+)
+
+INSERT INTO #testing (
+    eventdatetime,
+    state
+) 
+SELECT '20080801 13:30:00', 'Initial' UNION ALL
+SELECT '20080802 13:30:00', 'Work' UNION ALL
+SELECT '20080803 13:30:00', 'Review' UNION ALL
+SELECT '20080804 13:30:00', 'Work' UNION ALL
+SELECT '20080805 13:30:00', 'Review' UNION ALL
+SELECT '20080806 13:30:00', 'Accepted' UNION ALL
+SELECT '20080807 13:30:00', 'Done'
+
+SELECT DATEDIFF(dd, Initial, Review)
+FROM (
+SELECT  MIN(CASE WHEN state='Initial' THEN eventdatetime END) AS Initial,
+    	MIN(CASE WHEN state='Review' THEN eventdatetime END) AS Review
+FROM #testing
+) AS A
+
+DROP TABLE #testing
+
+
+create table A (
+    At datetime not null,
+    State varchar(20) not null
+)
+go
+insert into A(At,State)
+select '2008-08-01T13:30:00','Initial' union all
+select '2008-08-02T13:30:00','Work' union all
+select '2008-08-03T13:30:00','Review' union all
+select '2008-08-04T13:30:00','Work' union all
+select '2008-08-05T13:30:00','Review' union all
+select '2008-08-06T13:30:00','Accepted' union all
+select '2008-08-07T13:30:00','Done'
+go
+--Find trip time from Initial to Done
+select DATEDIFF(day,t1.At,t2.At)
+from
+    A t1
+    	inner join
+    A t2
+    	on
+    		t1.State = 'Initial' and
+    		t2.State = 'Review' and
+    		t1.At < t2.At
+    	left join
+    A t3
+    	on
+    		t3.State = 'Initial' and
+    		t3.At > t1.At and
+    		t4.At < t2.At
+    	left join
+    A t4
+    	on
+    		t4.State = 'Review' and
+    		t4.At < t2.At and
+    		t4.At > t1.At
+where
+    t3.At is null and
+    t4.At is null
+
+Didn't say whether joins were allowed or not. Joins to t3 and t4 (and their comparisons) let you say whether you want the earliest or latest occurrence of the start and end states (in this case, I'm asking for latest "Initial" and earliest "Review")
+In real code, my start and end states would be parameters
+Edit: Oops, need to include "t3.At < t2.At" and "t4.At > t1.At", to fix some odd sequences of States (e.g. If we removed the second "Review" and then queried from "Work" to "Review", the original query will fail)
+
+It is probably easier if you have a sequence number as well as the time-stamp: in most RDBMSs you can create an auto-increment column and not change any of the INSERT statements. Then you join the table with a copy of itself to get the deltas
+select after.moment - before.moment, before.state, after.state
+from object_states before, object_states after
+where after.sequence + 1 = before.sequence
+
+(where the details of SQL syntax will vary according to which database system).
+
+    -- Oracle SQl
+
+    CREATE TABLE ObjectState
+    (
+        startdate date NOT NULL,
+        state varchar2(10) NOT NULL
+    );
+
+
+
+   insert into ObjectState 
+   select to_date('01-Aug-2008 13:30:00','dd-Mon-rrrr hh24:mi:ss'),'Initial' union all
+   select to_date('02-Aug-2008 13:30:00','dd-Mon-rrrr hh24:mi:ss'),'Work' union all
+   select to_date('03-Aug-2008 13:30:00','dd-Mon-rrrr hh24:mi:ss'),'Review' union all
+   select to_date('04-Aug-2008 13:30:00','dd-Mon-rrrr hh24:mi:ss'),'Work' union all
+   select to_date('05-Aug-2008 13:30:00','dd-Mon-rrrr hh24:mi:ss'),'Review' union all
+   select to_date('06-Aug-2008 13:30:00','dd-Mon-rrrr hh24:mi:ss'),'Accepted' union all
+   select to_date('07-Aug-2008 13:30:00','dd-Mon-rrrr hh24:mi:ss'),'Done';
+
+-- Days in between two states
+
+  select  o2.startdate - o1.startdate as days
+  from ObjectState o1, ObjectState o2
+  where o1.state = 'Initial'
+  and o2.state = 'Review';
+
+
+I think that your steps (each record of your trip can be seen as a step) can be somewhere grouped together as part of the same activity. It is then possible to group your data on it, as, for example:
+SELECT Min(Tbl_Step.dateTimeStep) as tripBegin, _   
+       Max(Tbl_Step.dateTimeStep) as tripEnd _
+FROM 
+       Tbl_Step 
+WHERE 
+       id_Activity = 'AAAAAAA'
+
+Using this principle, you can then calculate other aggregates like the number of steps in the activity and so on. But you will not find an SQL way to calculate values like gap between 2 steps, as such a data does not belong either to the first or to the second step. Some reporting tools use what they call "running sums" to calculate such intermediate data. Depending on your objectives, this might be a solution for you.
+
+Here's an Oracle methodology using an analytic function.
+with data as (
+SELECT 1 trip_id, to_date('20080801 13:30:00','YYYYMMDD HH24:mi:ss') dt, 'Initial'  step from dual UNION ALL
+SELECT 1 trip_id, to_date('20080802 13:30:00','YYYYMMDD HH24:mi:ss') dt, 'Work'     step from dual  UNION ALL
+SELECT 1 trip_id, to_date('20080803 13:30:00','YYYYMMDD HH24:mi:ss') dt, 'Review'   step from dual  UNION ALL
+SELECT 1 trip_id, to_date('20080804 13:30:00','YYYYMMDD HH24:mi:ss') dt, 'Work'     step from dual UNION ALL
+SELECT 1 trip_id, to_date('20080805 13:30:00','YYYYMMDD HH24:mi:ss') dt, 'Review'   step from dual  UNION ALL
+SELECT 1 trip_id, to_date('20080806 13:30:00','YYYYMMDD HH24:mi:ss') dt, 'Accepted' step from dual  UNION ALL
+SELECT 1 trip_id, to_date('20080807 13:30:00','YYYYMMDD HH24:mi:ss') dt, 'Done'     step from dual )
+select trip_id,
+       step,
+       dt - lag(dt) over (partition by trip_id order by dt) trip_time
+from  data
+/
+
+
+1   Initial	
+1   Work	    1
+1   Review	    1
+1   Work	    1
+1   Review	    1
+1   Accepted    1
+1   Done	    1
+
+These are very commonly used in situations where traditionally we might use a self-join.
+
+PostgreSQL syntax :
+DROP TABLE ObjectState;
+CREATE TABLE ObjectState (
+    object_id integer not null,--foreign key
+    event_time timestamp NOT NULL,
+    state varchar(10) NOT NULL,
+    --Other fields 
+    CONSTRAINT pk_ObjectState PRIMARY KEY (object_id,event_time)
+);
+
+For given state find first folowing state of given type
+select parent.object_id,parent.event_time,parent.state,min(child.event_time) as ch_event_time,min(child.event_time)-parent.event_time as step_time
+from 
+    ObjectState parent
+    join ObjectState child on (parent.object_id=child.object_id and parent.event_time<child.event_time)
+where 
+    --Starting state 
+    parent.object_id=1 and parent.event_time=to_timestamp('01-Aug-2008 13:30:00','dd-Mon-yyyy hh24:mi:ss')
+    --needed state
+    and child.state='Review'
+group by parent.object_id,parent.event_time,parent.state;
+
+This query is not the shortest posible but it should be easy to understand and used as part of other queries :
+List events and their duration for given object
+select parent.object_id,parent.event_time,parent.state,min(child.event_time) as ch_event_time,
+       CASE WHEN parent.state<>'Done' and min(child.event_time) is null THEN (select localtimestamp)-parent.event_time ELSE min(child.event_time)-parent.event_time END  as step_time
+from 
+    ObjectState parent
+    left outer join ObjectState child on (parent.object_id=child.object_id and parent.event_time<child.event_time)
+where parent.object_id=4    
+group by parent.object_id,parent.event_time,parent.state
+order by parent.object_id,parent.event_time,parent.state;
+
+List current states for objects that are not "done"
+select states.object_id,states.event_time,states.state,(select localtimestamp)-states.event_time as step_time
+from
+    (select parent.object_id,parent.event_time,parent.state,min(child.event_time) as ch_event_time,min(child.event_time)-parent.event_time as step_time
+     from 
+        ObjectState parent
+        left outer join ObjectState child on (parent.object_id=child.object_id and parent.event_time<child.event_time)       
+     group by parent.object_id,parent.event_time,parent.state) states
+where     
+    states.object_id not in (select object_id from ObjectState where state='Done')
+    and ch_event_time is null;
+
+Test data
+insert into ObjectState (object_id,event_time,state)
+select 1,to_timestamp('01-Aug-2008 13:30:00','dd-Mon-yyyy hh24:mi:ss'),'Initial' union    all
+select 1,to_timestamp('02-Aug-2008 13:40:00','dd-Mon-yyyy hh24:mi:ss'),'Work' union all
+select 1,to_timestamp('03-Aug-2008 13:50:00','dd-Mon-yyyy hh24:mi:ss'),'Review' union all
+select 1,to_timestamp('04-Aug-2008 14:30:00','dd-Mon-yyyy hh24:mi:ss'),'Work' union all
+select 1,to_timestamp('04-Aug-2008 16:20:00','dd-Mon-yyyy hh24:mi:ss'),'Review' union all
+select 1,to_timestamp('06-Aug-2008 18:00:00','dd-Mon-yyyy hh24:mi:ss'),'Accepted' union all
+select 1,to_timestamp('07-Aug-2008 21:30:00','dd-Mon-yyyy hh24:mi:ss'),'Done';
+
+
+insert into ObjectState (object_id,event_time,state)
+select 2,to_timestamp('01-Aug-2008 13:30:00','dd-Mon-yyyy hh24:mi:ss'),'Initial' union all
+select 2,to_timestamp('02-Aug-2008 13:40:00','dd-Mon-yyyy hh24:mi:ss'),'Work' union all
+select 2,to_timestamp('07-Aug-2008 13:50:00','dd-Mon-yyyy hh24:mi:ss'),'Review' union all
+select 2,to_timestamp('14-Aug-2008 14:30:00','dd-Mon-yyyy hh24:mi:ss'),'Work' union all
+select 2,to_timestamp('15-Aug-2008 16:20:00','dd-Mon-yyyy hh24:mi:ss'),'Review' union all
+select 2,to_timestamp('16-Aug-2008 18:02:00','dd-Mon-yyyy hh24:mi:ss'),'Accepted' union all
+select 2,to_timestamp('17-Aug-2008 22:10:00','dd-Mon-yyyy hh24:mi:ss'),'Done';
+
+insert into ObjectState (object_id,event_time,state)
+select 3,to_timestamp('12-Sep-2008 13:30:00','dd-Mon-yyyy hh24:mi:ss'),'Initial' union    all
+select 3,to_timestamp('13-Sep-2008 13:40:00','dd-Mon-yyyy hh24:mi:ss'),'Work' union all
+select 3,to_timestamp('14-Sep-2008 13:50:00','dd-Mon-yyyy hh24:mi:ss'),'Review' union   all
+select 3,to_timestamp('15-Sep-2008 14:30:00','dd-Mon-yyyy hh24:mi:ss'),'Work' union all
+select 3,to_timestamp('16-Sep-2008 16:20:00','dd-Mon-yyyy hh24:mi:ss'),'Review';
+
+
+insert into ObjectState (object_id,event_time,state)
+select 4,to_timestamp('21-Aug-2008 03:10:00','dd-Mon-yyyy hh24:mi:ss'),'Initial' union all
+select 4,to_timestamp('22-Aug-2008 03:40:00','dd-Mon-yyyy hh24:mi:ss'),'Work' union all
+select 4,to_timestamp('23-Aug-2008 03:20:00','dd-Mon-yyyy hh24:mi:ss'),'Review' union all
+select 4,to_timestamp('24-Aug-2008 04:30:00','dd-Mon-yyyy hh24:mi:ss'),'Work';
+
+
+I tried to do this in MySQL. You would need to use a variable since there is no rank function in MySQL, so it would go like this:
+set @trip1 = 0; set @trip2 = 0;
+SELECT trip1.`date` as startdate, datediff(trip2.`date`, trip1.`date`) length_of_trip
+FROM
+(SELECT @trip1 := @trip1 + 1 as rank1, `date` from trip where state='Initial') as trip1
+INNER JOIN
+(SELECT @trip2 := @trip2 + 1 as rank2, `date` from trip where state='Done') as trip2
+ON rank1 = rank2;
+
+I am assuming that you want to calculate the time between 'Initial' and 'Done' states.
++---------------------+----------------+
+| startdate           | length_of_trip |
++---------------------+----------------+
+| 2008-08-01 13:30:00 |              6 |
++---------------------+----------------+
+
+
+Ok, this is a bit beyond geeky, but I built a web application to track my wife's contractions just before we had a baby so that I could see from work when it was getting close to time to go to the hospital.  Anyway, I built this basic thing fairly easily as two views.
+create table contractions time_date timestamp primary key;
+
+create view contraction_time as
+SELECT a.time_date, max(b.prev_time) AS prev_time
+   FROM contractions a, ( SELECT contractions.time_date AS prev_time
+           FROM contractions) b
+  WHERE b.prev_time < a.time_date
+  GROUP BY a.time_date;
+
+create view time_between as 
+SELECT contraction_time.time_date, contraction_time.prev_time, contraction_time.time_date - contraction_time.prev_time
+   FROM contraction_time;
+
+This could be done as a subselect obviously as well, but I used the intermediate views for other things as well, and so  this worked out well.

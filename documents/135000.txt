@@ -1,0 +1,91 @@
+How to prevent blank xmlns attributes in output from .NET's XmlDocument?
+c# .net xml xml-namespaces xmldocument
+When generating XML from XmlDocument in .NET, a blank xmlns attribute appears the first time an element without an associated namespace is inserted; how can this be prevented?
+Example:
+XmlDocument xml = new XmlDocument();
+xml.AppendChild(xml.CreateElement("root",
+    "whatever:name-space-1.0"));
+xml.DocumentElement.AppendChild(xml.CreateElement("loner"));
+Console.WriteLine(xml.OuterXml);
+
+Output:
+<root xmlns="whatever:name-space-1.0"><loner xmlns="" /></root>
+
+Desired Output:
+<root xmlns="whatever:name-space-1.0"><loner /></root>
+
+Is there a solution applicable to the XmlDocument code, not something that occurs after converting the document to a string with OuterXml?
+My reasoning for doing this is to see if I can match the standard XML of a particular protocol using XmlDocument-generated XML.  The blank xmlns attribute may not break or confuse a parser, but it's also not present in any usage that I've seen of this protocol.
+
+
+If the <loner> element in your sample XML didn't have the xmlns default namespace declaration on it, then it would be in the whatever:name-space-1.0 namespace rather than being in no namespace. If that's what you want, you need to create the element in that namespace:
+xml.CreateElement("loner", "whatever:name-space-1.0")
+
+If you want the <loner> element to be in no namespace, then the XML that's been produced is exactly what you need, and you shouldn't worry about the xmlns attribute that's been added automatically for you.
+
+Since root is in an unprefixed namespace, any child of root that wants to be un-namespaced has to be output like your example.  The solution would be to prefix the root element like so:
+<w:root xmlns:w="whatever:name-space-1.0">
+   <loner/>
+</w:root>
+
+code:
+XmlDocument doc = new XmlDocument();
+XmlElement root = doc.CreateElement( "w", "root", "whatever:name-space-1.0" );
+doc.AppendChild( root );
+root.AppendChild( doc.CreateElement( "loner" ) );
+Console.WriteLine(doc.OuterXml);
+
+
+If possible, create a serialization class then do:
+XmlSerializerNamespaces ns = new XmlSerializerNamespaces();
+ns.Add("", "");
+XmlSerializer serializer = new XmlSerializer(yourType);
+serializer.Serialize(xmlTextWriter, someObject, ns);
+
+It's safer, and you can control the namespaces with attributes if you really need more control.
+
+Thanks to Jeremy Lew's answer and a bit more playing around, I figured out how to remove blank xmlns attributes: pass in the root node's namespace when creating any child node you want not to have a prefix on.  Using a namespace without a prefix at the root means that you need to use that same namespace on child elements for them to also not have prefixes.
+Fixed Code:
+XmlDocument xml = new XmlDocument();
+xml.AppendChild(xml.CreateElement("root", "whatever:name-space-1.0"));
+xml.DocumentElement.AppendChild(xml.CreateElement("loner", "whatever:name-space-1.0")); 
+Console.WriteLine(xml.OuterXml);
+
+Thanks everyone to all your answers which led me in the right direction!
+
+I've solved the problem by using the Factory Pattern. I created a factory for XElement objects. As parameter for the instantiation of the factory I've specified a XNamespace object. So, everytime a XElement is created by the factory the namespace will be added automatically. Here is the code of the factory:
+internal class XElementFactory
+{
+    private readonly XNamespace currentNs;
+
+    public XElementFactory(XNamespace ns)
+    {
+        this.currentNs = ns;
+    }
+
+    internal XElement CreateXElement(String name, params object[] content)
+    {
+        return new XElement(currentNs + name, content);
+    }
+}
+
+
+This is a variant of JeniT's answer (Thank you very very much btw!)
+XmlElement new_element = doc.CreateElement("Foo", doc.DocumentElement.NamespaceURI);
+
+This eliminates having to copy or repeat the namespace everywhere.
+
+Yes you can prevent the XMLNS from the XmlElement .
+First Creating time it is coming : like that
+<trkpt lat="30.53597" lon="-97.753324" xmlns="">
+    <ele>249.118774</ele>
+    <time>2006-05-05T14:34:44Z</time>
+</trkpt>
+
+Change the code : And pass xml namespace
+like this
+C# code:
+XmlElement bookElement = xdoc.CreateElement("trkpt", "http://www.topografix.com/GPX/1/1");
+bookElement.SetAttribute("lat", "30.53597");
+bookElement.SetAttribute("lon", "97.753324");
+

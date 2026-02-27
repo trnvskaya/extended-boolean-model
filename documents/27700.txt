@@ -1,0 +1,36 @@
+C++ : Opening a file in non exclusive mode
+c++ windows linux filesystems
+I have to develop an application which parses a log file and sends specific data to a server. It has to run on both Linux and Windows. 
+The problem appears when I want to test the log rolling system (which appends .1 to the name of the creates a new one with the same name). On Windows (haven't tested yet on Linux) I can't rename a file that I have opened with std::ifstream() (exclusive access?) even if I open it in "input mode" (ios::in).
+Is there a cross-platform way to open file in a non-exclusive way?
+
+
+It's not the reading operation that's requiring the exclusive mode, it's the rename, because this is essentially the same as moving the file to a new location.
+I'm not sure but I don't think this can be done. Try copying the file instead, and later delete/replace the old file when it is no longer read.
+
+Win32 filesystem semantics require that a file you rename not be open (in any mode) at the time you do the rename. You will need to close the file, rename it, and then create the new log file.
+Unix filesystem semantics allow you to rename a file that's open because the filename is just a pointer to the inode.
+
+If you are only reading from the file I know it can be done with windows api CreateFile. Just specify FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE as the input to dwShareMode.
+Unfortunally this is not crossplatform. But there might be something similar for Linux.
+See msdn for more info on CreateFile.
+EDIT: Just a quick note about Greg Hewgill comment. I've just tested with the FILE_SHARE* stuff (too be 100% sure). And it is possible to both delete and rename files in windows if you open read only and specify the FILE_SHARE* parameters.
+
+
+Is there a way to open file in a non-exclusive way,
+
+Yes, using Win32, passing the various FILE_SHARE_Xxxx flags to CreateFile.
+
+is it cross platform?
+
+No, it requires platform-specific code.
+Due to annoying backwards compatibility concerns (DOS applications, being single-tasking, assume that nothing can delete a file out from under them, i.e. that they can fclose() and then fopen() without anything going amiss; Win16 preserved this assumption to make porting DOS applications easier, Win32 preserved this assumption to make porting Win16 applications easier, and it's awful), Windows defaults to opening files exclusively.
+The underlying OS infrastructure supports deleting/renaming open files  (although I believe it does have the restriction that memory-mapped files cannot be deleted, which I think isn't a restriction found on *nix), but the default opening semantics do not.
+C++ has no notion of any of this; the C++ operating environment is much the same as the DOS operating environment--no other applications running concurrently, so no need to control file sharing.
+
+I'd make sure you don't keep files open. This leads to weird stuff if your app crashes for example.
+What I'd do:
+
+Abstract (reading / writing / rolling over to a new file) into one class, and arrange closing of the file when you want to roll over to a new one in that class. (this is the neatest way, and since you already have the roll-over code you're already halfway there.)
+If you must have multiple read/write access points, need all features of fstreams and don't want to write that complete a wrapper then the only cross platform solution I can  think of is to always close the file when you don't need it, and have the roll-over code try to acquire exclusive access to the file a few times when it needs to roll-over before giving up.
+

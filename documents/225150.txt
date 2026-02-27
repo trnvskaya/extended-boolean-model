@@ -1,0 +1,44 @@
+Are there any pitfalls / things you need to know when changing from MyISAM to InnoDB
+mysql innodb myisam change-management
+One of my projects use the MyISAM engine in MySQL, but I'm considering changing it to InnoDB as I need transaction support here and there.
+
+What should I look at or consider before doing this? 
+Can I just change the engine, or should the data be prepared for it?
+
+
+
+The performance characteristics can be different, so you may need to keep an eye on the load.
+The data will be fine.
+
+Yes absolutely, there are many things, you should test your application extremely thoroughly:
+
+Transactions can deadlock and need to be repeated. This is the case (in some circumstances) even with an autocommitted transaction which only inserts one row.
+Disc usage will almost certainly increase
+I/O load during writes will almost certainly increase
+Behaviour of indexing will change because InnoDB uses clustered indexes - this may be a beneficial effect in some cases
+Your backup strategy will be impacted. Consider this carefully.
+
+The migration process itself will need to be carefully planned, as it will take a long time if you have a lot of data (during which time the data will be either readonly, or completely unavailable - do check!)
+
+Just altering the table and setting the engine should be fine.
+
+One of the big ones to watch out for is that select count(*) from MyTable is much slower in InnoDB than MyISAM.
+auto_increment values will reset to the highest value in the table +1 after a server restart -- this can cause funny problems if you have a messy db with some deletes.
+Optimum server settings are going to be different to a mainly MyISAM db.
+Make sure the size of the innodb file is big enough to hold all your data or you'll be crucified by constant reallocation when you change the engines of the tables.
+
+
+Some other notes:
+InnoDB does not reallocate free space on the filesystem after you drop a table/database or delete a record, this can be solved by "dumping and importing" or setting innodb_file_per_table=1 in my.cnf.
+Adding/removing indexes on a large InnoDB table can be quite painfull, because it locks the current table, creates a temporary one with your altered indexes and inserts data - row by row. There is a plugin from Innobase, but it works only for MySQL 5.1
+InnoDB is also MUCH MORE memory intense, I suggest you to have as large innodb_buffer_pool_size variable as your server memory allows (70-80% should be a safe bet). If your server is UNIX/Linux, consider reducing sysctl variable vm.swappiness to 0 and use innodb_flush_method=O_DIRECT to avoid double buffering. Always test if you hit swap when toggling those values.You can always read more at Percona blog, which is great.
+Also, you can run mysqlbackup with --single-transaction --skip-lock-tables and have no table locks while the backup is commencing.
+In any case, InnoDB is great, do not let some pitfalls discourage you.
+
+If you are intending to use InnoDB as a way to get concurrent queries, then you will want to set innodb_file_trx_commit=1 so you get some performance back. OTOH, if you were looking to re-code your application to be transaction aware, then deciding this setting will be part of the general performance review needed of the InnoDB settings.
+The other major thing to watch out for is that InnoDB does not support FullText indices, nor INSERT DELAYED. But then, MyISAM doesn't support referential integrity. :-)
+However, you can move over only the tables you need transaction aware. I've done this. Small tables (up to several thousand rows) can often be changed on-the-fly, incidentally.
+
+There is one big caveat. If you get any kind of hardware failure (or similar) during a write, InnoDB will corrupt tables.
+MyISAM will also, but a mysqlcheck --auto-repair will repair them. Trying this with InnoDB tables will fail. Yes, this is from experience. 
+This means you need to have a good regular data backup plan to use InnoDB. 

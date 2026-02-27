@@ -1,0 +1,51 @@
+How do you deal with connection strings when deploying an ASP.NET site?
+asp.net deployment
+Right now our test and production databases are on the same server, but with different names.  Deploying has meant editing Web.config to change all the connection strings for the correct database.  A step which I forget all too frequently... 
+We've finally created a new database server for testing, and I'm moving the databases over... but now the server will be different and we'll still need to deal with connection string issues.  
+I was thinking of managing it via a hosts file, but the thought of switching that on my desktop machine whenever I need to test against production data seems cumbersome at best.
+So I'm just wondering if there's a better way out there.  Something that would build with a "production" web config for deployment would be ideal...
+
+
+have environment folders with separate configs for each environment
+deploy out the correct one for the environment
+
+I usually have three separate web configs: one for my development machine, one for QA, and one for production.   The development one connects to my local SQL database (which is firewalled from outside) and it is the default web.config.  The others are named web-prod.config and web-qa.config.  After publishing I delete the two that I don't need and rename the correct one to web.config.  If I forget, the app breaks the first time it attempts to access the database, since the default config references one it can't get to.
+Since IIS refuses to serve up a file named .config, I make sure they all end in .config instead of say web.config-prod or web.config-qa.
+
+I did this so often, I made the web.config on the production server read-only.
+
+Use a Web Deployment Project and update the wdproj file (it's just an MSBuild file) with some post build tasks to output the correct .config file. I keep a web.config and web.release.config then use this in the wdproj file:
+<Target Name="AfterBuild">
+    <Copy Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' " SourceFiles="$(SourceWebPhysicalPath)\web.release.config" DestinationFiles="$(OutputPath)\web.config" />
+    <Delete Files="$(OutputPath)\web.release.config" />
+</Target>
+
+More information
+A simpler solution some like is using configSource property of appSettings and connectionStrings and then never overwriting that file on the production server.
+
+Here's another thing you can try:
+Using SQL Server Configuration Manager, make a db Alias for your development database so that the web.config file can be the same on both your development box and the production server.
+
+I'll put my connection strings in the machine.config on our QA and Production boxes. I'll keep them in the web.config on my dev box for flexibility, though. Then, I'll use a web deployment project to overwrite my dev connection strings with nothing (no connection strings) when deploying to QA. Therefore the QA site relies on the connection strings in machine.config. I still deploy to Production manually to make sure everything succeeds. I do this by manually copying everything from QA (except for web.config) to production.
+
+I create a database alias on each server to point to the database. I then use this alias in my web.config files. If I need to change which database the application points to, then I change the alias and not the web.config.
+For SQL Server, go to SQL Server Configuration Manager > SQL Native Client Configuration > Aliases > Create New Alias.
+You can do the same thing with Oracle with the tnsnames file.
+
+This kind of task is exactly what build events are designed to address. Think of building as building for a specific target, any target specific configuration should be done there. (with the normal caveat that there are always some exceptions to the rule)
+
+I've been in a few places now that store them in the registry. 
+There's probably more elaborate ways to do it now but a lot of code I've worked on with a 1.0/1.1 heritage store the strings in the registry.
+The registry has a few advantages
+
+It keeps people from deploying the code to the wrong places since machines not configured properly will lack the keys
+It eliminates the problem wherein a developer will accidentally package a web.config file with the development connection strings in it (followed by a frantic phone call in the middle of the night wherein it is revealed that the late night sysadmin did not back up the previous web.config and the developer does not know or recall the production strings)
+It limits the possibility of a hacker being able to get the connection string by fetching the web.config off of the machine. Plus the registry has more levels of security than the filesystem.
+
+
+We drive our a deployments from our CI server.  We usualy have a seperate file for each location and have the CI server switch to the appropriate config depending on the arguments passed ot it.  All the file editing is done in NAnt scripts, so develops can run the sam build on their machine to get their own settings.
+
+I've recently been leaning towards config manipulation on the continuous integration server. That's because we've had problems with multiple web.config, web.qa.config, web.production.config keeping the 95% of the file that should be the same in sync.
+In a nutshell: there's only the one web.config in source control and it's the development configuration (debug friendly, local db, etc.). The build server does the compile, then a deploy to the canary site, then the package for release candidate.
+We're using nant, so it's the .build file that has xmlpoke to set debug="false", alter connection strings, and whatever else needs to change in the canary copy and the packaging copy of the web.config.
+The build machine's deploy is called "canary" because it's the first thing to die if there's a problem.

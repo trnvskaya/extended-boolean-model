@@ -1,0 +1,81 @@
+.Net 8-bit Encoding
+.net encoding
+I'm working on serial port, transmitting and receiving data to some hardware at 8bit data. I would like to store it as string to facilitate comparison, and preset data are stored as string or hex format in xml file. I found out that only when using Encoding.Default which is ANSI encoding then the 8bit data is converted properly and easily reversible. ASCII encoding will only works for 7bit data, and UTF8 or UTF7 doesn't works well too, since I'm using some character from 1-255. Encoding.Default would be just fine, but I read on MSDN that it's dependent on OS codepage setting, which means it might behave differently on different codepage configured. I use GetBytes() and GetString extensively using the Encoding, but would like a failsafe and portable method that works all the time at any configuration. Any idea or better suggestion for this?
+
+
+Why not just use an array of bytes instead? It would have none of the encoding problems you're likely to suffer with the text approach.
+
+You could use base64 encoding to convert from byte to string and back. No problems with code pages or weird characters that way, and it'll be more space-efficient than hex.
+byte[] toEncode; 
+string encoded = System.Convert.ToBase64String(toEncode);
+
+
+Use the Hebrew codepage for Windows-1255. Its 8 bit.
+Encoding enc = Encoding.GetEncoding("windows-1255");
+I missunderstod you when you wrote "1-255", thought you where refereing to characters in codepage 1255.
+
+I think you should use a byte array instead. For comparison you can use some method like this:
+static bool CompareRange(byte[] a, byte[] b, int index, int count)
+{
+	bool res = true;
+	for(int i = index; i < index + count; i++)
+	{
+		res &= a[i] == b[i];
+	}
+	return res;
+}
+
+
+Latin-1 aka ISO-8859-1 aka codepage 28591 is a useful codepage for this scenario, as it maps values in the range 128-255 unchanged.  The following are interchangeable:
+Encoding.GetEncoding(28591)
+Encoding.GetEncoding("Latin1")
+Encoding.GetEncoding("iso-8859-1")
+
+The following code illustrates the fact that for Latin1, unlike Encoding.Default, all characters in the range 0-255 are mapped unchanged:
+static void Main(string[] args)
+{
+
+    Console.WriteLine("Test Default Encoding returned {0}", TestEncoding(Encoding.Default));
+    Console.WriteLine("Test Latin1 Encoding returned {0}", TestEncoding(Encoding.GetEncoding("Latin1")));
+    Console.ReadLine();
+    return;
+}
+
+private static bool CompareBytes(char[] chars, byte[] bytes)
+{
+    bool result = true;
+    if (chars.Length != bytes.Length)
+    {
+    	Console.WriteLine("Length mismatch {0} bytes and {1} chars" + bytes.Length, chars.Length);
+    	return false;
+    }
+    for (int i = 0; i < chars.Length; i++)
+    {
+    	int charValue = (int)chars[i];
+    	if (charValue != (int)bytes[i])
+    	{
+    		Console.WriteLine("Byte at index {0} value {1:X4} does not match char {2:X4}", i, (int) bytes[i], charValue);
+    		result = false;
+    	}
+    }
+    return result;
+}
+private static bool TestEncoding(Encoding encoding)
+{
+    byte[] inputBytes = new byte[256];
+    for (int i = 0; i < 256; i++)
+    {
+    	inputBytes[i] = (byte) i;
+    }
+
+    char[] outputChars = encoding.GetChars(inputBytes);
+    Console.WriteLine("Comparing input bytes and output chars");
+    if (!CompareBytes(outputChars, inputBytes)) return false;
+
+    byte[] outputBytes = encoding.GetBytes(outputChars);
+    Console.WriteLine("Comparing output bytes and output chars");
+    if (!CompareBytes(outputChars, outputBytes)) return false;
+
+    return true;
+}
+

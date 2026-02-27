@@ -1,0 +1,117 @@
+Is there a way to disable a SQL Server trigger for just a particular scope of execution?
+sql-server tsql triggers
+In SQL Server 2005, is there a way for a trigger to find out what object is responsible for firing the trigger? I would like to use this to disable the trigger for one stored prodecure.
+Is there any other way to disable the trigger only for the current transaction? I could use the following code, but if I'm not mistaken, it would affect concurrent transactions as well - which would be a bad thing.
+DISABLE TRIGGER { [ schema_name . ] trigger_name [ ,...n ] | ALL } ON { object_name | DATABASE | ALL SERVER } [ ; ]
+
+ENABLE TRIGGER { [ schema_name . ] trigger_name [ ,...n ] | ALL } ON { object_name | DATABASE | ALL SERVER } [ ; ]
+
+If possible, I would like to avoid the technique of having a "NoTrigger" field in my table and doing a NoTrigger = null, because I would like to keep the table as small as possible.
+The reason I would like to avoid the trigger is because it contains logic that is important for manual updates to the table, but my stored procedure will take care of this logic. Because this will be a highly used procedure, I want it to be fast.
+
+Triggers impose additional overhead on the server because they initiate an implicit transaction. As soon as a trigger is executed, a new implicit transaction is started, and any data retrieval within a transaction will hold locks on affected tables.
+
+From: http://searchsqlserver.techtarget.com/tip/1,289483,sid87_gci1170220,00.html#trigger
+
+
+i seriously, seriously doubt it, and suggest you reconsider the purpose of the trigger instead
+kinda defeats the purpose of a trigger!
+EDIT: based on the clarification in the comments and your last edit, i think you're SOL.
+just kidding! a suppress-the-trigger field in the table would work, but there's nothing to prevent manual updates from setting the field and screwing things up. Is there some other condition that you can check in the trigger to see if the processing has already been done? if not you may need to add something like that but in such a way that manual updates cannot screw it up
+
+ALTER TABLE tbl DISABLE TRIGGER trg
+http://doc.ddart.net/mssql/sql70/aa-az_5.htm
+I don't understand the meaning of your 1st paragraph though
+
+Do not disable the trigger. You are correct that will disable for any concurrent transactions.
+Why do you want to disable the trigger? What does it do?  WHy is the trigger casuing a problem? It is usually a bad idea to disable a tigger from a data integrity perspective.  
+
+If your trigger is causing performance problems in your application, then the best approach is to remove all manual updates to the table, and require all updates to go through the insert/update stored procedures that contain the correct update logic. Then you may remove the trigger completely. 
+I suggest denying table update permissions if nothing else works.
+This also solves the problem of duplicate code. Duplicating code in the update SP and in the trigger is a violation of good software engineering principles and will be a maintenance problem.
+
+Since you indicate that the trigger contains logic to handle all updates, even manual updates, then that should be where the logic resides. The example you mention, wherein a stored procedure "will take care of this logic" implies duplicate code. Additionally, if you want to be sure that every UPDATE statement has this logic applied regardless of author, then the trigger is the place for it. What happens when someone authors a procedure but forgets to duplicate the logic yet again? What happens when it is time to modify the logic?
+
+Consider rewriting the trigger to imporve performance if performance is the issue.
+
+I concur with some other answers.  Do not disable the trigger.
+This is pure opinion, but I avoid triggers like the plague.  I have found very few cases where a trigger was used to enforce database rules.  There are obvious edge cases in my experience, and I have only my experience on which to make this statement.  I have typically seen triggers used to insert some relational data (which should be done from the business logic), for insert data into reporting table ie denormalizing the data (which can be done with a process outside the transaction), or for transforming the data in some way.  
+There are legitimate uses for triggers, but I think that in everyday business programming they are few and far between.  This may not help in your current problem, but you might consider removing the trigger altogether and accomplishing the work the trigger is doing in some other fashion.
+
+I waffled a bit on this one. On the one hand I'm very anti-trigger mostly because it's one more place for me to look for code executing against my table, in addition to the reasons stated in the article linked in the question post. 
+On the other hand, if you have logic to enforce stable and immutable business rules or cross-table actions (like maintaining a history table) then it would be safer to get this into a trigger so procedure authors and programmers don't need to deal with it - it just works. 
+So, my recommendation is to put the necessary logic in your trigger rather than in this one proc which, will inevitably grow to several procs with the same exemption.
+
+I just saw this article recently highlighted on the SQL Server Central newsletter and it appears to offer a way which you may find useful using the Context_Info on the connection:
+http://www.mssqltips.com/tip.asp?tip=1591
+
+EDIT by Terrapin:
+The above link includes the following code:
+USE AdventureWorks;  
+GO  
+-- creating the table in AdventureWorks database  
+IF OBJECT_ID('dbo.Table1') IS NOT NULL  
+DROP TABLE dbo.Table1  
+GO  
+CREATE TABLE dbo.Table1(ID INT)  
+GO   
+-- Creating a trigger  
+CREATE TRIGGER TR_Test ON dbo.Table1 FOR INSERT,UPDATE,DELETE  
+AS  
+DECLARE @Cinfo VARBINARY(128)  
+SELECT @Cinfo = Context_Info()  
+IF @Cinfo = 0x55555  
+RETURN  
+PRINT 'Trigger Executed'  
+-- Actual code goes here  
+-- For simplicity, I did not include any code  
+GO
+
+If you want to prevent the trigger from being executed you can do the following:
+SET Context_Info 0x55555 
+INSERT dbo.Table1 VALUES(100)
+
+
+I just confronted the same problem and came up with the following solution, which works for me.
+
+Create a permanent DB table that contains one record for each trigger that you want to disable (e.g. refTriggerManager); each row contains the trigger name (e.g. strTriggerName = 'myTrigger') and a bit flag (e.g. blnDisabled, default to 0).
+At the beginning of the trigger body, look up strTriggerName = 'myTrigger' in refTriggerManager.  If blnDisabled = 1, then return without executing the rest of the trigger code, else continue the trigger code to completion. 
+In the stored proc in which you want to disable the trigger, do the following:
+
+
+BEGIN TRANSACTION
+UPDATE refTriggerManager SET blnDisabled = 1 WHERE strTriggerName = 'myTrigger'
+/* UPDATE the table that owns 'myTrigger,' but which you want disabled.   Since refTriggerManager.blnDisabled = 1, 'myTrigger' returns without executing its code. */
+UPDATE refTriggerManager SET blnDisabled= 0 WHERE triggerName = 'myTrigger'
+/* Optional final UPDATE code that fires trigger. Since refTriggerManager.blnDisabled = 0, 'myTrigger' executes in full. */
+COMMIT TRANSACTION
+
+All of this takes place within a transaction, so it's isolated from the outside world and won't affect other UPDATEs on the target table.
+Does anyone see any problem with this approach?
+Bill
+
+Not sure if this is a good idea but it seems to work for me.  Transaction should prevent inserts to the table from other processes while trigger is disabled.
+IF OBJECT_ID('dbo.TriggerTest') IS NOT NULL
+ DROP PROCEDURE dbo.TriggerTest
+GO
+
+CREATE PROCEDURE [dbo].[TriggerTest]
+AS
+BEGIN TRANSACTION trnInsertTable1s
+;
+DISABLE TRIGGER trg_tblTable1_IU ON tblTable1
+;
+BEGIN -- Procedure Code
+    PRINT '@@trancount'
+    PRINT @@TRANCOUNT
+    -- Do Stuff
+
+END -- Procedure Code
+;
+ENABLE TRIGGER trg_tblTable1_IU ON tblTable1
+
+IF @@ERROR <> 0 ROLLBACK TRANSACTION
+ELSE COMMIT TRANSACTION
+
+
+you can use 'Exec' function to diable and enable triggers from a stored procedure. Example:  EXEC ('ENABLE TRIGGER dbo.TriggerName on dbo.TriggeredTable')

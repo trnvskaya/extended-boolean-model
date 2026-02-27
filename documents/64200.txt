@@ -1,0 +1,90 @@
+How do I call MySQL stored procedures from Perl?
+mysql perl stored-procedures
+How do I call MySQL stored procedures from Perl? Stored procedure functionality is fairly new to MySQL and the MySQL modules for Perl don't seem to have caught up yet.
+
+
+First of all you should be probably connect through the DBI library and then you should use bind variables. E.g. something like:
+#!/usr/bin/perl
+#
+use strict;
+use DBI qw(:sql_types);
+
+my $dbh = DBI->connect(
+            $ConnStr,
+            $User,
+            $Password,
+            {RaiseError => 1, AutoCommit => 0}
+          ) || die "Database connection not made: $DBI::errstr";
+my $sql = qq {CALL someProcedure(1);}    } 
+
+my $sth = $dbh->prepare($sql);
+eval {
+  $sth->bind_param(1, $argument, SQL_VARCHAR);
+};
+if ($@) {
+ warn "Database error: $DBI::errstr\n";
+ $dbh->rollback(); #just die if rollback is failing
+}
+
+$dbh->commit();
+
+Mind you i haven't tested this, you'll have to lookup the exact syntax on CPAN.
+
+There's an example in the section on Multiple result sets in the DBD::mysql docs.
+
+MySQL stored procedures that produce datasets need you to use Perl DBD::mysql 4.001 or later. (http://www.perlmonks.org/?node_id=609098)
+Below is a test program that will work in the newer version:
+mysql> delimiter //
+mysql> create procedure Foo(x int)
+  -> begin
+  ->   select x*2;
+  -> end
+  -> //
+
+perl -e 'use DBI; DBI->connect("dbi:mysql:database=bonk", "root", "")->prepare("call Foo(?)")->execute(21)'
+
+But if you have too old a version of DBD::mysql, you get results like this:
+DBD::mysql::st execute failed: PROCEDURE bonk.Foo can't return a result set in the given context at -e line 1.
+
+You can install the newest DBD using CPAN.
+
+#!/usr/bin/perl
+# Stored Proc - Multiple Values In, Multiple Out
+use strict;
+use Data::Dumper;
+use DBI;
+my $dbh = DBI->connect('DBI:mysql:RTPC;host=db.server.com',
+    'user','password',{ RaiseError => 1 }) || die "$!\n";
+my $sth = $dbh->prepare('CALL storedProcedure(?,?,?,?,@a,@b);');
+$sth->bind_param(1, 2);
+$sth->bind_param(2, 1003);
+$sth->bind_param(3, 5000);
+$sth->bind_param(4, 100);
+$sth->execute();
+my $response = $sth->fetchrow_hashref();
+print Dumper $response . "\n";
+
+It took me a while to figure it out, but I was able to get what I needed with the above. if you need to get multiple return "lines" I'm guessing you just...
+while(my $response = $sth->fetchrow_hashref()) {
+    print Dumper $response . "\n";
+}
+
+I hope it helps.
+
+Hi, similar to above but using SQL exec.  I could not get the CALL command to work.  You will need to fill in anything that is within square brackets and remove the square brackets. 
+
+   use DBI;
+   #START: SET UP DATABASE AND CONNECT
+   my $host     = '*[server]*\\*[database]*';
+   my $database = '*[table]*';
+   my $user     = '*[user]*';
+   my $auth     = '*[password]*';
+
+   my $dsn = "dbi:ODBC:Driver={SQL Server};Server=$host;Database=$database";
+   my $dbh = DBI->connect($dsn, $user, $auth, { RaiseError => 1 });
+
+   #END  : SET UP DATABASE AND CONNECT
+   $sql = "exec *[stored procedure name]* *[param1]*,*[param2]*,*[param3]*;";
+   $sth = $dbh->prepare($sql);
+   $sth->execute or die "SQL Error: $DBI::errstr\n";
+

@@ -1,0 +1,78 @@
+Is there a way to dynamically load a properties file in NAnt?
+.net build automation nant
+I want to load a different properties file based upon one variable.
+Basically, if doing a dev build use this properties file, if doing a test build use this other properties file, and if doing a production build use yet a third properties file.
+
+
+The way I've done this kind of thing is to include seperate build files depending on the type of build using the nant task. A possible alternative might be to use the iniread task in nantcontrib.
+
+You can use the include task to include another build file (containing your properties) within the main build file. The if attribute of the include task can test against a variable to determine whether the build file should be included:
+<include buildfile="devPropertyFile.build" if="${buildEnvironment == 'DEV'}"/>
+<include buildfile="testPropertyFile.build" if="${buildEnvironment == 'TEST'}"/>
+<include buildfile="prodPropertyFile.build" if="${buildEnvironment == 'PROD'}"/>
+
+
+Step 1: Define a property in your NAnt script to track the environment you're building for (local, test, production, etc.).
+<property name="environment" value="local" />
+
+Step 2: If you don't already have a configuration or initialization target that all targets depends on, then create a configuration target, and make sure your other targets depend on it.
+<target name="config">
+    <!-- configuration logic goes here -->
+</target>
+
+<target name="buildmyproject" depends="config">
+    <!-- this target builds your project, but runs the config target first -->
+</target>
+
+Step 3: Update your configuration target to pull in an appropriate properties file based on the environment property.
+<target name="config">
+    <property name="configFile" value="${environment}.config.xml" />
+    <if test="${file::exists(configFile)}">
+        <echo message="Loading ${configFile}..." />
+        <include buildfile="${configFile}" />
+    </if>
+    <if test="${not file::exists(configFile) and environment != 'local'}">
+        <fail message="Configuration file '${configFile}' could not be found." />
+    </if>
+</target>
+
+Note, I like to allow team members to define their own local.config.xml files that don't get committed to source control.  This provides a nice place to store local connection strings or other local environment settings.
+Step 4: Set the environment property when you invoke NAnt, e.g.:
+
+nant -D:environment=dev
+nant -D:environment=test
+nant -D:environment=production
+
+
+I had a similar problem which the answer from scott.caligan partially solved, however I wanted people to be able to set the environment and load the appropriate properties file just by specifying a target like so:
+
+nant dev
+nant test
+nant stage
+
+You can do this by adding a target that sets the environment variable. For instance:
+<target name="dev">
+  <property name="environment" value="dev"/>
+  <call target="importProperties" cascade="false"/>
+</target>
+
+<target name="test">
+  <property name="environment" value="test"/>
+  <call target="importProperties" cascade="false"/>
+</target>
+
+<target name="stage">
+  <property name="environment" value="stage"/>
+  <call target="importProperties" cascade="false"/>
+</target>
+
+<target name="importProperties">
+  <property name="propertiesFile" value="properties.${environment}.build"/>
+  <if test="${file::exists(propertiesFile)}">
+    <include buildfile="${propertiesFile}"/>
+  </if>
+  <if test="${not file::exists(propertiesFile)}">
+    <fail message="Properties file ${propertiesFile} could not be found."/>
+  </if>
+</target>
+

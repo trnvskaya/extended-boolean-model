@@ -1,0 +1,31 @@
+What are the problems associated with serving pages with Content: application/xhtml+xml
+xhtml http-headers
+Starting recently, some of my new web pages (XHTML 1.1) are setup to do a regex of the request header Accept and send the right HTTP response headers if the user agent accepts XML (Firefox and Safari do).
+IE (or any other browser that doesn't accept it) will just get the plain text/html content type. 
+Will Google bot (or any other search bot) have any problems with this? Is there any negatives to my approach I have looked over? Would you think this header sniffer would have much effect on performance?
+
+
+I use content negotiation to switch between application/xhtml+xml and text/html just like you describe, without noticing any problems with search bots. Strictly though, you should take into account the q values in the accept header that indicates the preference of the user agent to each content type. If a user agent prefers to accept text/html but will accept application/xhtml+xml as an alternate, then for greatest safety you should have the page served as text/html.
+
+The only real problem is that browsers will display xml parse errors if your page contains invalid code, while in text/html they will at least display something viewable.  
+There is not really any benefit of sending xml unless you want to embed svg or are doing xml processing of the page.
+
+One problem with content negotiation (and with serving different content/headers to different user-agents) is proxy servers. Considering the following; I ran into this back in the Netscape 4 days and have been shy of server side sniffing ever since.
+User A downloads your page with Firefox, and gets a XHTML/XML Content-Type.  The user's ISP has a proxy server between the user and your site, so this page is now cached.
+User B, same ISP, requests your page using Internet Explorer.  The request hits the proxy first, the proxy says "hey, I have that page, here it is; as application/xhtml+xml".  User B is prompted to download the file (as IE will download anything sent as application/xhtml+xml.
+You can get around this particular issue by using the Vary Header, as described in this 456 Berea Street article. I also assume that proxy servers have gotten a bit smarter about auto detecting these things.
+Here's where the CF that is HTML/XHTML starts to creep in. When you use content negotiation to serve application/xhtml+xml to one set of user-agents, and text/html to another set of user agents, you're relying on all the proxies between your server and your users to be well behaved.  
+Even if all the proxy servers in the world were smart enough to recognize the Vary header (they aren't) you still have to contend with the computer janitors of the world.  There are a lot of smart, talented, and dedicated IT professionals in the world.  There are more not so smart people who spend their days double clicking installer applications and thinking "The Internet" is that blue E in their menu. A mis-configured proxy could still improperly cache pages and headers, leaving you out of luck.
+
+The problem is that you need to limit your markup to subset of both HTML and XHTML. 
+
+You can't use XHTML features (namespaces, self-closing syntax on all elements), because they will break in HTML (e.g. <script/> is unclosed to text/html parser and will kill document up to next </script>).
+You can't use XML serializer, because it could break text/html mode (may use XML-only features mentioned in previous point, may add tagname prefixes (PHP DOM sometimes does <default:h1>). <script> is CDATA in HTML, but XML serializer may output <script>if (a &amp;&amp; b)</script>).
+You can't use HTML's compact syntax (implied tags, optional quotes), because it won't parse as XML.
+It's risky to use use HTML tools (including most template engines), because they don't care about well-formedness (a single unescaped & in href or <br> will completely break XML, and make your site appear to work only in IE!)
+
+I've tested indexing of my XML-only website. It's been indexed even though I've used application/xml MIME type, but it appeared to be parsed as HTML anyway (Google did not index text that was in <[CDATA[ ]]> sections).
+
+Since IE doesn't support xhtml as application/xhtml+xml, the only way to get cross browser support is to use content negotiation. According to Web Devout, content negotiation is hard due to the misuse of wildcards where web browsers claim to support every type of content in existence! Safari and Konquer support xhtml, but only imply this support by a wildcard, while IE doesn't support it, yet implies support too.
+The W3C recommends only sending xhtml to browsers that specifically declare support in the HTTP Accept header and ignoring those browsers that don't specifically declare support. Note though, that headers aren't always reliable and it has been known to cause issues with caching. Even if you could get this working, having to maintain two similar, but different versions would be a pain.
+Given all these issues, I'm in favor of giving xhtml a miss, when your tools and libraries let you, of course.

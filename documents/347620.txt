@@ -1,0 +1,198 @@
+Where are all my inodes being used?
+linux unix posix inode
+How do I find out which directories are responsible for chewing up all my inodes?
+Ultimately the root directory will be responsible for the largest number of inodes, so I'm not sure exactly what sort of answer I want..
+Basically, I'm running out of available inodes and need to find a unneeded directory to cull.
+Thanks, and sorry for the vague question.
+
+
+So basically you're looking for which directories have a lot of files?  Here's a first stab at it:
+find . -type d -print0 | xargs -0 -n1 count_files | sort -n
+
+where "count_files" is a shell script that does (thanks Jonathan)
+echo $(ls -a "$1" | wc -l) $1
+
+
+Here's a simple Perl script that'll do it:
+#!/usr/bin/perl -w
+
+use strict;
+
+sub count_inodes($);
+sub count_inodes($)
+{
+  my $dir = shift;
+  if (opendir(my $dh, $dir)) {
+    my $count = 0;
+    while (defined(my $file = readdir($dh))) {
+      next if ($file eq '.' || $file eq '..');
+      $count++;
+      my $path = $dir . '/' . $file;
+      count_inodes($path) if (-d $path);
+    }
+    closedir($dh);
+    printf "%7d\t%s\n", $count, $dir;
+  } else {
+    warn "couldn't open $dir - $!\n";
+  }
+}
+
+push(@ARGV, '.') unless (@ARGV);
+while (@ARGV) {
+  count_inodes(shift);
+}
+
+If you want it to work like du (where each directory count also includes the recursive count of the subdirectory) then change the recursive function to return $count and then at the recursion point say:
+$count += count_inodes($path) if (-d $path);
+
+
+If you don't want to make a new file (or can't because you ran out of inodes) you can run this query: 
+for i in `find . -type d `; do echo `ls -a $i | wc -l` $i; done | sort -n
+
+as insider mentioned in another answer, using a solution with find will be much quicker since recursive ls is quite slow, check below for that solution! (credit where credit due!)
+
+Provided methods with recursive ls are very slow.
+Just for quickly finding parent directory consuming most of inodes i used:
+cd /partition_that_is_out_of_inodes
+for i in *; do echo -e "$(find $i | wc -l)\t$i"; done | sort -n
+
+
+
+for i in dir.[01]
+do
+    find $i -printf "%i\n"|sort -u|wc -l|xargs echo $i --
+done
+
+dir.0 -- 27913
+
+dir.1 -- 27913
+
+
+The perl script is good, but beware symlinks- recurse only when -l filetest returns false or you will at best over-count, at worst recurse indefinitely (which could- minor concern- invoke Satan's 1000-year reign).
+The whole idea of counting inodes in a file system tree falls apart when there are multiple links to more than a small percentage of the files.
+
+Just wanted to mention that you could also search indirectly using the directory size, for example:
+find /path -type d -size +500k
+
+Where 500k could be increased if you have a lot of large directories.
+Note that this method is not recursive. This will only help you if you have a lot of files in one single directory, but not if the files are evenly distributed across its descendants.
+
+This is my take on it. It's not so different from others, but the output is pretty and I think it counts more valid inodes than others (directories and symlinks). This counts the number of files in each subdirectory of the working directory; it sorts and formats the output into two columns; and it prints a grand total (shown as ".", the working directory). This will not follow symlinks but will count files and directories that begin with a dot. This does not count device nodes and special files like named pipes. Just remove the "-type l -o -type d -o -type f" test if you want to count those, too. Because this command is split up into two find commands it cannot correctly discriminate against directories mounted on other filesystems (the -mount option will not work). For example, this should really ignore "/proc" and "/sys" directories. You can see that in the case of running this command in "/" that including "/proc" and "/sys" grossly skews the grand total count.
+for ii in $(find . -maxdepth 1 -type d); do 
+    echo -e "${ii}\t$(find "${ii}" -type l -o -type d -o -type f | wc -l)"
+done | sort -n -k 2 | column -t
+
+Example:
+# cd /
+# for ii in $(find -maxdepth 1 -type d); do echo -e "${ii}\t$(find "${ii}" -type l -o -type d -o -type f | wc -l)"; done | sort -n -k 2 | column -t
+./boot        1
+./lost+found  1
+./media       1
+./mnt         1
+./opt         1
+./srv         1
+./lib64       2
+./tmp         5
+./bin         107
+./sbin        109
+./home        146
+./root        169
+./dev         188
+./run         226
+./etc         1545
+./var         3611
+./sys         12421
+./lib         17219
+./proc        20824
+./usr         56628
+.             113207
+
+
+find / -type f | grep -oP '^/([^/]+/){3}' | sort | uniq -c | sort -n
+
+Just a note, when you finally find some mail spool directory and want to delete all the junk that's in there, rm * will not work if there are too many files, you can run the following command to quickly delete everything in that directory:
+* WARNING * THIS WILL DELETE ALL FILES QUICKLY FOR CASES WHEN rm DOESN'T WORK
+find . -type f -delete
+
+
+I used the following to work out (with a bit of help from my colleague James) that we had a massive number of PHP session files which needed to be deleted on one machine:
+1. How many inodes have I got in use?
+ root@polo:/# df -i
+ Filesystem     Inodes  IUsed  IFree IUse% Mounted on
+ /dev/xvda1     524288 427294  96994   81% /
+ none           256054      2 256052    1% /sys/fs/cgroup
+ udev           254757    404 254353    1% /dev
+ tmpfs          256054    332 255722    1% /run
+ none           256054      3 256051    1% /run/lock
+ none           256054      1 256053    1% /run/shm
+ none           256054      3 256051    1% /run/user
+
+2. Where are all those inodes?
+ root@polo:/# find / -xdev -printf '%h\n' | sort | uniq -c | sort -k 1 -n
+ [...]
+    1088 /usr/src/linux-headers-3.13.0-39/include/linux
+    1375 /usr/src/linux-headers-3.13.0-29-generic/include/config
+    1377 /usr/src/linux-headers-3.13.0-39-generic/include/config
+    2727 /var/lib/dpkg/info
+    2834 /usr/share/man/man3
+  416811 /var/lib/php5/session
+ root@polo:/#
+
+That's a lot of PHP session files on the last line.
+3. How to delete all those files?
+Delete all files in the directory which are older than 1440 minutes (24 hours):
+root@polo:/var/lib/php5/session# find ./ -cmin +1440 | xargs rm
+root@polo:/var/lib/php5/session#
+
+4. Has it worked?
+ root@polo:~# find / -xdev -printf '%h\n' | sort | uniq -c | sort -k 1 -n
+ [...]
+    1088 /usr/src/linux-headers-3.13.0-39/include/linux
+    1375 /usr/src/linux-headers-3.13.0-29-generic/include/config
+    1377 /usr/src/linux-headers-3.13.0-39-generic/include/config
+    2727 /var/lib/dpkg/info
+    2834 /usr/share/man/man3
+    2886 /var/lib/php5/session
+ root@polo:~# df -i
+ Filesystem     Inodes  IUsed  IFree IUse% Mounted on
+ /dev/xvda1     524288 166420 357868   32% /
+ none           256054      2 256052    1% /sys/fs/cgroup
+ udev           254757    404 254353    1% /dev
+ tmpfs          256054    332 255722    1% /run
+ none           256054      3 256051    1% /run/lock
+ none           256054      1 256053    1% /run/shm
+ none           256054      3 256051    1% /run/user
+ root@polo:~#
+
+Luckily we had a sensu alert emailing us that our inodes were almost used up.
+
+An actually functional one-liner (GNU find, for other kinds of find you'd need your own equivalent of -xdev to stay on the same FS.)
+find / -xdev -type d | while read -r i; do printf "%d %s\n" $(ls -a "$i" | wc -l) "$i"; done | sort -nr | head -10
+The tail is, obviously, customizable.
+As with many other suggestions here, this will only show you amount of entries in each directory, non-recursively.
+
+This counts files under current directory. This is supposed to work even if filenames contain newlines. It uses GNU Awk. Change value of d to get wanted maximum separated path depths. 0 means unlimited depth.
+find . -mount -not -path . -print0 | gawk -v d=2 '
+BEGIN{RS="\0";FS="/";SUBSEP="/";ORS="\0"}
+{
+    s="./"
+    for(i=2;i!=d+1 && i<NF;i++){s=s $i "/"}
+    ++n[s]
+}
+END{for(val in n){print n[val] "\t" val "\n"}}' | sort -gz -k 1,1
+
+Same by Bash 4; this is significantly slower in my experience:
+declare -A n;
+d=2
+while IFS=/ read -d $'\0' -r -a a; do
+  s="./"
+  for ((i=2; i!=$((d+1)) && i<${#a[*]}; i++)); do
+    s+="${a[$((i-1))]}/"
+  done
+  ((++n[\$s]))
+done < <(find . -mount -not -path . -print0)
+
+for j in "${!n[@]}"; do
+    printf '%i\t%s\n\0' "${n[$j]}" "$j"
+done | sort -gz -k 1,1 
+

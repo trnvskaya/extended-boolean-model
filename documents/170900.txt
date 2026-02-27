@@ -1,0 +1,129 @@
+How can I avoid duplicate content in ASP.NET MVC due to case-insensitive URLs and defaults?
+c# asp.net asp.net-mvc razor
+
+Edit: Now I need to solve this problem for real, I did a little more
+  investigation and came up with a
+  number of things to reduce duplicate
+  content. I posted detailed code
+  samples on my blog: Reducing
+  Duplicate Content with ASP.NET MVC
+
+First post - go easy if I've marked this up wrong or tagged it badly :P
+In Microsoft's new ASP.NET MVC framework it seems there are two things that could cause your content to be served up at multiple URLs (something which Google penalize for and will cause your PageRank to be split across them):
+
+Case-insensitive URLs
+Default URL
+
+You can set the default controller/action to serve up for requests to the root of your domain. Let's say we choose HomeController/Index. We end up with the following URLs serving up the same content:
+
+mydomain.com/
+mydomain.com/Home/Index
+
+Now if people start linking to both of these then PageRank would be split. Google would also consider it duplicate content and penalize one of them to avoid duplicates in their results.
+On top of this, the URLs are not case sensitive, so we actually get the same content for these URLs too:
+
+mydomain.com/Home/Index
+mydomain.com/home/index
+mydomain.com/Home/index
+mydomain.com/home/Index
+(the list goes on)
+
+So, the question... How do I avoid these penalties? I would like:
+
+All requests for the default action to be redirected (301 status) to the same url
+All URLs to be case sensitive
+
+Possible?
+
+
+As well as posting here, I emailed ScottGu to see if he had a good response. He gave a sample for adding constraints to routes, so you could only respond to lowercase urls:
+public class LowercaseConstraint : IRouteConstraint
+{
+    public bool Match(HttpContextBase httpContext, Route route,
+            string parameterName, RouteValueDictionary values,
+            RouteDirection routeDirection)
+    {
+        string value = (string)values[parameterName];
+
+        return Equals(value, value.ToLower());
+    }
+
+And in the register routes method:
+public static void RegisterRoutes(RouteCollection routes)
+{
+    routes.IgnoreRoute("{resource}.axd/{*pathInfo}");
+
+    routes.MapRoute(
+        "Default",                                              // Route name
+        "{controller}/{action}/{id}",                           // URL with parameters
+        new { controller = "home", action = "index", id = "" },
+        new { controller = new LowercaseConstraint(), action = new LowercaseConstraint() }
+    );
+}
+
+It's a start, but 'd want to be able to change the generation of links from methods like Html.ActionLink and RedirectToAction to match.
+
+I was working on this as well.  I will obviously defer to ScottGu on this.  I humbly offer my solution to this problem as well though.
+Add the following code to global.asax:
+protected void Application_BeginRequest(Object sender, EventArgs e)
+{
+    // If upper case letters are found in the URL, redirect to lower case URL.
+    if (Regex.IsMatch(HttpContext.Current.Request.Url.ToString(), @"[A-Z]") == true)
+    {
+        string LowercaseURL = HttpContext.Current.Request.Url.ToString().ToLower();
+
+        Response.Clear();
+        Response.Status = "301 Moved Permanently";
+        Response.AddHeader("Location",LowercaseURL);
+        Response.End();
+    }
+}
+
+A great question!
+
+I believe there is a better answer to this.  If you put a canonical link in your page head like:
+<link rel="canonical" href="http://mydomain.com/Home/Index"/>
+
+Then google only shows the canonical page in their results and more importantly all of the google goodness goes to that page with no penalty.
+
+Like you, I had the same question; except I was unwilling to settle for an all-lowercase URL limitation, and did not like the canonical approach either (well, it's good but not on its own).
+I could not find a solution, so we wrote and open-sourced a redirect class.
+Using it is easy enough: each GET method in the controller classes needs to add just this one line at the start:
+Seo.SeoRedirect(this);
+
+The SEO rewrite class automatically uses C# 5.0's Caller Info attributes to do the heavy lifting, making the code above strictly copy-and-paste.
+As I mention in the linked SO Q&A, I'm working on a way to get this converted to an attribute, but for now, it gets the job done.
+The code will force one case for the URL. The case will be the same as the name of the controller's method - you choose if you want all caps, all lower, or a mix of both (CamelCase is good for URLs). It'll issue 301 redirects for case-insensitive matches, and caches the results in memory for best performance. It'll also redirect trailing backslashes (enforced for index listings, enforced off otherwise) and remove duplicate content accessed via the default method name (Index in a stock ASP.NET MVC app).
+
+i really don't know how you are going to feel after 8 years but Now ASP MVC 5 supports attribute routing for easy to remember routes and to solved duplicate content problems for SEO Friendly sites
+just add 
+routes.MapMvcAttributeRoutes(); in your RouteConfig and then define one and only route for each action like
+    [Route("~/")]
+    public ActionResult Index(int? page)
+    {
+        var query = from p in db.Posts orderby p.post_date descending select p;
+        var pageNumber = page ?? 1;
+        ViewData["Posts"] = query.ToPagedList(pageNumber, 7);         
+        return View();
+    }
+    [Route("about")]
+    public ActionResult About()
+    {
+        return View();
+    }
+    [Route("contact")]
+    public ActionResult Contact()
+    {
+        return View();
+    }
+    [Route("team")]
+    public ActionResult Team()
+    {
+        return View();
+    }
+    [Route("services")]
+    public ActionResult Services()
+    {
+        return View();
+    }
+

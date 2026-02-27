@@ -1,0 +1,213 @@
+How do you crash a JVM?
+java jvm
+I was reading a book on programming skills wherein the author asks the interviewee, "How do you crash a JVM?" I thought that you could do so by writing an infinite for-loop that would eventually use up all the memory.
+Anybody has any idea?
+
+
+JNI.  In fact, with JNI, crashing is the default mode of operation.  You have to work extra hard to get it not to crash.
+
+Depends on what you mean by crash.
+You can do an infinite recursion to make it run out of stack space, but that'll crash "gracefully".  You'll get an exception, but the JVM itself will be handling everything.
+You can also use JNI to call native code.  If you don't do it just right then you can make it crash hard.  Debugging those crashes is "fun" (trust me, I had to write a big C++ DLL that we call from a signed java applet). :)
+
+If you change that infinite for loop to a recursive call to the same function, then you would get a stack overflow exception:
+public static void main(String[] args) {
+    causeStackOverflow();
+}
+
+public void causeStackOverflow() {
+    causeStackOverflow();
+}
+
+
+The closest thing to a single "answer" is System.exit() which terminates the JVM immediately without proper cleanup. But apart from that, native code and resource exhaustion are the most likely answers. Alternatively you can go looking on Sun's bug tracker for bugs in your version of the JVM, some of which allow for repeatable crash scenarios. We used to get semi-regular crashes when approaching the 4 Gb memory limit under the 32-bit versions (we generally use `64-bit`` now).
+
+A perfect JVM implementation will never crash.
+To crash a JVM, aside from JNI, you need to find a bug in the VM itself.  An infinite loop just consumes CPU.  Infinitely allocating memory should just cause OutOfMemoryError's in a well built JVM.  This would probably cause problems for other threads, but a good JVM still should not crash.
+If you can find a bug in the source code of the VM, and for example cause a segmentation fault in the memory usage of the implementation of the VM, then you can actually crash it.
+
+The book Java Virtual Machine by Jon Meyer has an example of a series of bytecode instructions that caused the JVM to core dump. I can't find my copy of this book. If anyone out there has one please look it up and post the answer.
+
+I wouldn't call throwing an OutOfMemoryError or StackOverflowError a crash. These are just normal exceptions. To really crash a VM there are 3 ways:
+
+Use JNI and crash in the native code.
+If no security manager is installed you can use reflection to crash the VM. This is VM specific, but normally a VM stores a bunch of pointers to native resources in private fields (e.g. a pointer to the native thread object is stored in a long field in java.lang.Thread). Just change them via reflection and the VM will crash sooner or later.
+All VMs have bugs, so you just have to trigger one.
+
+For the last method I have a short example, which will crash a Sun Hotspot VM quiet nicely:
+public class Crash {
+    public static void main(String[] args) {
+        Object[] o = null;
+
+        while (true) {
+            o = new Object[] {o};
+        }
+    }
+}
+
+This leads to a stack overflow in the GC so you will get no StackOverflowError but a real crash including a hs_err* file.
+
+If you define a crash as an process abort because of a unhandled situation (i.e. no Java Exception or Error), then this can not be done from within Java (unless you have permission to use the sun.misc.Unsafe class). This the whole point of managed code.
+Typical crashes in native code happen by de-referencing pointers to wrong memory areas (null address or missaligned). Another source could be illegal machine instructions (opcodes) or unhandled signals from library or kernel calls. Both can be triggered if the JVM or the system libraries have bugs.
+For example JITed (generated) code, native methods or system calls (graphics driver) can have problems leading to real crashes (it was quite common to get a crash when you used ZIP functions and they ran out of memory). In those cases the crash handler of the JVM kicks in and dumps the state. It could also generate a OS core file (Dr. Watson on Windows and core dump on *nix).
+On Linux/Unix you can easyly make a JVM crash by sending it a Signal to the running process. Note: you should not use SIGSEGV for this, since Hotspot catches this signal and re-throws it as a NullPointerException in most places. So it is better to send a SIGBUS for example.
+
+on winxpsp2 w/wmp10 jre6.0_7
+Desktop.open(uriToAviOrMpgFile)
+This causes a spawned thread to throw an uncaught Throwable and crashes hotspot
+YMMV
+
+here is a detailed explanation on what causes JVM to core dump (i.e. crash): 
+http://kb.adobe.com/selfservice/viewContent.do?externalId=tn_17534
+
+I'm doing it now, but not entirely sure how...  :-)  JVM (and my app) sometimes just completely disappear.  No errors thrown, nothing logged.  Goes from working to not running at all instantly with no warning.
+
+If you want to pretend you have run out of memory you can do
+public static void main(String[] args) {
+    throw new OutOfmemoryError();
+}
+
+I know a couple of way to cause the JVM dump an error file by calling native methods (ones which are built in), but its probably best you not know how to do this. ;)
+
+JNI is a large source of crashes. You can also crash using the JVMTI interface since that needs to be written in C/C++ as well.
+
+Broken hardware can crash any program. I once had an app crash reproducably on a specific machine while running fine on other machines with the exact same setup. Turns out that machine had faulty RAM.
+
+Use this:
+import sun.misc.Unsafe;
+
+public class Crash {
+    private static final Unsafe unsafe = Unsafe.getUnsafe();
+    public static void crash() {
+        unsafe.putAddress(0, 0);
+    }
+    public static void main(String[] args) {
+        crash();
+    }
+}
+
+This class must be on the boot classpath because it is using trusted code,so run like this:
+
+java -Xbootclasspath/p:. Crash
+
+
+This code will crash the JVM in nasty ways
+import sun.dc.pr.PathDasher; 
+
+public class Crash
+{
+     public static void main(String[] args)
+     {    
+        PathDasher dasher = new PathDasher(null) ;
+     }
+}
+
+
+If you want to crash JVM - use the following in Sun JDK 1.6_23 or below..
+Double.parseDouble("2.2250738585072012e-308");
+
+This is due to bug in Sun JDK - also found in OpenJDK,
+This is fixed from Oracle JDK 1.6_24 onwards...
+Thanks....
+
+I came here because I also ran into this question in The Passionate Programmer, by Chad Fowler. For those who don't have access to a copy, the question is framed as a kind of filter/test for candidates interviewing for a position requiring "really good Java programmers."
+Specifically, he asks:
+
+How would you write a program, in pure Java, that would cause the Java Virtual Machine to crash?
+
+I've programmed in Java for over 15 years, and I found this question to be both puzzling and unfair. As others have pointed out, Java, as a managed language, is specifically designed not to crash. Of course there are always JVM bugs, but:
+
+After 15+ years of production-level JREs, it's rare.
+Any such bugs are likely to be patched in the next release, so how likely are you as a programmer to run into and recall the details of the current set of JRE show-stoppers?
+
+As others have mentioned, some native code via JNI is a sure way to crash a JRE. But the author specifically mentioned in pure Java, so that's out.
+Another option would be to feed the JRE bogus byte codes; it's easy enough to dump some garbage binary data to a .class file, and ask the JRE to run it:
+$ echo 'crap crap crap' > crap.class
+$ java crap
+Exception in thread "main" java.lang.ClassFormatError: Incompatible magic value 1668440432 in class file crap
+
+Does that count? I mean the JRE itself hasn't crashed; it properly detected the bogus code, reported it, and exited. 
+This leaves us with the most obvious kinds of solutions such as blowing the stack via recursion, running out of heap memory via object allocations, or simply throwing RuntimeException. But this just causes the JRE to exit with a StackOverflowError or similar exception, which, again is not really a crash.
+So what's left? I'd really love to hear what the author really had in mind as a proper solution.
+Update: Chad Fowler responded here.
+PS: it's an otherwise great book. I picked it up for moral support while learning Ruby.
+
+shortest possible way :)
+public class Crash
+{
+    public static void main(String[] args)
+    {
+        main(args);
+    }
+}
+
+
+Last time I tried this would do it:
+public class Recur {
+    public static void main(String[] argv) {
+        try {
+            recur();
+        }
+        catch (Error e) {
+            System.out.println(e.toString());
+        }
+        System.out.println("Ended normally");
+    }
+    static void recur() {
+        Object[] o = null;
+        try {
+            while(true) {
+                Object[] newO = new Object[1];
+                newO[0] = o;
+                o = newO;
+            }
+        }
+        finally {
+            recur();
+        }
+    }
+}
+
+First part of generated log file:
+#
+# An unexpected error has been detected by Java Runtime Environment:
+#
+#  EXCEPTION_STACK_OVERFLOW (0xc00000fd) at pc=0x000000006dad5c3d, pid=6752, tid=1996
+#
+# Java VM: Java HotSpot(TM) 64-Bit Server VM (11.2-b01 mixed mode windows-amd64)
+# Problematic frame:
+# V  [jvm.dll+0x2e5c3d]
+#
+# If you would like to submit a bug report, please visit:
+#   http://java.sun.com/webapps/bugreport/crash.jsp
+#
+
+---------------  T H R E A D  ---------------
+
+Current thread (0x00000000014c6000):  VMThread [stack: 0x0000000049810000,0x0000000049910000] [id=1996]
+
+siginfo: ExceptionCode=0xc00000fd, ExceptionInformation=0x0000000000000001 0x0000000049813fe8 
+
+Registers:
+EAX=0x000000006dc83090, EBX=0x000000003680f400, ECX=0x0000000005d40ce8, EDX=0x000000003680f400
+ESP=0x0000000049813ff0, EBP=0x00000000013f2df0, ESI=0x00000000013f0e40, EDI=0x000000003680f400
+EIP=0x000000006dad5c3d, EFLAGS=0x0000000000010206
+
+
+If a 'Crash' is anything that interrupts the jvm/program from normal termination, then an Un-handled exception could do this.
+public static void main(String args[]){
+   int i = 1/0;
+   System.out.print(i); // This part will not be executed due to above  unhandled exception
+  }
+
+So, it depends on what type of CRASH ?!
+
+Not a crash, but closer to a crash than the accepted answer of using System.exit
+You can halt the JVM by calling
+Runtime.getRuntime().halt( status )
+According to the docs :-
+
+"this method does not cause shutdown hooks to be started and does not run uninvoked finalizers if finalization-on-exit has been enabled". 
+
+
+Shortest? Use Robot class to trigger CTRL+BREAK. I spotted this when I was trying to close my program without closing console (It had no 'exit' functionality).

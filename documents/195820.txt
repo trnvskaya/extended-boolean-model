@@ -1,0 +1,75 @@
+Test Driven Design for iPhone Native apps
+iphone objective-c ruby tdd
+I'm experimenting with the iPhone SDK and doing some TDD ala Dr. Nic's rbiPhoneTest project. I'm wondering how many, if any, have been successful using this or any other testing framework for iPhone/Cocoa? More important, I'd like to know how to best assert a proprietary binary request/response protocol. The idea is to send a binary request over the network and receive a binary response. Requests and responses are created using byte and'ing and or'ing. I'm using the golden copy pattern to test my request. Here's what I have so far. Don't laugh as I'm new to btoh Objective C and Ruby:
+require File.dirname(__FILE__) + '/test_helper'
+require 'fileutils'
+require 'io'
+
+require "MyModel.bundle"
+OSX::ns_import :MyModel
+
+module MyTestExtensions
+  def is_absolute_path(path)
+    return /^\/.*/.match(path)
+  end
+
+  def parent_directory(file)
+    dir = file
+    if(! is_absolute_path(dir))
+      dir = File.expand_path(dir)
+    end
+    dir = File.dirname(dir)
+    assert is_absolute_path(dir), "Expecting an absolute path with #{dir}"
+    return dir
+  end
+
+  def assert_NSData_contains_bytes_from_file(file, data)
+  	assert_not_nil data, "Data should not be nil."
+    assert data.bytes, "data should have bytes"
+    data.length.times { |i|
+      expected = file.getc
+      assert_not_nil expected, "Expected only #{i} bytes. Actual data contains more."
+      actual = data.bytes.int8_at(i)
+      assert_equal expected, actual, "Bytes should be equal at offset #{i} expected #{expected.chr} but was #{actual.chr}"
+    }
+    expected = file.getc
+    raise AssertionFailedError, "Expecting #{expected.chr} at offset #{data.length}" unless expected == nil
+  end
+
+end
+
+class TestMyModel < Test::Unit::TestCase
+include OSX
+include MyTestExtensions
+
+  def this_files_dir
+    return parent_directory(__FILE__)
+  end
+
+  def setup
+    @expectedReq = File.new("#{this_files_dir}/ExpectedMyReq")
+    # @expectedReq = File.new("#{this_files_dir}/hello.txt")
+    assert File.exist?("#{this_files_dir}/ExpectedMyReq"), "The file [#{@expectedReq.path}] should exist."
+  end
+
+  def test_my_model_class_exists
+    MyModel
+  end
+
+  def test_can_init_instance
+    assert MyModel.instancesRespondToSelector(:init), "MyModel Should define :init"
+  end
+
+  def test_my_model_can_request_my_data
+	myModel = MyModel.alloc.init
+	data = myModel.requestMyData 'Some query text'
+	assert_NSData_contains_bytes_from_file @expectedReq, data
+  end
+
+end
+
+
+
+I donât know much about Ruby or binary protocols, but if Youâre interested in unit testing on iPhone, You might want to check out the Google Toolbox for Mac. I am having great success testing my OpenGLÂ ES application with it.
+
+Cliff, long term you're best investing time in pure ObjC TDD tools. I have used my own rbiphonetest lib in fmdb-migration-manager successfully, but its usefulness is probably limited to libraries etc. Even then there will undoubtly be enough 'works in Cocoa but fails in UIKit' scenarios to make rbiphonetest dubious to use. Hopefully one day RubyCocoa can be built against the Intel UIKit libraries and then it will be very useful and sturdy I think.

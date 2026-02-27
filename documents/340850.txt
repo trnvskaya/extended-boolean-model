@@ -1,0 +1,42 @@
+Python 3.0 - dict methods return views - why?
+dictionary iterator language-features python-3.x
+
+dict methods dict.keys(), dict.items()
+  and dict.values() return âviewsâ
+  instead of lists.
+  http://docs.python.org/dev/3.0/whatsnew//3.0.html
+
+First of all how is a view different from an iterator?  Secondly, what is the benefit of this change?  Is it just for performance reasons?  
+It doesn't seem intuitive to me, i.e., I'm asking for a list of thing (give me all your keys) and I'm getting something else back.  Will this confuse people?
+
+
+You are effectively getting a list. It's just not a copy of the internal list, but something that acts as if it where a list but only represents the internal state.
+That's the same way it's implemented in Java (and probably many other languages/environments as well).
+The main reason is that for many use cases returning a completely detached list is unnecessary and wasteful. It would require copying the entire content (which may or many not be a lot).
+If you simply want to iterate over the keys then creating a new list is not necessary. And if you indeed need it as a separate list (as a copy) then you can easily create that list from the view.
+
+Joachim Sauer's answer explains very well why a list is not returned. But this leaves the question why these functions wouldn't return iterators, just like iteritems etc. did in Python 2.
+An iterator is much more restrictive than a container. For example, an iterator does not allow more than one pass; if you try a second pass, you'll find it's empty. Therefore, operations such as elem in cont are supported by containers, but cannot be supported by iterators: once you check whether an element is "in" the iterator, the iterator gets destroyed!
+On the other hand, getting a container usually requires making a copy such as creating a list out of the dictionary's keys.
+The view object has the best of both worlds: it behaves as a container, and yet does not make a copy of the dictionary! It is, in fact, a kind of a virtual read-only container that works by linking to the underlying dictionary. I don't know if it's seen anywhere else in the standard Python.
+Edit:
+@AntonyHatchkins: the reason it doesn't return a generator function is that it wouldn't allow for a fast in operation. Yes, in works for generator functions (when you call them). That is, you can do this:
+def f():
+  for i in range(10):
+    yield i
+
+5 in f() # True
+
+But according to the definition of in, if the right side is a generator, python will go through all the n items of the generator - leading to O(n) time complexity. There's nothing you can do about it because that's the only meaningful behavior an arbitrary generator.
+On the other hand, in the case of the dictionary view, you can implement in any way you like, because you know more about the data you manage. And in fact in is implemented with O(1) complexity using a hash table. You can check it by running
+>>> d = dict(zip(range(50000000), range(50000000)))
+>>> 49999999 in d
+True
+>>> 49999999 in iter(d) # kinda how generator function would work
+True
+>>>
+
+and noticing how fast the first in is compared to the second in.
+
+As was already mentioned in the related question, view has len() method, which the iterator lacks (yet list has it).
+Another benefit of returning a view instead of a list is that at least for the keys it has an optimized membership testing in O(1) operations instead of O(N) for the list (or iterator).

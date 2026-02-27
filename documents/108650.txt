@@ -1,0 +1,81 @@
+Script.aculo.us Autocompleter problem in IE
+internet-explorer prototypejs scriptaculous autocomplete
+I'm struggling with a problem with the Script.aculo.us Autocompleter control in IE (I've tried it in IE6 & 7). The suggestions fail to appear for the first character is entered into the text box after the page has been loaded. After that initial failure, the control works as it should.
+I've verified that the suggestions data is returned from the server correctly; the problem appears to have something to do with the positioning of the suggestions element, as other relatively positioned elements on the page move out of position at the moment that you'd expect the suggestions to appear.
+Has anyone heard of such a problem or have any suggestions on how to fix it?
+Edit: In response to Chris, I have set the partialChars parameter to 1 and the control works in all the other browsers I've tried, which are the latest versions of Firefox, Safari, Opera, and Chrome. I should probably have made that clear in the first place. Thanks.
+
+
+Is your problem just in IE, or in all browsers?  Ignoring the first char is actually the default for the Autocompleter.  In controls.js, there's a class called Autocompleter.Local which has a field called partialChars which defaults to 2.  The docs for that field say:
+// - partialChars - How many characters to enter before triggering
+//                   a partial match (unlike minChars, which defines
+//                   how many characters are required to do any match
+//                   at all). Defaults to 2.                                                                                                         
+
+I still don't know what exactly caused this problem, but I've managed to come up with a hack to get round it. The idea is to perform the processing that normally causes the failure on the first character entry when the page loads to get it out of the way:
+new Ajax.Autocompleter(textInputId, suggestionsHolderId, suggestionsUrl, params);
+
+//Hack
+Event.observe(window, 'load', function()
+{
+    try
+    {
+        Position.clone($(textInputId), $(suggestionsHolderId),
+            { setHeight: false, offsetTop: $(textInputId).offsetHeight});
+    }
+    catch(e){}
+});
+
+
+I am indeed having the exact same problem. The problem only occurs in IE (also in 8.0 beta)
+Both Firefox and Chrome I tried, have no issues what-so-ever. 
+According to others this is due to the DOCTYPE declaration in the HTML file. Check here: http://prototype.lighthouseapp.com/projects/8887/tickets/32-ajax-autocomplete-in-ie-with-doctype
+The bug has also got a ticket at the ruby developer boards: http://dev.rubyonrails.org/ticket/11051
+Both links have got solutions to fix the problem.
+Hopefully the bug will be fixed in the next version of prototype/scriptaculous :)
+
+Much thanks for the hack.  I have used this myself, but modified it so it's only called when the Ajax.Autocompleter is used by doing the following.
+function positionAuto(element, entry) {
+    setTimeout( function() {
+      Element.clonePosition('choices_div', 'text_element', {
+      'setWidth': false,
+      'setHeight': false,
+      'offsetTop': $('text_element').offsetHeight
+    } );
+  }, 300);
+  return entry;
+}
+
+new Ajax.Autocompleter('text_element', 'choices_div', [url to web service], {
+  paramName: 'fulltext',
+  minChars: 2,
+  callback: positionAuto, // See above
+  [etc...]
+
+Since the callback is called just before the real request is made, positioning the DIV just at that moment makes the most sense.  And will make sure that even if the window is resized or scrolled, the DIV is positioned correctly.  What is maddening is that to get it to consistently work, I had to wrap it in a "setTimeout()".  Didn't experiment with different timing settings that much, but if there is a lower timeout threshold that works, I'd like to know.
+Tested on IE 8 & 7 and works very well.  And works with other real browsers as well. Hope this saves some coders headaches when dealing with this.
+
+This is a known bug with a patch that works but hasn't been included yet. You can read more about it here: https://prototype.lighthouseapp.com/projects/8886-prototype/tickets/618-getoffsetparent-returns-body-for-new-hidden-elements-in-ie8-final#ticket-618-9
+
+After much struggling with this issue in IE8/IE9 I ended up using a CSS hack. The method here is to force position relative within an absolute positioned container. The extra container is necessary in order to float the choices over other elements.
+div.acwrap {
+  position: absolute;
+  height: 40px;
+}
+
+div.autocomplete {
+  position: relative !important;
+  top: -5px  !important;
+  left: 0px !important;
+  width:250px;
+  margin:0;
+  padding:0;
+}
+
+In my HTML code I used the classes as follows:
+<div class="acwrap">
+ <div id="autocomplete_choices" class="autocomplete">
+ </div>
+</div>
+
+The idea originated here: Scriptaculous / Prototype IE 8 Autocomplete disappearing problem.

@@ -1,0 +1,71 @@
+Explicit code parallelism in c++
+c++ performance design-patterns
+Out of order execution in CPUs means that a CPU can reorder instructions to gain better performance and it means the CPU is having to do some very nifty bookkeeping and such.  There are other processor approaches too, such as hyper-threading.
+Some fancy compilers understand the (un)interrelatedness of instructions to a limited extent, and will automatically interleave instruction flows (probably over a longer window than the CPU sees) to better utilise the processor.  Deliberate compile-time interleaving of floating and integer instructions is another example of this.
+Now I have highly-parallel task.  And I typically have an ageing single-core x86 processor without hyper-threading.
+Is there a straight-forward way to get my the body of my 'for' loop for this highly-parallel task to be interleaved so that two (or more) iterations are being done together?  (This is slightly different from 'loop unwinding' as I understand it.)
+My task is a 'virtual machine' running through a set of instructions, which I'll really simplify for illustration as:
+void run(int num) {
+  for(int n=0; n<num; n++) {
+     vm_t data(n);
+     for(int i=0; i<data.len(); i++) {
+        data.insn(i).parse();
+        data.insn(i).eval();
+     }
+  }  
+}
+So the execution trail might look like this:
+data(1) insn(0) parse
+data(1) insn(0) eval
+data(1) insn(1) parse
+...
+data(2) insn(1) eval
+data(2) insn(2) parse
+data(2) insn(2) eval
+Now, what I'd like is to be able to do two (or more) iterations explicitly in parallel:
+data(1) insn(0) parse
+data(2) insn(0) parse  \ processor can do OOO as these two flow in
+data(1) insn(0) eval   /
+data(2) insn(0) eval   \ OOO opportunity here too
+data(1) insn(1) parse  /
+data(2) insn(1) parse
+I know, from profiling, (e.g. using Callgrind with --simulate-cache=yes), that parsing is about random memory accesses (cache missing) and eval is about doing ops in registers and then writing results back.  Each step is several thousand instructions long.  So if I can intermingle the two steps for two iterations at once, the processor will hopefully have something to do whilst the cache misses of the parse step are occurring...
+Is there some c++ template madness to get this kind of explicit parallelism generated?
+Of course I can do the interleaving - and even staggering - myself in code, but it makes for much less readable code.  And if I really want unreadable, I can go so far as assembler!  But surely there is some pattern for this kind of thing?
+
+
+Your best plan may be to look into OpenMP. It basically allows you to insert "pragmas" into your code which tell the compiler how it can split between processors.
+
+Hyperthreading is a much higher-level system than instruction reordering. It makes the processor look like two processors to the operating system, so you'd need to use an actual threading library to take advantage of that. The same thing naturally applies to multicore processors.
+If you don't want to use low-level threading libraries and instead want to use a task-based parallel system (and it sounds like that's what you're after) I'd suggest looking at OpenMP or Intel's Threading Building Blocks.
+TBB is a library, so it can be used with any modern C++ compiler. OpenMP is a set of compiler extensions, so you need a compiler that supports it. GCC/G++ will from verion 4.2 and newer. Recent versions of the Intel and Microsoft compilers also support it. I don't know about any others, though.
+EDIT: One other note. Using a system like TBB or OpenMP will scale the processing as much as possible - that is, if you have 100 objects to work on, they'll get split about 50/50 in a two-core system, 25/25/25/25 in a four-core system, etc.
+
+Modern processors like the Core 2 have an enormous instruction reorder buffer on the order of nearly 100 instructions; even if the compiler is rather dumb the CPU can still make up for it.
+The main issue would be if the code used a lot of registers, in which case the register pressure could force the code to be executed in sequence even if theoretically it could be done in parallel.
+
+There is no support for parallel execution in the current C++ standard.  This will change for the next version of the standard, due out next year or so.
+However, I don't see what you are trying to accomplish.  Are you referring to one single-core processor, or multiple processors or cores?  If you have only one core, you should do whatever gets the fewest cache misses, which means whatever approach uses the smallest memory working set.  This would probably be either doing all the parsing followed by all the evaluation, or doing the parsing and evaluation alternately.
+If you have two cores, and want to use them efficiently, you're going to have to either use a particularly smart compiler or language extensions.  Is there one particular operating system you're developing for, or should this be for multiple systems? 
+
+It sounds like you ran into the same problem chip designers face: Executing a single instruction takes a lot of effort, but it involves a bunch of different steps that can be strung together in an execution pipeline. (It is easier to execute things in parallel when you can build them out of separate blocks of hardware.)
+The most obvious way is to split each task into different threads. You might want to create a single thread to execute each instruction to completion, or create one thread for each of your two execution steps and pass data between them. In either case, you'll have to be very careful with how you share data between threads and make sure to handle the case where one instruction affects the result of the following instruction. Even though you only have one core and only one thread can be running at any given time, your operating system should be able to schedule compute-intense threads while other threads are waiting for their cache misses.
+(A few hours of your time would probably pay for a single very fast computer, but if you're trying to deploy it widely on cheap hardware it might make sense to consider the problem the way you're looking at it. Regardless, it's an interesting problem to consider.)
+
+Given optimizing compilers and pipelined processors, I would suggest you just write clear, readable code.
+
+Take a look at cilk.  It's an extension to ANSI C that has some nice constructs for writing parallelized code in C.  However, since it's an extension of C, it has very limited compiler support, and can be tricky to work with.
+
+This answer was written assuming the questions does not contain the part "And I typically have an ageing single-core x86 processor without hyper-threading.". I hope it might help other people who want to parallelize highly-parallel tasks, but target dual/multicore CPUs.
+As already posted in another answer, OpenMP is a portable way how to do this. However my experience is OpenMP overhead is quite high and it is very easy to beat it by 
+rolling a DIY (Do It Youself) implementation. Hopefully OpenMP will improve over time, but as it is now, I would not recommend using it for anything else than prototyping.
+Given the nature of your task, What you want to do is most likely a data based parallelism, which in my experience is quite easy - the programming style can be very similar to a single-core code, because you know what other threads are doing, which makes maintaining thread safety a lot easier - an approach which worked for me: avoid dependencies and call only thread safe functions from the loop.
+To create a DYI OpenMP parallel loop you need to:
+
+as a preparation create a serial for loop template and change your code to use functors to implement the loop bodies. This can be tedious, as you need to pass all references across the functor object
+create a virtual JobItem interface for the functor, and inherit your functors from this interface
+create a thread function which is able process individual JobItems objects 
+create a thread pool of the thread using this thread function
+experiment with various synchronizations primitives to see which works best for you. While semaphore is very easy to use, its overhead is quite significant and if your loop body is very short, you do not want to pay this overhead for each loop iteration. What worked great for me was a combination of manual reset event + atomic (interlocked) counter as a much faster alternative.
+experiment with various JobItem scheduling strategies. If you have long enough loop, it is better if each thread picks up multiple successive JobItems at a time. This reduces the synchronization overhead and at the same time it makes the threads more cache friendly. You may also want to do this in some dynamic way, reducing the length of the scheduled sequence as you are exhausting your tasks, or letting individual threads to steal items from other thread schedules.
+

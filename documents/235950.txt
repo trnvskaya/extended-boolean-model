@@ -1,0 +1,115 @@
+How to lookup django session for a particular user?
+django authentication session
+I am writing an application where I will be accessing the database from django and from a stand alone application. Both need to do session verification and the session should be the same for both of them. Django has a built in authentication/session verification, which is what I am using, now I need to figure out how to reuse the same session for my stand alone application.
+My question is how can I look up a session_key for a particular user?
+From what it looks there is nothing that ties together auth_user and django_session
+
+
+This is somewhat tricky to do, because not every session is necessarily associated with an authenticated user; Django's session framework supports anonymous sessions as well, and anyone who visits your site will have a session, regardless of whether they're logged in.
+This is made trickier still by the fact that the session object itself is serialized -- since Django has no way of knowing which data exactly you want to store, it simply serializes the dictionary of session data into a string (using Python's standard "pickle" module) and stuffs that into your database.
+If you have the session key (which will be sent by the user's browser as the cookie value "sessionid"), the easiest way to get at the data is simply to query the Session table for the session with that key, which returns a Session object. You can then call that object's "get_decoded()" method to get the dictionary of session data. If you're not using Django, you can look at the source code (django/contrib/sessions/models.py) to see how the session data is deserialized.
+If you have the user id, however, you'll need to loop through all of the Session objects, deserializing each one and looking for one which has a key named "_auth_user_id", and for which the value of that key is the user id.
+
+Modifying the django_session table to add an explicit user_id can make life a lot easier. Assuming you do that (or something similar), here are four approaches to munging things to your liking:
+Fork the django.contrib.session code. I know, I know, that's a horrible thing to suggest. But it's only 500 lines including all backends and minus the tests. It's pretty straightforward to hack. This is the best route only if you are going to do some serious rearranging of things.
+If you don't want to fork, you could try connecting to the Session.post_save signal and munge there.
+Or you could MonkeyPatch contrib.session.models.Session.save(). Just wrap the existing method (or create a new one), breakout/synthesize whatever values you need, store them in your new fields, and then super(Session, self).save().
+Yet another way of doing this is to put in 2 (yes, two) middleware classes -- one before and one after SessionMiddleware in your settings.py file. This is because of the way middleware is processed. The one listed after SessionMiddleware will get, on the inbound request, a request with the session already attached to it. The one listed before can do any processing on the response and/or change/resave the session.
+We used a variation on this last technique to create pseudo-sessions for search engine spiders to give them special access to material that is normally member-only. We also detect inbound links where the REFERER field is from the associated search engine and we give the user full access to that one article.
+Update:
+My answer is now quite ancient, although it still is mostly correct. See @Gavin_Ballard's much more recent answer (9/29/2014) below for yet another approach to this problem.
+
+Peter Rowell, thanks for your response.  It was a tremendous help.  This is what I did to get it working.  Only had to change one file in djang.contrib.sessions.
+In django/contrib/sessions/models.py, add the user_id to the table (add to DB table manually or drop table and run manage.py syncdb).
+class Session(models.Model):
+
+    ...
+
+    user_id = models.IntegerField(_('user_id'), null=True)
+
+    ...
+
+    def save(self, *args, **kwargs):
+        user_id = self.get_decoded().get('_auth_user_id')
+        if ( user_id != None ):
+            self.user_id = user_id
+
+        # Call the "real" save() method.
+        super(Session, self).save(*args, **kwargs)
+
+Now in your view where you do login (if you use django's base login, you will have to override it)
+# On login, destroy all prev sessions
+        # This disallows multiple logins from different browsers
+        dbSessions = Session.objects.filter( user_id = request.user.id )
+        for index, dbSession in enumerate( dbSessions ):
+            if ( dbSession.session_key != request.session.session_key ):
+                dbSession.delete()
+
+This worked for me.
+
+I found this code snippet
+from django.contrib.sessions.models import Session
+from django.contrib.auth.models import User
+
+session_key = '8cae76c505f15432b48c8292a7dd0e54'
+
+session = Session.objects.get(session_key=session_key)
+uid = session.get_decoded().get('_auth_user_id')
+user = User.objects.get(pk=uid)
+
+print user.username, user.get_full_name(), user.email
+
+here
+http://scottbarnham.com/blog/2008/12/04/get-user-from-session-key-in-django/
+Have not verified it yet, but looks pretty straight forward.
+
+I ran across this problem when I wanted to kick out a spammer.  It seems setting their account to "inactive" isn't enough, because they can still come in on their previous session. So - how to delete a session for a specific user, or how to deliberately expire a session for a specific user?
+The answer is to user the last_login field to track down the time at which the session was disabled, which tells you that the expire_date is two weeks later, which lets you perform a useful filter on the sessions table:
+from django.contrib.sessions.models import Session
+from django.contrib.auth.models import User
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+
+baduser = User.objects.get(username="whoever")     
+two_weeks = relativedelta(weeks=2)
+two_hours = relativedelta(hours=2)
+expiry = baduser.last_login + two_weeks
+sessions = Session.objects.filter(
+    expire_date__gt=expiry - two_hours,
+    expire_date__lt=expiry + two_hours
+) 
+print sessions.count() # hopefully a manageable number
+
+for s in sessions:
+    if s.get_decoded().get('_auth_user_id') == baduser.id:
+        print(s)
+        s.delete()
+
+
+This answer is being posted five years after the original question, but this SO thread is one of the top Google results when searching for a solution to this problem (and it's still something that isn't supported out of the box with Django).
+I've got an alternate solution for the use case where you're only concerned with logged in user sessions, which uses an additional UserSession model to map users to their sessions, something like this:
+from django.conf import settings
+from django.db import models
+from django.contrib.sessions.models import Session
+
+class UserSession(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL)
+    session = models.ForeignKey(Session)  
+
+Then you can simply save a new UserSession instance any time a user logs in:
+from django.contrib.auth.signals import user_logged_in
+
+def user_logged_in_handler(sender, request, user, **kwargs):
+    UserSession.objects.get_or_create(user = user, session_id = request.session.session_key)
+
+user_logged_in.connect(user_logged_in_handler)
+
+And finally when you'd like to list (and potentially clear) the sessions for a particular user:
+from .models import UserSession
+
+def delete_user_sessions(user):
+    user_sessions = UserSession.objects.filter(user = user)
+    for user_session in user_session:
+        user_session.session.delete()
+
+That's the nuts and bolts of it, if you'd like more detail I have a blog post covering it.

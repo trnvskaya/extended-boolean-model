@@ -1,0 +1,130 @@
+Visual Studio debugger tips & tricks for .NET
+.net visual-studio debugging tips-and-tricks hidden-features
+I've been working for years with VS's debugger, but every now and then I come across a feature I have never noticed before, and think "Damn! How could I have missed that? It's so useful!"
+[Disclaimer: These tips work in VS 2005 on a C# project, no guarantees for older incarnations of VS or other languages] 
+Keep track of object instances
+Working with multiple instances of a given class? How can you tell them apart?
+In pre-garbage collection programming days, it was easy to keep track of references - just look at the memory address. With .NET, you can't do that - objects can get moved around.
+Fortunately, the watches view lets you right-click on a watch and select 'Make Object ID'. 
+
+
+ 
+
+
+This appends a {1#}, {2#} etc. after the instance's value, effectively giving the instance a unique label. It looks like this: 
+
+
+
+
+
+The label is persisted for the lifetime of that object.
+Meaningful values for watched variables
+By default, a watched variable's value is it's type. If you want to see its fields, you have to expand it, and this could take a long time (or even timeout!) if there are many fields or they do something complicated.
+However, some predefined types show more meaningful information :
+
+strings show their actual contents
+lists and dictionaries show their elements count etc.
+
+
+Wouldn't it be nice to have that for my own types? 
+Hmm... 
+...some quality time with .NET Reflector shows how easily this can be accomplished with the DebuggerDisplay attribute on my custom type:
+[System.Diagnostics.DebuggerDisplay("Employee: '{Name}'")]
+public class Employee {
+    public string Name { get { ... } }
+    ...
+}
+
+... re-run, and...
+
+There's a lot more info on the subject here: MSDN
+Break on all exceptions
+... even the ones that are handled in code!
+I know, I'm such a n00b for not knowing about this ever since I was born, but here it goes anyway - maybe this will help someone someday:
+You can force a debugged process to break into debug mode each time an exception is thrown. Ever went on a bug hunt for hours only to come across a piece of code like this?
+try {
+    runStrangeContraption();
+} catch(Exception ex) {
+    /* TODO: Will handle this error later */
+}
+
+Catching all exceptions is really handy in these cases.
+This can be enabled from Debug > Exceptions... (Ctrl-Alt-E). Tick the boxes in the 'Thrown' column for each type of exception you need.
+
+Those were a few forehead-slapping moments for me. 
+Would you care to share yours?
+
+
+Of course, check out the VS tip of the day:
+http://blogs.msdn.com/SaraFord/
+
+I always make sure to set the "Name" property on new threads that I create. That way, when I'm debugging I can more easily identify different threads.
+
+Here's another neat trick I learned:
+System.Diagnostics.Debugger.Break()
+
+programatically causes the debugger to break on the next instruction. The really nice part is, this also works for a program compiled in Release mode, without debugging information.
+
+Conditional breaks are very useful if you have code that is repeated a lot but only fails under a specific set of conditions, such as code in a loop, methods called from a loop, or methods called from multiple threads. Put the break statement at the line of interest and set its conditions to match the error case. (There is a quick example here.)
+
+A few from me
+
+Uncheck the "Enable Just My Code" option in Tools->Options->Debugging.
+Conditional breakpoints - they save my life almost every day
+Use the .NET framework source if things get ugly
+
+
+Tools -> Attach To Process - easy to forget, but with it I can debug script in web pages, managed code loaded up in another process (think an add-in model), or even unmanaged code. Be careful with letting it automatically pick the type of debugging you're interested in.
+Tracepoints (and other breakpoint features... right click on the breakpoint and have fun)! - http://blogs.msdn.com/saraford/archive/2008/06/13/did-you-know-you-can-use-tracepoints-to-log-printf-or-console-writeline-info-without-editing-your-code-237.aspx
+The immediate window is awesome.
+Remote Debugging is very useful if you deploy apps (and can get to the machine where the problem can be reproduced).
+There are tons more. Try getting into WinDbg and SoS!
+
+.load sos in the Immediate window  :)
+
+try {
+    // do something big
+}
+catch {
+    // breakpoint set here:
+    throw CantHappenException("something horrible happened that should never happen.");
+}
+
+How do you see the exception that was originally thrown?  In a watch window, enter $exception
+
+Two from me:
+one that I hope everyone uses all over the place:
+Debug.Assert(<condition>, <message>)
+
+the second DebuggerHidden:
+<DebuggerHidden()> _
+Public Sub ReadDocumentProperty(ByVal propertyName As String, ByRef PropVal As Integer, ByVal DefaultVal As Integer)
+    Try
+        Dim prop As Office.DocumentProperty
+        prop = CustomProps.Item(propertyName)
+        PropVal = CType(prop.Value, Integer)
+    Catch
+        PropVal = DefaultVal
+    End Try
+End Sub
+
+Even if you have Debug, Exceptions, Break on thrown exceptions set, exceptions in here will not be caught.
+
+I found the Modules window useful a lot of times.  It tells whether the debugger has loaded a required dll and which version of the dll is loaded.  It also lets you manually load or unload a dll.
+
+Two in-code tricks:
+I really like the System.Diagnostics.DebuggerStepThrough attribute; you can attach it to a class, method or property to make VS not enter the code by default when debugging. I prefer it over the DebuggerHidden attribute as it will still allow you to put breakpoints in the ignored code if you really need to debug it.
+Another (sometimes) useful call is System.Diagnostics.Debugger.Launch(); when the execution hits it, you will be presented with the "select a debugger" dialog, and a debugger will start. A bit rude, but useful with particularly nasty to attach to processes, like a process that gets spawned by another and immediately executes your code.
+
+In unmanaged code you can set "data breakpoints". They user the debug registers of the CPU to issue an INT3 and the debugger stops on that instruction with no overhead during run time (in older version the debugger stepped through the program checking the memory..... slow!)
+This is useful if you have some corruption at a knwon address (stack / heap vaiable getting clobbered). 
+Also AutoExp.dat in ide\packages\debugger can be customized to show your data structures.
+pointer, mb shows a hex dump in the watch window
+http://msdn.microsoft.com/en-us/magazine/dd252945.aspx
+Yum!
+
+Create a Macro for attaching to a process and assign to an unused keyboard shortcut. Much faster than going: debug -> attach to process -> search for the process in the processes list ->...
+
+How about setting the IDE to break into exceptions when they occur, even when we don't have any debug point set.
+Debug--> Exceptions-->Commmon Language Runtime Exceptions-->Thrown
+This makes finding hidden exception handling problems a breeze. Actually this is kind of a setting every developer should have set through out the development, to avoid any unhanded or even handled exceptions that are going underneath.

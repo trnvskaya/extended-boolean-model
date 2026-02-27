@@ -1,0 +1,102 @@
+How can I enforce a maximum amount of forked children?
+php c fork process-management
+EDIT: I've tagged this C in a hope to get more response.  It's more the theory I'm interested in than a specific language implementation.  So if you're a C coder please treat the following PHP as pseudo-code and feel free to respond with an answer written in C.
+I am trying to speed up a PHP CLI script by having it execute its tasks in parallel instead of serial.  The tasks are completely independent of each other so it doesn't matter which order they start/finish in.
+Here's the original script (note all these examples are stripped-back for clarity):
+<?php
+
+$items = range(0, 100);
+
+function do_stuff_with($item) { echo "$item\n"; }
+
+foreach ($items as $item) {
+    do_stuff_with($item);
+}
+
+I've managed to make it work on the $items in parallel with pcntl_fork() as shown below:
+<?php
+
+ini_set('max_execution_time', 0); 
+ini_set('max_input_time', 0); 
+set_time_limit(0);
+
+$items = range(0, 100);
+
+function do_stuff_with($item) { echo "$item\n"; }
+
+$pids = array();
+foreach ($items as $item) {
+    $pid = pcntl_fork();
+    if ($pid == -1) {
+        die("couldn't fork()");
+    } elseif ($pid > 0) {
+        // parent
+        $pids[] = $pid;
+    } else {
+        // child
+        do_stuff_with($item);
+        exit(0);
+    }   
+}
+
+foreach ($pids as $pid) {
+    pcntl_waitpid($pid, $status);
+}
+
+Now I want to extend this so there's a maximum of, say, 10 children active at once.  What's the best way of handling this?  I've tried a few things but haven't had much luck.
+
+
+man 2 setrlimit
+That's going to be per-user which may be what you want anyway.
+
+The best thing I can come up with is to add all the tasks to a queue, launch the maximum number of threads you want, and then have each thread requesting a task from the queue, execute the task and requesting the next one. Don't forget to have the threads terminate when there are no more tasks to do.
+
+Forking is an expensive operation.  From the looks of it, what you really want is multi**threading**, not multi**processing**.  The difference is that threads are much lighter weight than processes, since threads share a virtual address space but processes have separate virtual address spaces.
+I'm not a PHP developer, but a quick Google search reveals that PHP does not support multithreading natively, but there are libraries to do the job.
+Anyways, once you figure out how to spawn threads, you should figure out how many threads to spawn.  In order to do this, you need to know what the bottleneck of your application is.  Is the bottleneck CPU, memory, or I/O?  You've indicated in your comments that you are network-bound, and network is a type of I/O.
+If you were CPU bound, you're only going to get as much parallelism as you have CPU cores; any more threads and you're just wasting time doing context switches.  Assuming you can figure out how many total threads to spawn, you should divide your work into that many units, and have each thread process one unit independently.
+If you were memory bound, then multithreading would not help.
+Since you're I/O bound, figuring out how many threads to spawn is a little trickier.  If all work items take approximately the same time to process with very low variance, you can estimate how many threads to spawn by measuring how long one work item takes.  However, since network packets tend to have highly variable latencies, this is unlikely to be the case.
+One option is to use thread pools - you create a whole bunch of threads, and then for each item to process, you see if there is a free thread in the pool.  If there is, you have that thread perform the work, and you move onto the next item.  Otherwise, you wait for a thread to become available.  Choosing the size of the thread pool is important - too big, and you're wasting time doing unnecessary context switches.  Too few, and you're waiting for threads too often.
+Yet another option is to abandon multithreading/multiprocessing and just do asynchronous I/O instead.  Since you mentioned you're working on a single-core processor, this will probably be the fastest option.  You can use functions like socket_select() to test if a socket has data available.  If it does, you can read the data, otherwise you move onto a different socket.  This requires doing a lot more bookkeeping, but you avoid waiting for data to come in on one socket when data is available on a different socket.
+If you want to eschew threads and asynchronous I/O and stick with multiprocessing, it can still be worthwhile if the per-item processing is expensive enough.  You might then do the work division like so:
+$my_process_index = 0;
+$pids = array();
+
+// Fork off $max_procs processes
+for($i = 0; $i < $max_procs - 1; $i++)
+{
+  $pid = pcntl_fork();
+  if($pid == -1)
+  {
+    die("couldn't fork()");
+  }
+  elseif($pid > 0)
+  {
+    // parent
+    $my_process_index++;
+    $pids[] = $pid
+  }
+  else
+  {
+    // child
+    break;
+  }
+}
+
+// $my_process_index is now an integer in the range [0, $max_procs), unique among all the processes
+// Each process will now process 1/$max_procs of the items
+for($i = $my_process_index; $i < length($items); $i += $max_procs)
+{
+  do_stuff_with($items[$i]);
+}
+
+if($my_process_index != 0)
+{
+  exit(0);
+}
+
+
+There is no syscall to get a list of child pids, but ps can do it for you.
+--ppid switch will list all children for you process so you just need to count number of lines outputted by ps.
+Alternatively you can maintain your own counter that you will increment on fork() and decrement on SIGCHLD signal, assuming ppid stays unchanged for fork'ed processed.

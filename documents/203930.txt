@@ -1,0 +1,55 @@
+C# streaming sockets, how to separate messages?
+c# sockets
+Kinda long title, but anyways...
+I've been looking at these examples, specifically on the parts on writing and reading the size of the message to the byte streams
+http://doc.trolltech.com/4.4/network-fortuneclient-client-cpp.html
+http://doc.trolltech.com/4.4/network-fortuneserver-server-cpp.html
+But I can't seem to figure it out in C#.
+StreamWriter writer = new StreamWriter(tcpClient.GetStream());
+writer.Write(data.Length + data);
+
+This doesn't work very well at all. Could someone give me a nudge in the right direction?
+
+
+Instead of data.Length, try:
+writer.Write(chr(data.Length) + data);
+
+This will prefix every data block with one byte indicating its length (up to 255 bytes long). As you requested, this is only a nudge. :)
+Update: I just remembered that C# is all Unicode and stuff, so chr() probably gives you more than one byte. Adjust to fit.
+
+I guess this should do that: 
+(I assume your data is a string)
+
+Stream stream = tcpClient.GetStream();
+Encoding encoding = Encoding.GetEncoding("encoding name");
+
+byte[] bytes = encoding.getBytes(data);
+
+stream.Write(BitConverter.GetBytes((short)bytes.Length),0,2); // hope data isn't longer that 64k
+stream.Write(bytes,0,bytes.Length);
+
+
+Generally you would send the length first. Both ends should agree on what a length looks like - for example, you might be happy to use fixed 4-byte length prefix as binary:
+  byte[] data = ...
+  int len = data.Length;
+  byte[] prefix = Bitconverter.GetBytes(len);
+  stream.Write(prefix, 0, prefix.Length); // fixed 4 bytes
+  stream.Write(data, 0, data.Length);
+
+Obviously the caller needs to do the same - i.e. read the first 4 bytes to get the length. For reading, the receiver should take care not to read too much data. One way is with a limiting stream - for example, this class can be used to get a Stream that won't read too much.
+If you don't want the overhead of always sending 4 bytes, then some more interesting encodings are possible - for example, using the msb as a continuation block.
+For info, protobuf-net is a binary serializer designed around Google's "protocol buffers" message-based format. It handles a lot of the details for you, and might be of interest if you don't want to spend lots of time writing serialization code. There are examples for sockets in the QuickStart project, for example here
+
+When you say, "This doesn't work very well at all", I'd be curious about specifically what doesn't work.   Are they .NET applications on both ends of the socket?   If so, ignore this answer.  If not, then could the problem be the byte ordering of the integer?  A little endian vs big endian issue?  This thread here discusses it:
+http://bytes.com/forum/thread225649.html
+http://books.google.com/books?id=2zT5b2BS1OUC&pg=PA64&lpg=PA64&dq=c%23+sockets+integers+byte+ordering&source=web&ots=_ISzZZ6HHT&sig=tUHdNT0NGv0uxusmHG9YjFw6j9k&hl=en&sa=X&oi=book_result&resnum=2&ct=result
+Another problem if both ends aren't .NET could be that the other end expects ANSI strings whereas you are sending Unicode.
+
+You could also, if you wanted to preserve the plaintextness of it, specify a specific maximum size and pad the number via string.Format. (Say for instance only allowing 4 characters in the length) This avoids the problems of numbers in the useful datastream, and simplifies decoding as well.
+A final plaintext solution is to put a specific character between length and data, such as -, then grab single characters at a time till you hit a minus, decode the retrieved string (Ignoring the minus of course) and then use that to determine the length of the remaining string, and your output code which simply need to be changed to add that character in between.
+
+Use WriteLine instead of Write,  ReadLine instead of Read...
+If you are talking sending pure textual messages, append the Newline character at the end of your messages.  Then, read bytes till you encounter this Newline character and convert the bytes into a string.
+For your convenience, any System.IO.StreamReader and System.IO.StreamReader implement this behavior in a single method (WriterLine or ReadLine)
+           writer.WriteLine("Line to send");
+           string lineSent = reader.ReadLine();

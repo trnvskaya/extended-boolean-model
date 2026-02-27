@@ -1,0 +1,51 @@
+Looking for suggestions for building a secure REST API within Ruby on Rails
+ruby-on-rails ruby security rest web-api
+I'm getting started on building a REST API for a project I'm working on, and it led me to do a little research as to the best way to build an API using RoR. I find out pretty quickly that by default, models are open to the world and can be called via URL by simply putting a ".xml" at the end of the URL and passing appropriate parameters.
+So then the next question came. How do I secure my app to prevent unauthorized changes? In doing some research I found a couple articles talking about attr_accessible and attr_protected and how they can be used. The particular URL I found talking about these was posted back in May of '07 (here). 
+As with all things ruby, I'm sure that things have evolved since then. So my question is, is this still the best way to secure a REST API within RoR?
+If not what do you suggest in either a "new project" or an "existing project"scenario?
+
+
+I'm facing similar questions as you at the moment because i'm also building out a REST api for a rails application.
+I suggest making sure that only attributes that can be user edited are marked with attr_accessible.  This will set up a white list of attributes that can be assigned using update_attributes.
+What I do is something like this:
+   class Model < ActiveRecord::Base  
+       attr_accessible nil  
+   end
+
+All my models inherit from that, so that they are forced to define attr_accessible for any fields they want to make mass assignable.  Personally, I wish there was a way to enable this behaviour by default (there might be, and I don't know about it).
+Just so you know someone can mass assign a property not only using the REST api but also using a regular form post.
+
+
+How do I secure my app to prevent
+  unauthorized changes?
+
+attr_accessible and attr_protected are both useful for controlling the ability to perform mass-assignments on an ActiveRecord model.  You definitely want to use attr_protected to prevent form injection attacks; see Use attr_protected or we will hack you.
+Also, in order to prevent anyone from being able to access the controllers in your Rails app, you're almost certainly going to need some kind of user authentication system and put a before_filter in your controllers to ensure that you have an authorized user making the request before you allow the requested controller action to execute.
+See the Ruby on Rails Security Guide (part of the Rails Documentation Project) for tons more helpful info.
+
+There are several schemes for authenticating API requests, and they're different than normal authentication provided by plugins like restful_authentication or acts_as_authenticated.  Most importantly, clients will not be maintaining sessions, so there's no concept of a login.
+HTTP Authentication
+You can use basic HTTP authentication.  For this, API clients will use a regular username and password and just put it in the URL like so:
+http://myusername:mypass@www.someapp.com/
+
+I believe that restful_authentication supports this out of the box, so you can ignore whether or not someone is using your app via the API or via a browser.
+One downside here is that you're asking users to put their username and password in the clear in every request.  By doing it over SSL, you can make this safe.
+I don't think I've ever actually seen an API that uses this, though.  It seems like a decently good idea to me, especially since it's supported out of the box by the current authentication schemes, so I don't know what the problem is.
+API Key
+Another easy way to enable API authentication is to use API keys.  It's essentially a username for a remote service.  When someone signs up to use your API, you give them an API key.  This needs to be passed with each request.
+One downside here is that if anyone gets someone else's API key, they can make requests as that user.  I think that by making all your API requests use HTTPS (SSL), you can offset this risk somewhat.
+Another downside is that users use the same authentication credentials (the API key) everywhere they go. If they want to revoke access to an API client their only option is to change their API key, which will disable all other clients as well. This can be mitigated by allowing users to generate multiple API keys.
+API Key + Secret Key signing
+Deprecated(sort of) - see OAuth below
+Significantly more complex is signing the request with a secret key.  This is what Amazon Web Services (S3, EC2, and such do).  Essentially, you give the user 2 keys: their API key (ie. username) and their secret key (ie. password).  The API key is transmitted with each request, but the secret key is not.  Instead, it is used to sign each request, usually by adding another parameter.
+IIRC, Amazon accomplishes this by taking all the parameters to the request, and ordering them by parameter name.  Then, this string is hashed, using the user's secret key as the hash key.  This new value is appended as a new parameter to the request prior to being sent.  On Amazon's side, they do the same thing.  They take all parameters (except the signature), order them, and hash using the secret key.  If this matches the signature, they know the request is legitimate.
+The downside here is complexity.  Getting this scheme to work correctly is a pain, both for the API developer and the clients.  Expect lots of support calls and angry emails from client developers who can't get things to work.
+OAuth
+To combat some of the complexity issues with key + secret signing, a standard has emerged called OAuth. At the core OAuth is a flavor of key + secret signing, but much of it is standardized and has been included into libraries for many languages.
+In general, it's much easier on both the API producer and consumer to use OAuth rather than creating your own key/signature system.
+OAuth also inherently segments access, providing different access credentials for each API consumer. This allows users to selectively revoke access without affecting their other consuming applications.
+Specifically for Ruby, there is an OAuth gem that provides support out of the box for both producers and consumers of OAuth. I have used this gem to build an API and also to consume OAuth APIs and was very impressed. If you think your application needs OAuth (as opposed to the simpler API key scheme), then I can easily recommend using the OAuth gem.
+
+Another approach that saves building a lot of the stuff yourself is to use something like http://www.3scale.net/ which handles keys, tokens, quotas etc. for individual developers. It also does analytics and creates a developer portal. 
+There's a ruby/rails plugin ruby API plugin which will apply to policies to traffic as it arrives - you can use it in conjunction with the oAuth gem. You can also us it by dropping varnish in front of the app and using the varnish lib mod: Varnish API Module.

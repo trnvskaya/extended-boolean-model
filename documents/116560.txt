@@ -1,0 +1,104 @@
+Open an Emacs buffer when a command tries to open an editor in shell-mode
+unix shell emacs
+I like to use Emacs' shell mode, but it has a few deficiencies. One of those is that it's not smart enough to open a new buffer when a shell command tries to invoke an editor. For example with the environment variable VISUAL set to vim I get the following from svn propedit:
+
+$ svn propedit svn:externals . 
+"svn-prop.tmp" 2L, 149C[1;1H
+~                                                                               [4;1H~                                                                               [5;1H~                                                                               [6;1H~                                                                               [7;1H~            
+...
+
+(It may be hard to tell from the representation, but it's a horrible, ugly mess.)
+With VISUAL set to "emacs -nw", I get
+
+$ svn propedit svn:externals .
+emacs: Terminal type "dumb" is not powerful enough to run Emacs.
+It lacks the ability to position the cursor.
+If that is not the actual type of terminal you have,
+use the Bourne shell command `TERM=... export TERM' (C-shell:
+`setenv TERM ...') to specify the correct type.  It may be necessary
+to do `unset TERMINFO' (C-shell: `unsetenv TERMINFO') as well.svn: system('emacs -nw svn-prop.tmp') returned 256
+
+(It works with VISUAL set to just emacs, but only from inside an Emacs X window, not inside  a terminal session.)
+Is there a way to get shell mode to do the right thing here and open up a new buffer on behalf of the command line process?
+
+
+You can attach to an Emacs session through emacsclient. First, start the emacs server with 
+M-x server-start
+
+or add (server-start) to your .emacs. Then,
+export VISUAL=emacsclient
+
+Edit away.
+Note:
+
+The versions of emacs and emacsclient must agree. If you have multiple versions of Emacs installed, make sure you invoke the version of emacsclient corresponding to the version of Emacs running the server.
+If you start the server in multiple Emacs processes/frames (e.g., because (server-start) is in your .emacs), the buffer will be created in the last frame to start the server.
+
+
+There's emacsclient, gnuserv, and in Emacs 23, multi-tty that are all useful for this.  Actually I think in Emacs 23, emacsclient has all of the interesting functionality of gnuserv.
+
+Not entirely true.  ansi-term can run an emacs fine (although I usually run mg for commit logs, in the rare event I don't commit from emacs directly).  eshell can also run an emacs if you start a screen first and run it from within there.
+
+Along with using emacs client/server, I am using this script to invoke emacs.  
+This will start emacs if it is not running yet, or just open a new emacs buffer in the running emacs (using gnuclient).  It runs in the background by default, but can be run in the foreground for processes that expect some input.  For example, I am using this as my source control editor, when entering a change list description.  I have "SVN_EDITOR=emacs sync", so I can do "svn commit" in an emacs shell, and it will open the svn editor in a new emacs buffer in the same emacs.  When I close the buffer, "svn commit" continues.  Pretty useful.
+
+#!/bin/sh
+
+if [ -z $EMACS_CMD ]; then
+  EMACS_CMD="/usr/bin/emacs"
+fi
+
+if [ -z $GNUCLIENT_CMD ]; then
+  GNUCLIENT_CMD="/usr/bin/gnuclient"
+fi
+
+if [ "$1" = "sync" ]; then
+    shift 1
+    sync=true
+else
+    sync=false
+fi
+
+cmd="${EMACS_CMD} $*"
+lsof $EMACS_CMD | grep $USER >/dev/null 2>&1
+if [ "$?" -ne "1" ]; then
+    cmd="${GNUCLIENT_CMD} $*"
+fi
+
+if [ $sync = "true" ]; then
+    $cmd
+else
+    $cmd &
+fi
+
+
+
+I wanted to do something similar for merging in an emacs shell via mercurial.  Thanks to the posters here, i found the way.  two steps:
+
+add: (start-server) in your .emacs file (remember to load-file after your change)
+in your hgrc:
+[merge-tools]
+emacs.executable = emacsclient
+emacs.premerge = False
+emacs.args = --eval "(ediff-merge-with-ancestor \"$local\" \"$other\" \"$base\" nil \"$output\")"
+
+
+
+When I have (start-server) in my .emacs I get this error....
+Debugger entered--Lisp error: (void-function start-server)
+  (start-server)
+  eval-buffer(#<buffer  *load*> nil "/Users/jarrold/.emacs" nil t)  ; Reading at buffer position 22768
+  load-with-code-conversion("/Users/jarrold/.emacs" "/Users/jarrold/.emacs" t t)
+  load("~/.emacs" t t)
+  #[nil "^H\205\276^@   \306=\203^Q^@\307^H\310Q\202A^@ \311=\2033^@\312\307\313\314#\203#^@\315\202A^@\312\307\$
+  command-line()
+  normal-top-level()
+
+....I am using GNU Emacs 22.1.1
+And this is the version of Mac OS-X I am using:
+
+shandemo 511 $ uname -a Darwin Facilitys-MacBook-Pro.local 10.8.0
+Darwin Kernel Version 10.8.0: Tue Jun  7 16:33:36 PDT 2011;
+root:xnu-1504.15.3~1/RELEASE_I386 i386
+
+Note that m-x ansi-term appears to allow me to successfully hg commit inside of its shell.  However, that shell does not let me scroll through the buffer with e.g. c-p or c-n so I would prefer to us m-x shell.

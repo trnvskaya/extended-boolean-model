@@ -1,0 +1,106 @@
+Map a network drive to be used by a service
+windows windows-services unc system-administration mapped-drive
+Suppose some Windows service uses code that wants mapped network drives and no UNC paths. How can I make the drive mapping available to the service's session when the service is started? Logging in as the service user and creating a persistent mapping will not establish the mapping in the context of the actual service.
+
+
+You wan't to either change the user that the Service runs under from "System" or find a sneaky way to run your mapping as System. 
+The funny thing is that this is possible by using the "at" command, simply schedule your drive mapping one minute into the future and it will be run under the System account making the drive visible to your service.
+
+You could us the 'net use' command:
+var p = System.Diagnostics.Process.Start("net.exe", "use K: \\\\Server\\path");
+var isCompleted = p.WaitForExit(5000);
+
+If that does not work in a service, try the Winapi and PInvoke WNetAddConnection2
+Edit: Obviously I misunderstood you - you can not change the sourcecode of the service, right? In that case I would follow the suggestion by mdb, but with a little twist: Create your own service (lets call it mapping service) that maps the drive and add this mapping service to the dependencies for the first (the actual working) service. That way the working service will not start before the mapping service has started (and mapped the drive).
+
+You'll either need to modify the service, or wrap it inside a helper process: apart from session/drive access issues, persistent drive mappings are only restored on an interactive logon, which services typically don't perform.
+The helper process approach can be pretty simple: just create a new service that maps the drive and starts the 'real' service. The only things that are not entirely trivial about this are:
+
+The helper service will need to pass on all appropriate SCM commands (start/stop, etc.) to the real service. If the real service accepts custom SCM commands, remember to pass those on as well (I don't expect a service that considers UNC paths exotic to use such commands, though...)
+Things may get a bit tricky credential-wise. If the real service runs under a normal user account, you can run the helper service under that account as well, and all should be OK as long as the account has appropriate access to the network share. If the real service will only work when run as LOCALSYSTEM or somesuch, things get more interesting, as it either won't be able to 'see' the network drive at all, or require some credential juggling to get things to work.
+
+
+The reason why you are able to access the drive in when you normally run the executable from command prompt is that when u are executing it as normal exe you are running that application in the User account from which you have logged on . And that user has the privileges to access the network. But , when you install the executable as a service , by default if you see in the task manage it runs under 'SYSTEM' account . And you might be knowing that the 'SYSTEM' doesn't have rights to access network resources. 
+There can be two solutions to this problem. 
+
+To map the drive as persistent as already pointed above.
+There is one more approach that can be followed. If you open the service manager by typing in the 'services.msc'you can go to your service and in the properties of your service there is a logOn tab where you can specify the account as any other account than 'System' you can either start service from your own logged on user account or through 'Network Service'. When you do this .. the service can access any network component and drive even if they are not persistent also. 
+To achieve this programmatically you can look into 'CreateService' function at 
+http://msdn.microsoft.com/en-us/library/ms682450(v=vs.85).aspx and can set the parameter 'lpServiceStartName ' to 'NT AUTHORITY\NetworkService'. This will start your service under 'Network Service' account and then you are done. 
+You can also try by making the service as interactive by specifying SERVICE_INTERACTIVE_PROCESS in the servicetype parameter flag of your CreateService() function but this will be limited only till XP as Vista and 7 donot support this feature.
+
+Hope the solutions help you.. Let me know if this worked for you .
+
+Use this at your own risk. (I have tested it on XP and Server 2008 x64 R2)
+For this hack you will need SysinternalsSuite by Mark Russinovich:
+Step one:
+Open an elevated cmd.exe prompt (Run as administrator)
+Step two:
+Elevate again to root using PSExec.exe:
+Navigate to the folder containing SysinternalsSuite and execute the following command
+psexec -i -s cmd.exe
+you are now inside of a prompt that is nt authority\system and you can prove this by typing whoami. The -i is needed because drive mappings need to interact with the user
+Step Three:
+Create the persistent mapped drive as the SYSTEM account with the following command
+net use z: \\servername\sharedfolder /persistent:yes
+It's that easy!
+WARNING: You can only remove this mapping the same way you created it, from the SYSTEM account. If you need to remove it, follow steps 1 and 2 but change the command on step 3 to net use z: /delete.
+NOTE: The newly created mapped drive will now appear for ALL users of this system but they will see it displayed as "Disconnected Network Drive (Z:)". Do not let the name fool you. It may claim to be disconnected but it will work for everyone. That's how you can tell this hack is not supported by M$.
+
+I found a solution that is similar to the one with psexec but works without additional tools and survives a reboot.
+Just add a sheduled task, insert "system" in the "run as" field and point the task to a batch file with the simple command
+net use z: \servername\sharedfolder /persistent:yes
+
+Then select "run at system startup" (or similar, I do not have an English version) and you are done.
+
+A better way would be to use a symbolic link using mklink.exe. You can just create a link in the file system that any app can use. See http://en.wikipedia.org/wiki/NTFS_symbolic_link.
+
+I found a really cool way to get UNC with credentials working in a windows service on codeproject.
+see Adrian Hayes post: http://www.codeproject.com/Articles/43091/Connect-to-a-UNC-Path-with-Credentials
+His solution works a treat.
+
+ForcePush,
+NOTE: The newly created mapped drive will now appear for ALL users of this system but they will see it displayed as "Disconnected Network Drive (Z:)". Do not let the name fool you. It may claim to be disconnected but it will work for everyone. That's how you can tell this hack is not supported by M$...
+It all depends on the share permissions. If you have Everyone in the share permissions, this mapped drive will be accessible by other users. But if you have only some particular user whose credentials you used in your batch script and this batch script was added to the Startup scripts, only System account will have access to that share not even Administrator.
+So if you use, for example, a scheduled ntbackuo job, System account must be used in 'Run as'.
+If your service's 'Log on as: Local System account' it should work.
+What I did, I didn't map any drive letter in my startup script, just used net use \\\server\share ... and used UNC path in my scheduled jobs. Added a logon script (or just add a batch file to the startup folder) with the mapping to the same share with some drive letter: net use Z: \\\... with the same credentials. Now the logged user can see and access that mapped drive. There are 2 connections to the same share. In this case the user doesn't see that annoying "Disconnected network drive ...". But if you really need access to that share by the drive letter not just UNC, map that share with the different drive letters, e.g. Y for System and Z for users.
+
+Found a way to grant Windows Service access to Network Drive.
+Take Windows Server 2012 w/ NFS Disk for example:
+
+Step 1: Write a Batch File to Mount.
+
+Write a batch file, ex: C:\mount_nfs.bat
+echo %time% >> c:\mount_nfs_log.txt
+net use Z: \\{your ip}\{netdisk folder}\ >> C:\mount_nfs_log.txt 2>&1
+
+
+Step 2: Mount Disk as NT AUTHORITY/SYSTEM.
+
+Open "Task Scheduler", create a new task:
+
+Run as "SYSTEM", at "System Startup".
+Create action: Run "C:\mount_nfs.bat".
+
+
+Finished.
+
+After these two simple steps, my Windows ActiveMQ Service run under "Local System" priviledge, perform perfectly without login.
+Hope this helps!
+
+There is a good answer here:
+http://superuser.com/a/651015/299678
+I.e. You can use a symbolic link, e.g.
+mklink /D C:\myLink \\127.0.0.1\c$
+
+
+I can't comment yet (working on reputation) but created an account just to answer @Tech Jerk @spankmaster79 (nice name lol) and @NMC issues they reported in reply to the "I found a solution that is similar to the one with psexec but works without additional tools and survives a reboot." post @Larry had made.
+The solution to this is to just browse to that folder from within the logged in account, ie: 
+    \\servername\share  
+
+and let it prompt to login, and enter the same credentials you used for the UNC in psexec.  After that it starts working. In my case, I think this is because the server with the service isn't a member of the same domain as the server I'm mapping to.  I'm thinking if the UNC and the scheduled task both refer to the IP instead of hostname
+    \\123.456.789.012\share 
+
+it may avoid the problem altogether. 
+If I ever get enough rep points on here i'll add this as a reply instead.

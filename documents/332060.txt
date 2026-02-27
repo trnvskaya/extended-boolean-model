@@ -1,0 +1,113 @@
+How do I Unit Test Actions without Mocking that use UpdateModel?
+asp.net-mvc updatemodel argumentnullexception controllercontext
+I have been working my way through Scott Guthrie's excellent post on ASP.NET MVC Beta 1.  In it he shows the improvements made to the UpdateModel method and how they improve unit testing.  I have recreated a similar project however anytime I run a UnitTest that contains a call to UpdateModel I receive an ArgumentNullException naming the controllerContext parameter.
+Here's the relevant bits, starting with my model:
+public class Country {
+  public Int32 ID { get; set; }
+  public String Name { get; set; }
+  public String Iso3166 { get; set; }
+}
+
+The controller action:
+[AcceptVerbs(HttpVerbs.Post)]
+public ActionResult Edit(Int32 id, FormCollection form)
+{
+  using ( ModelBindingDataContext db = new ModelBindingDataContext() ) {
+    Country country = db.Countries.Where(c => c.CountryID == id).SingleOrDefault();
+
+    try {
+      UpdateModel(country, form);
+
+      db.SubmitChanges();
+
+      return RedirectToAction("Index");
+    }
+    catch {
+      return View(country);
+    }
+  }
+}
+
+And finally my unit test that's failing:
+[TestMethod]
+public void Edit()
+{
+  CountryController controller = new CountryController();
+  FormCollection form = new FormCollection();
+  form.Add("Name", "Canada");
+  form.Add("Iso3166", "CA");
+
+  var result = controller.Edit(2 /*Canada*/, form) as RedirectToRouteResult;
+
+  Assert.IsNotNull(result, "Expected to be redirected on successful POST.");
+  Assert.AreEqual("Show", result.RouteName, "Expected to redirect to the View action.");
+}
+
+ArgumentNullException is thrown by the call to UpdateModel with the message "Value cannot be null. Parameter name: controllerContext".  I'm assuming that somewhere the UpdateModel requires the System.Web.Mvc.ControllerContext which isn't present during execution of the test.
+I'm also assuming that I'm doing something wrong somewhere and just need to pointed in the right direction.
+Help Please!
+
+
+I don't think it can be done since TryUpdateModel, which UpdateModel uses, references the ControllerContext which is null when invoked from a unit test.  I use RhinoMocks to mock or stub the various components needed by the controller.
+var routeData = new RouteData();
+var httpContext = MockRepository.GenerateStub<HttpContextBase>();
+FormCollection formParameters = new FormCollection();
+
+EventController controller = new EventController();
+ControllerContext controllerContext = 
+    MockRepository.GenerateStub<ControllerContext>( httpContext,
+                                                    routeData,
+                                                    controller );
+controller.ControllerContext = controllerContext;
+
+ViewResult result = controller.Create( formParameters ) as ViewResult;
+
+Assert.AreEqual( "Event", result.Values["controller"] );
+Assert.AreEqual( "Show", result.Values["action"] );
+Assert.AreEqual( 0, result.Values["id"] );
+
+Here's the relevant bit from the Controller.cs source on www.codeplex.com/aspnet:
+protected internal bool TryUpdateModel<TModel>( ... ) where TModel : class
+{
+
+     ....
+
+    ModelBindingContext bindingContext =
+           new ModelBindingContext( ControllerContext,
+                                    valueProvider,
+                                    typeof(TModel),
+                                    prefix,
+                                    () => model,
+                                    ModelState,
+                                    propertyFilter );
+
+     ...
+}
+
+
+Or you can create form data proxy, like 
+public class CountryEdit {
+  public String Name { get; set; }
+  public String Iso3166 { get; set; }
+}
+
+
+Plus. Easy create unit tests
+Plus. Define white list of fields update from post
+Plus. Easy setup validation rules, easy test it.
+Minus. You should move date from proxy to you model
+
+So Controller.Action should look, like
+public ActionResult Edit(Int32 id, CountryEdit input)
+{
+  var Country = input.ToDb();
+  // Continue your code
+}
+
+
+I was having this same issue.  After reading tvanfosson's solution, I tried a simple solution not involving a mock framework.
+Add a default ControllerContext to the controller as follows:
+CountryController controller = new CountryController();
+controller.ControllerContext = new ControllerContext();
+
+This removed the error just fine for me while unit testing.  I hope this may help someone else out.

@@ -1,0 +1,125 @@
+Importance of closing SQLConnection objects when using the SQLDataReader object
+vb.net generics ado.net sqlconnection.close
+My present contract engagement is at a large E-Commerce company. Their code base which has origins going back to .Net 1.0 has caught me by surprise to contain many issues that raise the level of smell beyond the last crap I took. 
+That notwithstanding and trying to diffuse my level of distraction from it, I go along merrily trying to add in features to either fix other problems or extend more crap. Where I touch the DAL/BLL the time it will take to fix the aforementioned will be done. However I wanted to get a vote of confidence from the experts to get some assurance of not wasting the clients time or worse having my credibility voted down by touching "stuff that works".  Of course unit testing would solve or at least soften this worry. Perhaps this should also be added to the wtf.com?
+Public Function GetSizeInfoBySite(ByVal siteID As String) As IList
+    Dim strSQL As String = "YES INLINE SQL!! :)"
+    Dim ci As CrapInfo
+    Dim alAnArrayList As ArrayList
+
+    Dim cn As New SqlConnection(ConfigurationSettings.AppSettings("ConnectionString"))
+    Dim cmd As New SqlCommand(strSQL, cn)
+    cmd.Parameters.Add(New SqlParameter("@MySiteID", SqlDbType.NVarChar, 2)).Value = siteID
+    cn.Open()
+    Dim rs As SqlDataReader = cmd.ExecuteReader(CommandBehavior.CloseConnection)
+    While rs.Read()
+        ci = New CategoryInfo(rs("someID"), rs("someName"))
+        If IsNothing(alAnArrayList) Then
+            alAnArrayList = New ArrayList
+        End If
+        alAnArrayList.Add(ci)
+    End While
+    rs.Close()
+    Return CType(alAnArrayList, IList)
+End Function
+
+Does anyone see problems with this aside from the inline SQL which makes my gut churn? At the least wouldn't you ordinarily wrap the above in a try/catch/finally which most of us knows has been around since .Net v1.0? Even better would'nt it be wise to fix with Using statements? Does the SQLDataReader close really encapsulate the connection close automagically? 
+
+
+Definitely get some using statements around the Connection and Reader objects. If there is an exception, they won't be closed until the Garbage Collector gets around to them. 
+I tend not to call .Close() when there are using statements. Even if the SqlDataReader closes the connection on dispose (check the doco), putting a using around the Connection can't hurt and sticks to the pattern .
+If you do that the try/finally is only needed if you need to do exception handling right there. I tend to leave exception handling at the higher levels (wrap each UI entry point, Library entry points, extra info in exception) as the stacktrace is usually enough to debug the errors.
+Not that it matters much, but if you are re-factoring, move the collection initialization outside the loop. On second thoughts the code returns null if there are no records.
+At least SqlParameters are used! Get rid of anything that concatenates user input with SQL if you find it (SQL Injection attack) no matter how well "Cleaned" it is.
+
+If you were using c# I would wrap the datareader creation in a using statement but I don't think vb has those?
+
+Nothing wrong with inline sql if the user input is properly parameterized, and this looks like it is.  
+Other than that, yes you do need to close the connections.  On a busy web site you could hit your limit and that would cause all kinds of weirdness.
+I also noticed it's still using an arraylist.  Since they've moved on from .Net 1.0 it's time to update those to generic List<T>'s (and avoid the call to CType- you should be able to DirectCast() that instead).
+
+The connection will be closed when the reader is closed because it's using the CloseConnection command behavior.
+Dim rs As SqlDataReader = cmd.ExecuteReader(CommandBehavior.CloseConnection)
+
+According to MSDN (http://msdn.microsoft.com/en-us/library/aa326246(VS.71).aspx)
+
+If the SqlDataReader is created with CommandBehavior set to CloseConnection, closing the SqlDataReader closes the connection automatically.
+
+
+In reply to some of the great points indicated by Joel and Robert I refactored the method as follows which ran flawless.
+Public Function GetSomeInfoByBusObject(ByVal SomeID As String) As IList
+Dim strSQL As String = "InLine SQL"
+Dim ci As BusObject
+Dim list As New GenList(Of BusObject)
+Dim cn As New SqlConnection(
+    ConfigurationSettings.AppSettings("ConnectionString"))
+Using cn
+    Dim cmd As New SqlCommand(strSQL, cn)
+    Using cmd
+        cmd.Parameters.Add(New SqlParameter
+            ("@SomeID", SqlDbType.NVarChar, 2)).Value = strSiteID
+        cn.Open()
+            Dim result As SqlDataReader = cmd.ExecuteReader(CommandBehavior.CloseConnection)
+                While result.Read()
+                    ci = New BusObject(rs("id), result("description"))
+                    list.Add(DirectCast(ci, BusObject))
+                End While
+            result.Close()
+        End Using
+    Return list
+End Using
+
+End Function
+Created a nice little helper class to wrap the generic details up
+Public Class GenList(Of T)
+    Inherits CollectionBase
+    Public Function Add(ByVal value As T) As Integer
+        Return List.Add(value)
+    End Function
+    Public Sub Remove(ByVal value As T)
+        List.Remove(value)
+    End Sub
+    Public ReadOnly Property Item(ByVal index As Integer) As T
+        Get
+            Return CType(List.Item(index), T)
+        End Get
+    End Property
+End Class
+
+
+Public Function GetSizeInfoBySite(ByVal siteID As String) As IList(Of CategoryInfo)
+        Dim strSQL As String = "YES INLINE SQL!! :)"
+
+        'reference the 2.0 System.Configuration, and add a connection string section to web.config
+        '  <connectionStrings>
+        '   <add name="somename" connectionString="someconnectionstring" />
+        '  </connectionStrings >
+
+        Using cn As New SqlConnection(System.Configuration.ConfigurationManager.ConnectionStrings("somename").ConnectionString
+
+            Using cmd As New SqlCommand(strSQL, cn)
+
+                cmd.Parameters.Add(New SqlParameter("@MySiteID", SqlDbType.NVarChar, 2)).Value = siteID
+                cn.Open()
+
+                Using reader As IDataReader = cmd.ExecuteReader()
+
+                    Dim records As IList(Of CategoryInfo) = New List(Of CategoryInfo)
+
+                    'get ordinal col indexes
+                    Dim ordinal_SomeId As Integer = reader.GetOrdinal("someID")
+                    Dim ordinal_SomeName As Integer = reader.GetOrdinal("someName")
+
+                    While reader.Read()
+                        Dim ci As CategoryInfo = New CategoryInfo(reader.GetInt32(ordinal_SomeId), reader.GetString(ordinal_SomeName))
+                        records.Add(ci)
+                    End While
+
+                    Return records
+
+                End Using
+            End Using
+        End Using
+    End Function
+
+You could try something like the above, the using statements will handle connection closing and object disposal. This is available when the class implements IDisposable.  Also build and return your IList of CategoryInfo.

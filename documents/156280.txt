@@ -1,0 +1,36 @@
+Using Mercurial, is there an easy way to diff my working copy with the tip file in the default remote repository
+svn http mercurial diff scp
+When using mercurial, I'd like to be able to diff the working copy of a file with the tip file in my default remote repository.  Is there an easy way to do this?
+I know I can do an "hg incoming -p" to see the patch sets of changes coming in, but it'd be nice to just directly see the actual changes for a particular file that I'd get if I do a pull of the latest stuff (or what I might be about put push out).
+The easiest thing I can think of right now is to create a little script that takes a look at the default location in .hg/hgrc and downloads the file using curl (if it's over http, otherwise scp it over ssh, or just do a direct diff if it's on the local file system) and then to diff the working copy or the tip against that temporary copy.
+I'm trying to sell mercurial to my team, and one of my team members brought this up today as something that they're able to do easily in SVN with their GUI tools.
+
+
+You could try having two repositories locally - one for incoming stuff, and one for outgoing. Then you should be able to do diff with any tools. See here:
+http://weblogs.java.net/blog/kohsuke/archive/2007/11/using_mercurial.html
+
+to expand on Lars method (for some reason comment doesn't work), you can use the -R option on the diff command to reference a local repository. That way you can use the same diff application that you've specified within hg
+
+After some digging, I came across the "http://www.selenic.com/mercurial/wiki/index.cgi/RdiffExtension'>rdiff" extension that does most of what I want it to.
+It doesn't come with mercurial, but it can be installed by cloning the repository:
+hg clone http://hg.kublai.com/mercurial/extensions/rdiff
+
+And then modifing your ~/.hgrc file to load the extension:
+[extensions] 
+rdiff=~/path/to/rdiff/repo/rdiff.py
+
+It's a little quirky in that it actually modifies the existing "hg diff" command by detecting if the first parameter is a remote URL.  If it is then it will diff that file against your tip file in your local repo (not the working copy).  This as the remote repo is first in the arguments, it's the reverse of what I'd expect, but you can pass "--reverse" to the hg diff command to switch that around.
+I could see these being potential enhancements to the extension, but for now, I can work around them with a bash/zsh shell function in my starup file.  It does a temp checkin of my working copy (held by the mercurial transaction so it can be rolled back), executes the reverse diff, and then rolls the transaction back to return things back to the way they were:
+hgrdiff() {
+    hg commit -m "temp commit for remote diff" && 
+    hg diff --reverse http://my_hardcoded_repo $* &&
+    hg rollback      # revert the temporary commit
+}
+
+And then call it with:
+hgrdiff <filename to diff against remote repo tip>
+
+
+Using templates you can get a list of all changed files:
+hg incoming --template {files}
+

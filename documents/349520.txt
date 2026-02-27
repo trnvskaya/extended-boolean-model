@@ -1,0 +1,84 @@
+Built-in helper to parse User.Identity.Name into Domain\Username
+c# asp.net .net authentication active-directory
+Is there any built-in utility or helper to parse HttpContext.Current.User.Identity.Name, e.g. domain\user to get separately domain name if exists and user?
+Or is there any other class to do so?
+I understand that it's very easy to call String.Split("\") but just interesting
+
+
+I don't think so, because System.Security.Principal.WindowsIdentity doesn't contain such members.
+
+I think No too, because I asked myself the same question the other day :D
+You can try:
+public static string GetDomain(string s)
+{
+    int stop = s.IndexOf("\\");
+    return (stop > -1) ? s.Substring(0, stop + 1) : null;
+}
+
+public static string GetLogin(string s)
+{
+    int stop = s.IndexOf("\\");
+    return (stop > -1) ? s.Substring(stop + 1, s.Length - stop - 1) : null;
+}
+
+
+This is better (easier to use, no opportunity of NullReferenceExcpetion and conforms MS coding guidelines about treating empty and null string equally):
+public static class Extensions
+{
+    public static string GetDomain(this IIdentity identity)
+    {
+        string s = identity.Name;
+        int stop = s.IndexOf("\\");
+        return (stop > -1) ?  s.Substring(0, stop) : string.Empty;
+    }
+
+    public static string GetLogin(this IIdentity identity)
+    {
+        string s = identity.Name;
+        int stop = s.IndexOf("\\");
+        return (stop > -1) ? s.Substring(stop + 1, s.Length - stop - 1) : string.Empty;
+    }
+}
+
+Usage:
+IIdentity id = HttpContext.Current.User.Identity;
+id.GetLogin();
+id.GetDomain();
+
+This requires C# 3.0 compiler (or newer) and doesn't require 3.0 .Net for working after compilation.
+
+You guys might also consider parsing a string input like "user@company.com", or "user@domain".
+This is what I'm currently doing:
+If string contains '\' then split string at '\' and extract username and domain
+Else If string contains '@' then split string at '@' and extract username and domain
+Else treat string as username without a domain
+I'm still hunting for a better solution in the case where the input string isn't in an easily predicted format, i.e. "domain\user@domain". I'm thinking RegEx...
+Update: I stand corrected. My answer is a bit of out context, it refers to the general case of parsing username and domains out of user input, like in user login/logon prompt. Hope it still helps someone.
+
+System.Environment.UserDomainName gives you the domain name only
+Similarly, System.Environment.UserName gives you the user name only
+
+var components = User.Identity.Name.Split('\\');
+
+var userName = components.Last() 
+
+var domainName = components.Reverse().Skip(1).FirstOrDefault()
+
+
+Seems like a problem made to be solved by regular expressions:
+public static class UserExtensions
+{
+    public static string GetDomain(this IIdentity identity)
+    {
+        Regex.Match(identity.Name, ".*\\\\").ToString()
+    }
+
+    public static string GetLogin(this IIdentity identity)
+    {
+        return Regex.Replace(identity.Name, ".*\\\\", "");
+    }
+}
+
+
+Although not a .NET built-in, one can always P/Invoke to CredUIParseUserName. Here's a example of how to use it in .NET.
+PS: It doesn't seem to handle the "dot", as in ".\username".

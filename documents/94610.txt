@@ -1,0 +1,115 @@
+Best way to catch a WCF exception in Silverlight?
+wcf silverlight exception
+I have a Silverlight 2 application that is consuming a WCF service.  As such, it uses asynchronous callbacks for all the calls to the methods of the service.  If the service is not running, or it crashes, or the network goes down, etc before or during one of these calls, an exception is generated as you would expect.  The problem is, I don't know how to catch this exception.
+
+Because it is an asynchronous call, I can't wrap my begin call with a try/catch block and have it pick up an exception that happens after the program has moved on from that point.
+Because the service proxy is automatically generated, I can't put a try/catch block on each and every generated function that calls EndInvoke (where the exception actually shows up).  These generated functions are also surrounded by External Code in the call stack, so there's nowhere else in the stack to put a try/catch either.
+I can't put the try/catch in my callback functions, because the exception occurs before they would get called.
+There is an Application_UnhandledException function in my App.xaml.cs, which captures all unhandled exceptions.  I could use this, but it seems like a messy way to do it.  I'd rather reserve this function for the truly unexpected errors (aka bugs) and not end up with code in this function for every circumstance I'd like to deal with in a specific way.
+
+Am I missing an obvious solution?  Or am I stuck using Application_UnhandledException?
+[Edit]
+As mentioned below, the Error property is exactly what I was looking for.  What is throwing me for a loop is that the fact that the exception is thrown and appears to be uncaught, yet execution is able to continue.  It triggers the Application_UnhandledException event and causes VS2008 to break execution, but continuing in the debugger allows execution to continue.  It's not really a problem, it just seems odd.
+
+
+I check the Error property of the event args in the service method completed event handler.  I haven't had issues with the event handler not being called.  In the case where the server goes down, the call takes a few seconds then comes back with a ProtocolException in the Error property.
+Assuming you have tried this and your callback really never gets called, you might look into customizing the generated proxy class.  See this article.
+
+I found a forum thread that was talking about this, and it mentions that the best practice is to use the Error property. Between this thread and my own experiences, this is what I can conclude:
+
+In normal .NET code, the generated proxy class handles the exception properly by putting the exception in the Error property instead of throwing it.
+In Silverlight, the generated proxy class sets the Error property, but does not handle the exception completely.  The exception is picked up by the debugger, which pops up the exception box with the message "ProtocolException was unhandled by user code".  Despite this message, the exception does not seem to actually make it to the Application_UnhandledException function.  
+
+I'd expect that this is one of the things they will fix in the final release.
+For now, I will use the Error property and just deal with the debugger breaking execution.  If it gets too annoying, I can turn off the break on exception for ProtocolException.
+
+You can forget about Application_UnhandledException on asyn client callbacks, reason why:
+Application_UnhandledException only exceptions fired on the UI thread can be caught by Application.UnhandledExceptions
+This means... not called at all for a WCF async call :-).
+Check detailed response from MSFT
+http://silverlight.net/forums/t/21828.aspx
+Hello, only exceptions fired on the UI thread can be caught by Application.UnhandledExceptions. It can't catch exceptions from other threads. You can try this to trouble shoot the issue: In Visual Studio, from the Debug menu, choose Exceptions. Then check "Common Language Runtime Exceptions". This will make the debugger stop whenever an exception is thrown. But note this may be quite annoying sometimes since even if an exception is already caught. You can use the CheckBoxes to filter the exceptions you want to catch.
+Good news in my case is that handling the error message just in the clietn service call back is enough if you are not debugging.
+Thanks
+Braulio
+
+
+OOpps....
+Sorry wrong answer from my side (well the MSFT guy didn't hit the write answer service callbacks are called on the same UI thread), the thing is
+More info:
+- In development even detaching from the debugger, this method is never reached. 
+- On the production environment yes.
+
+My guess something related with Visual Studio options and intercepting exceptions.
+More info, in this thread
+http://silverlight.net/forums/p/48613/186745.aspx#186745
+Quite interesting topic.
+
+I'm not a plumber, so I decided to create my own WCF service class that overrides some of the functionality of the class file "reference.cs" that is automatically generated by Visual Studio, I then added my own try/catch blocks to catch communication errors.
+The class I created looks something like this:
+public class myWCFService : MyWCFServiceClient
+{
+
+    protected override MyController.MyService.IMyWCFService CreateChannel()
+    {
+        return new MyWCFServiceClientChannel(this);
+    }
+
+}
+
+private class MyWCFServiceClientChannel : ChannelBase<MyController.MyService.IMyWCFService>, MyController.MyService.IMyWCFService
+{
+    /// <summary>
+    /// Channel Constructor
+    /// </summary>
+    /// <param name="client"></param>
+    public MyWCFServiceClientChannel(System.ServiceModel.ClientBase<MyController.MyService.IMyWCFService> client) :
+    base(client)
+    {
+    }
+    /// <summary>
+    /// Begin Call To RegisterUser
+    /// </summary>
+    /// <param name="memberInformation"></param>
+    /// <param name="callback"></param>
+    /// <param name="asyncState"></param>
+    /// <returns></returns>
+    public System.IAsyncResult BeginRegisterUser(MyDataEntities.MembershipInformation memberInformation, System.AsyncCallback callback, object asyncState)
+    {               
+        object[] _args = new object[1];
+        _args[0] = memberInformation;
+        System.IAsyncResult _result = base.BeginInvoke("RegisterUser", _args, callback, asyncState);
+        return _result;               
+    }
+    /// <summary>
+    /// Result from RegisterUser
+    /// </summary>
+    /// <param name="result"></param>
+    /// <returns></returns>
+    public MyDataEntities.MembershipInformation EndRegisterUser(System.IAsyncResult result)
+    {
+        try
+        {
+            object[] _args = new object[0];
+            MyDataEntities.MembershipInformation _result = ((MyDataEntities.MembershipInformation)(base.EndInvoke("RegisterUser", _args, result)));
+            return _result;
+        }
+         catch (Exception ex)
+        {
+            MyDataEntities.MembershipInformation _result = new MyDataEntities.MembershipInformation();
+            _result.ValidationInformation.HasErrors = true;
+            _result.ValidationInformation.Message = ex.Message;
+            return _result;
+        }
+    }
+}
+
+
+With Silverlight 3 the the Visual Studio debugger catches these exceptions so that the exception handler - confusingly - is never reached. However, when running without the debugger, the exception handler is called as expected. I guess this is ok as long as one is aware of it. I admit i wasted a few hours trying to figure out how to drill into the inner workings of Silverlight/Wcf/Browser to get to my exception. Don't go there.
+
+Using a custom WCF Proxy generator is a good solution to handle asynchronous exceptions in Silver-light.Click here to download source code. 
+
+With XNA on WP7, I found I had no choice but to manually add try/catch to the various async End*FunctionName*() methods; nothing else I tried would prevent application failure & shutdown when the server was unavailable. It's a real drag having to manually update this code when a service changes.
+I am surprised this isn't a bigger issue since there doesn't seem to be any other way to catch these exceptions on WP7 using XNA but I suppose this just says more about how many (==not many) people are trying to do this than anything else. If they would just make slsvcutil.exe generate sync methods we could easily catch these within our own worker thread, but unfortunately the generated code uses thread pool threads with no means to catch the exceptions.
+
+To Handle this situation use the TargetInvocationException. This will catch the Exception when the network is down or your service is unavailable.

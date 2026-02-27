@@ -1,0 +1,63 @@
+What pre-existing services exist for calculating distance between two addresses?
+algorithm geolocation distance
+I'd like to implement a way to display a list of stored addresses sorted by proximity to a given address.
+Addresses in the list will be stored in a database table.  Separate parts have separate fields (we have fields for postal code, city name, etc.) so it is not just a giant varchar.  These are user-entered and due to the nature of the system may not always be complete (some may be missing postal code and others may have little more than city and state).
+Though this is for an intranet application I have no problems using outside resources including accessing internet web services and such.  I'd actually prefer that over rolling my own unless it would be trivial to do myself.  If Google or Yahoo! already provides a free service, I'm more than willing to check it out.  The keyword is it must be free, as I'm not at liberty to introduce any additional cost onto this project for this feature as it is already a bonus "perk" so to speak.
+I'm thinking of this much like many brick & mortar shops do their "Find a Location" feature.  Showing it in a simple table sorted appropriately and displaying distance (in, say, miles) is great.  Showing a map mash-up is even cooler, but I can definitely live with just getting the distance back and me handling all of the subsequent display and sorting.
+The problem with simple distance algorithms is the nature of the data.  Since all or part of the address can be undefined, I don't have anything convenient like lat/long coords.  Also, even if I make postal codes required, 90% of the addresses will probably have the same five postal codes.
+While it need not be blisteringly fast, anything that takes more than seven seconds to show up on the page due to latency might be too long for the average user to wait, as we know.  If such a hypothetical service supports sending a batch of addresses at once instead of querying one at a time, that'd be great.  Still, I should not think the list of addresses would exceed 50 total, if that many.
+
+
+Can't you just use google maps API to get the distances and sort them on your side?
+http://code.google.com/apis/maps/
+
+I'd suggest investigating the google maps API.
+It would require you to have an external connection (and for it to be alright to shunt the data over it to a web service) but it provides what you require, namely the distance by asking for a route between 2 points and getting the distance from it.
+API reference of the directions API
+
+One thing we've done at my company is to cheat and use the latitude/longitude of the zip code (Roughly the center of the zip code area).  It's not perfect, but it's close enough for those find me x within n miles of y types of searches. This is especially helpful when the addresses can't be recognized by address cleaning services.
+At some point I came across a free zip code to latitude/longitude lookup table to use in this approximation.  I'm sorry I don't have the link to this any more.
+
+Google and Yahoo! both provide geocoding services for free.  You can calculate distance using the Haversine formula (implemented in .NET or SQL).  Both services will let you do partial searches (zip code only, city only) and will let you know what the precision of their results are (so that you can exclude locations without meaningful information, though Yahoo! provides more precision info than Google).
+
+The Google Maps API is no good to you due to their terms of use. However, Yahoo offer a REST service for turning addresses into Long/Lat coordinates, which you could then use to calculate distances. Its here.
+
+Someone else has done it already at Daft Logic (edit: typo). They use Google Maps API with the Great-circle formula. I don't think it's hard to implement.
+Update: Practically, you only need to get the coordinates from your favourite provider, then do the calculation with your code. You can preload the shops' coordinates, when users provide their location - you can even use this for validation. Then, when the request is made, you can only lookup the customer's location.
+
+Require them to enter a ZIP code, then create a database table mapping ZIP code to latitude/longitude pairs (or find one online). I don't know how it is where you work but over here, ZIP code can be specific to several meters, so that should be precise enough. Then use this method to calculate the distance between two ZIP codes:
+public static double distance(double lat1, double lon1, double lat2, double lon2, char unit)
+{
+  double theta = lon1 - lon2;
+  double dist = Math.Sin(deg2rad(lat1)) * Math.Sin(deg2rad(lat2)) +
+    Math.Cos(deg2rad(lat1)) * Math.Cos(deg2rad(lat2)) * Math.Cos(deg2rad(theta));
+  dist = Math.Acos(dist);
+  dist = rad2deg(dist);
+  dist = dist * 60 * 1.1515;
+  if (unit == 'K')
+  {
+    dist = dist * 1.609344;
+  }
+  else if (unit == 'N')
+  {
+    dist = dist * 0.8684;
+  }
+  return (dist);
+}
+
+private static double deg2rad(double deg)
+{
+  return (deg * Math.PI / 180.0);
+}
+
+private static double rad2deg(double rad)
+{
+  return (rad / Math.PI * 180.0);
+}
+
+The advantage of using your own code over a geocoding service is that you can then do a bunch more interesting calculations against the data as well as storing stuff alongside it in your db.
+
+Check out this website: http://geocoder.us/help/utility.shtml
+You can process records, 1 per 15 seconds like this:
+http://geocoder.us/service/distance?zip1=95472&zip2=94305
+They also have a subscription service without the time limit

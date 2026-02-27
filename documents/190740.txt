@@ -1,0 +1,133 @@
+Setting ruby hash .default to a list
+ruby hashmap
+I thought I understood what the default method does to a hash... 
+Give a default value for a key if it doesn't exist:
+irb(main):001:0> a = {}
+=> {}
+irb(main):002:0> a.default = 4
+=> 4
+irb(main):003:0> a[8]
+=> 4
+irb(main):004:0> a[9] += 1
+=> 5
+irb(main):005:0> a
+=> {9=>5}
+
+All good.
+But if I set the default to be a empty list, or empty hash, I don't understand it's behaviour at all....
+irb(main):001:0> a = {}
+=> {}
+irb(main):002:0> a.default = []
+=> []
+irb(main):003:0> a[8] << 9
+=> [9]                          # great!
+irb(main):004:0> a
+=> {}                           # ?! would have expected {8=>[9]}
+irb(main):005:0> a[8]
+=> [9]                          # awesome!
+irb(main):006:0> a[9]
+=> [9]                          # unawesome! shouldn't this be [] ??
+
+I was hoping/expecting the same behaviour as if I had used the ||= operator...
+irb(main):001:0> a = {}
+=> {}
+irb(main):002:0> a[8] ||= []
+=> []
+irb(main):003:0> a[8] << 9
+=> [9]
+irb(main):004:0> a
+=> {8=>[9]}
+irb(main):005:0> a[9]
+=> nil
+
+Can anyone explain what is going on?
+
+
+Hash.default is used to set the default value returned when you query a key that doesn't exist.  An entry in the collection is not created for you, just because queried it.
+Also, the value you set default to is an instance of an object (an Array in your case), so when this is returned, it can be manipulated.
+a = {}
+a.default = []     # set default to a new empty Array
+a[8] << 9          # a[8] doesn't exist, so the Array instance is returned, and 9 appended to it
+a.default          # => [9]
+a[9]               # a[9] doesn't exist, so default is returned
+
+
+irb(main):002:0> a.default = []
+=> []
+irb(main):003:0> a[8] << 9
+=> [9]                          # great!
+
+With this statement, you have modified the default; you have not created a new array and added "9".  At this point, it's identical to if you had done this instead:
+irb(main):002:0> a.default = [9]
+=> [9]
+
+Hence it's no surprise that you now get this:
+irb(main):006:0> a[9]
+=> [9]                          # unawesome! shouldn't this be [] ??
+
+Furthermore, the '<<' added the '9' to the array; it did not add it to the hash, which explains this:
+irb(main):004:0> a
+=> {}                           # ?! would have expected {8=>[9]}
+
+Instead of using .default, what you probably want to do in your program is something like this:
+# Time to add a new entry to the hash table; this might be 
+# the first entry for this key..
+myhash[key] ||= []
+myhash[key] << value
+
+
+This is a very useful idiom:
+(myhash[key] ||= []) << value
+
+It can even be nested:
+((myhash[key1] ||= {})[key2] ||= []) << value
+
+The other way is to do:
+myhash = Hash.new {|hash,key| hash[key] = []}
+
+But this has the significant side-effect that asking about a key will create it, which renders has_key? fairly useless, so I avoid this method.
+
+I'm not sure if this is what you want, but you can do this to always return an empty array when a missing hash key is queried.
+h = Hash.new { [] }
+h[:missing]
+   => []
+
+#But, you should never modify the empty array because it isn't stored anywhere
+#A new, empty array is returned every time
+h[:missing] << 'entry'
+h[:missing]
+   => []
+
+
+I think this is the behavior you are looking for. This will automatically initialize any new keys in the Hash to an array:
+irb(main):001:0> h = Hash.new{|h, k| h[k] = []}
+=> {}
+irb(main):002:0> h[1] << "ABC"
+=> ["ABC"]
+irb(main):003:0> h[3]
+=> []
+irb(main):004:0> h
+=> {1=>["ABC"], 3=>[]}
+
+
+glenn mcdonald says:
+"The other way is to do:
+myhash = Hash.new {|hash,key| hash[key] = []}
+But this has the significant side-effect that asking about a key will create it, which renders has_key? fairly useless, so I avoid this method."
+that does not in fact seem to be true. 
+irb(main):004:0> a = Hash.new {|hash,key| hash[key] = []}
+=> {}
+irb(main):005:0> a.has_key?(:key)
+=> false
+irb(main):006:0> a[:key]
+=> []
+irb(main):007:0> a.has_key?(:key)
+=> true
+
+Accessing the key will create it, as I would expect. Merely asking has_key? does not. 
+
+If you really wanna have an endlessly deep hash:
+endless = Hash.new { |h, k| h[k] = Hash.new(&h.default_proc) }
+endless["deep"]["in"]["here"] = "hello"
+
+Of course, as Glenn points out above, if you do this, the has_key? looses its meaning as it will always return true. Thx to jbarnette for this one. 

@@ -1,0 +1,77 @@
+batch file to keep one of ten lines
+windows batch-file
+I have a file with n lines. (n above 100 millions)
+I want to output a file with only 1 of 10 lines, I can't split the file in ten part and keep only one part, as it must be a little more random. later I have to do a statistical analysis I can't afford to create a strong bias in the data).
+I was thinking of reading the file and for each record if the record number mod 10 then output it.
+The constraints are:
+
+it's a windows (likely hardened) computer possibly XP Vista or Windows server 2003.
+no development tools available
+no network,usb,cd-rom. read no external communication.
+
+Therefore I was thinking of windows batch file (I can't assume powershell, and vbscript is likely to have been removed). And at the moment looking at the FOR /F command.
+Still I am not an expert and I don't know how to achieve this.
+Thank you Paul for your answer.
+I reformat (with Hosam help) the answer to put it in a batch file:
+@echo off
+setlocal   
+findstr/N . inputFile| findstr ^[0-9]*0: >temporaryFile
+FOR /F "tokens=1,* delims=: " %%i in (temporaryfile) do echo %%j > outputFile
+
+Thanks quux and Pax for the similar alternative solution. However after a quick test on a larger file Paul's answer is roughly 8 times faster. I guess the evaluation (in SET) is kind of slow, even if the logic seems brilliant.
+
+
+Ok, I think I've cracked it:
+findstr/N . path-to-log-file | findstr ^[0-9]*0:
+
+(use findstr to add the line number to the beginning of the line, then again to print only lines with a line number ending in zero)
+So you'll get one line in 10, but with the linenumber and colon prepended to each line
+If I can think of a way using command-line tools only of stripping that out, I'll edit this answer :)
+Remove the line number and colon with
+FOR /F "tokens=1,2* delims=: " %i in (file-with-linenumbers) do echo %j
+
+Paul.
+
+Here's a little command script which does what you want (print out every 10 lines of the file lines32.txt exactly). That file (for my tests) held the number 1 through 32 inclusive, one per line, and the output was 10, 20, 30.
+@echo off
+setlocal
+
+set /a "n = 0"
+for /f %%i in (lines32.txt) do call :fn %%i
+endlocal
+goto :eof
+
+:fn
+set /a "n = n + 1"
+if not %n%==10 goto :eof
+echo %1
+set /a "n = 0"
+goto :eof
+
+The Windows command language has come quite a way since the bad old DOS days.  I still don't thonk it's a match for ksh or bash but it does a decent job.
+
+Paul has a really good answer. By adding the redirection operator you can have the data written to a file.
+findstr /n . yourLogFile.txt | findstr ^[0-9]*0: > numberedFile.txt
+for /f "tokens=1,2* delims=:" %i in (numberedFile.txt) do echo %j > smallFile.txt
+del numberedFile.txt
+
+This will work if run from the command line. If you want to put it in a batch file, replace every '%' character with '%%' (so that %i will become %%i, and %j will be %%j, because in batch files '%' has a special meaning).
+
+The chosen answer might take a very long time to process, since it has to process the whole file twice. If that file is millions of lines ... woosh.
+Here's what I came up with. It will simply plod along processing the file sequentially, print each 10th line (ending in whichever digit you like):
+@ECHO OFF
+SETLOCAL
+SET lastdigit=7
+SET linecounter=0
+FOR /F "tokens=*" %%a IN (text.txt) DO CALL :picker %%a
+ENDLOCAL
+GOTO :eof
+
+:picker
+set line=%*
+IF {%linecounter:~-1%} == {%lastdigit%} ECHO %linecounter% %line%
+SET /a linecounter=%linecounter% + 1
+GOTO :eof
+
+Every line is numbered, starting at zero. Any line whose %linenumber% ends in %lastdigit% is echo'd to console, along with the linenumber. Use set /? to see how I came up with that
+{%linecounter:~-1%} thing (which simply strips all but the last digit of linenumber). 

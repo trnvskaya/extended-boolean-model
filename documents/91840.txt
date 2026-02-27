@@ -1,0 +1,46 @@
+Multi tenant architecture and NHibernate
+.net nhibernate domain-driven-design saas
+Could anyone explain me finally what is the best strategy to implement transparent and fluent support of multi-tenant functionality in NHibernate powered domain model?
+Im looking for the way, how to keep the domain logic as isolated as possible from the  multi-tenant stuff like filtering by TenantID etc
+
+
+Ayende has some good blog posts about building multi-tenancy apps. How NHibernate is used for it would depend on the type of multi-tenancy you are going for. 
+
+The simplest approach is to use different databases for each client.
+Implementing multi-tenanting in this manner allows you to effectively write a single tenant application and only worry about the multi-tenanting at the point where you create / retrieve the session.
+I haven't delved deep into the details as yet (I need to do something similar in a few months), but I think the easiest way to manage which database a session is connected to is via a custom ISessionFactory implementation that can determine which connection to use (based on an external aspect such as the host portion of the request url).
+I have seen at least one post around the net somewhere discussing this, but I cannot find the link at this time.
+If you are using Castle Windsor, have a look at the NHibernate integration facility.  This supports the concept of multiple ( named ) session factories which would allow you to have a session factory per client.  The integration facility provides an ISessionManager interface which allows you to open a session on a named session factory ( as well as providing per request session semantics for web applications ).  Anything requiring access to the session could simply take an ISession constructor parameter and you could create a factory that takes an ISessionManager as a constructor parameter.  You factory could then open a session on the appropriate named session factory by inspecting the request to determine which named session factory should be used.
+
+I have also been digging into it for my next project recently.
+You can implement custom IConnectionProvider and register it in configuration with "connection.provider".
+I suggest you derive from DriverConnectionProvider and override ConnectionString rather then implement a completely custom one.
+It can be something like this one:
+    public class ContextualConnectionProvider : DriverConnectionProvider
+    {
+
+        protected override string ConnectionString
+        {
+            get
+            {
+                return GetCurrentTenantDatabaseConnectionStringInternally();
+            }
+        }
+
+        public override void Configure(IDictionary<string, string> settings)
+        {
+            ConfigureDriver(settings);
+        }
+
+    }
+
+Hope this helps.
+
+There are a variety of ways to accomplish it, but the issues of multi-tenancy go deeper than just the data model. I hate to be plugging product, but check out SaaSGrid by my the company I work at, Apprenda.We're a cloud operating system that allows you to write single tenant SOA apps (feel free to use NHibernate for data access) that automatically injects multi-tenancy into your app. When you publish your app, you can do things like choose a data model (isolated database or shared) and SaaSGrid will deploy accordingly and your app will run without any code changes -   just write code as if it were for a single tenant!
+
+Using a shared schema approach requires you to intercept and decorate all of your queries with additional information to restrict the results.
+NHibernate provides interceptors to do this, and event listeners are also available from NHibernate 2.0 Aplpha 1.
+See http://elegantcode.com/2008/05/15/implementing-nhibernate-interceptors/ and http://www.codinginstinct.com/2008/04/nhibernate-20-events-and-listeners.html for discussions on these. 
+Also have a look at Ayende's Rhino Security component as he does a lot of work in this to modify queries with additional restrictions based on security descriptors.  You can browse the source at https://rhino-tools.svn.sourceforge.net/svnroot/rhino-tools/trunk/security
+
+I've blogged an approach for Multi-tenancy here, the approach is not ideal for all situations, however, it does allow you to largely forget about multi-tenancy issues without having to use a 3rd party product.

@@ -1,0 +1,94 @@
+SQL - state machine - reporting on historical data based on changeset
+sql postgresql
+I want to record user states and then be able to report historically based on the record of changes we've kept. I'm trying to do this in SQL (using PostgreSQL) and I have a proposed structure for recording user changes like the following.
+CREATE TABLE users (
+  userid SERIAL NOT NULL PRIMARY KEY, 
+  name VARCHAR(40), 
+  status CHAR NOT NULL
+);
+
+CREATE TABLE status_log (
+  logid SERIAL, 
+  userid INTEGER NOT NULL REFERENCES users(userid), 
+  status CHAR NOT NULL, 
+  logcreated TIMESTAMP
+);
+
+That's my proposed table structure, based on the data.
+For the status field 'a' represents an active user and 's' represents a suspended user,
+INSERT INTO status_log (userid, status, logcreated) VALUES (1, 's', '2008-01-01'); 
+INSERT INTO status_log (userid, status, logcreated) VALUES (1, 'a', '2008-02-01');
+
+So this user was suspended on 1st Jan and active again on 1st of February.
+If I wanted to get a suspended list of customers on 15th January 2008, then userid 1 should show up. If I get a suspended list of customers on 15th February 2008, then userid 1 should not show up.
+1) Is this the best way to structure this data for this kind of query?
+2) How do I query the data in either this structure or in your proposed modified structure so that I can simply have a date (say 15th January) and find a list of customers that had an active status on that date in SQL only? Is this a job for SQL?
+
+
+This can be done, but would be a lot more efficient if you stored the end date of each log.  With your model you have to do something like:
+select l1.userid
+from status_log l1
+where l1.status='s'
+and l1.logcreated = (select max(l2.logcreated)
+                     from status_log l2
+                     where l2.userid = l1.userid
+                     and   l2.logcreated <= date '2008-02-15'
+                    );
+
+With the additional column it woud be more like:
+select userid
+from status_log
+where status='s'
+and logcreated <= date '2008-02-15'
+and logsuperseded >= date '2008-02-15';
+
+(Apologies for any syntax errors, I don't know Postgresql.)
+To address some further issues raised by Phil:
+
+A user might get moved from active, to suspended, to cancelled, to active again. This is a simplified version, in reality, there are even more states and people can be moved directly from one state to another.
+
+This would appear in the table like this:
+userid  from       to         status
+FRED    2008-01-01 2008-01-31 s
+FRED    2008-02-01 2008-02-07 c
+FRED    2008-02-08            a
+
+I used a null for the "to" date of the current record.  I could have used a future date like 2999-12-31 but null is preferable in some ways.
+
+Additionally, there would be no "end date" for the current status either, so I think this slightly breaks your query?
+
+Yes, my query would have to be re-written as
+select userid
+from status_log
+where status='s'
+and logcreated <= date '2008-02-15'
+and (logsuperseded is null or logsuperseded >= date '2008-02-15');
+
+A downside of this design is that whenever the user's status changes you have to end date their current status_log as well as create a new one.  However, that isn't difficult, and I think the query advantage probably outweighs this.
+
+@Tony the "end" date isn't necessarily applicable.
+A user might get moved from active, to suspended, to cancelled, to active again. This is a simplified version, in reality, there are even more states and people can be moved directly from one state to another.
+Additionally, there would be no "end date" for the current status either, so I think this slightly breaks your query?
+
+@Phil
+I like Tony's solution. It seems to most approriately model the situation described. Any particular user has a status for a given period of time (a minute, an hour, a day, etc.), but it is for a duration, not an instant in time. Since you want to know who was active during a certain period of time, modeling the information as a duration seems like the best approach.
+I am not sure that additional statuses are a problem. If someone is active, then suspended, then cancelled, then active again, each of those statuses would be applicable for a given duration, would they not? It may be a vey short duration, such as a few seconds or a minute, but they would still be for a length of time.
+Are you concerned that a person's status can change multiple times in a given day, but you want to know who was active for a given day? If so, then you just need to more specifically define what it means to be active on a given day. If it is enough that they were active for any part of that day, then Tony's answer works well as is. If they would have to be active for a certain amount of time in a given day, then Tony's solution could be modified to simply determine the length of time (in hours, or minutes, or days), and adding further restrictions in the WHERE clause to retrieve for the proper date, status, and length of time in that status.
+As for there being no "end date" for the current status, that is no problem either as long as the end date were nullable. Simply use something like this "WHERE enddate <= '2008-08-15' or enddate is null".
+
+Does Postgres support analytic queries? This would give the active users on 2008-02-15
+select userid
+from
+(
+select logid, 
+       userid, 
+       status, 
+       logcreated,
+       max(logcreated) over (partition by userid) max_logcreated_by_user
+from   status_log
+where  logcreated <= date '2008-02-15'
+)
+where  logcreated = max_logcreated_by_user
+  and  status     = 'a'
+/
+

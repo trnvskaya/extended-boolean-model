@@ -1,0 +1,27 @@
+Mutli-threaded application hanging on _dl_sysinfo_int80
+c++ linux multithreading gdb
+I have a multi-threaded application that is hanging on a call to _dl_sysinfo_int80().  According to gdb, all threads are stuck in this call.
+The top of the stack trace looks like:
+#0  0x002727a2 in _dl_sysinfo_int80 () from /lib/ld-linux.so.2
+#1  0x004f23de in __lll_mutex_lock_wait () from /lib/tls/libpthread.so.0
+#2  0x004ef00b in _L_mutex_lock_35 () from /lib/tls/libpthread.so.0
+#3  0x092828ac in construction vtable for std::ostream-in-std::basic_stringstream<char, std::char_traits<char>, std::allocator<char> > ()
+
+Any idea what could be causing this?
+
+
+int 80 is the software interrupt to make a kernel level system call.  My guess is that pthread is doing a call in to the kernel that is hanging.  There could be any number of reasons for why all of your threads would hang on a mutex like this:
+  - The mutex is locked by another thread that exited without releasing the lock
+  - The mutex is locked by one of the threads that is typing to lock it and wasn't declared recursive
+  - The mutex was never initialized at all
+  - The mutex has been corrupted by a bad pointer, stack problem, some other type of general memory corruption.
+
+SoapBox is right - you're going to have to hook up a kernel debugger to figure out the kernel half of the callstack and find out what's really blocking
+
+A quick look at the glibc source code showed me that:
+
+_dl_sysinfo_int80 is, as another answer already mentioned, a call to int $0x80 (calling into the kernel);
+__lll_mutex_lock_wait seems to be one of the functions of the userspace half of the futex implementation.
+
+This means all threads blocked in that stack trace or similar ones are in fact waiting for some sort of pthread synchronization object (probably a pthread mutex). All the reasons given on @SoapBox's answer could be the cause.
+There is no need to look at the kernel side of that system call, unless you suspect select is broken.

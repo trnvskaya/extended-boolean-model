@@ -1,0 +1,85 @@
+How to manage a simple PHP session using C++ cURL (libcurl)
+php c++ session curl libcurl
+I'm writing a C++ client which is using libcurl for communicating with a PHP script.
+The communication should be session based, and thus the first task is to login and make the PHP script set up a session.
+I'm not used to working with sessions either from C++ or PHP. I basically know that it has to do with cookies and communicating session id.
+I can't find any example on the curl homepage which demonstrates a simple session management use case.
+I'm assuming it has something to do with one or many of the following options in curl:
+CURLOPT_COOKIE
+CURLOPT_COOKIEFILE
+CURLOPT_COOKIEJAR
+CURLOPT_COOKIESESSION
+CURLOPT_COOKIELIST
+
+But I can't really see the big picture just from the documentation of CURLOPT_COOKIESESSION for instance.
+Anybody who has done this, please share a simple piece of code which shows the concept.
+Regards
+Robert
+
+
+A session in PHP has the purpose of preserving some state over several requests, since HTTP in itself is stateless. To get a session from PHP, simply request a php page that starts a session, and keep the cookie you get back for subsequent requests.
+Starting a session in php is simple - call the session_start() function. That function will resume an existsing session if the cookie exists in the request. When the session is started, persistent variables can be set using the superglobal array $_SESSION. It's a good idea to store a 'is logged in'-token there =) To end the PHP session, set $_SESSION to array(), so that the token is destroyed.
+
+I have an example for command line curl in bash - logging in to PHPMyAdmin and then using its export function. Maybe it will help you:
+#!/bin/bash
+
+PHPMYADMINURL="http://www.example.com/phpmyadmin/"
+
+# Username and password, has to be URL-encoded
+MYUSERNAME="username"
+MYPASSWORD="password"
+
+TMPCOOKIES="$(mktemp)" || exit 1
+
+TOKEN=$(
+        curl \
+                --silent \
+                --show-error \
+                --data @- \
+                --data "lang=en-utf-8" \
+                --cookie-jar "$TMPCOOKIES" \
+                --dump-header - \
+                --url "$PHPMYADMINURL" \
+                <<< "pma_username=$MYUSERNAME&pma_password=$MYPASSWORD" \
+                | egrep 'token=[0-9a-h]+' \
+                | head -1 \
+                | sed -r 's/^(.*token=)([0-9a-h]+)(.*)/\2/' \
+        ) || exit 1
+
+curl \
+       --cookie "$TMPCOOKIES" \
+       --data "token=$TOKEN" \
+       --data "export_type=server" \
+       --data "what=sql" \
+       --data "asfile=sendit" \
+       --data "sql_data=something" \
+       --data "sql_columns=something" \
+       --data "sql_hex_for_blob=something" \
+       --data "compression=gzip" \
+       --url "$PHPMYADMINURL"export.php 1>&2 || exit 1
+
+rm -f "$TMPCOOKIES" || exit 1
+
+PHPMyAdmin uses tokens besides cookies so the code is a little more complicated than normally needed.
+
+As far as I understand it, CURL will handle session cookies automatically for you if you enable cookies, as long as you reuse your CURL handle for each request in the session:
+CURL *Handle = curl_easy_init();
+
+// Read cookies from a previous session, as stored in MyCookieFileName.
+curl_easy_setopt( Handle, CURLOPT_COOKIEFILE, MyCookieFileName );
+// Save cookies from *this* session in MyCookieFileName
+curl_easy_setopt( Handle, CURLOPT_COOKIEJAR, MyCookieFileName );
+
+curl_easy_setopt( Handle, CURLOPT_URL, MyLoginPageUrl );
+assert( curl_easy_perform( Handle ) == CURLE_OK );
+
+curl_easy_setopt( Handle, CURLOPT_URL, MyActionPageUrl );
+assert( curl_easy_perform( Handle ) == CURLE_OK );
+
+// The cookies are actually saved here.
+curl_easy_cleanup( Handle );
+
+I'm not positive that you need to set both COOKIEFILE and COOKIEJAR, but the documentation makes it seem that way.  In any case, you have to set one of the two in order to enable cookies at all in CURL.  You can do something as simple as:
+curl_easy_setopt( Handle, CURLOPT_COOKIEFILE, "" );
+
+That won't read any cookies from disk, but it will enable session cookies for the duration of the curl handle.

@@ -1,0 +1,46 @@
+What is the best way to store and search through object transactions?
+search transactions oop storage
+We have a decent sized object-oriented application.  Whenever an object in the app is changed, the object changes are saved back to the DB.  However, this has become less than ideal.
+Currently, transactions are stored as a transaction and a set of transactionLI's.
+The transaction table has fields for who, what, when, why, foreignKey, and foreignTable.  The first four are self-explanatory. ForeignKey and foreignTable are used to determine which object changed.
+TransactionLI has timestamp, key, val, oldVal, and a transactionID.  This is basically a key/value/oldValue storage system.
+The problem is that these two tables are used for every object in the application, so they're pretty big tables now.  Using them for anything is slow.  Indexes only help so much.
+So we're thinking about other ways to do something like this.  Things we've considered so far:
+- Sharding these tables by something like the timestamp.
+- Denormalizing the two tables and merge them into one.
+- A combination of the two above.
+- Doing something along the lines of serializing each object after a change and storing it in subversion.
+- Probably something else, but I can't think of it right now.
+The whole problem is that we'd like to have some mechanism for properly storing and searching through transactional data.  Yeah you can force feed that into a relational database, but really, it's transactional data and should be stored accordingly.
+What is everyone else doing?
+
+
+I've never found a great end all solution for this type of problem. Some things you can try is if your DB supports partioning (or even if it doesn't you can implement the same concept your self), but partion this log table by object type and then you can further partion by date/time or by your object ID (if your ID is a numeric this works nicely not sure how a guid would partion). 
+This will help maintain the size of the table and keep all related transactions to a single instance of an object to itself. 
+One idea you could explore is instead of storing each field in a name value pair table, you could store the data as a blob (either text or binary). For example serialize the object to Xml and store it in a field. 
+The downside of this is that as your object changes you have to consider how this affects all historical data if your using Xml then there are easy ways to update the historical xml structures, if your using binary there are ways but you have to be more concious of the effort.
+I've had awsome success storing a rather complex object model that has tons of interelations as a blob (the xml serializer in .net didn't handle the relationships btw the objects). I could very easily see myself storing the binary data. A huge downside of storing it as binary data is that to access it you have to take it out of the database with Xml if your using a modern database like MSSQL you can access the data.
+One last approach is to split the two patterns, you could define a Difference Schema (and I assume more then one property changes at a time) so for example imagine storing this xml:
+<objectDiff>
+<field name="firstName" newValue="Josh" oldValue="joshua"/>
+<field name="lastName" newValue="Box" oldValue="boxer"/>
+</objectDiff>
+
+This will help alleviate the number of rows, and if your using MSSQL you can define an XML Schema and get some of the rich querying ability around the object. You can still partition the table.
+Josh
+
+Depending on the characteristics of your specific application an alternative approach is to keep revisions of the entities themselves in their respective tables, together with the who, what, why and when per revision. The who, what and when can still be foreign keys.
+Although I would be very careful to use this approach, since this is only viable for applications with a relatively small amount of changes per entity/entity type. 
+
+If querying the data is important I would use true Partitioning in SQL Server 2005 and above if you have enterprise edition of SQL Server. We have millions of rows partitioned by year down to day for the current month - you can be as granular as your application demands with a maximum number of 1000 partitions. 
+Alternatively , if you are using SQL 2008 you could look into filtered indexes. 
+These are solutions that will enable you to retain the simplified structure you have whilst providing the performance you need to query that data. 
+Splitting/Archiving older changes obviously should be considered. 
+
+We have taken the following approach:-
+
+All objects are serialised (using the standard XMLSeriliser) but we have decorated our classes with serialisation attributes so that the resultant XML is much smaller (storing elements as attributes and dropping vowels on field names for example). This could be taken a stage further by compressing the XML if necessary.
+The object repository is accessed via a SQL view. The view fronts a number of tables that are identical in structure but the table name appended with a GUID. A new table is generated when the previous table has reached critical mass (a pre-determined number of rows)
+We run a nightly archiving routine that generates the new tables and modifies the views accordingly so that calling applications do not see any differences.
+Finally, as part of the overnight routine we archive any old object instances that are no longer required to disk (and then tape).
+

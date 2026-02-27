@@ -1,0 +1,115 @@
+Is it possible to change the natural order of columns in Postgres?
+postgresql
+Is it possible to change the natural order of columns in Postgres 8.1?
+I know that you shouldn't rely on column order - it's not essential to what I am doing - I only need it to make some auto-generated stuff come out in a way that is more pleasing, so that the field order matches all the way from pgadmin through the back end and out to the front end.
+
+
+Unfortunately, no, it's not. Column order is entirely up to Postgres.
+
+Specifying the column order in the query is the only reliable (and sane) way. That said, you can usually get a different ordering by altering the table as shown in the example below as the columns are usually (not guaranteed to be) returned in the order they were added to the table.
+postgres=# create table a(a int, b int, c int);
+CREATE TABLE
+postgres=# insert into a values (1,2,3);
+INSERT 0 1
+postgres=# select * from a;
+ a | b | c
+---+---+---
+ 1 | 2 | 3
+(1 row)
+
+postgres=# alter table a add column a2 int;
+ALTER TABLE
+postgres=# select * from a;
+ a | b | c | a2
+---+---+---+----
+ 1 | 2 | 3 |
+(1 row)
+
+postgres=# update a set a2 = a;
+UPDATE 1
+postgres=# alter table a drop column a;
+ALTER TABLE
+postgres=# alter table a rename column a2 to a;
+ALTER TABLE
+postgres=# select * from a;
+ b | c | a
+---+---+---
+ 2 | 3 | 1
+(1 row)
+
+postgres=#
+
+
+As the other answers mentioned, you cannot change the order of columns, that's up to postgres. You can (and should!) solve your problem with a view. For the purposes of your reporting query, it will look just like a table. Something like:
+create view my_view as
+  select * from my_table
+  order by some_col;
+
+
+If your database is not very big and you can afford some downtime then you can:
+
+Disable write access to the database
+this is essential as otherwise any changes after starting the next point will be lost
+pg_dump --create --column-inserts databasename > databasename.pgdump.sql
+Edit apropriate CREATE TABLE statement in databasename.pgdump.sql
+If the file is too big for your editor just split it using split command, edit, then assemble back using cat
+drop database databasename
+You do have a recent backup, just in case, do you?
+psql --single-transaction -f databasename.pgdump.sql
+If you don't use --single-transaction it will be very slow
+
+If you use so called large objects make sure they are included in the dump. I'm not sure if they are by default in 8.1.
+
+You can actually just straight up change the column order, but I'd hardly recommend it, and you should be very careful if you decide to do it.
+eg.
+
+# CREATE TABLE test (a int, b int, c int);
+# INSERT INTO test VALUES (1,2,3);
+# SELECT * FROM test;
+ a | b | c 
+---+---+---
+ 1 | 2 | 3
+(1 row)
+
+Now for the tricky bit, you need to connect to your database using the postgres user so you can modify the system tables.
+
+# SELECT relname, relfilenode FROM pg_class WHERE relname='test';
+ relname | relfilenode 
+---------+-------------
+ test_t  |       27666
+(1 row)
+
+# SELECT attrelid, attname, attnum FROM pg_attribute WHERE attrelid=27666;
+ attrelid | attname  | attnum 
+----------+----------+--------
+    27666 | tableoid |     -7
+    27666 | cmax     |     -6
+    27666 | xmax     |     -5
+    27666 | cmin     |     -4
+    27666 | xmin     |     -3
+    27666 | ctid     |     -1
+    27666 | b        |      1
+    27666 | a        |      2
+    27666 | c        |      3
+(9 rows)
+
+attnum is a unique column, so you need to use a temporary value when you're modifying the column numbers as such:
+
+# UPDATE pg_attribute SET attnum=4 WHERE attname='a' AND attrelid=27666;
+UPDATE 1
+# UPDATE pg_attribute SET attnum=1 WHERE attname='b' AND attrelid=27666;
+UPDATE 1
+# UPDATE pg_attribute SET attnum=2 WHERE attname='a' AND attrelid=27666;
+UPDATE 1
+
+# SELECT * FROM test;
+ b | a | c 
+---+---+---
+ 1 | 2 | 3
+(1 row)
+
+Again, because this is playing around with database system tables, use extreme caution if you feel you really need to do this.
+This is working as of postgres 8.3, with prior versions, your milage may vary.
+
+I have asked that question in pgsql-admin in 2007. Tom Lane himself declared it practically unfeasible to change the order in the catalogs. Clarification: .. for users, with the present tools (still true for v9.1). Does not mean, it could not be implemented. IMO, it should be.
+http://archives.postgresql.org/pgsql-admin/2007-06/msg00037.php

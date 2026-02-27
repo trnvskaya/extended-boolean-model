@@ -1,0 +1,92 @@
+Python: using a recursive algorithm as a generator
+python recursion generator
+Recently I wrote a function to generate certain sequences with nontrivial constraints. The problem came with a natural recursive solution. Now it happens that, even for relatively small input, the sequences are several thousands, thus I would prefer to use my algorithm as a generator instead of using it to fill a list with all the sequences.
+Here is an example. Suppose we want to compute all the permutations of a string with a recursive function. The following naive algorithm takes an extra argument 'storage' and appends a permutation to it whenever it finds one:
+def getPermutations(string, storage, prefix=""):
+   if len(string) == 1:
+      storage.append(prefix + string)   # <-----
+   else:
+      for i in range(len(string)):
+         getPermutations(string[:i]+string[i+1:], storage, prefix+string[i])
+
+storage = []
+getPermutations("abcd", storage)
+for permutation in storage: print permutation
+
+(Please don't care about inefficiency, this is only an example.)
+Now I want to turn my function into a generator, i.e. to yield a permutation instead of appending it to the storage list:
+def getPermutations(string, prefix=""):
+   if len(string) == 1:
+      yield prefix + string             # <-----
+   else:
+      for i in range(len(string)):
+         getPermutations(string[:i]+string[i+1:], prefix+string[i])
+
+for permutation in getPermutations("abcd"):
+   print permutation
+
+This code does not work (the function behaves like an empty generator).
+Am I missing something?
+Is there a way to turn the above recursive algorithm into a generator without replacing it with an iterative one?
+
+
+def getPermutations(string, prefix=""):
+    if len(string) == 1:
+        yield prefix + string
+    else:
+        for i in xrange(len(string)):
+            for perm in getPermutations(string[:i] + string[i+1:], prefix+string[i]):
+                yield perm
+
+Or without an accumulator:
+def getPermutations(string):
+    if len(string) == 1:
+        yield string
+    else:
+        for i in xrange(len(string)):
+            for perm in getPermutations(string[:i] + string[i+1:]):
+                yield string[i] + perm
+
+
+The interior call to getPermutations -- it's a generator, too.
+def getPermutations(string, prefix=""):
+   if len(string) == 1:
+      yield prefix + string            
+   else:
+      for i in range(len(string)):
+         getPermutations(string[:i]+string[i+1:], prefix+string[i])  # <-----
+
+You need to iterate through that with a for-loop (see @MizardX posting, which edged me out by seconds!)
+
+This avoids the len(string)-deep recursion, and is in general a nice way to handle generators-inside-generators:
+from types import GeneratorType
+
+def flatten(*stack):
+    stack = list(stack)
+    while stack:
+        try: x = stack[0].next()
+        except StopIteration:
+            stack.pop(0)
+            continue
+        if isinstance(x, GeneratorType): stack.insert(0, x)
+        else: yield x
+
+def _getPermutations(string, prefix=""):
+    if len(string) == 1: yield prefix + string
+    else: yield (_getPermutations(string[:i]+string[i+1:], prefix+string[i])
+            for i in range(len(string)))
+
+def getPermutations(string): return flatten(_getPermutations(string))
+
+for permutation in getPermutations("abcd"): print permutation
+
+flatten allows us to continue progress in another generator by simply yielding it, instead of iterating through it and yielding each item manually.
+
+Python 3.3 will add yield from to the syntax, which allows for natural delegation to a sub-generator:
+def getPermutations(string, prefix=""):
+    if len(string) == 1:
+        yield prefix + string
+    else:
+        for i in range(len(string)):
+            yield from getPermutations(string[:i]+string[i+1:], prefix+string[i])
+

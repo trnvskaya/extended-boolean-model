@@ -1,0 +1,338 @@
+jQuery/JavaScript to replace broken images
+javascript jquery html brokenimage
+I have a web page that includes a bunch of images. Sometimes the image isn't available, so a broken image is displayed in the client's browser.
+How do I use jQuery to get the set of images, filter it to broken images then replace the src?
+
+--I thought it would be easier to do this with jQuery, but it turned out much easier to just use a pure JavaScript solution, that is, the one provided by Prestaul.
+
+
+Handle the onError event for the image to reassign its source using JavaScript:
+function imgError(image) {
+    image.onerror = "";
+    image.src = "/images/noimage.gif";
+    return true;
+}
+
+<img src="image.png" onerror="imgError(this);"/>
+
+Or without a JavaScript function:
+<img src="image.png" onError="this.onerror=null;this.src='/images/noimage.gif';" />
+
+The following compatibility table lists the browsers that support the error facility:
+http://www.quirksmode.org/dom/events/error.html
+
+I believe this is what you're after: jQuery.Preload
+Here's the example code from the demo, you specify the loading and not found images and you're all set:
+$('#images img').preload({
+    placeholder:'placeholder.jpg',
+    notFound:'notfound.jpg'
+});
+
+
+I am not sure if there is a better way, but I can think of a hack to get it - you could Ajax post to the img URL, and parse the response to see if the image actually came back. If it came back as a 404 or something, then swap out the img. Though I expect this to be quite slow.
+
+I don't know jQuery yet, so my answer will be generic (and the result of a quick search...).
+I found the page Detecting broken images with JavaScript (via a DZone Snippet, but I better give the original source!) which gives a simple and apparently relatively cross-browser (to test on Opera/Safari) method.
+Of course, it would be better to serve a non-broken page, no? Although to be honest it can be a connection issue to.
+
+Here is a standalone solution:
+$(window).load(function() {
+  $('img').each(function() {
+    if (!this.complete || typeof this.naturalWidth == "undefined" || this.naturalWidth == 0) {
+      // image was broken, replace with your new image
+      this.src = 'http://www.tranism.com/weblog/images/broken_ipod.gif';
+    }
+  });
+});
+
+
+I use the built in error handler:
+$("img").error(function () {
+  $(this).unbind("error").attr("src", "broken.gif");
+});
+
+error() deprecated in 1.8 or higher.
+
+$(window).bind('load', function() {
+$('img').each(function() {
+    if((typeof this.naturalWidth != "undefined" &&
+        this.naturalWidth == 0 ) 
+        || this.readyState == 'uninitialized' ) {
+        $(this).attr('src', 'missing.jpg');
+    }
+}); })
+
+Source: http://www.developria.com/2009/03/jquery-quickie---broken-images.html
+
+I couldn't find a script to suit my needs, so I made a recursive function to check for broken images and attempt to reload them every four seconds until they are fixed.
+I limited it to 10 attempts as if it's not loaded by then the image might not be present on server and the function would enter an infinite loop. I am still testing though. Feel free to tweak it :)
+var retries = 0;
+$.imgReload = function() {
+    var loaded = 1;
+
+    $("img").each(function() {
+        if (!this.complete || typeof this.naturalWidth == "undefined" || this.naturalWidth == 0) {
+
+            var src = $(this).attr("src");
+            var date = new Date();
+            $(this).attr("src", src + "?v=" + date.getTime()); //slightly change url to prevent loading from cache
+            loaded =0;
+        }
+    });
+
+    retries +=1;
+    if (retries < 10) { // If after 10 retries error images are not fixed maybe because they
+                        // are not present on server, the recursion will break the loop
+        if (loaded == 0) {
+            setTimeout('$.imgReload()',4000); // I think 4 seconds is enough to load a small image (<50k) from a slow server
+        }
+        // All images have been loaded
+        else {
+            // alert("images loaded");
+        }
+    }
+    // If error images cannot be loaded  after 10 retries
+    else {
+        // alert("recursion exceeded");
+    }
+}
+
+jQuery(document).ready(function() {
+    setTimeout('$.imgReload()',5000);
+});
+
+
+Better call using
+jQuery(window).load(function(){
+    $.imgReload();
+});
+
+Because using document.ready doesn't necessary imply that images are loaded, only the HTML. Thus, there is no need for a delayed call.
+
+In case someone like me, tries to attach the error event to a dynamic HTML img tag, I'd like to point out that, there is a catch: 
+Apparently img error events don't bubble in most browsers, contrary to what the standard says.
+So, something like the following will not work:
+$(document).on('error', 'img', function () { ... })
+
+Hope this will be helpful to someone else. I wish I had seen this here in this thread. But, I didn't. So, I am adding it 
+
+;(window.jQuery || window.Zepto).fn.fallback = function (fallback) {
+    return this.one('error', function () {
+        var self = this;
+        this.src = (fallback || 'http://lorempixel.com/$width/$height')
+        .replace(/\$(\w+)/g, function (m, t) { return self[t] || ''; });
+    });
+};
+
+You can pass a placeholder path and acces in it all properties from the failed image object via $*:
+$('img').fallback('http://dummyimage.com/$widthx$height&text=$src');
+
+http://jsfiddle.net/ARTsinn/Cu4Zn/
+
+CoffeeScript variant:
+I made it to fix an issue with Turbolinks that causes the .error() method to get raised in Firefox sometimes even though the image is really there.
+$("img").error ->
+  e = $(@).get 0
+  $(@).hide() if !$.browser.msie && (typeof this.naturalWidth == "undefined" || this.naturalWidth == 0)
+
+
+I solved my problem with these two simple functions:
+function imgExists(imgPath) {
+    var http = jQuery.ajax({
+                   type:"HEAD",
+                   url: imgPath,
+                   async: false
+               });
+    return http.status != 404;
+}
+
+function handleImageError() {
+    var imgPath;
+
+    $('img').each(function() {
+        imgPath = $(this).attr('src');
+        if (!imgExists(imgPath)) {
+            $(this).attr('src', 'images/noimage.jpg');
+        }
+    });
+}
+
+
+Here is a quick-and-dirty way to replace all the broken images, and there is no need to change the HTML code ;)
+http://ashfaqahmed.net/jquery-replacing-broken-images/
+$("img").each(function()
+{
+    var NoImageUrl = "http://www.acsu.buffalo.edu/~rslaine/imageNotFound.jpg";
+    var image = $(this);
+    var ThisHeight = $(image).css("height");
+    var ThisWidth = $(image).css("width");
+    if (image.context.naturalWidth == 0 || image.readyState == 'uninitialized')
+    {
+        $(image).unbind("error").attr("src", NoImageUrl).css(
+        {
+            height: ThisHeight,
+            width: ThisWidth,
+        });
+    }
+});
+
+
+This is a crappy technique, but it's pretty much guaranteed:
+<img ...  onerror="this.parentNode.removeChild(this);">
+
+
+This has been frustrating me for years.  My CSS fix sets a background image on the img. When a dynamic image src doesn't load to the foreground, a placeholder is visible on the img's bg.  This works if your images have a default size (e.g. height, min-height, width and/or min-width).
+You'll see the broken image icon but it's an improvement.  Tested down to IE9 successfully.  iOS Safari and Chrome don't even show a broken icon.
+.dynamicContainer img {
+  background: url('/images/placeholder.png');
+  background-size: contain;
+}
+
+Add a little animation to give src time to load without a background flicker.  Chrome fades in the background smoothly but desktop Safari doesn't.
+.dynamicContainer img {
+  background: url('/images/placeholder.png');
+  background-size: contain;
+  -webkit-animation: fadein 1s;
+  animation: fadein 1s;                     
+}
+
+@-webkit-keyframes fadein {
+  0%   { opacity: 0.0; }
+  50%  { opacity: 0.5; }
+  100% { opacity: 1.0; }
+}
+
+@keyframes fadein {
+  0%   { opacity: 0.0; }
+  50%  { opacity: 0.5; }
+  100% { opacity: 1.0; }
+}
+
+
+By using Prestaul's answer, I added some checks and I prefer to use the jQuery way.
+<img src="image1.png" onerror="imgError(this,1);"/>
+<img src="image2.png" onerror="imgError(this,2);"/>
+
+function imgError(image, type) {
+    if (typeof jQuery !== 'undefined') {
+       var imgWidth=$(image).attr("width");
+       var imgHeight=$(image).attr("height");
+
+        // Type 1 puts a placeholder image
+        // Type 2 hides img tag
+        if (type == 1) {
+            if (typeof imgWidth !== 'undefined' && typeof imgHeight !== 'undefined') {
+                $(image).attr("src", "http://lorempixel.com/" + imgWidth + "/" + imgHeight + "/");
+            } else {
+               $(image).attr("src", "http://lorempixel.com/200/200/");
+            }
+        } else if (type == 2) {
+            $(image).hide();
+        }
+    }
+    return true;
+}
+
+
+This solution is plain JavaScript, and it should be crossbrowser compatible and delivers without ugly markup onerror="":
+var sPathToDefaultImg = 'http://cdn.sstatic.net/stackexchange/img/logos/so/so-icon.png';
+
+var fnValidateImage = function (oImg)
+{
+    img         = new Image();
+    img.onerror = function () {
+        oImg.src  = sPathToDefaultImg;
+    };
+    img.src     = oImg.src;
+};
+
+var aImg = document.getElementsByTagName('IMG');
+var i    = aImg.length;
+
+while (--i !== -1) {
+    fnValidateImage(aImg[i]);
+}
+
+Feel free to play around with this CODEPEN
+
+This is JavaScript, should be cross browser compatible, and delivers without the ugly markup onerror="":
+var sPathToDefaultImg = 'http://cdn.sstatic.net/stackexchange/img/logos/so/so-icon.png';
+var fnValidateImage = function(oImg) {
+    img = new Image();
+    img.onerror = function() {
+        oImg.src = sPathToDefaultImg;
+    };
+    img.src = oImg.src;
+};
+var aImg = document.getElementsByTagName('IMG');
+var i = aImg.length;
+while (--i !== -1) {
+    fnValidateImage(aImg[i]);
+}
+
+CODEPEN: 
+
+If you have inserted your img with innerHTML, like: $("div").innerHTML = <img src="wrong-uri">, you can load another image if it fails doing, e.g, this:
+<script>
+    function imgError(img) {
+        img.error="";
+        img.src="valid-uri";
+    }
+</script>
+
+<img src="wrong-uri" onerror="javascript:imgError(this)">
+
+Why is javascript: _needed? Because scripts injected into the DOM via script tags in innerHTML are not run at the time they are injected, so you have to be explicit.
+
+I use the code below which first tries to find the current user's avatar based on their userid which in this case is "123", and if it doesn't find an avatar image the onerror code changes the img src to a placeholder image.
+<img src="avatars/users/123.png" onerror="this.src='/ngTribeBase/src/assets/img/avatars/male.png'" />
+
+
+You can use GitHub's own fetch for this:
+Frontend: https://github.com/github/fetch
+or for Backend, a Node.js version: https://github.com/bitinn/node-fetch
+fetch(url)
+  .then(function(res) {
+    if (res.status == '200') {
+      return image;
+    } else {
+      return placeholder;
+    }
+  }
+
+Edit: This method is going to replace XHR and supposedly already has been in Chrome. To anyone reading this in the future, you may not need the aforementioned library included.
+
+I found this post while looking at this other SO post.  Below is a copy of the answer I gave there.
+I know this is an old thread, but React has become popular and, perhaps, someone using React will come here looking for an answer to the same problem.
+So, if you are using React, you can do something like the below, which was an answer original provided by Ben Alpert of the React team here
+getInitialState: function(event) {
+    return {image: "http://example.com/primary_image.jpg"};
+},
+handleError: function(event) {
+    this.setState({image: "http://example.com/failover_image.jpg"});
+},
+render: function() {
+    return (
+        <img onError={this.handleError} src={src} />;
+    );
+}
+
+
+I created a fiddle to replace the broken image using "onerror" event.
+This may help you. 
+    //the placeholder image url
+    var defaultUrl = "url('https://sadasd/image02.png')";
+
+    $('div').each(function(index, item) {
+      var currentUrl = $(item).css("background-image").replace(/^url\(['"](.+)['"]\)/, '$1');
+      $('<img>', {
+        src: currentUrl
+      }).on("error", function(e) {
+        $this = $(this);
+        $this.css({
+          "background-image": defaultUrl
+        })
+        e.target.remove()
+      }.bind(this))
+    })
+

@@ -1,0 +1,45 @@
+What techniques can you use to profile your code
+c++ profile profiler homebrew
+Some of the platforms that I develop on, don't have profiling tools.  I am looking for suggestions/techniques that you have personally used to help you identify hotspots, without the use of a profiler.
+The target language is C++.
+I am interested in what you have personally used.
+
+
+In essence, if a profiling tool is not available, you emulate what a profiler would have done.  You insert counters into functions you think are interesting and count how many times, and potentially with what size/sort of arguments they're called.
+If you have access to any timers on your platform, you may start/stop these at the beginning/end of said functions to get execution time information as well, if this is unclear from the code.  This is going to give you the biggest bang for your buck in complex code, as there will usually be too many functions to instrument them all.  Instead, you can obtain the time spent in certain sections of code by dedicating a timer to each one.
+These two techniques in tandem can form an iterative approach, where you find the broad section of code that consumes the majority of your cycles using timers, then instrument individual functions at a finer granularity to hone in on the problem.
+
+If it is something sufficiently long in duration (e.g. a minute or more), I run the software in a debugger then break a few times and see where the debugger breaks, this gives a very rough idea of what the software is up to (e.g. if you break 10 times and they are all in the same place, this tells you something interesting!). 
+Very rough and ready but doesn't require any tools, instrumentation etc. 
+
+I've found the following quite useful:
+#ifdef PROFILING
+# define PROFILE_CALL(x) do{ \
+    const DWORD t1 = timeGetTime(); \
+    x; \
+    const DWORD t2 = timeGetTime(); \
+    std::cout << "Call to '" << #x << "' took " << (t2 - t1) << " ms.\n"; \
+  }while(false)
+#else
+# define PROFILE_CALL(x) x
+#endif
+
+Which can be used in the calling function as such:
+PROFILE_CALL(renderSlow(world));
+int r = 0;
+PROFILE_CALL(r = readPacketSize());
+
+
+No joke:  In addition to dumping timings to std::cout and other text/data oriented approaches I also use the Beep() function.  There's something about hearing the gap of silence between two "Beep" checkpoints that makes a different kind of impression.
+It's like the difference between looking at a written sheet music, and actually HEARING the music.   It's like the difference between reading rgb(255,0,0) and seeing fire-engine red.
+So, right now, I have a client/server app and with Beeps of different frequencies, marking where the client sends the message, where the server starts its reply, finishes its reply, where reply first enters the client, etc, I can very naturally get a feel for where the time is spent.
+
+I would use the 80/20 rule and put timers around hotspots or interesting call paths. You should have a general idea where the bottlenecks will be (or at least a majority of the execution paths) and use the appropriate platform dependent high resolution timer (QueryPerformanceCounters, gettimeofday, etc.).
+I usually don't bother with anything at startup or shutdown (unless needed) and will have well defined "choke points", usually message passing or some sort of algorithmic calculation. I've generally found that message sinks/srcs (sinks moreso), queues, mutexes, and just plain mess-ups (algorithms, loops) usually account for most of the latency in an execution path.
+
+I'm not sure what platforms you had in mind, but on embedded microcontrollers, it's sometimes helpful to twiddle a spare digital output line and measure the pulse width using an oscilloscope, counter/timer, or logic analyzer.
+
+Are you using Visual Studio?
+The you can use the /Gh and /GH switches. Here's an example involving stack inspection
+These flags allow you, by a file-by-file basis, to register undecorated functions that are called every time a method is entered and/or left in runtime.
+You can then register all times of profiling information, not just timing information.  Stack-dumps, calling address, return address, etc.  Which is important, because you may want to know that 'function X used Y time under function Z' and not just the total time spent in function X.

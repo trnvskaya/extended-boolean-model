@@ -1,0 +1,52 @@
+Hash Collision - what are the chances?
+database-design hash
+I have some code on my PHP powered site that creates a random hash (using sha1()) and I use it to match records in the database.
+What are the chances of a collision? Should I generate the hash, then check first if it's in the database (I'd rather avoid an extra query) or automatically insert it, based on the probability that it probably won't collide with another.
+
+
+If you assume that SHA-1 does a good job, you can conclude that there's a 1 in 2^160 chance that two given messages have the same hash (since SHA-1 produces a 160-bit hash).
+2^160 is a ridiculously large number. It's roughly 10^48. Even if you have a million entries in your database, that's still a 1 in 10^42 chance that a new entry will share the same hash.
+SHA-1 has proved to be fairly good, so I don't think you need to worry about collisions at all.
+As a side note, use PHP's *raw_output* feature when you use SHA-1 as this will lead to a shorter string and hence will make your database operations a bit faster.
+EDIT: To address the birthday paradox, a database with 10^18 (a million million million) entries has a chance of about 1 in 0.0000000000003 of a collision. Really not worth worrying about.
+
+SHA-1 produces 160 bit long digest. Therefore you are safe as long as you have less than 2^(160/2) entries. Division by 2 is due to birthday paradox.
+
+From first principles:
+SHA-1 produces a 160-bit digest. Assuming it uses the entire bit-space evenly (which is presumably what it was designed to do), that is only a 2^-160 chance on each insert that you would get a collision.
+So for each insert, it should be safe to assume there is no collision, and deal with the error if there is.
+That is not to say that you can ignore the chance of collision entirely.
+The Birthday Paradox suggests the chance of there being at least one collision in your database is higher than you would guess, because of the O(N^2) possible collisions.
+
+If you use numerically increasing IDs as input, then chances are practically zero that SHA-1 will collide.
+If the ID is the only input, then SHA-1 seems to be quite some overkill - producing a 160 bit hash from a 32-bit integer. I would rather use modular exponentiation, e.g. chose a large (32-bit) prime p, compute the modular generator g of that group, and then use g^id. This will be guaranteed collision free, and only give 32-bit "hashes".
+
+Ask the question what will it cost you if there is a collision. If this is a free site fine. If you are running a money making business and an overrite will cost you a million dollar contract then I would think again.
+I think you are going about this the wrong way.
+I think you need to keep the unique ID but you want to make sure that the users can not manually change the ID.
+One way to to do this is to put the ID and the hash of the ID (with some extra data) in the link.
+For Example: (my PHP is rusty so general algorithm would be:)
+id   = 5;
+hash = hash("My Private String " + id)
+link = "http://mySite.com/resource?id=" + id + "&hash=" + hash
+
+Then when you receive a request just validate that you can regenerate the hash from ID. This does leave you open to an attack to work out "My Private String" but that will be quite computationally hard and you could always append something else unique that is not directly available to the user (like the session ID).
+
+The other comments have covered you on the probabilities, however if you look at this pragmatically then you can get a definite answer for yourself.
+You said yourself that you are going to be hashing your sequential IDs. It would be easy to code up a test case. Iterate through ~100,000,000 ids and check for collisions. That would not take long to do. On the other hand you might run out of memory quarter of the way through.
+
+Use a symmetric encryption scheme and a private server key to encrypt the ID (and other values) when you send them to the client and decrypt again on reception. Take care that your cryptographic function provides both confidentiality and integrity checks.
+This allows you to use sensible values when talking to the DB without any collision, great security when talking to the client and reduces your probability to land on thedailyWTF by approximatly 2^160.
+See also Pounding A Nail: Old Shoe or Glass Bottle?!
+
+why not do something which guarantees there'll be no collisions, as well as makes sure that no one can change a GET parameter to view something they shouldn't: using a salt, combine the id and its hash.
+$salt = "salty";
+$key = sha1($salt . $id) . "-" . $id;
+// 0c9ab85f8f9670a5ef2ac76beae296f47427a60a-5
+
+even if you do accidentally stumble upon two numbers which have the exact same sha1 hash (with your salt), then the $key will still be different and you'll avoid all collisions.
+
+I don't think sha1() is going to give you any trouble here, weak random number generation is a more likely candidate for collisions.
+Stefan Esser wrote good article on the topic.
+
+If you have to obfuscate some data in your url to hide data, you are doing something wrong.

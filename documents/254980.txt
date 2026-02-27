@@ -1,0 +1,81 @@
+Help with CredEnumerate
+c# windows security winapi
+As a follow-up to this question I am hoping someone can help with the CredEnumerate API.  
+As I understand from the documentation the PCREDENTIALS out parameter is a "pointer to an array of pointers to credentials". I am able to successfully call the CredEnumerate API using C# but I am not sure of how to convert the PCREDENTIALS into something useful (like a list of credentials).
+Edit: Here's the code I am using:
+        int count = 0;
+        IntPtr pCredentials = IntPtr.Zero;
+        bool ret = false;
+        ret = CredEnumerate(null, 0, out count, out pCredentials);
+        if (ret != false)
+        {
+            IntPtr[] credentials = new IntPtr[count];
+            IntPtr p = pCredentials;
+            for (int i = 0; i < count; i++)
+            {
+                p = new IntPtr(p.ToInt32() + i);
+                credentials[i] = Marshal.ReadIntPtr(p);
+            }
+            List<Credential> creds = new List<Credential>(credentials.Length);
+            foreach (IntPtr ptr in credentials)
+            {
+                creds.Add((Credential)Marshal.PtrToStructure(ptr, typeof(Credential)));
+            }
+        }
+
+Unfortunately, while this works for the first credential in the arrayâit gets generated and added to the list correctlyâsubsequent array items bomb at Marshal.PtrToStructure with the following error:
+Attempted to read or write protected memory. This is often an indication that other memory is corrupt.
+Any ideas? Anyone? Bueller?
+
+
+You need to dereference the pointer to the array to get the array, then for each item in the array you will need to dereference the item to get the PCREDENTIALS instance.
+I found this post with some example code for performing what you want to do:
+[DllImport("advapi32", SetLastError = true, CharSet=CharSet.Unicode)]
+static extern bool CredEnumerate(string filter, int flag, out int count, out IntPtr
+pCredentials);
+
+...
+int count = 0;
+IntPtr pCredentials = IntPtr.Zero;
+IntPtr[] credentials = null;
+bool ret = CredEnumerate(null, 0, out count, out pCredentials);
+if (ret != false)
+{
+    credentials = new IntPtr[count];
+    IntPtr p = pCredentials;
+    for (int n = 0; n < count; n++)
+    {
+        credentials[n] = Marshal.ReadIntPtr(pCredentials,
+           n * Marshal.SizeOf(typeof(IntPtr)));
+    }
+} 
+else
+// failed....
+
+Then for each pointer you'll need to use Marshal.PtrToStructure to dereference the pointer into a PCREDENTIALS struct instance (sorry I cannot find the typedef for PCREDENTIALS anywhere, I'll assume you have it - and if you do don't forget the correct MarshalAs attributes and StructLayout attribute when you do define it):
+// assuming you have declared struct PCREDENTIALS
+var creds = new List<PCREDENTIALS>(credentials.Length);
+foreach (var ptr in credentials)
+{
+    creds.Add((PCREDENTIALS)Marshal.PtrToStructure(ptr, typeof(PCREDENTIALS)));
+}
+
+You would obviously want to combine the example and PtrToStructure code for optimal results but I wanted to leave the integrity of the example intact.
+
+You also need to calculate 'IntPtr p' correctly the code above is missing that and it will only fetch the 1st structure.
+Th following code will get all structures in 'IntPtr pCredentials'
+int count;
+IntPtr pCredentials;
+
+if (CredEnumerate(filter, 0, out count, out pCredentials) != 0)
+{
+    m_list = new List<PCREDENTIALS >(count);
+    int sz = Marshal.SizeOf(pCredentials);
+
+    for (int index = 0; index < count; index++)
+    {
+        IntPtr p = new IntPtr((sz == 4 ? pCredentials.ToInt32() : pCredentials.ToInt64()) + index * sz);
+        m_list.Add((PCREDENTIALS)Marshal.PtrToStructure(p, typeof(PCREDENTIALS)));
+    }
+}
+

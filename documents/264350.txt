@@ -1,0 +1,226 @@
+Is there an alternative for sleep() in C?
+c sleep delay
+In traditional embedded programming, we will give a delay function like so:
+for(i=0;i<255;i++)
+   for(j=0;j<255;j++);
+
+In the microprocessor's view, is this how the sleep() function works?
+Is there an alternative for the sleep() function in C?
+
+
+The kind of loop you describe is called a "busy wait". In real operating systems, sleeping does not cause a busy wait; it tells the operating system to not schedule the process in until the sleep period is over.
+
+You talk about "embedded programming" in the OP.  If you're doing embedded work and need something like sleep(), there are often hardware counters/timers available.  This will vary from architecture to architecture, so have a look at the datasheet.
+If you're not doing embedded work, I apologize :)
+
+If you're using for-loops, you'd better know what they compile to and how long those instructions take at your given clock speed, and ensure the CPU runs your instructions and nothing else (this can be done in embedded systems but it's tricky since it disallows interrupts).
+Otherwise, you won't be able to tell how long it's really going to take.
+Early PC games had this problem - they were built for a 4.7MHz PC and, when the faster computers came along, they were unplayable.
+The best way a 'sleep' can work is for the CPU to know what time it is at any given point.  Not necessarily the actual time (7:15 am) but at least the relative time (8612 seconds since some point in time).
+That way it can apply a delta to the current time and wait in a loop until the current+delta is reached.
+Anything that relies on number CPU cycles is inherently unreliable as the CPU may go off to another task and leave your loop hanging.
+Let's say you have a memory-mapped 16-bit I/O port which the CPU increments once a second.  Let's also assume it's at memory location 0x33 in your embedded system, where ints are also 16 bits.  A function called sleep then becomes something like:
+void sleep (unsigned int delay) {
+    unsigned int target = peek(0x33) + delay;
+    while (peek(0x33) != target);
+}
+
+You'll have to ensure that peek() returns the memory contents every time (so optimizing compilers don't muck up the logic) and that your while statement runs more than once per second so you don't miss the target, but these are operational issues that don't affect the concept I'm presenting.
+
+Alternatives depend in what you are trying to do and what OS you are on.
+If you just want to waste time, then these might help:
+On most unix-type systems you'll find a 'usleep' function, which is more or less like sleep with greater resolution. Be careful with that one because it usually can not sleep for just one microsecond.
+On some unix-type systems, the select system call can be used with all file descriptor sets zero in order to get a fairly accurate sub-second wait.
+On windows systems, you have Sleep, which is pretty much the same, but taking a number of milliseconds. 
+In a multi-tasking operating system, a sleep function can sometimes be given 0 as a parameter. This generally causes the function to give up it's timeslice, but be re-scheduled immediately if no other task is ready to run.
+
+One common mechanism is to use a select() that is guaranteed to time out, and specify the sleep time as the timeout:
+// Sleep for 1.5 sec
+struct timeval tv;
+tv.tv_sec = 1;
+tv.tv_usec = 500000;
+select(0, NULL, NULL, NULL, &tv);
+
+The select() is typically used to check a set of file descriptors and wait until at least one is ready to perform I/O.  If none is ready (or, in this case, if no fds are specified), it will time out.
+The advantage of select() over a busy loop is that it consumes very little resources while sleeping, while a busy loop monopolizes the processor as much as permitted by its priority level.
+
+In a unix-derivative OS, you would probably schedule a signal() call, and your code would simply block the code until the signal is raised. Signals are intended for the purpose, and they are very simple and efficient. 
+
+Busy-waiting is for amateurs even in an embedded system, use a real time source.
+
+There's more information on how sleep() works here
+By the way, busy waiting is not necessarily for amateurs--although it does burn processor that you may want to use for some other purpose.  If you are using a time source, you are limited to the granularity of that source.  E.G. if you have a 1 ms timer, and want to way 500 uS, you have a problem.  If your embedded system can handle the fact that you'll be buzzing in a loop for 500 uSec, that might be acceptable.  And even if you have a timer with your desired granularity, you also need to get an interrupt off that timer at the right time...then dispatch ot the interrupt handler...then get to your code.  Sometimes a busy loop is the most expedient solution.  Sometimes.
+
+sleep actually interfaces with operating system, where sleeping processes are placed outside of scheduling queue. I usually use:
+poll(0, 0, milliseconds);
+
+for POSIX compliant systems. select also works for windows (they must have a native API (probably called Sleep) for that.)
+
+any decent C compiler would, without extra work, remove your code entirely and the delay would vanish
+
+You would not use the code you published to sleep on an embedded system. A decent compiler would entirely remove it, and even if your compiler does not remove it is suboptimal, since running the processor in a tight loop will burn power, which is an issue for embedded system. Even systems not running on battery care about power usage, since lower power usage means cheaper power supplies and cooling.
+The way you normally do this is your CPU will implement some sort of IDLE or SLEEP instructions, that will cause it to temporarily stop processing commands. An external interrupt line connected to a timer circuit will wake the processor back up at regular intervals, and which point the CPU checks to see if it has been asleep for long enough, and if not it goes back to sleep.
+//Pseudo code
+int start = getTime();
+int end = start + sleepTime;
+
+while (getTime() < end) {
+       asm("SLEEP");
+}
+
+The exact details vary from processor to processor. If you are running as a process on an OS the sleep call generally just tells the scheduler to suspend your process, and then the kernel decides whether to schedule another process or to sleep the CPU. Also, the above code will not be adequete for real time systems, which want deadline guarantees, etc. In those cases you will need to get the time in the loop, know the duration of the time interrupt so ou know if you can resleep without blowing the deadline, and potentially reprogram the timer hardware or busy wait.
+
+Page 20 in 'Threading in C#' by Joseph Albahari has an interesting discussion of this. You cannot sleep for less than 1 ms in .Net but DateTime.Ticks has a granularity of 100-nanoseconds (= 0.1 microseconds) intervals. For controlling my 5 axis CNC stepper I only need to pause for 10 microseconds  between step commands. I have used a micro controller to do the nasty looping but I think it is OK hand over a processor for the job if you have a whole bunch anyway, stop the thread when you can. At least it wont always be the same one.
+
+an attempt... to really solve this issue, i.e. something that works (not like the above attempts of answer) lol
+I still have to improve this code to make it out. Few add-ons are welcome.
+// Sleep for both Windows and Linux: 
+// Too bad? No one proposed you a solution that works? 
+// Since Windows has no select.h nor poll.h, an implementation
+// is necessary.
+//  
+// Solutions on boards are often refered to use either select or poll, but ok, what about C (not c++)?
+//
+/// implementation of poll is destined in this attempt for windows
+/// Ideally, you add this part of code to the header of you *.c file, and it might work through...
+
+#ifdef WIN32
+#include <time.h>
+#include <sys/time.h>
+#include <ws2tcpip.h>
+#include <Winsock2.h>
+#include <windows.h>
+/* winsock doesn't feature poll(), so there is a version implemented
+ * in terms of select() in mingw.c. The following definitions
+ * are copied from linux man pages. A poll() macro is defined to
+ * call the version in mingw.c.
+ */
+#define POLLIN      0x0001    /* There is data to read */
+#define POLLPRI     0x0002    /* There is urgent data to read */
+#define POLLOUT     0x0004    /* Writing now will not block */
+#define POLLERR     0x0008    /* Error condition */
+#define POLLHUP     0x0010    /* Hung up */
+#define POLLNVAL    0x0020    /* Invalid request: fd not open */
+struct pollfd {
+  SOCKET fd;        /* file descriptor */
+  short events;     /* requested events */
+  short revents;    /* returned events */
+};
+
+int mingw_poll (struct pollfd *, unsigned int, int);
+
+#define poll(x, y, z)        mingw_poll(x, y, z)
+#endif
+
+
+
+
+
+int mingw_poll(struct pollfd *fds, unsigned int nfds, int timo)
+{
+    struct timeval timeout, *toptr;
+    fd_set ifds, ofds, efds, *ip, *op;
+    int i, rc;
+
+    /* Set up the file-descriptor sets in ifds, ofds and efds. */
+    FD_ZERO(&ifds);
+    FD_ZERO(&ofds);
+    FD_ZERO(&efds);
+    for (i = 0, op = ip = 0; i < nfds; ++i) {
+    fds[i].revents = 0;
+    if(fds[i].events & (POLLIN|POLLPRI)) {
+        ip = &ifds;
+        FD_SET(fds[i].fd, ip);
+    }
+    if(fds[i].events & POLLOUT) {
+        op = &ofds;
+        FD_SET(fds[i].fd, op);
+    }
+    FD_SET(fds[i].fd, &efds);
+    } 
+
+    /* Set up the timeval structure for the timeout parameter */
+    if(timo < 0) {
+    toptr = 0;
+    } else {
+    toptr = &timeout;
+    timeout.tv_sec = timo / 1000;
+    timeout.tv_usec = (timo - timeout.tv_sec * 1000) * 1000;
+    }
+
+#ifdef DEBUG_POLL
+    printf("Entering select() sec=%ld usec=%ld ip=%lx op=%lx\n",
+           (long)timeout.tv_sec, (long)timeout.tv_usec, (long)ip, (long)op);
+#endif
+    rc = select(0, ip, op, &efds, toptr);
+#ifdef DEBUG_POLL
+    printf("Exiting select rc=%d\n", rc);
+#endif
+
+    if(rc <= 0)
+    return rc;
+
+    if(rc > 0) {
+        for (i = 0; i < nfds; ++i) {
+            int fd = fds[i].fd;
+        if(fds[i].events & (POLLIN|POLLPRI) && FD_ISSET(fd, &ifds))
+            fds[i].revents |= POLLIN;
+        if(fds[i].events & POLLOUT && FD_ISSET(fd, &ofds))
+            fds[i].revents |= POLLOUT;
+        if(FD_ISSET(fd, &efds))
+            /* Some error was detected ... should be some way to know. */
+            fds[i].revents |= POLLHUP;
+#ifdef DEBUG_POLL
+        printf("%d %d %d revent = %x\n", 
+                FD_ISSET(fd, &ifds), FD_ISSET(fd, &ofds), FD_ISSET(fd, &efds), 
+                fds[i].revents
+        );
+#endif
+        }
+    }
+    return rc;
+}
+
+
+I found the function in this post (http://cboard.cprogramming.com/c-programming/111229-how-use-sleep-function.html) and it works:
+#include <stdio.h>
+#include <windows.h>
+
+int main()
+{
+    puts("Hello \n");
+    /* in windows.h is declared the Sleep (upper S) function and it takes time in 
+miliseconds */
+    Sleep(3000);
+    puts("World \n");
+    return 0;
+}
+
+
+#include <Windows.h>
+
+static NTSTATUS(__stdcall *NtDelayExecution)(BOOL Alertable, PLARGE_INTEGER DelayInterval) = (NTSTATUS(__stdcall*)(BOOL, PLARGE_INTEGER)) GetProcAddress(GetModuleHandle("ntdll.dll"), "NtDelayExecution");
+
+static NTSTATUS(__stdcall *ZwSetTimerResolution)(IN ULONG RequestedResolution, IN BOOLEAN Set, OUT PULONG ActualResolution) = (NTSTATUS(__stdcall*)(ULONG, BOOLEAN, PULONG)) GetProcAddress(GetModuleHandle("ntdll.dll"), "ZwSetTimerResolution");
+
+
+
+
+static void SleepShort(float milliseconds) {
+    static bool once = true;
+    if (once) {
+        ULONG actualResolution;
+        ZwSetTimerResolution(1, true, &actualResolution);
+        once = false;
+    }
+
+    LARGE_INTEGER interval;
+    interval.QuadPart = -1 * (int)(milliseconds * 10000.0f);
+    NtDelayExecution(false, &interval);
+}
+
+Yes it uses some undocumented kernel functions, but honestly, it much faster than most suggestions and works very well, (note it will be limited to the CPU's amount, for example mine can only sleep 500 nanoseconds (0.5))
+
+available in linux
+usleep( int microseconds )
+nanosleep( ... ) more precision see man pages for calling arguments

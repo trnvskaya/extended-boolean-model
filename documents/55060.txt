@@ -1,0 +1,233 @@
+Php function argument error suppression, empty() isset() emulation
+php error-handling error-suppression
+I'm pretty sure the answer to this question is no, but in case there's some PHP guru
+is it possible to write a function in a way where invalid arguments or non existent variables can be passed in and php will not error without the use of '@'
+Much like empty and isset do. You can pass in a variable you just made up and it won't error.
+ex:
+
+empty($someBogusVar); // no error
+
+myHappyFunction($someBogusVar); // Php warning / notice
+
+
+
+No, because this isn't really anything to do with the function; the error is coming from attempting to de-reference a non-existent array key. You can change the warning level of your PHP setup to surpress these errors, but you're better off just not doing this.
+Having said that, you could do something like
+function safeLookup($array, $key)
+{
+  if (isset($array, $key))
+    return $array[$key];
+
+  return 0;
+}
+
+And use it in place of array key lookup
+defaultValue(safeLookup($foo, "bar"), "baz);
+
+Now I need to take a shower :)
+
+
+@Brian: I use a trinary operation to do the check for me:
+
+return $value ? $value : $default;
+
+this returns either $value OR $default. Depending upon the value of $value. If it is 0, false, empty or anything similar the value in $default will be returned.
+I'm more going for the challenge to emulate functions like empty() and isset() 
+
+And going further up the abstraction tree, what are you using this for?
+You could either initialize those values in each class as appropriate or create a specific class containing all the default values and attributes, like:
+class Configuration {
+
+    private var $configValues = array( 'cool' => 'Defaultcoolval' ,
+                                       'uncool' => 'Defuncoolval'  );
+
+    public setCool($val) {
+        $this->configValues['cool'] = $val;
+    }
+
+    public getCool() {
+        return $this->configValues['cool'];
+    }
+
+}
+
+The idea being that, when using defaultValue function everywhere up and down in your code, it will become a maintenance nightmare whenever you have to change a value, looking for all the places where you've put a defaultValue call. And it'll also probably lead you to repeat yourself, violating DRY.
+Whereas this is a single place to store all those default values. You might be tempted to avoid creating those setters and getters, but they also help in maintenance, in case it becomse pertinent to do some modification of outputs or validation of inputs.
+
+I'm sure there could be a great discussion on ternary operators vrs function calls. But the point of this question was to see if we can create a function that won't throw an error if a non existent value is passed in without using the '@'
+
+You can do this using func_get_args like so:
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+function defaultValue() {
+    $args = func_get_args();
+
+    foreach($args as $arg) {
+        if (!is_array($arg)) {
+            $arg = array($arg);
+        }
+        foreach($arg as $a) {
+            if(!empty($a)) {
+                return $a;
+            }
+        }
+    }
+
+    return false;
+}
+
+$var = 'bob';
+
+echo defaultValue(compact('var'), 'alpha') . "\n"; //returns 'bob'
+echo defaultValue(compact('var2'), 'alpha') . "\n"; //returns 'alpha'
+echo defaultValue('alpha') . "\n"; //return
+echo defaultValue() . "\n";
+
+This func goes one step further and would give you the first non empty value of any number of args (you could always force it to only take up to two args but this look more useful to me like this).
+EDIT: original version didn't use compact to try and make an array of args and STILL gave an error. Error reporting bumped up a notch and this new version with compact is a little less tidy, but still does the same thing and allows you to provide a default value for non existent vars. 
+
+@Sean That was already answered by Brian
+return isset($input) ? $input : $default;
+
+
+Sean, you could do:
+$result = ($func_result = doLargeIntenseFunction()) ? $func_result : 'no result';
+
+EDIT:
+
+I'm sure there could be a great
+  discussion on ternary operators vrs
+  function calls. But the point of this
+  question was to see if we can create a
+  function that won't throw an error if
+  a non existent value is passed in
+  without using the '@'
+
+And I told you, check it with isset(). A ternary conditional's first part doesn't check null or not null, it checks true or false. If you try to check true or false on a null value in PHP, you get these warnings. isset() checks whether a variable or expression returns a null value or not, and it returns a boolean, which can be evaluated by the first part of your ternary without any errors.
+
+Summing up, the proper answer is no, you shouldn't (see caveat below). 
+There are workarounds already mentioned by many people in this thread, like using reference variables or isset() or empty() in conditions and suppressing notices in PHP configuration. That in addition to the obvious workaround, using @, which you don't want.
+Summarizing an interesting comment discussion with Gerry: Passing the variable by reference is indeed valid if you check for the value of the variable inside the function and handle undefined or null cases properly. Just don't use reference passing as a way of shutting PHP up (this is where my original shouldn't points to).
+
+You don't get any error when variable is passed by reference (PHP will create new variable silently):
+ function myHappyFunction(&$var)
+ {       
+ }
+
+But I recommend against abusing this for hiding programming errors.
+
+While the answer to the original question is "no", there is an options no one has mentioned.
+When you use the @ sign, all PHP is doing is overriding the error_reporting level and temporarily setting it to zero. You can use "ini_restore('error_reporting');" to set it back to whatever it was before the @ was used.
+This was useful to me in the situation where I wanted to write a convenience function to check and see if a variable was set, and had some other properties as well, otherwise, return a default value. But, sending an unset variable through caused a PHP notice, so I used the @ to suppress that, but then set error_reporting back to the original value inside the function.
+Something like:
+$var = @foo($bar);
+
+function foo($test_var)
+{
+     ini_restore('error_reporting');
+
+     if(is_set($test_var) && strlen($test_var))
+     {
+          return $test_var;
+     }
+     else
+     {
+          return -1;
+     }
+}
+
+So, in the case above, if $bar is not set, I won't get an error when I call foo() with a non-existent variable. However, I will get an error from within the function where I mistakenly typed is_set instead of isset.
+This could be a useful option covering what the original question was asking in spirit, if not in actual fact.
+
+
+is it possible to write a function in a way where invalid arguments or non existent variables can be passed in and php will not error without the use of '@'
+
+Yes you can!
+porneL is correct [edit:I don't have enough points to link to his answer or vote it up, but it's on this page]
+He is also correct when he cautions "But I recommend against abusing this for hiding programming errors." however error suppression via the Error Control Operator (@) should also be avoided for this same reason.
+I'm new to Stack Overflow, but I hope it's not common for an incorrect answer to be ranked the highest on a page while the correct answer receives no votes. :(
+
+If you simply add a default value to the parameter, you can skip it when calling the function. For example:
+function empty($paramName = ""){
+    if(isset($paramName){
+        //Code here
+    }
+    else if(empty($paramName)){
+        //Code here
+    }
+}
+
+
+There are valid cases where checking becomes cumbersome and unnessesary.
+Therfore i've written this little magic function: 
+/**
+ * Shortcut for getting a value from a possibly unset variable.
+ * Normal:
+ *   if (isset($_GET['foo']) && $_GET['foo'] == 'bar') {
+ * Short:
+ *   if (value($_GET['foo']) == 'bar') {
+ *
+ * @param mixed  $variable 
+ * @return mixed  Returns null if not set
+ */
+function value(&$variable) {
+    if (isset($variable)) {
+    	return $variable;
+    }
+}
+
+It doesn't require any changes to myHappyFunction().
+You'll have to change
+myHappyFunction($someBogusVar);
+
+to
+myHappyFunction(value($someBogusVar));
+
+Stating your intent explicitly. which makes it good practice in my book.
+
+With a single line, you can acomplish it: myHappyFunction($someBogusVar="");
+I hope this is what you are looking for. If you read the php documentation, under default argument values, you can see that assigning a default value to an function's argument helps you prevent an error message when using functions.
+In this example you can see the difference of using a default argument and it's advantages:
+PHP code:
+<?php
+function test1($argument)
+{
+    echo $argument;
+    echo "\n";
+}
+
+function test2($argument="")
+{
+    echo $argument;
+    echo "\n";
+}
+
+test1();
+test1("Hello");
+test1($argument);
+$argument = "Hello world";
+test1($argument);
+
+test2();
+test2("Hello");
+test2($argument);
+$argument = "Hello world";
+test2($argument);
+?>
+
+Output for test1() lines:
+
+Warning:  Missing argument 1 for test1() .
+  Hello. 
+  . 
+  Hello world.
+
+Output for test2() lines:
+
+. 
+  Hello. 
+
+  Hello world.
+
+This can also be used in combination to isset() and other functions to accomplish what you want.

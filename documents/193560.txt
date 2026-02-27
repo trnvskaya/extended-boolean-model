@@ -1,0 +1,101 @@
+Writing a compiler in its own language
+compiler-construction bootstrapping
+Intuitively, it would seems that a compiler for language Foo, cannot itself be written in Foo. More specifically, the first compiler for language Foo cannot be written in Foo, but any subsequent compiler could be written for Foo.
+But is this actually true? I have some very vague recollection of reading about a language whose first compiler was written in "itself". Is this possible, and if so how?
+
+
+This is called "bootstrapping".  You must first build a compiler (or interpreter) for your language in some other language (usually Java or C).  Once that is done, you can write a new version of the compiler in language Foo.  You use the first bootstrap compiler to compile the compiler, and then use this compiled compiler to compile everything else (including future versions of itself).
+Most languages are indeed created in this fashion, partially because language designers like to use the language they are creating, and also because a non-trivial compiler often serves as a useful benchmark for how "complete" the language may be.
+An example of this would be Scala.  Its first compiler was created in Pizza, an experimental language by Martin Odersky.  As of version 2.0, the compiler was completely re-written in Scala.  From that point on, the old Pizza compiler could be completely discarded, due to the fact that the new Scala compiler could be used to compile itself for future iterations.
+
+Maybe you can write a BNF describing BNF.
+
+You cannot write a compiler in itself because you have nothing to compile your starting source code with. There are two approachs to solving this. The least favoured is... 
+You write a minimal compiler in assembler (yuck) for a minimal set of the language and then use that compiler to implement extra features of the language. Building your way up until you have a compiler with all the language features for itself. A painful process that is usually only done when you have no other choice.
+The preferred approach is to use a cross compiler. You change the back end of an existing compiler on a different machine to create output that runs on the target machine. Then you have a nice full compiler up and working on the target machine. Most popular for this is the C language as there are plenty of existing compilers that have pluggable back ends that can be swapped out.
+A little known fact is that the GNU C++ compiler has an implementation that uses only the C subset. The reason being it is usally easy to find a C compiler for a new target machine that allows you to then build the full GNU C++ compiler from it. You have now boot strapped yourself to having a C++ compiler on the target machine.
+
+Here's a dump (difficult topic to search on, actually): 
+
+Smalltalk
+C
+
+This is also the idea of PyPy and Rubinius:
+(I think this might also apply to Forth, but I don't know anything about Forth.)
+
+Adding a curiosity to the previous answers. Here's a quote from the Linux From Scratch manual, at the step where one starts building the GCC compiler from its source. (Linux From Scratch is a way to install Linux that is radically different from installing a distribution, in that you have to compile really every single binary of the target system.)
+make bootstrap
+The 'bootstrap' target does not just compile GCC, but compiles it several times. It uses the programs compiled in a first
+    round to compile itself a second time, and then again a third time. It then compares these second and third
+    compiles to make sure it can reproduce itself flawlessly. This also implies that it was compiled correctly.
+That use of the 'bootstrap' target is motivated by the fact that the compiler one uses to build the target system's toolchain may not have the very same version of the target compiler. Proceeding in that way one is sure to obtain, in the target system, a compiler that can compile itself.
+
+GNAT, the GNU Ada compiler, requires an Ada compiler to be fully built. This can be a pain when porting it to a platform where there is no GNAT binary readily available.
+
+In compiler theory you can use T-diagrams for describing the bootstrapping process:
+http://www.oopweb.com/Compilers/Documents/Compilers/Volume/cha03s.htm
+In my bachlor thesis I used these T-diagrams for describing the the process of converting and showing documents when storing large amounts of electronic documents in different formats from different platforms.
+
+I recall listening to a Software Engineering Radio podcast wherein Dick Gabriel spoke about bootstrapping the original LISP interpreter by writing a bare-bones version in LISP on paper and hand assembling it into machine code.  From then on, the rest of the LISP features were both written in and interpreted  with LISP.  Very cool.
+
+Generally, you need to have a working (if primative) cut of the compiler working first - then you can start thinking about making it self-hosting. This is actually considered an important milestone in some langauges.
+From what I remember from "mono", it is likely they will need to add a few things to reflection to get it working: the mono team keep pointing out that some things simply aren't possible with Reflection.Emit; of course, the MS team might prove them wrong.
+This has a few real advantages: it is a fairly good unit test, for starters! And you only have one language to worry about (i.e. it is possible a C# expert might not know much C++; but now thy can fix the C# compiler). But I wonder if there isn't an amount of professional pride at work here: they simply want it to be self-hosting.
+Not quite a compiler, but I've recently been working on a system that is self hosting; the code generator is used to generate the code generator... so if the schema changes I simply run it on itself : new version. If there is a bug, I just go back to an earlier version and try again. Very convenient, and very easy to maintain.
+[update]
+I've just watched the video of Anders at PDC, and (about an hour in) he does give some much more valid reasons - all about the compiler as a service. Just for the record ;-p
+
+The Mono project C# compiler has been "self hosted" for a long time now, what it means is that it has been written in C# itself.
+What I know is that the compiler was started as pure C code but once the "basic" features of ECMA were implemented they started to rewrite the compiler in C#.
+Im not aware of the advantages of writing the compiler in the same language but Im sure it has to do at least with the features that the language itself can offer (C for example does not support object oriented programming)
+You can find more information here
+
+Actually, most compilers are written in the language they compile, for the reasons stated above.
+The first bootstrap compiler is usually written in C/C++ or Assembly.
+
+When you write your first compiler for C, you write it in some other language. Now, you have a compiler for C in, say, assembler. Eventually, you will come to the place where you have to parse strings, specifically escape sequences. You will write code to convert \n to the character with the decimal code 10 (and \r to 13, etc).
+After that compiler is ready, you will start to reimplement it in C. This process is called "bootstrapping".
+The string parsing code will become:
+...
+if (c == 92) { // backslash
+    c = getc();
+    if (c == 110) { // n
+        return 10;
+    } else if (c == 92) { // another backslash
+        return 92;
+    } else {
+        ...
+    }
+}
+...
+
+When this compiles, you have a binary which understands '\n'. This means you can change the source code:
+...
+if (c == '\\') {
+    c = getc();
+    if (c == 'n') {
+        return '\n';
+    } else if (c == '\\') {
+        return '\\';
+    } else {
+        ...
+    }
+}
+...
+
+So where is the information that '\n' is the code for 13? It's in the binary! It's like DNA: Compiling C source code with this binary will inherit this information. If the compiler compiles itself, it will pass this knowledge on to its offspring. From this point on, there is no way to see from the source alone what the compiler will do.
+If you want to hide a virus in the source of some program, you can do it like this: Get the source of a compiler, find the function which compiles functions and replace it with this one:
+void compileFunction(char * name, char * filename, char * code) {
+    if (strcmp("compileFunction", name) == 0 && strcmp("compile.c", filename) == 0) {
+        code = A;
+    } else if (strcmp("xxx", name) == 0 && strcmp("yyy.c", filename) == 0) {
+        code = B;
+    }
+
+    ... code to compile the function body from the string in "code" ...
+}
+
+The interesting parts are A and B. A is the source code for compileFunction including the virus, probably encrypted in some way so it's not obvious from searching the resulting binary. This makes sure that compiling to compiler with itself will preserve the virus injection code.
+B is the same for the function we want to replace with our virus. For example, it could be the function "login" in the source file "login.c" which is probably from the Linux kernel. We could replace it with a version that will accept the password "joshua" for the root account in addition to the normal password.
+If you compile that and spread it as a binary, there will be no way to find the virus by looking at the source.
+The original source of the idea: http://cm.bell-labs.com/who/ken/trust.html

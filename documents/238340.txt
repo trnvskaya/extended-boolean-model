@@ -1,0 +1,94 @@
+Algorithm/pattern for selecting sub-collections using LINQ and C#
+c# linq algorithm design-patterns
+I have a C# collection of strings. Each string is a sentence that can appear on a page. I also have a collection of page breaks which is a collection of int's. representing the index where the collection of strings are split to a new page.
+Example: Each 10 items in the string collection is a page so the collection of page breaks would be a collection of int's with the values of 10, 20, 30. ...
+So if there are 2 pages of strings then there will be 1 item in the page break collection and if there is 1 page then the page break collection would have zero items.
+I am trying to create the following function:
+List<string> GetPage(List<string> docList, List<int> pageBreakList, int pageNum)
+{
+    // This function returns a subset of docList - just the page requested
+}
+
+I've taken a few stabs at writing this function and keep on coming up with complex if and switch statements to take into account single and two page documents and page numbers being requested outside the range (e.g. last page should be returned if page number is greater than number of pages and first page if page number is 0 or less).
+My struggle with this problem leads me to ask the question: Is there a well known pattern or algorithm to address this type of subset query?
+
+
+Not sure what the list of page breaks is for.  I would think of it this way.  A collection of strings, a page number, and the size of the page.  Then you could do something like:
+List<string> strings = ...
+int pageNum = ...
+int pageSze = ...
+
+if (pageNum < 1) pageNum = 1;
+if (pageSize < 1) pageSize = 1;
+
+List<string> pageOfStrings = strings.Skip( pageSize*(pageNum-1) ).Take( pageSize ).ToList();
+
+In the case where the number of pages vary per page as per your comment, try something like below.  You may need to adjust the edge condition checking...
+List<string> strings = ...
+List<int> sizes = ...
+
+int pageNum = ...
+int itemsToSkip =  0;
+int itemsToTake = 1;
+
+if (pageNum > 1)
+{
+   sizes.Take( pageNum - 2).Sum();
+
+   if (pageNum <= sizes.Count)
+   {
+       itemsToTake = sizes[pageNum-1]
+   }
+{
+
+List<string> pageOfStrings = strings.Skip( itemsToSkip ).Take( itemsToTake );
+
+
+"Pure" Linq isn't a good fit for this problem.  The best fit is to rely on the methods and properties of List(T).  There aren't -that- many special cases.
+//pageNum is zero-based.
+List<string> GetPage(List<string> docList, List<int> pageBreaks, int pageNum)
+{
+
+  // 0 page case
+  if (pageBreaks.Count != 0)
+  {
+    return docList;
+  }
+
+  int lastPage = pageBreaks.Count;
+
+  //requestedPage is after the lastPage case
+  if (requestedPage > lastPage)
+  {
+    requestedPage = lastPage;
+  }
+
+
+  int firstLine = requestedPage == 0 ? 0  :
+      pageBreaks[requestedPage-1];
+  int lastLine = requestedPage == lastPage ? docList.Count :
+      pageBreaks[requestedPage];
+
+  //lastLine is excluded.  6 - 3 = 3 - 3, 4, 5
+
+  int howManyLines = lastLine - firstLine;
+
+  return docList.GetRange(firstLine, howManyLines);
+}
+
+You don't want to replace the .Count property with linq's .Count() method.
+You don't want to replace the .GetRange() method with linq's .Skip(n).Take(m) methods.
+Linq would be a better fit if you wanted to project these collections into other collections:
+IEnumerable<Page> pages =
+  Enumerable.Repeat(0, 1)
+  .Concat(pageBreaks)
+  .Select
+  (
+    (p, i) => new Page()
+    {
+      PageNumber = i,
+      Lines = 
+        docList.GetRange(p, ((i != pageBreaks.Count) ? pageBreaks[i] : docList.Count)  - p)
+    }
+  );
+

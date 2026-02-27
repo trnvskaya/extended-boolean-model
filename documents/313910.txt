@@ -1,0 +1,127 @@
+Can I add an attribute to a function to prevent reentry?
+c# function attributes reentrancy reentrant
+At the moment, I have some functions which look like this:
+private bool inFunction1 = false;
+public void function1()
+{
+    if (inFunction1) return;
+    inFunction1 = true;
+
+    // do stuff which might cause function1 to get called
+    ...
+
+    inFunction1 = false;
+}
+
+I'd like to be able to declare them like this:
+[NoReEntry]
+public void function1()
+{
+    // do stuff which might cause function1 to get called
+    ...
+}
+
+Is there an attribute I can add to a function to prevent reentry?  If not, how would I go about making one?  I've heard about AOP attributes that can be used to add code before and after function calls; would they be suitable?
+
+
+There is no such attribute predefined. You can make new attributes, but that won't help you. The issue is making the custom attribute prevent the method being called again, which I don't think is doable.
+The lock statement is not what you want, since that will cause calls to block and wait, not return immediately.
+PS: use a try ... finally block in the above sample. Otherwise, if an exception is thrown in the middle of the function, inFunction1 will be left true and all calls will return immediately.
+e.g. :
+if (inFunction1) 
+   return;
+
+try
+{
+  inFunction1 = true;
+
+  // do stuff which might cause function1 to get called
+  ...
+}
+finally 
+{
+  inFunction1 = false;
+}
+
+
+I dont think that will be possible. 
+The closest will be the the 'Synchronized' attribute, but that will block all subsequent calls.
+
+You may find that you could use PostSharp to accomplish this - along with the suggestions from Anthony about using try/finally. It's likely to be messy though. Also consider whether you want the re-entrancy to be on a per-thread or per-instance basis. (Could multiple threads call into the method to start with, or not?)
+There's nothing like this in the framework itself.
+
+If this is for Thread safety you have to be careful with that variable. 
+It's possible another thread could come into the function and pass the check before the first thread has set the variable.
+Make sure it's marked volatile like so:
+private volatile bool inFunction1 = false;
+
+
+Without assembly and IL rewriting, there's no way for you to create a custom attribute that modifies the code in the way you describe.
+I suggest that you use a delegate-based approach instead, e.g. for functions of a single argument:
+static Func<TArg,T> WrapAgainstReentry<TArg,T>(Func<TArg,T> code, Func<TArg,T> onReentry)
+{
+    bool entered = false;
+    return x =>
+    {
+        if (entered)
+            return onReentry(x);
+        entered = true;
+        try
+        {
+            return code(x);
+        }
+        finally
+        {
+            entered = false;
+        }
+    };
+}
+
+This method takes the function to wrap (assuming it matches Func<TArg,T> - you can write other variants, or a totally generic version with more effort) and an alternate function to call in cases of reentry. (The alternate function could throw an exception, or return immediately, etc.) Then, throughout your code where you would normally be calling the passed method, you call the delegate returned by WrapAgainstReentry() instead.
+
+Instead of using a bool and setting it directly, try using a long and the Interlocked class:
+long m_InFunction=0;
+
+if(Interlocked.CompareExchange(ref m_InFunction,1,0)==0)
+{
+  // We're not in the function
+  try
+  {
+  }
+  finally
+  {
+    m_InFunction=0;
+  }
+}
+else
+{
+  // We're already in the function
+}
+
+This will make the check thread safe.
+
+You could build a PostSharp attribute to check to see if the name of the method is in the current stack trace
+	[MethodImpl(MethodImplOptions.NoInlining)]
+	private static bool IsReEntry() {
+		StackTrace stack = new StackTrace();
+		StackFrame[] frames = stack.GetFrames();
+
+		if (frames.Length < 2)
+			return false;
+
+		string currentMethod = frames[1].GetMethod().Name;
+
+		for (int i = 2; i < frames.Length; i++) {
+			if (frames[i].GetMethod().Name == currentMethod) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+
+This thread is a bit old but I figured it'd be worth bring it into 2012 because this problem still exists (more or less). I was able to solve this problem using proxy objects generated using Reflection.Emit (specifically using LinFu.DynamicProxy). The LinFu article is older than this article so I assume everything it discusses was relevant when it was asked (and yet somehow still today).
+I used LinFu because I was already using it for other purposes, but I'm sure some of the other DynamicProxy frameworks available would work for you (e.g. Castle.DynamicProxy) or you could roll your own based on Reflection.Emit (not for those with weak dispositions). They provide a mechanism that fills a large part of AOP's role while keeping you in control of your code.
+
+You may want to consider avoiding re-entrancy by modifying your design so that it will never call function1() before its previous invocation completes. To me it seems that a layer is missing from above function1().

@@ -1,0 +1,104 @@
+How to unit test immutable class constructors?
+c# unit-testing
+I have an immutable class with some private fields that are set during the constructor execution.  I want to unit test this constructor but I'm not sure the "best practice" in this case.
+Simple Example
+This class is defined in Assembly1:
+public class Class2Test
+{
+    private readonly string _StringProperty;
+
+    public Class2Test()
+    {
+        _StringProperty = ConfigurationManager.AppSettings["stringProperty"];
+    }
+}
+
+This class is defined in Assembly2:
+[TestClass]
+public class TestClass
+{
+    [TestMethod]
+    public void Class2Test_Default_Constructor()
+    {
+        Class2Test x = new Class2Test();
+        //what do I assert to validate that the field was set properly?
+    }
+}
+
+EDIT 1: I have answered this question with a potential solution but I'm not sure if it's the "right way to go".  So if you think you have a better idea please post it.
+This example isn't really worth testing, but assume the constructor has some more complex logic.  Is the best approach to avoid testing the constructor and to just assume it works if all the tests for the methods on the class work?
+EDIT 2:  Looks like I made the sample a little to simple.  I have updated it with a more reasonable situation.
+
+
+I have properly enabled [InternalsVisibleTo] on Assembly1 (code) so that there is a trust relationship with Assembly2 (tests).
+public class Class2Test
+{
+    private readonly string _StringProperty;
+    internal string StringProperty { get { return _StringProperty; } }
+
+    public Class2Test(string stringProperty)
+    {
+        _StringProperty = stringProperty;
+    }
+}
+
+Which allows me to assert this:
+Assert.AreEqual(x.StringProperty, "something");
+
+The only thing I don't really like about this is that it's not clear (without a comment) when you are just looking at Class2Test what the purpose of the internal property is.
+Additional thoughts would be greatly appreciated.
+
+Nothing, unless you are using that field.  You don't want over-specification via tests.  In other words, there is no need to test that the assignment operator works.
+If you are using that field in a method or something, call that method and assert on that.
+Edit: 
+
+assume the constructor has some more complex logic
+
+You shouldn't be performing any logic in constructors.
+Edit 2:
+
+public Class2Test()
+{
+     _StringProperty = ConfigurationManager.AppSettings["stringProperty"];
+}
+
+
+Don't do that!  =)  Your simple unit test has now become an integration test because it depends on the successful operation of more than one class.  Write a class that handles configuration values.  WebConfigSettingsReader could be the name, and it should encapsulate the ConfigurationManager.AppSettings call.  Pass an instance of that SettingsReader class into the constructor of Class2Test.  Then, in your unit test, you can mock your WebConfigSettingsReader and stub out a response to any calls you might make to it.
+
+In your edit, you now have a dependancy on ConfigurationManager that is hard to test. 
+One suggestion is to extract an interface to it and then make the Class2Test ctor take an IConfigManager instance as a parameter. Now you can use a fake/mock object to set up its state, such that any methods that rely on Configuration can be tested to see if they utilize the correct values...
+    public interface IConfigManager
+    {
+        string FooSetting { get; set; }
+    }
+
+    public class Class2Test
+    {
+        private IConfigManager _config;
+        public Class2Test(IConfigManager configManager)
+        {
+            _config = configManager;   
+        }
+
+        public void methodToTest()
+        {
+            //do something important with ConfigManager.FooSetting
+            var important = _config.FooSetting;
+            return important;
+        }
+    }
+
+    [TestClass]
+    public class When_doing_something_important
+    {
+        [TestMethod]
+        public void Should_use_configuration_values()
+        {
+            IConfigManager fake = new FakeConfigurationManager();
+            //setup state
+            fake.FooSetting = "foo";
+            var sut = new Class2Test(fake);
+            Assert.AreEqual("foo", sut.methodToTest());
+        }
+    }
+

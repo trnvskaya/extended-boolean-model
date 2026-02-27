@@ -1,0 +1,49 @@
+Avg on datetime in Access
+sql sql-server tsql ms-access
+I am porting some queries from Access to T-SQL and those who wrote the queries used the Avg aggregate function on datetime columns.  This is not supported in T-SQL and I can understand why - it doesn't make sense.  What is getting averaged?
+So I was about to start reverse engineering what Access does when it aggregates datetime using Avg, but thought I would throw the question out here first.
+
+
+I'd imagine that Access is averaging the numeric representation of the dates.  You could do similar in T-SQL with the following...
+select AverageDate = cast(avg(cast(MyDateColumn as decimal(20, 10))) as datetime)
+from    MyTable
+
+
+I'm more familiar with non-MS DBMS, but... Since you cannot add two DATETIME values, you cannot ordinarily average them.  However, you could do something similar to:
+SELECT AVG(datetime_column - TIMESTAMP '2000-01-01 00:00:00.000000') +
+              TIMESTAMP '2000-01-01 00:00:00.000000'
+    FROM table_containing_datetime_column;
+
+This calculates the average interval between the start of 2000 and the actual datetime values, and then adds that interval to the start of 2000.  The choice of 'start of 2000' is arbitrary; as long as the datetime subtracted in the AVG() function is added back, you get a sensible answer.
+This does assume that the DBMS used supports SQL standard 'timestamp' notation, and supports the INTERVAL types appropriately.  The difference between two DATETIME or TIMESTAMP values should be an INTERVAL (indeed, INTERVAL DAY(9) TO SECOND(6), to be moderately accurate, though the '9' is somewhat debatable).
+When appropriately mangled for the DBMS I work with, the expression 'works':
+CREATE TEMP TABLE table_containing_datetime_column
+(
+    datetime_column DATETIME YEAR TO FRACTION(5) NOT NULL
+);
+
+INSERT INTO table_containing_datetime_column VALUES('2008-11-19 12:12:12.00000');
+INSERT INTO table_containing_datetime_column VALUES('2008-11-19 22:22:22.00000');
+
+SELECT AVG(datetime_column - DATETIME(2000-01-01 00:00:00.00000) YEAR TO FRACTION(5)) +
+    DATETIME(2000-01-01 00:00:00.00000) YEAR TO FRACTION(5)
+FROM table_containing_datetime_column;
+
+Answer:
+2008-11-19 17:17:17.00000
+
+
+@David W. Fenton: "A Jet date field is an integer value for the day plus a decimal value for the time" -- no, an ACE/Jet DATETIME column is a FLOAT (synonyms DOUBLE, FLOAT8, IEEEDOUBLE, NUMBER) with limits e.g. the maximum DATETIME value is #9999-12-31:23:59:59# though the maximum FLOAT value that can be cast to DATETIME will be a little larger e.g. 
+SELECT CDBL(CDATE('9999-12-31 23:59:59'))
+
+returns 2958465.99998843, however
+SELECT CDATE(CDBL(2958465.9999999997))
+
+does not error, whereas 
+SELECT CDATE(CDBL(2958465.9999999998))
+
+does error.
+Therefore, to preserve functionality in SQL Server, I suggest casting the DATETIME column to FLOAT e.g. 
+SELECT CAST(AVG(CAST(MyDateTimeColumn AS FLOAT)) AS DATETIME)
+  from MyTable
+

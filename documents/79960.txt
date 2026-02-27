@@ -1,0 +1,325 @@
+How to Truncate a string in PHP to the word closest to a certain number of characters?
+php string function
+I have a code snippet written in PHP that pulls a block of text from a database and sends it out to a widget on a webpage.  The original block of text can be a lengthy article or a short sentence or two; but for this widget I can't display more than, say, 200 characters.  I could use substr() to chop off the text at 200 chars, but the result would be cutting off in the middle of words-- what I really want is to chop the text at the end of the last word before 200 chars.
+
+
+By using the wordwrap function. It splits the texts in multiple lines such that the maximum width is the one you specified, breaking at word boundaries. After splitting, you simply take the first line:
+substr($string, 0, strpos(wordwrap($string, $your_desired_width), "\n"));
+
+One thing this oneliner doesn't handle is the case when the text itself is shorter than the desired width. To handle this edge-case, one should do something like:
+if (strlen($string) > $your_desired_width) 
+{
+    $string = wordwrap($string, $your_desired_width);
+    $string = substr($string, 0, strpos($string, "\n"));
+}
+
+
+The above solution has the problem of prematurely cutting the text if it contains a newline before the actual cutpoint. Here a version which solves this problem:
+function tokenTruncate($string, $your_desired_width) {
+  $parts = preg_split('/([\s\n\r]+)/', $string, null, PREG_SPLIT_DELIM_CAPTURE);
+  $parts_count = count($parts);
+
+  $length = 0;
+  $last_part = 0;
+  for (; $last_part < $parts_count; ++$last_part) {
+    $length += strlen($parts[$last_part]);
+    if ($length > $your_desired_width) { break; }
+  }
+
+  return implode(array_slice($parts, 0, $last_part));
+}
+
+Also, here is the PHPUnit testclass used to test the implementation:
+class TokenTruncateTest extends PHPUnit_Framework_TestCase {
+  public function testBasic() {
+    $this->assertEquals("1 3 5 7 9 ",
+      tokenTruncate("1 3 5 7 9 11 14", 10));
+  }
+
+  public function testEmptyString() {
+    $this->assertEquals("",
+      tokenTruncate("", 10));
+  }
+
+  public function testShortString() {
+    $this->assertEquals("1 3",
+      tokenTruncate("1 3", 10));
+  }
+
+  public function testStringTooLong() {
+    $this->assertEquals("",
+      tokenTruncate("toooooooooooolooooong", 10));
+  }
+
+  public function testContainingNewline() {
+    $this->assertEquals("1 3\n5 7 9 ",
+      tokenTruncate("1 3\n5 7 9 11 14", 10));
+  }
+}
+
+EDIT :
+Special UTF8 characters like 'Ã ' are not handled. Add 'u' at the end of the REGEX to handle it:
+$parts = preg_split('/([\s\n\r]+)/u', $string, null, PREG_SPLIT_DELIM_CAPTURE);
+
+Use strpos and substr:
+<?php
+
+$longString = "I have a code snippet written in PHP that pulls a block of text.";
+$truncated = substr($longString,0,strpos($longString,' ',30));
+
+echo $truncated;
+
+This will give you a string truncated at the first space after 30 characters.
+
+Here you go:
+function neat_trim($str, $n, $delim='â¦') {
+   $len = strlen($str);
+   if ($len > $n) {
+       preg_match('/(.{' . $n . '}.*?)\b/', $str, $matches);
+       return rtrim($matches[1]) . $delim;
+   }
+   else {
+       return $str;
+   }
+}
+
+
+I would use the preg_match function to do this, as what you want is a pretty simple expression.
+$matches = array();
+$result = preg_match("/^(.{1,199})[\s]/i", $text, $matches);
+
+The expression means "match any substring starting from the beginning of length 1-200 that ends with a space." The result is in $result, and the match is in $matches. That takes care of your original question, which is specifically ending on any space. If you want to make it end on newlines, change the regular expression to:
+$result = preg_match("/^(.{1,199})[\n]/i", $text, $matches);
+
+
+This will return the first 200 characters of words:
+preg_replace('/\s+?(\S+)?$/', '', substr($string, 0, 201));
+
+
+Keep in mind whenever you're splitting by "word" anywhere that some languages such as Chinese and Japanese do not use a space character to split words. Also, a malicious user could simply enter text without any spaces, or using some Unicode look-alike to the standard space character, in which case any solution you use may end up displaying the entire text anyway. A way around this may be to check the string length after splitting it on spaces as normal, then, if the string is still above an abnormal limit - maybe 225 characters in this case - going ahead and splitting it dumbly at that limit.
+One more caveat with things like this when it comes to non-ASCII characters; strings containing them may be interpreted by PHP's standard strlen() as being longer than they really are, because a single character may take two or more bytes instead of just one. If you just use the strlen()/substr() functions to split strings, you may split a string in the middle of a character! When in doubt, mb_strlen()/mb_substr() are a little more foolproof.
+
+Here is my function based on @Cd-MaN's approach.
+function shorten($string, $width) {
+  if(strlen($string) > $width) {
+    $string = wordwrap($string, $width);
+    $string = substr($string, 0, strpos($string, "\n"));
+  }
+
+  return $string;
+}
+
+
+Based on @Justin Poliey's regex:
+// Trim very long text to 120 characters. Add an ellipsis if the text is trimmed.
+if(strlen($very_long_text) > 120) {
+  $matches = array();
+  preg_match("/^(.{1,120})[\s]/i", $very_long_text, $matches);
+  $trimmed_text = $matches[0]. '...';
+}
+
+
+$WidgetText = substr($string, 0, strrpos(substr($string, 0, 200), ' '));
+
+And there you have it â a reliable method of truncating any string to the nearest whole word, while staying under the maximum string length.
+I've tried the other examples above and they did not produce the desired results.
+
+Ok so I got another version of this based on the above answers but taking more things in account(utf-8, \n and &nbsp ; ), also a line stripping the wordpress shortcodes commented if used with wp.
+function neatest_trim($content, $chars) 
+  if (strlen($content) > $chars) 
+  {
+    $content = str_replace('&nbsp;', ' ', $content);
+    $content = str_replace("\n", '', $content);
+    // use with wordpress    
+    //$content = strip_tags(strip_shortcodes(trim($content)));
+    $content = strip_tags(trim($content));
+    $content = preg_replace('/\s+?(\S+)?$/', '', mb_substr($content, 0, $chars));
+
+    $content = trim($content) . '...';
+    return $content;
+  }
+
+
+This is a small fix for mattmac's answer:
+preg_replace('/\s+?(\S+)?$/', '', substr($string . ' ', 0, 201));
+
+The only difference is to add a space at the end of $string. This ensures the last word isn't cut off as per ReX357's comment.
+I don't have enough rep points to add this as a comment.
+
+/*
+Cut the string without breaking any words, UTF-8 aware 
+* param string $str The text string to split
+* param integer $start The start position, defaults to 0
+* param integer $words The number of words to extract, defaults to 15
+*/
+function wordCutString($str, $start = 0, $words = 15 ) {
+    $arr = preg_split("/[\s]+/",  $str, $words+1);
+    $arr = array_slice($arr, $start, $words);
+    return join(' ', $arr);
+}
+
+Usage:
+$input = 'Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do eiusmod tempor incididunt ut labore et dolore magna liqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.';
+echo wordCutString($input, 0, 10); 
+
+This will output first 10 words.
+The preg_split function is used to split a string into substrings. The boundaries along which the string is to be split, are specified using a regular expressions pattern.
+preg_split function takes 4 parameters, but only the first 3 are relevant to us right now.
+First Parameter â Pattern
+The first parameter is the regular expressions pattern along which the string is to be split. In our case, we want to split the string across word boundaries. Therefore we use a predefined character class \s which matches white space characters such as space, tab, carriage return and line feed.
+Second Parameter â Input String
+The second parameter is the long text string which we want to split.
+Third Parameter â Limit
+The third parameter specifies the number of substrings which should be returned. If you set the limit to n, preg_split will return an array of n elements. The first n-1 elements will contain the substrings. The last (n th) element will contain the rest of the string.
+
+I know this is old, but...
+function _truncate($str, $limit) {
+    if(strlen($str) < $limit)
+        return $str;
+    $uid = uniqid();
+    return array_shift(explode($uid, wordwrap($str, $limit, $uid)));
+}
+
+
+The following solution was born when I've noticed a $break parameter of wordwrap function:
+
+string wordwrap ( string $str [, int $width = 75 [, string $break =
+  "\n" [, bool $cut = false ]]] )
+
+Here is the solution:
+/**
+ * Truncates the given string at the specified length.
+ *
+ * @param string $str The input string.
+ * @param int $width The number of chars at which the string will be truncated.
+ * @return string
+ */
+function truncate($str, $width) {
+    return strtok(wordwrap($str, $width, "...\n"), "\n");
+}
+
+Example #1.
+print truncate("This is very long string with many chars.", 25);
+
+The above example will output:
+This is very long string...
+
+Example #2.
+print truncate("This is short string.", 25);
+
+The above example will output:
+This is short string.
+
+
+I used this before
+<?php
+    $your_desired_width = 200;
+    $string = $var->content;
+    if (strlen($string) > $your_desired_width) {
+        $string = wordwrap($string, $your_desired_width);
+        $string = substr($string, 0, strpos($string, "\n")) . " More...";
+    }
+    echo $string;
+?>
+
+
+May be this will help someone:
+<?php
+
+    $string = "Your line of text";
+    $spl = preg_match("/([, \.\d\-''\"\"_()]*\w+[, \.\d\-''\"\"_()]*){50}/", $string, $matches);
+    if (isset($matches[0])) {
+        $matches[0] .= "...";
+        echo "<br />" . $matches[0];
+    } else {
+        echo "<br />" . $string;
+    }
+
+?>
+
+
+I have a function that does almost what you want, if you'll do a few edits, it will fit exactly:
+<?php
+function stripByWords($string,$length,$delimiter = '<br>') {
+    $words_array = explode(" ",$string);
+    $strlen = 0;
+    $return = '';
+    foreach($words_array as $word) {
+        $strlen += mb_strlen($word,'utf8');
+        $return .= $word." ";
+        if($strlen >= $length) {
+            $strlen = 0;
+            $return .= $delimiter;
+        }
+    }
+    return $return;
+}
+?>
+
+
+$shorttext = preg_replace('/^([\s\S]{1,200})[\s]+?[\s\S]+/', '$1', $fulltext);
+
+Tests:
+
+regex101.com let's add to or few other r
+regex101.com orrrr exactly 200 characters.
+regex101.com after fifth r orrrrr excluded.
+
+Enjoy.
+
+This is how i did it:
+$string = "I appreciate your service & idea to provide the branded toys at a fair rent price. This is really a wonderful to watch the kid not just playing with variety of toys but learning faster compare to the other kids who are not using the BooksandBeyond service. We wish you all the best";
+
+print_r(substr($string, 0, strpos(wordwrap($string, 250), "\n")));
+
+
+I create a function more similar to substr, and using the idea of @Dave.
+function substr_full_word($str, $start, $end){
+    $pos_ini = ($start == 0) ? $start : stripos(substr($str, $start, $end), ' ') + $start;
+    if(strlen($str) > $end){ $pos_end = strrpos(substr($str, 0, ($end + 1)), ' '); } // IF STRING SIZE IS LESSER THAN END
+    if(empty($pos_end)){ $pos_end = $end; } // FALLBACK
+    return substr($str, $pos_ini, $pos_end);
+}
+
+Ps.: The full length cut may be less than substr.
+
+Here you can try this
+substr( $str, 0, strpos($str, ' ', 200) ); 
+
+
+It's surprising how tricky it is to find the perfect solution to this problem.  I haven't yet found an answer on this page that doesn't fail in at least some situations (especially if the string contains newlines or tabs, or if the word break is anything other than a space, or if the string has UTF-8 multibyte characters).
+Here is a simple solution that works in all cases.  There were similar answers here, but the "s" modifier is important if you want it to work with multi-line input, and the "u" modifier makes it correctly evaluate UTF-8 multibyte characters.
+function wholeWordTruncate($s, $characterCount) 
+{
+    if (preg_match("/^.{1,$characterCount}\b/su", $s, $match)) return $match[0];
+    return $s;
+}
+
+One possible edge case with this... if the string doesn't have any whitespace at all in the first $characterCount characters, it will return the entire string.  If you prefer it forces a break at $characterCount even if it isn't a word boundary, you can use this:
+function wholeWordTruncate($s, $characterCount) 
+{
+    if (preg_match("/^.{1,$characterCount}\b/su", $s, $match)) return $match[0];
+    return mb_substr($return, 0, $characterCount);
+}
+
+One last option, if you want to have it add ellipsis if it truncates the string... 
+function wholeWordTruncate($s, $characterCount, $addEllipsis = ' â¦') 
+{
+    $return = $s;
+    if (preg_match("/^.{1,$characterCount}\b/su", $s, $match)) 
+        $return = $match[0];
+    else
+        $return = mb_substr($return, 0, $characterCount);
+    if (strlen($s) > strlen($return)) $return .= $addEllipsis;
+    return $return;
+}
+
+
+Added IF/ELSEIF statements to the code from Dave and AmalMurali for handling strings without spaces
+if ((strpos($string, ' ') !== false) && (strlen($string) > 200)) { 
+    $WidgetText = substr($string, 0, strrpos(substr($string, 0, 200), ' ')); 
+} 
+elseif (strlen($string) > 200) {
+    $WidgetText = substr($string, 0, 200);
+}
+

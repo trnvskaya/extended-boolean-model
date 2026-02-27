@@ -1,0 +1,24 @@
+How to automatically create a file with the latest compile time and include it into a library?
+c++ c build makefile
+I have a library consisting of approx 100 source files. I want one of the sources to be always rebuilt if any of the other files have been compiled but I don't want it built every time I run the make/build.
+Basically I want this file to have the last build date/time built into it so any application linking to the library can check the last build time/date. Is there any other way to do this?
+
+
+Let the object file containing the build timestamp depend on all the other object files:
+version.o: $(OBJECTS)
+
+
+To expand slightly on JesperE's solution.
+Let the object file depend on all targets which the executable depends on, (excluding itself).
+So if all the executable depends on is objects, then JesperE is completely correct.
+Otherwise, you could rebuild the executable without updating the timestamp, in the case where one of the other dependencies changes but none of your object files does. So the two things mentioned in the question, "has the last build time/date" and "rebuilt if any of the sources has been compiled", aren't actually the same thing, so it depends which you want.
+Examples could include a library you statically link against, or some script which is used to do the linking and which changes a lot so has been made a dependency for the convenience of developers.
+This still won't update the timestamp if you just delete the executable and rebuild it (perhaps because something has changed which is relevant, but not a dependency, such as because you've grabbed the latest version of the linker or you've changed something in the environment which affects the linker and/or the makefile). So the best thing to do might be to compile the object as part of the rule for building the executable, like this:
+blah.exe : whatever
+    rm -f version.o
+    $(CC) $(CFLAGS) -c version.c
+    $(CC) $(CFLAGS) $(OBJFILES) version.o -o blah.exe
+
+or whatever (probably not .exe if you're using make, but you never know). Actually the error-handling there is a bit dodgy, since version.o won't be deleted if the last line fails.
+I'd also add that if you're going to release something to users (by which I mean basically anyone more than 10 feet from your desk), it might be an idea to build from scratch anyway rather than just run make to update, and ship it. It's pretty easy otherwise to screw up the makefile so that you miss a dependency, accidentally build a "mixed version", and have no way to reproduce what you shipped.
+I've jiggered makefiles before so that the version number was deliberately sabotaged (set to "0.0 private build") if it was built by a developer - only the build server set the option used to enable the proper version number. For that project, it just wasn't meaningful to put a number on something that wasn't checked out of source control by tags, and built from there.

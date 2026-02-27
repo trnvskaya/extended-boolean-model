@@ -1,0 +1,109 @@
+How do I perform a Unit Test using threads?
+java multithreading unit-testing junit
+Executive Summary: When assertion errors are thrown in the threads, the unit test doesn't die. This makes sense, since one thread shouldn't be allowed to crash another thread. The question is how do I either 1) make the whole test fail when the first of the helper threads crashes or 2) loop through and determine the state of each thread after they have all completed (see code below). One way of doing the latter is by having a per thread status variable, e.g., "boolean[] statuses" and have "statuses[i] == false" mean that the thread failed (this could be extended to capture more information). However, that is not what I want: I want it to fail just like any other unit test when the assertion errors are thrown. Is this even possible? Is it desirable?
+I got bored and I decided to spawn a bunch of threads in my unit test and then have them call a service method, just for the heck of it. The code looks approximately like:
+Thread[] threads = new Thread[MAX_THREADS];
+for( int i = 0; i < threads.length; i++ ) {
+    threads[i] = new Thread( new Runnable() {
+        private final int ID = threadIdSequenceNumber++;
+        public void run() {
+            try {
+                resultRefs[ID] = runTest( Integer.toString( ID ) ); // returns an object
+            }
+            catch( Throwable t ) { 
+                // this code is EVIL - it catches even
+                // Errors - don't copy it - more on this below
+                final String message = "error testing thread with id => "
+                            + ID;
+                logger.debug( message, t );
+                throw new IllegalStateException( message, t ); 
+                // need to wrap throwable in a 
+                // run time exception so it will compile
+            }
+        }
+    } );
+}
+
+After this, we will loop through the array of threads and start each one. After that we will wait for them all to finish. Finally, we will perform some checks on the result references.
+for( Thread thread : threads )
+    thread.start();
+
+logger.debug( "waiting for threads to finish ..." );
+boolean done = false;
+while( !done ) {
+    done = true;
+    for( Thread thread : threads )
+        if( thread.isAlive() )
+            done = false;
+}
+
+for( int i = 0; i < resultRefs.length; i++ ) {
+    assertTrue( "you've got the world messed, dawg!",
+            myCondition(resultRefs[i]) );
+
+Here's the problem. Did you notice that nasty try-catch-throwable block? I just added that as a temporary hack so I could see what was going on. In runTest( String ) a few assertions are made, e.g., assertNotNull( null ), but since it is in a different thread, it doesn't cause the unit test to fail!!!!
+My guess is that we will need to somehow iterate over the threads array, check the status of each, and manually cause an assertion error if the thread terminated in a nasty way. What's the name of the method that gives this information (the stack trace of the dead thread).
+
+
+Concurrency is one of those things that are very difficult to unit test. If you are just trying to test that the code inside each thread is doing what it is supposed to test, may be you should just test this code isolated of the context. 
+ If in this example the threads collaborate to reach a result, may be you can test that collaboration without using threads. That would be done by executing all the collaborative parts sequentially.
+ If you want to test for race conditions and these kind of things, unit testing is not the best way. You will get tests that sometimes fail and sometimes donÂ´t fail.
+ To summarize, I think that may be your problem is that you are unit testing in a level too high.
+ Hope this helps
+
+The Google Testing Blog had an excellent article on this subject that's well worth reading: http://googletesting.blogspot.com/2008/08/tott-sleeping-synchronization.html
+It's written in Python, but I think the principles are directly transferable to Java.
+
+Unit testing in a multithreaded environment is tough... so some adjustments need to be made. Unit tests must be repeatable.. deterministic. As a result anything with multiple threads fails this criteria. Tests with multiple threads also tend to be slow.
+
+I'd either try to see if I can get by with testing on a single thread.. does the logic under test really need multiple threads.
+If that doesn't work, go with the member variable approach that you can check against an expected value at the end of the test, when all the threads have finished running.
+
+Hey seems like there's another question just like this. Check my post for a link to a longer discussion at the tdd yahoogroup
+http://stackoverflow.com/questions/111676/unit-testing-a-multithreaded-application
+
+Your runnable wrapper should be passing the exception object back to your test class and then you can store them in a collection. When all the tests are finish you can test the collection. If it isn't empty, iterate over each of the exceptions and .printStackTrace() then fail.
+
+Implement a UncaughtExceptionHandler that sets some flags (which the Threads peridocially check) and set it on each Thread.
+
+Another popular option for Junit concurrent thread testing is Matthieu Carbou's method using a custom JunitRunner and a simple annotation.
+See the full documentation
+
+It is possible making the unit test to fail, by using  a special synchronization object. Take a look at the following article:
+Sprinkler - Advanced synchronization object
+I'll try to explain the main points here. 
+You want to be able to externalize internal threads failures to the main thread, which, in your case is the test. So you have to use a shared object/lock that both the internal thread and the test will use to sync each other.
+See the following test - it creates a thread which simulates a thrown exception by calling a shared object named Sprinkler.
+The main thread (the test) is blocked on Sprinkler.getInstance().await(CONTEXT, 10000)
+which, by the time release is called - will be free and catch the thrown exception.
+In the catch block you can write the assert which fails the test.
+ @Test
+    public void testAwait_InnerThreadExternalizeException() {
+
+        final int CONTEXT = 1;
+        final String EXCEPTION_MESSAGE = "test inner thread exception message";
+
+        // release will occur sometime in the future - simulate exception in the releaser thread
+        ExecutorServiceFactory.getCachedThreadPoolExecutor().submit(new Callable<void>() {
+
+            @Override
+            public Void call() throws Exception {
+
+                Sprinkler.getInstance().release(CONTEXT, new RuntimeException(EXCEPTION_MESSAGE));
+
+                return null;
+            }
+
+        });
+
+        Throwable thrown = null;
+        try {
+            Sprinkler.getInstance().await(CONTEXT, 10000);
+        } catch (Throwable t) {
+            // if the releaser thread delivers exception it will be externelized to this thread
+            thrown = t;
+        }
+        Assert.assertTrue(thrown instanceof SprinklerException);
+        Assert.assertEquals(EXCEPTION_MESSAGE, thrown.getCause().getMessage());
+    }
+

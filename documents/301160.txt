@@ -1,0 +1,82 @@
+What are the differences between various threading synchronization options in C#?
+c# multithreading synchronization locking mutex
+Can someone explain the difference between:
+
+lock (someobject) {}
+Using Mutex
+Using Semaphore
+Using Monitor
+Using Other .Net synchronization classes
+
+I just can't figure it out.  It seems to me the first two are the same?
+
+
+Great question. I maybe wrong.. Let me try.. Revision#2 of my orig answer.. with a little bit of more understanding. Thanks for making me read :)
+lock(obj) 
+
+is a CLR construct that for (intra-object?) thread synchronization. Ensures that only one thread can take ownership of the object's lock & enter the locked block of code. Other threads must wait till the current owner relinquishes the lock by exiting the block of code. Also it is recommended that you lock on a private member object of your class.
+
+Monitors 
+
+lock(obj) is implemented internally using a Monitor. You should prefer lock(obj) because it prevents you from goofing up like forgetting the cleanup procedure. It 'idiot-proof's the Monitor construct if you will.
+Using Monitor is generally preferred over mutexes, because monitors were designed specifically for the .NET Framework and therefore make better use of resources.
+
+Using a lock or monitor is useful for preventing the simultaneous execution of thread-sensitive blocks of code, but these constructs do not allow one thread to communicate an event to another. This requires synchronization events, which are objects that have one of two states, signaled and un-signaled, that can be used to activate and suspend threads. 
+Mutex, Semaphores are OS-level concepts. e.g with a named mutex you could synchronize across multiple (managed) exes (ensuring that only one instance of your application is running on the machine.)  
+Mutex: 
+
+Unlike monitors, however, a mutex can be used to synchronize threads across processes. When used for inter-process synchronization, a mutex is called a named mutex because it is to be used in another application, and therefore it cannot be shared by means of a global or static variable. It must be given a name so that both applications can access the same mutex object.
+In contrast, the Mutex class is a wrapper to a Win32 construct. While it is more powerful than a monitor, a mutex requires interop transitions that are more computationally expensive than those required by the Monitor class. 
+
+Semaphores (hurt my brain).
+
+Use the Semaphore class to control access to a pool of resources. Threads enter the semaphore by calling the WaitOne method, which is inherited from the WaitHandle class, and release the semaphore by calling the Release method.
+The count on a semaphore is decremented each time a thread enters the semaphore, and incremented when a thread releases the semaphore. When the count is zero, subsequent requests block until other threads release the semaphore. When all threads have released the semaphore, the count is at the maximum value specified when the semaphore was created. 
+A thread can enter the semaphore multiple times..The Semaphore class does not enforce thread identity on WaitOne or Release.. programmers responsibility to not muck up.
+Semaphores are of two types: local semaphores and named system semaphores. If you create a Semaphore object using a constructor that accepts a name, it is associated with an operating-system semaphore of that name. Named system semaphores are visible throughout the operating system, and can be used to synchronize the activities of processes.
+A local semaphore exists only within your process. It can be used by any thread in your process that has a reference to the local Semaphore object. Each Semaphore object is a separate local semaphore. 
+
+THE PAGE TO READ - Thread Synchronization (C#)
+
+As stated in ECMA, and as you can observe from Reflected methods the lock statement is basically equivalent to
+object obj = x;
+System.Threading.Monitor.Enter(obj);
+try {
+   â¦
+}
+finally {
+   System.Threading.Monitor.Exit(obj);
+}
+
+From the aforementioned example we see that Monitors can lock on objects.
+Mutexe's are useful when you need interprocess synchronization as they can lock on a string identifier. The same string identifier can be used by different processes to acquire the lock.
+Semaphores are like Mutexes on steroids, they allow concurrent access by providing a maximum count of concurrent access'. Once the limit is reached the semaphore starts blocking any further access to the resource until one of the callers releases the semaphore.
+
+Re "Using Other .Net synchronization classes"- some of the others you should know about:
+
+ReaderWriterLock - allows multiple readers or a single writer (not at the same time)
+ReaderWriterLockSlim - like above, lower overhead
+ManualResetEvent - a gate that allows code past when open
+AutoResetEvent - as above, but shuts automatically once opened
+
+There are also more (low overhead) locking constructs in CCR/TPL (the Parallel Extensions CTP) - but IIRC, these will be made available in .NET 4.0
+
+An additional caveat for locking on any shared Mutex you've identified with a string ID is that it will default to a "Local\" mutex and will not be shared across sessions in a terminal server environment. 
+Prefix your string identifier with "Global\" to ensure that access to shared system resources is properly controlled. I was just running into a whole heap of problems synchronizing communications with a service running under the SYSTEM account before I realized this.
+
+I would try to avoid "lock()", "Mutex" and "Monitor" if you can...   
+Check out the new namespace System.Collections.Concurrent   in .NET 4
+It has some nice thread-safe collection classes
+http://msdn.microsoft.com/en-us/library/system.collections.concurrent.aspx
+ConcurrentDictionary rocks! no manual locking anymore for me!
+
+I did the classes & CLR support for threading in DotGNU and I have a few thoughts...
+Unless you require cross process locks you should always avoid using Mutex & Semaphores.  These classes in .NET are wrappers around the Win32 Mutex and Semaphores and are rather heavy weight (they require a context switch into the Kernel which is expensive - especially if your lock is not under contention).
+As others are mentioned, the C# lock statement is compiler magic for Monitor.Enter and Monitor.Exit (existing within a try/finally).
+Monitors have a simple but powerful signal/wait mechanism that Mutexes don't have via the Monitor.Pulse/Monitor.Wait methods.  The Win32 equivalent would be event objects via CreateEvent which actually also exist in .NET as WaitHandles.  The Pulse/Wait model is similar to Unix's pthread_signal and pthread_wait but are faster because they can be entirely user-mode operations in the un-contended case.
+Monitor.Pulse/Wait is simple to use.  In one thread, we lock an object, check a flag/state/property and if it's not what we are expecting, call Monitor.Wait which will release the lock and wait until a pulse is sent.  When the wait returns, we loop back and check the flag/state/property again.  In the other thread, we lock the object whenever we change the flag/state/property and then call PulseAll to wake up any listening threads.
+Often we want our classes to be thread safe so we put locks in our code.  However, it is often the case that our class will only ever be used by one thread.  This means the locks needlessly  slow down our code...this is where clever optimisations in the CLR can help improve performance.
+I'm not sure about Microsoft's implementation of locks but in DotGNU and Mono, a lock state flag is stored in the header of every object.  Every object in .NET (and Java) can become a lock so every object needs to support this in their header.  In the DotGNU implementation, there is a flag that allows you to use a global hashtable for every object that is used as a lock -- this has the benefit of eliminating a 4 byte overhead for every object.  This is not great for memory (especially for embedded systems that aren't heavily threaded) but has a hit on performance.
+Both Mono and DotGNU effectively use mutexes to perform locking/waiting but use a spinlock style compare-and-exchange operations to eliminate the need to actually perform a hard locks unless really necessary:
+You can see an example of how monitors can be implemented here:
+http://cvs.savannah.gnu.org/viewvc/dotgnu-pnet/pnet/engine/lib_monitor.c?revision=1.7&view=markup

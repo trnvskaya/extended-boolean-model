@@ -1,0 +1,65 @@
+Retaining HTTP POST data when a request is interrupted by a login page
+language-agnostic
+Say a user is browsing a website, and then performs some action which changes the database (let's say they add a comment). When the request to actually add the comment comes in, however, we find we need to force them to login before they can continue.
+Assume the login page asks for a username and password, and redirects the user back to the URL they were going to when the login was required. That redirect works find for a URL with only GET parameters, but if the request originally contained some HTTP POST data, that is now lost.
+Can anyone recommend a way to handle this scenario when HTTP POST data is involved?
+Obviously, if necessary, the login page could dynamically generate a form with all the POST parameters to pass them along (though that seems messy), but even then, I don't know of any way for the login page to redirect the user on to their intended page while keeping the POST data in the request.
+
+Edit : One extra constraint I should have made clear - Imagine we don't know if a login will be required until the user submits their comment. For example, their cookie might have expired between when they loaded the form and actually submitted the comment.
+
+
+This is one good place where Ajax techniques might be helpful. When the user clicks the submit button, show the login dialog on client side and validate with the server before you actually submit the page.
+Another way I can think of is showing or hiding the login controls in a DIV tag dynamically in the main page itself.
+
+Collect the data on the page they submitted it, and store it in your backend (database?) while they go off through the login sequence, hide a transaction id or similar on the page with the login form. When they're done, return them to the page they asked for by looking it up using the transaction id on the backend, and dump all the data they posted into the form for previewing again, or just run whatever code that page would run.
+Note that many systems, eg blogs, get around this by having login fields in the same form as the one for posting comments, if the user needs to be logged in to comment and isn't yet.
+
+Just store all the necessary data from the POST in the session until after the login process is completed. Or have some sort of temp table in the db to store in and then retrieve it. Obviously this is pseudo-code but:
+if ( !loggedIn ) {
+    StorePostInSession();
+    ShowLoginForm();
+}
+
+if ( postIsStored ) {
+    RetrievePostFromSession();
+}
+
+Or something along those lines.
+
+2 choices:
+
+Write out the messy form from the login page, and JavaScript form.submit() it to the page.
+Have the login page itself POST to the requesting page (with the previous values), and have that page's controller perform the login verification. Roll this into whatever logic you already have for detecting the not logged in user (frameworks vary on how they do this). In pseudo-MVC:
+
+
+        CommentController {
+           void AddComment() {
+             if (!Request.User.IsAuthenticated && !AuthenticateUser()) {
+                return;
+             }
+             // add comment to database
+           }
+
+           bool AuthenticateUser() {
+             if (Request.Form["username"] == "") {
+                // show login page
+                foreach (Key key in Request.Form) {
+                   // copy form values
+                   ViewData.Form.Add("hidden", key, Request.Form[key]);
+                }
+                ViewData.Form.Action = Request.Url;
+
+                ShowLoginView();
+                return false;
+              } else {
+                 // validate login
+                 return TryLogin(Request.Form["username"], Request.Form["password"]);
+              } 
+           }
+        }
+
+
+I know it says language-agnostic, but why not take advantage of the conventions provided by the server-side language you are using? If it were Java, the data could persist by setting a Request attribute. You would use a controller to process the form, detect the login, and then forward through. If the attributes are set, then just prepopulate the form with that data?
+Edit: You could also use a Session as pointed out, but I'm pretty sure if you use a forward in Java back to the login page, that the Request attribute will persist.
+
+You might want to investigate why Django removed this feature  before implementing it yourself.  It doesn't seem like a Django specific problem, but rather yet another cross site forgery attack.

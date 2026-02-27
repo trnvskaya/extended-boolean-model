@@ -1,0 +1,142 @@
+How to remove duplicate rows from flat file using SSIS?
+sql-server ssis duplicates business-intelligence duplicate-removal
+Let me first say that being able to take 17 million records from a flat file, pushing to a DB on a remote box and having it take 7 minutes is amazing. SSIS truly is fantastic. But now that I have that data up there, how do I remove duplicates?
+Better yet, I want to take the flat file, remove the duplicates from the flat file and put them back into another flat file.
+I am thinking about a:
+Data Flow Task
+
+File source (with an associated file connection)
+A for loop container
+A script container that contains some logic to tell if another row exists
+
+Thak you, and everyone on this site is incredibly knowledgeable.
+Update: I have found this link, might help in answering this question
+
+
+I would suggest using SSIS to copy the records to a temporary table, then create a task that uses Select Distinct or Rank depending on your situation to select the duplicates which would funnel them to a flat file and delete them from the temporary table.  The last step would be to copy the records from the temporary table into the destination table.
+Determining a duplicate is something SQL is good at but a flat file is not as well suited for.  In the case you proposed, the script container would load a row and then would have to compare it against 17 million records, then load the next row and repeat...The performance might not be all that great.
+
+The strategy will usually depend on how many columns the staging table has. The more columns, the more complex the solution. The article you linked has some very good advice.
+The only thing that I will add to what everybody else has said so far, is that columns with date and datetime values will give some of the solutions presented here fits.
+One solution that I came up with is this:
+SET NOCOUNT ON
+
+DECLARE @email varchar(100)
+
+SET @email = ''
+
+SET @emailid = (SELECT min(email) from StagingTable WITH (NOLOCK) WHERE email > @email)
+
+WHILE @emailid IS NOT NULL
+BEGIN
+
+    -- Do INSERT statement based on the email
+    INSERT StagingTable2 (Email)
+    FROM StagingTable WITH (NOLOCK) 
+    WHERE email = @email
+
+    SET @emailid = (SELECT min(email) from StagingTable WITH (NOLOCK) WHERE email > @email)
+
+END
+
+This is a LOT faster when doing deduping, than a CURSOR and will not peg the server's CPU. To use this, separate each column that comes from the text file into their own variables. Use a separate SELECT statement before and inside the loop, then include them in the INSERT statement. This has worked really well for me.
+
+To do this on the flat file, I use the unix command line tool, sort: 
+sort -u inputfile > outputfile
+
+Unfortunately, the windows sort command does not have a unique option, but you could try downloading a sort utility from one of these: 
+
+http://unxutils.sourceforge.net/ 
+http://www.highend3d.com/downloads/tools/os_utils/76.html.  
+
+(I haven't tried them, so no guarantees, I'm afraid).  
+On the other hand, to do this as the records are loaded into the database, you could create a unique index on the key the database table whith ignore_dup_key.  This will make the records unique very efficiently at load time.  
+CREATE UNIQUE INDEX idx1 ON TABLE (col1, col2, ...) WITH IGNORE_DUP_KEY
+
+
+A bit of a dirty solution is to set your target table up with a composite key that spans all columns. This will guarantee distint uniqueness.  Then on the Data Destination shape, configure the task to ignore errors.  All duplicate inserts will fall of into oblivion.
+
+Use the Sort Component.
+Simply choose which fields you wish to sort your loaded rows by and in the bottom left corner you'll see a check box to remove duplicates. This box removes any rows which are duplicates based on the sort criteria only
+so in the example below the rows would be considered duplicate if we only sorted on the first field:
+1 | sample A |
+1 | sample B |
+
+
+Flat File Source --> Aggregate (Group By Columns you want unique) --> Flat File Destination
+
+I would recommend loading a staging table on the destination server and then merge the results into a target table on the destination server.  If you need to run any hygiene rules, then you could do this via stored procedure since you are bound to get better performance than through SSIS data flow transformation tasks.  Besides, deduping is generally a multi-step process.  You may want to dedupe on:
+
+Distinct lines.
+Distinct groups of columns like First Name, Last Name, Email Address, etc.
+You may want to dedupe against an existing target table.  If that's the case, then you may need to include NOT EXISTS or NOT IN statements.  Or you may want to update the original row with new values.  This usually is best served with a MERGE statement and a subquery for the source.
+Take the first or last row of a particular pattern.  For instance, you may want the last row entered in the file for each occurrence of an email address or phone number.  I usually rely on CTE's with ROW_NUMBER() to generate sequential order and reverse order columns like in the folling sample:
+
+.
+WITH    
+    sample_records 
+    (       email_address
+        ,   entry_date
+        ,   row_identifier
+    )
+    AS
+    (
+            SELECT      'tester@test.com'
+                    ,   '2009-10-08 10:00:00'
+                    ,   1
+        UNION ALL
+
+            SELECT      'tester@test.com'
+                    ,   '2009-10-08 10:00:01'
+                    ,   2
+
+        UNION ALL
+
+            SELECT      'tester@test.com'
+                    ,   '2009-10-08 10:00:02'
+                    ,   3
+
+        UNION ALL
+
+            SELECT      'the_other_test@test.com'
+                    ,   '2009-10-08 10:00:00'
+                    ,   4
+
+        UNION ALL
+
+            SELECT      'the_other_test@test.com'
+                    ,   '2009-10-08 10:00:00'
+                    ,   5
+    )
+,   filter_records 
+    (       email_address
+        ,   entry_date
+        ,   row_identifier
+        ,   sequential_order
+        ,   reverse_order
+    )
+    AS
+    (
+        SELECT  email_address
+            ,   entry_date
+            ,   row_identifier
+            ,   'sequential_order'  = ROW_NUMBER() OVER (
+                                        PARTITION BY    email_address 
+                                        ORDER BY        row_identifier ASC)
+            ,   'reverse_order'     = ROW_NUMBER() OVER (
+                                        PARTITION BY    email_address
+                                        ORDER BY        row_identifier DESC)
+        FROM    sample_records
+    )
+    SELECT      email_address
+            ,   entry_date
+            ,   row_identifier
+    FROM        filter_records
+    WHERE       reverse_order = 1
+    ORDER BY    email_address;
+
+There are lots of options for you on deduping files, but ultimately I recommend handling this in a stored procedure once you have loaded a staging table on the destination server.  After you cleanse the data, then you can either MERGE or INSERT into your final destination.
+
+Found this page link text might be worth looking at, although with 17 million records might take a bit too long
+
+We can use look up tables for this. Like SSIS provides two DFS (Data Flow Transformations) i.e. Fuzzy Grouping and Fuzzy Lookup.

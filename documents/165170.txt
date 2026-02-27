@@ -1,0 +1,74 @@
+In Ruby on Rails, how do I format a date with the "th" suffix, as in, "Sun Oct 5th"?
+ruby-on-rails ruby date
+I want to display dates in the format: short day of week, short month, day of month without leading zero but including "th", "st", "nd", or "rd" suffix.
+For example, the day this question was asked would display "Thu Oct 2nd".
+I'm using Ruby 1.8.7, and Time.strftime just doesn't seem to do this.  I'd prefer a standard library if one exists.
+
+
+You can use active_support's ordinalize helper method on numbers. 
+>> 3.ordinalize
+=> "3rd"
+>> 2.ordinalize
+=> "2nd"
+>> 1.ordinalize
+=> "1st"
+
+
+Use the ordinalize method from 'active_support'.
+>> time = Time.new
+=> Fri Oct 03 01:24:48 +0100 2008
+>> time.strftime("%a %b #{time.day.ordinalize}")
+=> "Fri Oct 3rd"
+
+Note, if you are using IRB with Ruby 2.0, you must first run:
+require 'active_support/core_ext/integer/inflections'
+
+
+>> require 'activesupport'
+=> []
+>> t = Time.now
+=> Thu Oct 02 17:28:37 -0700 2008
+>> formatted = "#{t.strftime("%a %b")} #{t.day.ordinalize}"
+=> "Thu Oct 2nd"
+
+
+I like Bartosz's answer, but hey, since this is Rails we're talking about, let's take it one step up in devious.  (Edit: Although I was going to just monkeypatch the following method, turns out there is a cleaner way.)
+DateTime instances have a to_formatted_s method supplied by ActiveSupport, which takes a single symbol as a parameter and, if that symbol is recognized as a valid predefined format, returns a String with the appropriate formatting.  
+Those symbols are defined by Time::DATE_FORMATS, which is a hash of symbols to either strings for the standard formatting function... or procs.  Bwahaha.
+d = DateTime.now #Examples were executed on October 3rd 2008
+Time::DATE_FORMATS[:weekday_month_ordinal] = 
+    lambda { |time| time.strftime("%a %b #{time.day.ordinalize}") }
+d.to_formatted_s :weekday_month_ordinal #Fri Oct 3rd
+
+But hey, if you can't resist the opportunity to monkeypatch, you could always give that a cleaner interface:
+class DateTime
+
+  Time::DATE_FORMATS[:weekday_month_ordinal] = 
+      lambda { |time| time.strftime("%a %b #{time.day.ordinalize}") }
+
+  def to_my_special_s
+    to_formatted_s :weekday_month_ordinal
+  end
+end
+
+DateTime.now.to_my_special_s  #Fri Oct 3rd
+
+
+Taking Patrick McKenzie's answer just a bit further, you could create a new file in your config/initializers directory called date_format.rb (or whatever you want) and put this in it:
+Time::DATE_FORMATS.merge!(
+  :my_date => lambda { |time| time.strftime("%a, %b #{time.day.ordinalize}") }
+)
+
+Then in your view code you can format any date simply by assigning it your new date format:
+My Date: <%= h some_date.to_s(:my_date) %>
+
+It's simple, it works, and is easy to build on.  Just add more format lines in the date_format.rb file for each of your different date formats.  Here is a more fleshed out example.
+Time::DATE_FORMATS.merge!(
+   :datetime_military => '%Y-%m-%d %H:%M',
+   :datetime          => '%Y-%m-%d %I:%M%P',
+   :time              => '%I:%M%P',
+   :time_military     => '%H:%M%P',
+   :datetime_short    => '%m/%d %I:%M',
+   :due_date      => lambda { |time| time.strftime("%a, %b #{time.day.ordinalize}") }
+)
+

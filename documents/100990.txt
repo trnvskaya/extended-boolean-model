@@ -1,0 +1,61 @@
+spring & web service client - Fault Detail
+spring service webservicetemplate
+How could I get the Fault Detail sent by a SoapFaultClientException ?
+I use a WebServiceTemplate as shown below :
+WebServiceTemplate ws = new WebServiceTemplate();
+ws.setMarshaller(client.getMarshaller());
+ws.setUnmarshaller(client.getUnMarshaller());
+try {
+    MyResponse resp = (MyResponse) = ws.marshalSendAndReceive(WS_URI, req);
+} catch (SoapFaultClientException e) {
+     SoapFault fault =  e.getSoapFault();
+     SoapFaultDetail details = e.getSoapFault().getFaultDetail();
+      //details always NULL ? Bug?
+}
+
+The Web Service Fault sent seems correct :
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<soapenv:Body>
+  <soapenv:Fault>
+     <faultcode>soapenv:Client</faultcode>
+     <faultstring>Validation error</faultstring>
+     <faultactor/>
+     <detail>
+        <ws:ValidationError xmlns:ws="http://ws.x.y.com">ERR_UNKNOWN</ws:ValidationError>
+     </detail>
+  </soapenv:Fault>
+</soapenv:Body>
+
+
+Thanks
+Willome
+
+
+From the Javadocs for the marshalSendAndReceive method
+it looks like the SoapFaultClientException in the catch block will never happen.  
+From the API it looks like the best bet for determining the details of the fault is to set a custom Fault Message Receiver.  
+
+Problem was coming from the JAXB Libraries
+
+I also had the problem that getFaultDetail() returned null (for a SharePoint web service). I could get the detail element out by using a method similar to this:
+private Element getDetail(SoapFaultClientException e) throws TransformerException {
+    TransformerFactory transformerFactory = TransformerFactory.newInstance();
+    Transformer transformer = transformerFactory.newTransformer();
+    DOMResult result = new DOMResult();
+    transformer.transform(e.getSoapFault().getSource(), result);
+    NodeList nl = ((Document)result.getNode()).getElementsByTagName("detail");
+    return (Element)nl.item(0);
+}
+
+After that, you can call getTextContent() on the returned Element or whatever you want.
+
+Check out what type of HTTP response you get when receiving Soap Fault. I had the same problem when SOAP Fault responses using HTTP 200 instead of HTTP 500. Then you get:
+
+JAXB unmarshalling exception; nested exception is
+  javax.xml.bind.UnmarshalException
+
+When you change WebServiceTemplate connection fault settings as below: 
+WebServiceTemplate webServiceTemplate = getWebServiceTemplate();
+webServiceTemplate.setCheckConnectionForFault(false);
+
+then you can properly catch SoapFaultClientException

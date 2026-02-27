@@ -1,0 +1,41 @@
+Efficient synthesis of a 4-to-1 function in Verilog
+logic verilog synthesis version-control
+I need to implement a 4-to-1 function in Veriog.  The input is 4 bits, a number from 0-15.  The output is a single bit, 0 or 1.  Each input gives a different output and the mapping from inputs to outputs is known, but the inputs and outputs themselves are not.  I want vcs to successfully optimizing the code and also have it be as short/neat as possible.  My solution so far:
+wire [3:0] a;
+wire b;
+wire [15:0] c;
+
+assign c = 16'b0100110010111010; //for example but could be any constant
+assign b = c[a];
+
+Having to declare c is ugly and I don't know if vcs will recognize the K-map there.  Will this work as well as a case statement or an assignment in conjunctive normal form?
+
+
+My preference - if it makes sense for your problem - is for a case statement that makes use of enums or `defines. Anything to make code review, maintenance and verification easier.
+
+I totally agree with Dallas. Use a case statement - it makes your intent clearer.  The synthesis tool will build it as a look-up table (if it's parallel) and will optimise whatever it can.
+Also, I wouldn't worry so much about keeping your RTL code short.  I'd shoot for clarity first.  Synthesis tools are cleverer than you think...
+
+What you have is fine.  A case statement would also work equally well.  It's just a matter of how expressive you wish to be.  
+Your solution, indexing, works fine if the select encodings don't have any special meaning (a memory address selector for example).  If the select encodings do have some special semantic meaning to you the designer (and there aren't too many of them), then go with a case statement and enums.
+Synthesis wise, it doesn't matter which one you use.  Any decent synthesis tool will produce the same result.
+
+For things like this, RTL clarity trumps all by a wide margin.  SystemVerilog has special always block directives to make it clear when the block should synthesize to combinational logic, latches, or flops (and your synthesis tool should throw an error if you've written RTL that conflicts with that (e.g. not including all signals in the sensitivity list of an always block).  Also be aware that the tool will probably replace whatever encoding you have with the most hardware-efficient encoding (the one that minimizes the area of your total design), unless the encoding itself propagates out to the pins of your top-level module.
+This advice goes in general, as well.  Make your code easy to understand by humans, and it will probably be more understandable to the synthesis tool as well, which allows it to more effectively bring literally thousands of man-years of algorithms research to bear on your RTL.
+You can also code it using ternary operators if you like, but i'd prefer something like:
+always_comb //or "always @*" if you don't have an SV-enabled tool flow
+begin 
+  case(a)
+  begin
+    4'b0000: b = 1'b0;
+    4'b0001: b = 1'b1;
+    ...
+    4'b1111: b = 1'b0;
+    //If you don't specify a "default" clause, your synthesis tool
+    //Should scream at you if you didn't specify all cases,
+    //Which is a good thing (tm)
+  endcase //a
+end //always
+
+
+Apparently I am using a lousy synthesis tool.  :-)  I just synthesized both versions (just the module using a model based on fan-outs for wire delays) and the indexing version from the question gave better timing and area results than the case statements.  Using Synopsys DC Z-2007.03-SP.

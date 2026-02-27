@@ -1,0 +1,40 @@
+Updating sort keys after delete
+mysql sql sorting sql-order-by
+I have a table which has a field sort_id. In this field there are numbers from 1 to n, that define the order of the data sets.
+Now I want to delete some elements and afterwards I want to reorder the table. Therefore I need a query that "finds" the gaps and changes the sort_id field according to the modifications.
+Sure, I could do something like this:
+SELECT sort_id FROM table WHERE id = 5
+
+Then save the sort_id and afterwards:
+DELETE FROM table WHERE id = 5
+UPDATE table SET sort_id = sort_id - 1 WHERE sort_id > {id from above}
+
+But I'd like to do the reordering process in one step.
+
+
+for sql server 2005:
+this is how you get the new sequence:
+SELECT row_number() over(order by sort_id) as RN
+FROM table
+
+updating the table means you should join that select to your update:
+update t1
+set sort_id = t2.RN
+FROM table t1 
+     join (SELECT row_number() over(order by sort_id) as RN FROM table) t2 
+        on t1.UniqueId = t2.UniqueId
+
+
+I don't know MySQL syntax variations and cannot test query live, but something like next should give you at least an idea:
+update table t1
+set sort_id = (select count * from table t2 where t2.sort_id <= t1.sort_id)
+
+
+Mladen and Arvo have good ideas, but unfortunately in MySQL you can't SELECT and UPDATE the same table in the same statement (even in a subquery).  This is a known limitation of MySQL.
+Here's a solution that uses MySQL user variables:
+SET @i := 0;
+UPDATE mytable
+SET sort_id = (@i := @i + 1)
+ORDER BY sort_id;
+
+For what it's worth, I wouldn't bother doing this anyway.  If your sort_id is used only for sorting and not as a kind of "row number," then the rows are still in sorted order after you delete the row where id=6.  The values don't necessarily have to be consecutive for sorting.

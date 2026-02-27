@@ -1,0 +1,97 @@
+how do I query multiple SQL tables for a specific key-value pair?
+sql lazy-evaluation
+Situation: A PHP application with multiple installable modules creates a new table in database for each, in the style of mod_A, mod_B, mod_C etc. Each has the column section_id.
+Now, I am looking for all entries for a specific section_id, and I'm hoping there's another way besides "Select * from mod_a, mod_b, mod_c ... mod_xyzzy where section_id=value"... or even worse, using a separate query for each module.
+
+
+What about?
+SELECT * FROM mod_a WHERE section_id=value
+UNION ALL
+SELECT * FROM mod_b WHERE section_id=value
+UNION ALL
+SELECT * FROM mod_c WHERE section_id=value
+
+
+I was going to suggest the same think as borjab.  The only problem with that is that you will have to update all of these queries if you add another table.  The only other option I see is a stored procedure.
+I did think of another option here, or at least an easier way to present this.  You can also use a view to these multiple tables to make them appear as one, and then your query would look cleaner, be easier to understand and you wouldn't have to rewrite a long union query when you wanted to do other queries on these multiple tables.
+
+Perhaps some additional info would help, but it sounds like you have the solution already.  You will have to select from all the tables with a section_id.  You could use joins instead of a table list, joining on section_id.  For example
+select a.some_field, b.some_field.... 
+from mod_a a
+inner join mod_b b on a.section_id = b.section_id
+...
+where a.section_id = <parameter>
+
+You could also package this up as a view.
+Also notice the field list instead of *, which I would recommend if you were intending to actually use *.
+
+Well, there are only so many ways to aggregate information from multiple tables.  You can join, like you mentioned in your example, or you can run multiple queries and union them together as in borjab's answer.  I don't know if some idea of creating a table that intersects all the module tables would be useful to you, but if section_id was on a table like that you'd be able to get everything from a single query.  Otherwise, I applaud your laziness, but am afraid to say, I don't see any way to make that job eaiser :)
+
+If the tables are changing over time, you can inline code gen your solution in an SP (pseudo code - you'll have to fill in):
+SET @sql = ''
+
+DECLARE CURSOR FOR
+SELECT t.[name] AS TABLE_NAME
+FROM sys.tables t
+WHERE t.[name] LIKE 'SOME_PATTERN_TO_IDENTIFY_THE_TABLES'
+
+-- or this
+DECLARE CURSOR FOR
+SELECT t.[name] AS TABLE_NAME
+FROM TABLE_OF_TABLES_TO_SEACRH t
+
+START LOOP
+
+IF @sql <> '' SET @sql = @sql + 'UNION ALL '
+SET @sql = 'SELECT * FROM [' + @TABLE_NAME + '] WHERE section_id=value '
+
+END LOOP
+
+EXEC(@sql)
+
+I've used this technique occasionally, when there just isn't any obvious way to make it future-proof without dynamic SQL.
+Note: In your loop, you can use the COALESCE/NULL propagation trick and leave the string as NULL before the loop, but it's not as clear if you are unfamiliar with the idiom:
+SET @sql = COALESCE(@sql + ' UNION ALL ', '')
+    + 'SELECT * FROM [' + @TABLE_NAME + '] WHERE section_id=value '
+
+
+I have two suggestions.
+
+Perhaps you need to consolidate all your tables. If they all contain the same structure, then why not have one "master" module table, that just adds one new column identifying the module ("A", "B", "C", ....)
+If your module tables are mostly the same, but you have a few columns that are different, you might still be able to consolidate all the common information into one table, and keep smaller module-specific tables with those differences. Then you would just need to do a join on them.
+This suggestion assumes that your query on the column section_id you mention is super-critical to look up quickly. With one query you get all the common information, and with a second you would get any specific information if you needed it. (And you might not -- for instance if you were trying to validate the existense of the section, then finding it in the common table would be enough)
+Alternatively you can add another table that maps section_id's to the modules that they are in.
+
+section_id | module
+-----------+-------
+      1    |  A
+      2    |  B
+      3    |  A
+     ...   | ...
+
+This does mean though that you have to run two queries, one against this mapping table, and another against the module table to pull out any useful data.
+You can extend this table with other columns and indices on those columns if you need to look up other columns that are common to all modules.
+This method has the definite disadvanage that the data is duplicated.
+
+
+SELECT * FROM (
+	SELECT * FROM table1
+	UNION ALL
+	SELECT * FROM table2
+	UNION ALL
+	SELECT * FROM table3
+) subQry
+WHERE field=value
+
+
+An option from the database side would be to create a view of the UNION ALL of the various tables.  When you add a table, you would need to add it to the view, but otherwise it would look like a single table.
+CREATE VIEW modules AS (
+    SELECT * FROM mod_A
+    UNION ALL 
+    SELECT * FROM mod_B
+    UNION ALL 
+    SELECT * FROM mod_C
+);
+
+select * from modules where section_id=value;
+

@@ -1,0 +1,34 @@
+PowerShell App.Config
+powershell configuration-files
+Has anyone worked out how to get PowerShell to use app.config files? I have a couple of .NET DLL's I'd like to use in one of my scripts but they expect their own config sections to be present in app.config/web.config.
+
+
+I'm guessing that the settings would have to be in powershell.exe.config in the powershell directory, but that seems to be a bad way of doing things.
+You can use ConfigurationManager.OpenMappedExeConfiguration to open a configuration file based on the executing DLL name, rather than the application exe, but this would obviously require changes to the DLLs.
+
+I had the same problem, and resolved it using Keith Hill's parser, available here. 
+
+Cross-referencing with this thread, which helped me with the same question:
+Subsonic Access To App.Config Connection Strings From Referenced DLL in Powershell Script
+I added the following to my script, before invoking the DLL that needs config settings, where $configpath is the location of the file I want to load:
+[appdomain]::CurrentDomain.SetData("APP_CONFIG_FILE", $configpath)
+Add-Type -AssemblyName System.Configuration
+
+
+Attempting a new answer to an old question.
+I think the modern answer would be: don't do that.  PowerShell is a shell.  The normal way of passing information between parts of the shell are shell variables. For powershell that would look like:
+$global:MyComponent_MySetting = '12'
+# i.e. 
+$PSDefaultParameterValues
+$ErrorActionPreference
+
+If settings is expected to be inherited across processes boundaries the convention is to use environment variables.  I extend this to settings that cross C# / PowerShell boundary.  A couple of examples:
+$env:PATH
+$env:PSModulePath
+
+If you think this is an anti-pattern for .NET you might want to reconsider.  This is the norm for PAAS hosted apps, and is going to be the new default for ASP.NET running on server-optimized CLR (ASP.NET v5).  
+See https://github.com/JabbR/JabbRv2/blob/dev/src/JabbR/Startup.cs#L21 
+Note: at time of writing I'm linking to .AddEnvironmentVariables()
+I've revisited this question a few times, including asking it myself.  I wanted to put a stake in the ground to say PowerShell stuff doesn't work well with <appSettings>.  IMO it is much better to embrace the shell aspect of PS over the .NET aspect in this regards.  
+If you need complex configuration take a JSON string.  POSH v3+ has ConvertFrom-JSON built-in.  If everything in your process uses the same complex configuration put it in a .json file and point to that file from an environment variable.  
+If a single file doesn't suffice there are well established solutions like the PATH pattern, GIT .gitignore resolution, or ASP.NET web.config resolution (which I won't repeat here).

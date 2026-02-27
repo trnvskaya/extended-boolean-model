@@ -1,0 +1,118 @@
+Is there a convenient way to wrap std::pair as a new type?
+c++ stl
+Often times I find myself using std::pair to define logical groupings of two related quantities as function arguments/return values. Some examples: row/col, tag/value, etc.
+Often times I should really be rolling my own class instead of just using std::pair. It's pretty easy to see when things start breaking down - when the code becomes littered with make_pair, first, and second, its very hard to remember what is what - an std::pair<int, int> conveys less meaning than a type Position.
+What have you found are the best ways to wrap the functionality of std::pair in a type that conveys real meaning?
+Here are some things I have considered:
+typedef std::pair<int, int> Position;
+
+This at least gives the type a meaningful name when passing it around, but the type isn't enforced, its still really just a pair, and most of the same problems still exist. This is however very simple to write.
+struct Position : public std::pair<int, int>
+{
+    typedef std::pair<int, int> Base;
+    Position() : Base() {}
+    Position(const Position &x) : Base(x) {}
+    Position(int a, int b) : Base(a, b) {}
+
+    int &row() { return first; }
+    const int &row() const { return first; }
+
+    int &col() { return second; }
+    const int &col() const { return second; }
+};
+
+This is better, since we can access the variables via a reasonably descriptive name. The problem here is that you can still access first and second, so its easy for the abstraction to leak. Also, accessing simple variables via functions makes the syntax annoying.
+The obvious next step is to make the inheritance private:
+struct Position : private std::pair<int, int>
+{
+    typedef std::pair<int, int> Base;
+    Position() {}
+    Position(const Position &x) : Base(x) {}
+    Position(int a, int b) : Base(a, b) {}
+
+    int &row() { return first; }
+    const int &row() const { return first; }
+
+    int &col() { return second; }
+    const int &col() const { return second; }
+
+    bool operator<(const Position &x) const { return Base(*this) < Base(x); }
+    // other forwarding operators as needed...
+};
+
+So now at least we have gotten rid of the access to first and second, but now a new problem pops up. When we want to store the type in an std::set, we now don't have access to the operator< overload since we don't have access to first and second. This means we have to define a forwarding function for each operator overload we want. For me this is usually ==, !=, and <, but there could be others that I'd want. Yes I know I probably shouldn't overload operator< just to stick it in an associative container, but it makes everything so darn simple... And defining these operators for each new type is a pain, and we STILL have to access via functions. We can fix that:
+struct Position
+{
+    Position() {}
+    Position(const Position &x) : row(x.row), col(x.col) {}
+    Position(int row, int col) : row(row), col(col) {}
+
+    int row, col;
+};
+bool operator<(const Position &a, const Position &b)
+{
+    return a.row < b.row || (!(b.row < a.row) && a.col < b.col);
+}
+// more overloads as needed
+
+So now we have simple variable access, but now defining overloaded operators is even more of a pain, because instead of just forwarding them to the pair's implementation, we actually have to re-implement them each time...
+Are there any solutions I have overlooked that make this easy without the drawbacks? If there aren't which would you tend to prefer?
+
+
+This is what Boost.Tuple was made for.
+But you should probably be using std::tuple now...
+
+You can still reuse the pair functionality by forwarding to it:
+bool operator< ( const Position &a, const Position &b ) 
+{
+    return
+        std::make_pair( a.row, a.col ) < std::make_pair( b.row, b.col );
+}
+
+Although you still end up with doing this for every operatory you need...
+
+You can use some standard utility templates that help define the relation operators.
+#include <utility>
+http://www.sgi.com/tech/stl/operators.html
+Requirements on types
+The requirement for operator!= is that x == y is a valid expression
+The requirement for operator> is that y < x is a valid expression
+The requirement for operator<= is that y < x is a valid expression
+The requirement for operator>= is that x < y is a valid expression
+So basically it will automatically generate the other operators give < and == all you have to do is include <utility>
+
+A coworker pointed me to two possible solutions:
+Using boost strong typedef as an improved version of the typedef. I'd never heard of this before, and it doesn't seem to really be part of any sub-library, just kind of floating.
+Using a macro to generate the code needed for the different operators. This way I wouldn't have to explicitly write anything on a per definition level, just do something like DEFINE_PAIR_TYPE(Position, int, int, row, col);. This is probably closest to what I'm looking for, but it still feels kind of evil compared to some of the solutions presented by others.
+
+There's also the Boost::Operators library to automatically generate operator code. It's similar to the SGI library that Martin York suggested, but might be more portable.
+
+I must say that's a lot of thought just to make a simple struct.
+Overload operator< and operator== and you're done. I use that for a lot of code I write, mainly because I usually have more member variables to store than 2.
+struct MyStruct
+{
+	std::string var1;
+	std::string var2;
+	bool var3;
+
+	struct less : std::binary_function<struct MyStruct, struct MyStruct, bool>
+	{
+		bool operator() (const struct MyStruct& s1, const struct MyStruct& s2) const
+            { if (var1== a2.var1) return var2 < a2.var2; else return var3 < a2.var3; }
+	};
+};
+typedef std::set<struct MyStruct, MyStruct::less> MySet;
+
+or put these inside the class definition
+bool operator==(const MyStruct& rhs) const 
+    { return var1 == rhs.var1 && var2 == rhs.var2 && var3 == rhs.var3; };
+bool operator<(const MyStruct& a2) const  
+    { if (var1== a2.var1) return var2 < a2.var2; else return var3 < a2.var3; };
+
+The best reasons are that its easy to understand the above, they can be slipped into the class definition easily, and they are easy to expand if you find you need more variables later on. I would never try to overload std::pair when there's a much simpler solution.
+
+Unfortunately strong typedefs will not make it into C++0x, it has been given the classification of Not ready for C++0x, but open to resubmit in future.
+
+Don't use it.
+I hate std::pair exactly for this reason. You never know which is which, and since access to first and second are public you can't enforce contracts either.
+But after all, it's a matter of taste.

@@ -1,0 +1,117 @@
+Why is there no RAII in .NET?
+.net struct destructor raii value-type
+Being primarily a C++ developer the absence of RAII (Resource Acquisition Is Initialization) in Java and .NET has always bothered me. The fact that the onus of cleaning up is moved from the class writer to its consumer (by means of try finally or .NET's using construct) seems to be markedly inferior.
+I see why in Java there is no support for RAII since all objects are located on the heap and the garbage collector inherently doesn't support deterministic destruction, but in .NET with the introduction of value-types (struct) we have the (seemingly) perfect candidate for RAII. A value type that's created on the stack has a well defined scope and C++ destructor semantics can be used. However the CLR does not permit a value-type to have a destructor.
+My random searches found one argument that if a value-type is boxed it falls under the jurisdiction of the garbage collector and therefore its destruction becomes non-deterministic. 
+I feel that this argument isn't strong enough, the benefits of RAII are big enough to say that a value-type with a destructor cannot be boxed (or used as a class member).
+To cut a long story short my question is: are there any other reasons value types can not be used in order to introduce RAII to .NET?  (or do you think my argument about RAII's obvious advantages are flawed?)
+Edit: I must have not phrased the question clearly since the first four answers have missed the point. I know about Finalize and its non-deterministic characteristics, I know about the using construct and I feel these two options are inferior to RAII. using is one more thing the consumer of a class must remember (how many people forgot to put a StreamReader in a using block?). My question is a philosophical one about the language design, why is it the way it is and can it be improved?
+For instance with a generic deterministically destructible value-type I can make the using and lock keywords redundant (achievable by library classes):
+    public struct Disposer<T> where T : IDisposable
+    {
+        T val;
+        public Disposer(T t) { val = t; }
+        public T Value { get { return val; } }
+        ~Disposer()  // Currently illegal 
+        {
+            if (val != default(T))
+                val.Dispose();
+        }
+    }
+
+
+I can't help but end with a apropos quotation which I once saw but can't currently find its origin.
+
+You can take my deterministic destruction when my cold dead hand goes out of scope.  --Anon
+
+
+
+The closest you get to that is the very limited stackalloc operator.
+
+You can do a form of RAII in .net and java using finalize() methods. A finalize() overload is called before the class is cleaned up by the GC and so can be used to clean up any resources that absolutely shouldn't be kept by the class (mutexes, sockets, file handles, etc). It still isn't deterministic though. 
+With .NET you can do some of this deterministically with the IDisposable interface and the using keyword, but this does have limitations (using construct when used required for deterministic behaviour, still no deterministic memory deallocation, not automatically used in classes, etc). 
+And yes, I feel there is a place for RAII ideas to be introduced into .NET and other managed languages, although the exact mechanism could be debated endlessly. The only other alternative I could see would be to introduce a GC that could handle arbitrary resource cleanup (not just memory) but then you have issues when said resources absolutely have to be released deterministically.
+
+There's some similar threads if you search for them but basicly what it boils down to is that if you want to RAII on .NET simply implement an IDisposable type and use the "using" statement to get deterministic Disposal. That way many of the same ideoms can be implemented and used in only a slightly more wordy manner.
+
+Excellent question and one that has bothered me greatly. It appears that the benefits of RAII are perceived very differently. In my experience with .NET, the lack of deterministic (or at least reliable) resource collection is one of the major drawbacks. In fact, .NET has forced me several times to employ whole architectures to deal with unmanaged resources that might (but might not) require explicit collecting. Which, of course, is a huge drawback because it makes the overall architecture more difficult and directs the client's attention away from the more central aspects.
+
+Brian Harry has a nice post about the rationales here.
+Here is an excerpt:
+
+What about deterministic finalization and value types (structs)?
+-------------- I've seen a lot of questions about structs having
+  destructors, etc.  This is worth
+  comment.  There are a variety of
+  issues for why some languages don't
+  have them.
+(1) composition - They don't give you
+  deterministic lifetime in the general
+  case for the same kinds of composition
+  reasons described above.  Any
+  non-deterministic class containing one
+  would not call the destructor until it
+  was finalized by the GC anyway.
+(2) copy constructors - The one place
+  where it would really be nice is in
+  stack allocated locals.  They would be
+  scoped to the method and all would be
+  great.  Unfortunately, in order to get
+  this to really work, you also have to
+  add copy constructors and call them
+  every time an instance is copied. 
+  This is one of the ugliest and most
+  complex things about C++.  You end up
+  getting code executing all over the
+  place where you don't expect it.  It
+  causes bunches of language problems. 
+  Some language designers have chosen to
+  stay away from this.
+Let's say we created structs with
+  destructors but added a bunch of
+  restrictions to make their behavior
+  sensible in the face of the issues
+  above.  The restrictions would be
+  something like:
+(1) You can only declare them as local
+  variables. 
+(2) You can only pass them
+  by-ref
+(3) You can't assign them, you
+  can only access fields and call
+  methods on them. 
+(4) You can't box
+  them. 
+(5) Problems using them through
+  Reflection (late binding) because that
+  usually involves boxing. 
+maybe more,
+  but that's a good start.
+What use would these things be?  Would
+  you actually create a file or a
+  database connection class that can
+  ONLY be used as a local variable?  I
+  don't believe anybody really would. 
+  What you would do instead is create a
+  general purpose connection and then
+  create an auto destructed wrapper for
+  use as a scoped local variable.  The
+  caller would then pick what they
+  wanted to use.  Note the caller made a
+  decision and it is not entirely
+  encapsulated in the object itself. 
+  Given that you could use something
+  like the suggestions coming up in a
+  couple of sections.
+
+The replacement for RAII in .NET is the using-pattern, which works almost as well once you get used to it.
+
+A better title would be "Why is there no RAII in C#/VB". C++/CLI (The evolution of the abortion that was Managed C++) has RAII in the exact same sense as C++. It's all just syntax sugar for the same finalisation pattern that the rest of the CLI languages use (Destructors in managed objects for C++/CLI are effectively finalisers), but it is there.
+You might like http://blogs.msdn.com/hsutter/archive/2004/07/31/203137.aspx
+
+IMHO, the big things that VB.net and C# need are:
+a "using" declaration for fields, which would cause the compiler to generate code to dispose of all fields thus tagged.  The default behavior should be for the compiler to make a class implement IDisposable if it does not, or insert disposal logic before the start of the main disposal routine for any of a number of common IDisposal implementation patterns, or else use an attribute to specify that the disposal stuff should go in a routine with a particular name.
+a means of deterministically disposing of objects whose constructors and/or field initializers throw an exception, either by a default behavior (calling the default disposal method) or a custom behavior (calling a method with a particular name).
+For vb.net, an auto-generated method to null out all WithEvent fields.
+
+All of those can be kludged pretty well in vb.net, and somewhat less well in C#, but first-class support for them would improve both languages.

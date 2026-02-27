@@ -1,0 +1,125 @@
+Drag'n'drop one or more mails from Outlook to C# WPF application
+c# wpf outlook drag-and-drop
+I'm working on a windows client written in WPF with C# on .Net 3.5 Sp1, where a requirement is that data from emails received by clients can be stored in the database. Right now the easiest way to handle this is to copy and paste the text, subject, contact information and time received manually using an arthritis-inducing amount of ctrl-c/ctrl-v.
+I thought that a simple way to handle this would be to allow the user to drag one or more emails from Outlook (they are all using Outlook 2007 currently) into the window, allowing my app to extract the necessary information and send it to the backend system for storage.
+However, a few hours googling for information on this seem to indicate a shocking lack of information about this seemingly basic task. I would think that something like this would be useful in a lot of different settings, but all I've been able to find so far have been half-baked non-solutions. 
+Does anyone have any advice on how to do this? Since I am just going to read the mails and not send anything out or do anything evil, it would be nice with a solution that didn't involve the hated security pop ups, but anything beats not being able to do it at all.
+Basically, if I could get a list of all the mail items that were selected, dragged and dropped from Outlook, I will be able to handle the rest myself!
+Thanks!
+Rune
+
+
+I think Shell Style Drag and Drop in .NET (WPF and WinForms) can help you. Once you can respond to drag drop using the COM Interfaces, you should be able to get the data out of outlook.
+
+In your Xaml you need to set up your Event:
+<TextBlock
+        Name="myTextBlock"  
+        Text="Drag something into here"
+        AllowDrop="True" 
+        DragDrop.Drop="myTextBlock_Drop"
+        />
+
+Once you have Set AllowDrop = True and Set you drop event then go to the code behind and set up your event:
+private void myTextBlock_Drop(object sender, DragEventArgs e)
+{
+         // Mark the event as handled, so TextBox's native Drop handler is not called.
+         e.Handled = true;
+         Stream sr;
+
+          //Explorer 
+          if (e.Data.GetDataPresent(DataFormats.FileDrop, true))
+              //Do somthing
+
+    	//Email Message Subject	
+    	if (e.Data.GetDataPresent("FileGroupDescriptor"))
+        {
+    		sr = e.Data.GetData("FileGroupDescriptor") as Stream;
+    	        StreamReader sr = new StreamReader(sr2);//new StreamReader(strPath, Encoding.Default);
+            //Message Subject
+                    string strFullString = sr.ReadToEnd();
+         }
+
+
+}
+
+If you wish to break it down further you can use:
+FILEDESCRIPTOR or FILECONTENTS as outline in the following article
+your other option is to tie into outlooks MS Office Primary Interop Assemblies and break the message apart that way.
+
+I found a lot of solutions suggesting you use the âFileGroupDescriptorâ for all the file names and the âFileContentsâ on the DragEventArgs object to retrieve the data of each file. The âFileGroupDescriptorâ works fine for the email message names, but âFileContentsâ returns a null because the implementation of the IDataObject in .Net cannot handle the IStorage object that is returned by COM. 
+David Ewen has a great explanation, excellent sample and code download that works great at http://www.codeproject.com/KB/office/outlook_drag_drop_in_cs.aspx.
+
+I found a great article that should do exactly what you need to. 
+UPDATE
+I was able to get the code in that article working in WPF with a little tweaking, below are the changes you need to make.
+Change all references from System.Windows.Forms.IDataObject to System.Windows.IDataObject
+In the OutlookDataObject constructor, change
+FieldInfo innerDataField = this.underlyingDataObject.GetType().GetField("innerData", BindingFlags.NonPublic | BindingFlags.Instance);
+
+To
+FieldInfo innerDataField = this.underlyingDataObject.GetType().GetField("_innerData", BindingFlags.NonPublic | BindingFlags.Instance);
+
+Change all DataFormats.GetFormat calls to DataFormats.GetDataFormat
+Change the SetData implementation from
+public void SetData(string format, bool autoConvert, object data)
+{
+    this.underlyingDataObject.SetData(format, autoConvert, data);
+}
+
+TO
+public void SetData(string format, object data, bool autoConvert)
+{
+    this.underlyingDataObject.SetData(format, data, autoConvert);
+}
+
+With those changes, I was able to get it to save the messages to files as the article did. Sorry for the formatting, but numbered/bulleted lists don't work well with code snippets.
+
+I assume that you have an Exchange server running behind Outlook. 
+What you can do is to retrieve the mail from the Exchange server and store its location in your database based on the mail's EntryID and StoreID. Here's a VB.Net snippet: 
+Imports Microsoft.Office.Interop
+
+Public Class OutlookClientHandler
+
+Private _application As Outlook.Application
+Private _namespace As Outlook.NameSpace
+
+Public Sub New()
+    If Process.GetProcessesByName("outlook".ToLower).Length > 0 Then
+        _application = New Outlook.Application
+    Else
+        Dim startInfo As ProcessStartInfo = New ProcessStartInfo("outlook.exe")
+        startInfo.WindowStyle = ProcessWindowStyle.Minimized
+        Process.Start(startInfo)
+
+        _application = New Outlook.Application
+    End If
+End Sub
+
+' Retrieves the specified e-mail from Outlook/Exchange via the MAPI
+Public Function GetMailItem(ByVal entryID as String, ByVal storeID as String) As Outlook.MailItem
+    _namespace = _application.GetNamespace("MAPI")
+    Dim item As Outlook.MailItem
+    Try
+        item = _namespace.GetItemFromID(entryID, storeID)
+    Catch comex As COMException
+        item = Nothing ' Fugly, e-mail wasn't found!
+    End Try
+
+    Return item
+End Function
+End Class
+
+I guess you are comfortable with using the MAPI, otherwise you can read up here: 
+http://msdn.microsoft.com/en-us/library/cc765775(v=office.12).aspx
+To retrieve the selected e-mails from outlook: 
+Public Function GetSelectedItems() As List(Of Object) 
+    Dim items As List(Of Object) = New List(Of Object)
+
+    For Each item As Object In _application.ActiveExplorer().Selection
+        items.Add(item)
+    Next
+
+    Return items
+End Function
+
+After you've retrieved the e-mails from Outlook you can just push them into your database! Save their EntryID and StoreID (you might want to store their parent's (the folder's) EntryID and StoreID as well).

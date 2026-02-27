@@ -1,0 +1,89 @@
+Undefined reference to static class member
+c++ g++
+Can anyone explain why following code won't compile? At least on g++ 4.2.4.
+And more interesting, why it will compile when I cast MEMBER to int?
+#include <vector>
+
+class Foo {  
+public:  
+    static const int MEMBER = 1;  
+};
+
+int main(){  
+    vector<int> v;  
+    v.push_back( Foo::MEMBER );       // undefined reference to `Foo::MEMBER'
+    v.push_back( (int) Foo::MEMBER ); // OK  
+    return 0;
+}
+
+
+
+You need to actually define the static member somewhere (after the class definition).  Try this:
+class Foo { /* ... */ };
+
+const int Foo::MEMBER;
+
+int main() { /* ... */ }
+
+That should get rid of the undefined reference.
+
+The problem comes because of an interesting clash of new C++ features and what you're trying to do.  First, let's take a look at the push_back signature:
+void push_back(const T&)
+
+It's expecting a reference to an object of type T.  Under the old system of initialization, such a member exists.  For example, the following code compiles just fine:
+#include <vector>
+
+class Foo {
+public:
+    static const int MEMBER;
+};
+
+const int Foo::MEMBER = 1; 
+
+int main(){
+    std::vector<int> v;
+    v.push_back( Foo::MEMBER );       // undefined reference to `Foo::MEMBER'
+    v.push_back( (int) Foo::MEMBER ); // OK  
+    return 0;
+}
+
+This is because there is an actual object somewhere that has that value stored in it.  If, however, you switch to the new method of specifying static const members, like you have above, Foo::MEMBER is no longer an object.  It is a constant, somewhat akin to:
+#define MEMBER 1
+
+But without the headaches of a preprocessor macro (and with type safety).  That means that the vector, which is expecting a reference, can't get one.
+
+No idea why the cast works, but Foo::MEMBER isn't allocated until the first time Foo is loaded, and since you're never loading it, it's never allocated.  If you had a reference to a Foo somewhere, it would probably work.
+
+The C++ standard requires a definition for your static const member if the definition is somehow needed.  
+The definition is required, for example if it's address is used.  push_back takes its parameter by const reference, and so strictly the compiler needs the address of your member and you need to define it in the namespace.
+When you explicitly cast the constant, you're creating a temporary and it's this temporary which is bound to the reference (under special rules in the standard).
+This is a really interesting case, and I actually think it's worth raising an issue so that the std be changed to have the same behaviour for your constant member!
+Although, in a weird kind of way this could be seen as a legitimate use of the unary '+' operator.  Basically the result of the unary + is an rvalue and so the rules for binding of rvalues to const references apply and we don't use the address of our static const member:
+v.push_back( +Foo::MEMBER );
+
+
+Aaa.h
+class Aaa {
+
+protected:
+
+    static Aaa *defaultAaa;
+
+};
+
+Aaa.cpp
+// You must define an actual variable in your program for the static members of the classes
+
+static Aaa *Aaa::defaultAaa;
+
+
+Regarding the second question: push_ref takes reference as a parameter, and you cannot have a reference to static const memeber of a class/struct. Once you call static_cast, a temporary variable is created. And a reference to this object can be passed, everything works just fine.
+Or at least my colleague who resolved this said so.
+
+With C++11, the above would be possible for basic types as
+class Foo {
+public:  
+  static constexpr int MEMBER = 1;  
+};
+
+The constexpr part creates a static expression as opposed to a static variable - and that behaves just like an extremely simple inline method definition. The approach proved a bit wobbly with C-string constexprs inside template classes, though. 

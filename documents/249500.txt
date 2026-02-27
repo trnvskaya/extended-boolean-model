@@ -1,0 +1,315 @@
+Looking for a better way than virtual inheritance in C++
+c++ inheritance multiple-inheritance
+OK, I have a somewhat complicated system in C++. In a nutshell, I need to add a method to a third party abstract base class. The third party also provides a ton of derived classes that also need the new functionality.
+I'm using a library that provides a standard Shape interface, as well as some common shapes.
+class Shape
+{
+    public:
+        Shape(position);
+        virtual ~Shape();
+
+        virtual position GetPosition() const;
+        virtual void SetPosition(position);
+
+        virtual double GetPerimeter() const = 0;
+
+    private: ...
+};
+
+class Square : public Shape
+{
+    public:
+        Square(position, side_length);
+    ...
+};
+
+class Circle, Rectangle, Hexagon, etc
+
+Now, here's my problem. I want the Shape class to also include a GetArea() function. So it seems like I should just do a:
+class ImprovedShape : public virtual Shape
+{
+    virtual double GetArea() const = 0;
+};
+
+class ImprovedSquare : public Square, public ImprovedShape
+{
+    ...
+}
+
+And then I go and make an ImprovedSquare that inherits from ImprovedShape and Square. Well, as you can see, I have now created the dreaded diamond inheritance problem. This would easily be fixed if the third party library used virtual inheritance for their Square, Circle, etc. However, getting them to do that isn't a reasonable option.
+So, what do you do when you need to add a little functionality to an interface defined in a library? Is there a good answer?
+Thanks!
+
+
+I suppose the facade pattern should do the trick.
+Wrap the 3rd party interface into an interface of your own, and your application's code works with the wrapper interface rather than the 3rd party interface. That way you've nicely insulated changes in the uncontrolled 3rd party interface as well.
+
+We had a very similar problem in a project and we solved it by just NOT deriving ImprovedShape from Shape.  If you need Shape functionality in ImprovedShape you can dynamic_cast, knowing that your cast will always work.  And the rest is just like in your example.
+
+Why does this class need to derive from shape?
+class ImprovedShape : public virtual Shape
+{
+    virtual double GetArea() const = 0;
+};
+
+Why not just have
+class ThingWithArea 
+{
+    virtual double GetArea() const = 0;
+};
+
+ImprovedSquare is a Shape and is a ThingWithArea
+
+Perhaps you should read up on proper inheritance, and conclude that ImprovedShape does not need to inherit from Shape but instead can use Shape for its drawing functionality, similar to the discussion in point 21.12 on that FAQ on how a SortedList doesn't have to inherit from List even if it wants to provide the same functionality, it can simply use a List.
+In a similar fashion, ImprovedShape can use a Shape to do it's Shape things.
+
+Possibly a use for the decorator pattern? [http://en.wikipedia.org/wiki/Decorator_pattern][1]
+
+Is it possible to do a completely different approach - using templates and meta-programming techniques?  If you're not constrained to not using templates, this could provide an elegant solution.  Only ImprovedShape and ImprovedSquare change:
+template <typename ShapePolicy>
+class ImprovedShape : public ShapePolicy
+{
+public:
+    virtual double GetArea();
+    ImprovedShape(void);
+    virtual ~ImprovedShape(void);
+
+protected:
+    ShapePolicy shape;
+    //...
+};
+
+and the ImprovedSquare becomes:
+class ImprovedSquare : public ImprovedShape<Square>
+{
+public:
+    ImprovedSquare(void);
+    ~ImprovedSquare(void);
+
+    // ...
+
+};
+
+You'll avoid the diamond inheritance, getting both the inheritance from your original Shape (through the policy class) as well as the added functionality you want.
+
+Dave Hillier's approach is the right one.  Separate GetArea() into its own interface:
+class ThingWithArea
+{
+public:
+    virtual double GetArea() const = 0;
+};
+
+If the designers of Shape had done the right thing and made it a pure interface, 
+and the public interfaces of the concrete classes were powerful enough, you could 
+have instances of concrete classes as members.  This is how you get SquareWithArea
+(ImprovedSquare is a poor name) being a Shape and a ThingWithArea:
+class SquareWithArea : public Shape, public ThingWithArea
+{
+public:
+    double GetPerimeter() const { return square.GetPerimeter(); }
+    double GetArea() const { /* do stuff with square */ }
+
+private:
+    Square square;
+};
+
+Unfortunately, the Shape designers put some implementation into Shape, and you 
+would end up carrying two copies of it per SquareWithArea, just like in
+the diamond you originally proposed.
+This pretty much forces you into the most tightly coupled, and therefore least 
+desirable, solution:
+class SquareWithArea : public Square, public ThingWithArea
+{
+};
+
+These days, it's considered bad form to derive from concrete classes in C++.
+It's hard to find a really good explanation why you shouldn't. Usually, people 
+cite Meyers's More Effective C++ Item 33, which points out the impossibility
+of writing a decent operator=() among other things.  Probably, then, you should
+never do it for classes with value semantics.  Another pitfall is where the 
+concrete class doesn't have a virtual destructor (this is why you should 
+never publicly derive from STL containers).  Neither applies here.  The poster
+who condescendingly sent you to the C++ faq to learn about inheritance is
+wrong - adding GetArea() does not violate Liskov substitutability.  About 
+the only risk I can see comes from overriding virtual functions in the 
+concrete classes, when the implementer later changes the name and silently breaks
+your code.
+In summary, I think you can derive from Square with a clear conscience.
+(As a consolation, you won't have to write all the forwarding functions for
+the Shape interface).
+Now for the problem of functions which need both interfaces.  I don't like 
+unnecessary dynamic_casts.  Instead, make the function take references to 
+both interfaces and pass references to the same object for both at the call site:
+void PrintPerimeterAndArea(const Shape& s, const ThingWithArea& a)
+{
+    cout << s.GetPerimeter() << endl;
+    cout << a.GetArea() << endl;
+}
+
+// ...
+
+SquareWithArea swa;
+PrintPerimeterAndArea(swa, swa);
+
+All PrintPerimeterAndArea() needs to do its job is a source of perimeter and a 
+source of area.  It is not its concern that these happen to be implemented
+as member functions on the same object instance.  Conceivably, the area could
+be supplied by some numerical integration engine between it and the Shape.  
+This gets us to the only case where I would consider passing in one reference
+and getting the other by dynamic_cast - where it's important that the two
+references are to the same object instance.  Here's a very contrived example:
+void hardcopy(const Shape& s, const ThingWithArea& a)
+{
+    Printer p;
+    if (p.HasEnoughInk(a.GetArea()))
+    {
+        s.print(p);
+    }
+}
+
+Even then, I would probably prefer to send in two references rather than
+dynamic_cast.  I would rely on a sane overall system design to eliminate the 
+possibility of bits of two different instances being fed to functions like this.   
+
+Another take on meta-programming/mixin, this time a bit influenced by traits. 
+It assumes that calculating area is something you want to add based on exposed properties; you could do something which kept with encapsulation, it that is a goal, rather than modularisation.  But then you have to write a GetArea for every sub-type, rather than using a polymorphic one where possible. Whether that's worthwhile depends on how committed you are to encapsulation, and whether there are base classes in your library you could exploit common behaviour of, like RectangularShape below
+#import <iostream>
+
+using namespace std;
+
+// base types
+class Shape {
+    public:
+        Shape () {}
+        virtual ~Shape () { }
+        virtual void DoShapyStuff () const = 0;
+};
+
+class RectangularShape : public Shape {
+    public:
+        RectangularShape () { }
+
+        virtual double GetHeight () const = 0 ;
+        virtual double GetWidth  () const = 0 ;
+};
+
+class Square : public RectangularShape {
+    public:
+        Square () { }
+
+        virtual void DoShapyStuff () const
+        {
+            cout << "I\'m a square." << endl;
+        }
+
+        virtual double GetHeight () const { return 10.0; }
+        virtual double GetWidth  () const { return 10.0; }
+};
+
+class Rect : public RectangularShape {
+    public:
+        Rect () { }
+
+        virtual void DoShapyStuff () const
+        {
+            cout << "I\'m a rectangle." << endl;
+        }
+
+        virtual double GetHeight () const { return 9.0; }
+        virtual double GetWidth  () const { return 16.0; }
+};
+
+// extension has a cast to Shape rather than extending Shape
+class HasArea {
+    public:
+        virtual double GetArea () const = 0;
+        virtual Shape& AsShape () = 0;
+        virtual const Shape& AsShape () const = 0;
+
+        operator Shape& ()
+        {
+            return AsShape();
+        }
+
+        operator const Shape& () const
+        {
+            return AsShape();
+        }
+};
+
+template<class S> struct AreaOf { };
+
+// you have to have the declaration before the ShapeWithArea 
+// template if you want to use polymorphic behaviour, which 
+// is a bit clunky
+static double GetArea (const RectangularShape& shape)
+{
+    return shape.GetWidth() * shape.GetHeight();
+}
+
+template <class S>
+class ShapeWithArea : public S, public HasArea {
+    public:
+        virtual double GetArea () const
+        {
+            return ::GetArea(*this);
+        }
+        virtual Shape& AsShape ()             { return *this; }
+        virtual const Shape& AsShape () const { return *this; }
+};
+
+// don't have to write two implementations of GetArea
+// as we use the GetArea for the super type
+typedef ShapeWithArea<Square> ImprovedSquare;
+typedef ShapeWithArea<Rect> ImprovedRect;
+
+void Demo (const HasArea& hasArea)
+{
+    const Shape& shape(hasArea);
+    shape.DoShapyStuff();
+    cout << "Area = " << hasArea.GetArea() << endl;
+}
+
+int main ()
+{
+    ImprovedSquare square;
+    ImprovedRect   rect;
+
+    Demo(square);
+    Demo(rect);
+
+    return 0;
+}
+
+
+There exists a solution to your problem, as I understood the question. Use the addapter-pattern. The adapter pattern is used to add functionality to a specific class or to exchange particular behaviour (i.e. methods). Considering the scenario you painted:
+class ShapeWithArea : public Shape
+{
+ protected:
+  Shape* shape_;
+
+ public:
+  virtual ~ShapeWithArea();
+
+  virtual position GetPosition() const { return shape_->GetPosition(); }
+  virtual void SetPosition(position)   { shape_->SetPosition(); }
+  virtual double GetPerimeter() const  { return shape_->GetPerimeter(); }
+
+  ShapeWithArea (Shape* shape) : shape_(shape) {}
+
+  virtual double getArea (void) const = 0;
+};
+
+The Adapter-Pattern is meant to adapt the behaviour or functionality of a class. You can use it to
+
+change the behaviour of a class, by not forwarding but reimplementing methods.
+add behaviour to a class, by adding methods.
+
+How does it change behaviour? When you supply an object of type base to a method, you can also supply the adapted class. The object will behave as you instructed it to, the actor on the object will only care about the interface of the base class. You can apply this adaptor to any derivate of Shape.
+
+GetArea() need not be a member. It could be templated function, so that you can invoke it for any Shape.
+Something like:
+template <class ShapeType, class AreaFunctor> 
+int GetArea(const ShapeType& shape, AreaFunctor func);
+
+The STL min, max functions can be thought of as an analogy for your case. You can find a min and max for an array/vector of objects given a comparator function. Like wise, you can derive the area of any given shape provided the function to compute the area.

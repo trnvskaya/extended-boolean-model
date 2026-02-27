@@ -1,0 +1,44 @@
+How to configure Tomcat JULI logging to roll log files?
+java tomcat logging log4j
+I have a several webapps which use java.util.logging.  Tomcat 5.5 is configured to use the Juli logger so that each webapp has its own log file.  The problem is that Juli does not have properties for maximum file size and file count.  Using Juli the files will grow unbounded and only roll at the end of the day.  Also, an unlimited number of log files are retained.
+You can see the FileHandler properties on this page - Apache Tomcat 5.5 Documentation
+There is no limit or count property (the following lines do nothing)
+org.apache.juli.FileHandler.limit=102400
+org.apache.juli.FileHandler.count=5
+Without changing the webapps is there a way to get unique log files for each application with some type of bounds on the log file sizes?
+UPDATE:
+The solution I found was not use the Juli logger at all!
+java.util.logging.FileHandler.limit=102400
+java.util.logging.FileHandler.count=5 
+Thanks,
+Greg
+
+
+Update: I see your point now after reading more. "Tomcat's JULI implementation is not intended to be a fully-featured logging libary, only a simple bridge to those libraries. However, JULI does provide several properties for configuring the its handlers. These are listed below."  Funny that they say that the default java.util.Logging implementation is too limited then they work around it by providing an even more limiting implementation.
+FileHandler javadocs
+
+java.util.logging.FileHandler.limit specifies an approximate maximum amount to write (in bytes) to any one file. If this is zero, then there is no limit. (Defaults to no limit).
+java.util.logging.FileHandler.count specifies how many output files to cycle through (defaults to 1). 
+
+for the one file per web app, you probably want to separate it by the name of the logger and it depends on how the loggers are created for each app. If they're based off the package or class name then you can filter the logs based on that.  It looks like the sample on the link you provided tells how to do this
+org.apache.catalina.core.ContainerBase.[Catalina].[localhost].level = INFO
+org.apache.catalina.core.ContainerBase.[Catalina].[localhost].handlers = \
+   2localhost.org.apache.juli.FileHandler
+
+
+EDIT: Just realized you wanted per webapp logging which might not be possible with this setup...
+My suggestion, assuming your are using Tomcat 6.0, is to compile the extra component for full commons-logging and use Log4j to configure rolling logs.
+Building instructions here
+http://tomcat.apache.org/tomcat-6.0-doc/building.html
+Then replace the tomcat-juli.jar in the /bin directory of Tomcat and place the tomcat-juli-adapters.jar in the /lib directory along with log4j.jar and log4j.properties.
+Then using something like:
+<appender name="file" class="org.apache.log4j.RollingFileAppender">
+  <param name="File" value="logfile.log"/>
+  <param name="Threshold" value="INFO"/>
+  <param name="MaxFileSize" value="10MB"/>
+  <param name="MaxBackupIndex" value="3"/>
+  <layout class="org.apache.log4j.PatternLayout">
+    <param name="ConversionPattern" value="%d{ISO8601} %p %m%n"/>
+  </layout>
+</appender>
+

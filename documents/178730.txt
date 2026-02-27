@@ -1,0 +1,131 @@
+Lock Active Directory accounts programmatically
+c# active-directory
+I have to lock user accounts in Active Directory programmatically in C#. 
+Unfortunately it doesn't work via the userAccountControl attribute. Every time I set userAccountControl to 528 (=normal account w/ lockout flag), Active Directory won't accept the value and resets it without further notice to 512 (=normal account).
+Now I tried to lock the account by providing incorrect credentials (see below), but this doesn't work either.
+int retries = 0;
+while (!adsUser.IsAccountLocked && retries < MAX_LOCK_RETRIES)
+{
+     retries++;
+
+    try
+    {  
+        new DirectoryEntry(userPath, logonName, incorrectPassword).RefreshCache();
+    }
+    catch (Exception)
+    { 
+        /* ... */ 
+    }
+    adsUser.GetInfo();
+}
+
+Any ideas?
+
+
+Make sure the account you're using to disable the account has sufficient privileges to disable accounts.  See this example from Microsoft.
+
+Borrowed from http://www.codeproject.com/KB/system/everythingInAD.aspx
+/// <summary>
+/// Gets or sets a value indicating if the user account is locked out
+/// </summary>
+public bool IsLocked
+{
+    get { return Convert.ToBoolean(dEntry.InvokeGet("IsAccountLocked")); }
+    set { dEntry.InvokeSet("IsAccountLocked", value); }
+}
+
+
+This will work once you have the directory entry object.
+DirectoryEntry de = result.GetDirectoryEntry();
+int val = (int)de.Properties["userAccountControl"].Value;
+de.Properties["userAccountControl"].Value = val | 0x0002;
+
+
+This code will work to lock a user in AD
+/// <summary>
+/// Locks a user account
+/// </summary>
+/// <param name="userName">The name of the user whose account you want to unlock</param>
+/// <remarks>
+/// This actually trys to log the user in with a wrong password. 
+/// This in turn will lock the user out
+/// </remarks>
+public void LockAccount(string userName)
+{
+    DirectoryEntry user = GetUser(userName);
+    string path = user.Path;
+    string badPassword = "SomeBadPassword";
+    int maxLoginAttempts = 10;
+
+    for (int i = 0; i &lt maxLoginAttempts; i++)
+    {
+        try
+        {
+            new DirectoryEntry(path, userName, badPassword).RefreshCache();
+        }
+        catch (Exception e)
+        {
+
+        }
+    }
+    user.Close();
+}
+
+
+Depending on your Active Directory policies, interactive login attempts may be required to lock an account.  You can simulate those using the LogonUser method of advapi32.dll.  In my tests, I have seen that running this loop 100 times does not guarantee 100 bad password attempts at the domain controller, so you should check the user is locked out and make more attempts if necessary.
+The bottom line for this is that you should be disabling the account instead of trying to lock it.  There is no functional difference between locked and disabled accounts.  The code below is a hack.
+using System;
+using System.Runtime.InteropServices;
+
+namespace Test
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            IntPtr token = IntPtr.Zero;
+            string userPrincipalName = "userID@domain.com";
+            string authority = null; // Can be null when using UPN (user principal name)
+            string badPassword = "bad";
+
+            int maxTries = 100;
+            bool res = false;
+
+            for (var i = 0; i < maxTries; i++)
+            {
+                res = LogonUser(userPrincipalName, authority, badPassword, LogonSessionType.Interactive, LogonProvider.Default, out token);
+                CloseHandle(token);
+            }
+        }
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        static extern bool LogonUser(
+          string principal,
+          string authority,
+          string password,
+          LogonSessionType logonType,
+          LogonProvider logonProvider,
+          out IntPtr token);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool CloseHandle(IntPtr handle);
+        enum LogonSessionType : uint
+        {
+            Interactive = 2,
+            Network,
+            Batch,
+            Service,
+            NetworkCleartext = 8,
+            NewCredentials
+        }
+
+        enum LogonProvider : uint
+        {
+            Default = 0, // default for platform (use this!)
+            WinNT35,     // sends smoke signals to authority
+            WinNT40,     // uses NTLM
+            WinNT50      // negotiates Kerb or NTLM
+        }
+    }
+}
+

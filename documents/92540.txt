@@ -1,0 +1,371 @@
+Save and Restore Form Position and Size
+.net winforms configuration settings
+In a WinForms 2.0 C# application, what is the typical method used for saving and restoring form position and size in an application?
+Related, is it possible to add new User scoped application settings AT RUNTIME? I totally see how to add settings at design time, that's not a problem. But what if I want to create one at runtime?
+More details:
+My application is a conversion of an existing Visual FoxPro application. I've been trying to read as much as I can about application settings, user settings, etc. and get myself clear on the .Net way of doing things, but there are still several things I am confused on.
+In the Fox app, saved settings are stored in the registry. My forms are subclassed, and I have base class code that automatically saves the form position and size in the registry keyed on the form name. Whenever I create a new form, I don't have to do anything special to get this behavior; it's built in to the base class. My .Net forms are also subclassed, that part is working well.
+In .Net, I get the impression I'm supposed to use User scoped settings for things like user preferences. Size and location of a form definitely seem like a user preference. But, I can't see any way to automatically add these settings to the project. In other words, every time I add a new form to my project (and their are 100's of forms), I have to remember to ADD a User scoped application setting and be sure to give it the same name as the form, i.e.,  "FormMySpecialSizePosition" to hold the size and position. I'd rather not have to remember to do that. Is this just tough luck? Or am I totally barking up the wrong tree by trying to use User scoped settings? Do I need to create my own XML file to hold settings, so that I can do whatever I want (i.e, add a new setting at runtime)? Or something else?
+Surely this is a very common and somebody can tell the "right" way to do it. Thanks in advance!
+
+
+You could create a base form class with common functionality such as remembering the position and size and inherit from that base class.
+public class myForm : Form {
+protected override void OnLoad(){
+    //load the settings and apply them
+    base.OnLoad();
+}
+
+protected override void OnClose(){
+    //save the settings
+    base.OnClose();
+}
+}
+then for the other forms:
+
+public class frmMainScreen : myForm {
+// you get the settings for free ;)
+}
+Well, something like that ;)
+
+I'm in the same boat as you, in that I have a number of forms (MDI children, in my case) that I want to preserve the position and size of for each user.  From my research, creating application settings at runtime is not supported.  (see this blog entry)
+However, you don't have to stick everything in the main settings file.  You can add a Settings file to your project (explained here in the MSDN) and use it via the Properties.Settings object.  This won't ease the pain of having to remember to create new settigns for each form, but at least it will keep them together, and not clutter up your main application settings.
+As far as using the base class to retrieve the settings... I don't know if you can do it there.  What I would (and probably will) do is name each attribute , then use Me.GetType().ToString() (I'm working in VB) to composite the names of the attributes I want to retrieve in the Load() event of each form.
+
+private void Form1_Load( object sender, EventArgs e )
+{
+    // restore location and size of the form on the desktop
+    this.DesktopBounds =
+        new Rectangle(Properties.Settings.Default.Location,
+    Properties.Settings.Default.Size);
+    // restore form's window state
+    this.WindowState = ( FormWindowState )Enum.Parse(
+        typeof(FormWindowState),
+        Properties.Settings.Default.WindowState);
+}
+
+private void Form1_FormClosing( object sender, FormClosingEventArgs e )
+{
+    System.Drawing.Rectangle bounds = this.WindowState != FormWindowState.Normal ? this.RestoreBounds : this.DesktopBounds;
+    Properties.Settings.Default.Location = bounds.Location;
+    Properties.Settings.Default.Size = bounds.Size;
+    Properties.Settings.Default.WindowState =
+        Enum.GetName(typeof(FormWindowState), this.WindowState);
+    // persist location ,size and window state of the form on the desktop
+    Properties.Settings.Default.Save();
+}
+
+
+i just stream it out to a separate xml file - quick and dirty and probably not what youre after:
+        Dim winRect As String() = util.ConfigFile.GetUserConfigInstance().GetValue("appWindow.rect").Split(",")
+        Dim winState As String = util.ConfigFile.GetUserConfigInstance().GetValue("appWindow.state")
+        '
+        Me.WindowState = FormWindowState.Normal
+        '
+        Me.Left = CType(winRect(0), Integer)
+        Me.Top = CType(winRect(1), Integer)
+        Me.Width = CType(winRect(2), Integer)
+        Me.Height = CType(winRect(3), Integer)
+        '
+        If winState = "maximised" Then
+            Me.WindowState = FormWindowState.Maximized
+        End If
+
+and
+        Dim winState As String = "normal"
+        If Me.WindowState = FormWindowState.Maximized Then
+            winState = "maximised"
+        ElseIf Me.WindowState = FormWindowState.Minimized Then
+            winState = "minimised"
+        End If
+        '
+        If Me.WindowState = FormWindowState.Normal Then
+            '
+            Dim winRect As String = CType(Me.Left, String) & "," & CType(Me.Top, String) & "," & CType(Me.Width, String) & "," & CType(Me.Height, String)
+            ' only save window rectangle if its not maximised/minimised
+            util.ConfigFile.GetUserConfigInstance().SetValue("appWindow.rect", winRect)
+        End If
+        '
+        util.ConfigFile.GetUserConfigInstance().SetValue("appWindow.state", winState)
+
+
+Here are some relevant links to check out:
+Saving out a Form's Size and Location using the Application Settings feature
+Any good examples of how to use Applications settings
+Exploring Secrets of Persistent Application Settings
+
+I got this code from somewhere, but unfortunately at the time (long ago) didn't make a comment about where I got it from.
+This saves the form info to the user's HKCU registry:
+using System;
+using System.Windows.Forms;
+using Microsoft.Win32;
+
+/// <summary>Summary description for FormPlacement.</summary>
+public class PersistentForm : System.Windows.Forms.Form
+{
+    private const string DIALOGKEY = "Dialogs";
+
+    /// <summary></summary>
+    protected override void OnCreateControl()
+    {
+        LoadSettings();
+        base.OnCreateControl ();
+    }
+
+    /// <summary></summary>
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        SaveSettings();
+        base.OnClosing(e);
+    }
+
+    /// <summary>Saves the form's settings.</summary>
+    public void SaveSettings()
+    {
+        RegistryKey dialogKey = Application.UserAppDataRegistry.CreateSubKey(DIALOGKEY);
+        if (dialogKey != null)
+        {
+            RegistryKey formKey = dialogKey.CreateSubKey(this.GetType().ToString());
+            if (formKey != null)
+            {
+                formKey.SetValue("Left", this.Left);
+                formKey.SetValue("Top", this.Top);
+                formKey.Close();
+            }
+            dialogKey.Close();
+        }
+    }
+
+    /// <summary></summary>
+    public void LoadSettings()
+    {
+        RegistryKey dialogKey = Application.UserAppDataRegistry.OpenSubKey(DIALOGKEY);
+        if (dialogKey != null)
+        {
+            RegistryKey formKey = dialogKey.OpenSubKey(this.GetType().ToString());
+            if (formKey != null)
+            {
+                this.Left = (int)formKey.GetValue("Left");
+                this.Top = (int)formKey.GetValue("Top");
+                formKey.Close();
+            }
+            dialogKey.Close();
+        }
+    }
+}
+
+
+There is actually a real lack of a single, "just works" solution to this anywhere on the internet, so here's my own creation:
+using System;
+using System.Collections.Generic;
+using System.Text;
+using System.Drawing;
+using System.Windows.Forms;
+using Microsoft.Win32;
+using System.ComponentModel;
+using System.Security.Cryptography;
+
+namespace nedprod
+{
+    abstract public class WindowSettings
+    {
+        private Form form;
+
+        public FormWindowState state;
+        public Point location;
+        public Size size;
+
+        public WindowSettings(Form _form)
+        {
+            this.form = _form;
+        }
+        internal class MD5Sum
+        {
+            static MD5CryptoServiceProvider engine = new MD5CryptoServiceProvider();
+            private byte[] sum = engine.ComputeHash(BitConverter.GetBytes(0));
+            public MD5Sum() { }
+            public MD5Sum(string s)
+            {
+                for (var i = 0; i < sum.Length; i++)
+                    sum[i] = byte.Parse(s.Substring(i * 2, 2), System.Globalization.NumberStyles.HexNumber);
+            }
+            public void Add(byte[] data)
+            {
+                byte[] temp = new byte[sum.Length + data.Length];
+                var i=0;
+                for (; i < sum.Length; i++)
+                    temp[i] = sum[i];
+                for (; i < temp.Length; i++)
+                    temp[i] = data[i - sum.Length];
+                sum=engine.ComputeHash(temp);
+            }
+            public void Add(int data)
+            {
+                Add(BitConverter.GetBytes(data));
+            }
+            public void Add(string data)
+            {
+                Add(Encoding.UTF8.GetBytes(data));
+            }
+            public static bool operator ==(MD5Sum a, MD5Sum b)
+            {
+                if (a.sum == b.sum) return true;
+                if (a.sum.Length != b.sum.Length) return false;
+                for (var i = 0; i < a.sum.Length; i++)
+                    if (a.sum[i] != b.sum[i]) return false;
+                return true;
+            }
+            public static bool operator !=(MD5Sum a, MD5Sum b)
+            {
+                return !(a == b);
+            }
+            public override bool Equals(object obj)
+            {
+                try
+                {
+                    return (bool)(this == (MD5Sum)obj);
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+            public override int GetHashCode()
+            {
+                return ToString().GetHashCode();
+            }
+            public override string ToString()
+            {
+                StringBuilder sb = new StringBuilder();
+                for (var i = 0; i < sum.Length; i++)
+                    sb.Append(sum[i].ToString("x2"));
+                return sb.ToString();
+            }
+        }
+        private MD5Sum screenconfig()
+        {
+            MD5Sum md5=new MD5Sum();
+            md5.Add(Screen.AllScreens.Length); // Hash the number of screens
+            for(var i=0; i<Screen.AllScreens.Length; i++)
+            {
+                md5.Add(Screen.AllScreens[i].Bounds.ToString()); // Hash the dimensions of this screen
+            }
+            return md5;
+        }
+        public void load()
+        {
+            using (RegistryKey r = Registry.CurrentUser.OpenSubKey(@"Software\" + CompanyId() + @"\" + AppId() + @"\Window State\" + form.Name))
+            {
+                if (r != null)
+                {
+                    try
+                    {
+                        string _location = (string)r.GetValue("location"), _size = (string)r.GetValue("size");
+                        state = (FormWindowState)r.GetValue("state");
+                        location = (Point)TypeDescriptor.GetConverter(typeof(Point)).ConvertFromInvariantString(_location);
+                        size = (Size)TypeDescriptor.GetConverter(typeof(Size)).ConvertFromInvariantString(_size);
+
+                        // Don't do anything if the screen config has since changed (otherwise windows vanish off the side)
+                        if (screenconfig() == new MD5Sum((string) r.GetValue("screenconfig")))
+                        {
+                            form.Location = location;
+                            form.Size = size;
+                            // Don't restore if miminised (it's unhelpful as the user misses the fact it's opened)
+                            if (state != FormWindowState.Minimized)
+                                form.WindowState = state;
+                        }
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+            }
+        }
+        public void save()
+        {
+            state = form.WindowState;
+            if (form.WindowState == FormWindowState.Normal)
+            {
+                size = form.Size;
+                location = form.Location;
+            }
+            else
+            {
+                size = form.RestoreBounds.Size;
+                location = form.RestoreBounds.Location;
+            }
+            using (RegistryKey r = Registry.CurrentUser.CreateSubKey(@"Software\" + CompanyId()+@"\"+AppId() + @"\Window State\" + form.Name, RegistryKeyPermissionCheck.ReadWriteSubTree))
+            {
+                r.SetValue("state", (int) state, RegistryValueKind.DWord);
+                r.SetValue("location", location.X.ToString() + "," + location.Y.ToString(), RegistryValueKind.String);
+                r.SetValue("size", size.Width.ToString()+","+size.Height.ToString(), RegistryValueKind.String);
+                r.SetValue("screenconfig", screenconfig().ToString(), RegistryValueKind.String);
+            }
+        }
+        abstract protected string CompanyId();
+        abstract protected string AppId();
+    }
+}
+
+This implementation stores the position and size of a form in HKCU/Software/<CompanyId()>/<AppId()>/Window State/<form name>. It won't restore settings if the monitor configuration changes as so to prevent windows being restored off screen.
+Obviously this can't handle multiple instances of the same form. I also specifically disabled restoring minimised but that's an easy fix of the source.
+The above is designed to be dropped into its own .cs file and never touched again. You have to instantiate a local namespace copy like this (in Program.cs or your plugin main .cs file or wherever):
+namespace <your app/plugin namespace name>
+{
+    public class WindowSettings : nedprod.WindowSettings
+    {
+        public WindowSettings(Form form) : base(form) { }
+        protected override string CompanyId() { return "<your company name>"; }
+        protected override string AppId() { return "<your app name>"; }
+    }
+    ....
+
+Now you have a non-abstract instantiation in the main namespace. So, to use, add this to the forms you want saved and restored:
+    private void IssuesForm_FormClosing(object sender, FormClosingEventArgs e)
+    {
+        new WindowSettings(this).save();
+    }
+
+    private void IssuesForm_Load(object sender, EventArgs e)
+    {
+        new WindowSettings(this).load();
+    }
+
+Obviously feel free to customise to your own purposes. No warranty is expressed or implied. Use at your own risk - I disclaim any copyright.
+Niall
+
+Here's the code I used.
+private void SaveWindowPosition()
+{
+    Rectangle rect = (WindowState == FormWindowState.Normal) ?
+        new Rectangle(DesktopBounds.Left, DesktopBounds.Top, DesktopBounds.Width, DesktopBounds.Height) :
+        new Rectangle(RestoreBounds.Left, RestoreBounds.Top, RestoreBounds.Width, RestoreBounds.Height);
+    RegistrySettings.SetSetting("WindowPosition", String.Format("{0},{1},{2},{3},{4}",
+        (int)this.WindowState,
+        rect.Left, rect.Top, rect.Width, rect.Height));
+}
+
+private void RestoreWindowPosition()
+{
+    try
+    {
+        string s = RegistrySettings.GetSetting("WindowPosition", String.Empty) as string;
+        if (s != null)
+        {
+            List<int> settings = s.Split(new char[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                                  .Select(v => int.Parse(v)).ToList();
+            if (settings.Count == 5)
+            {
+                this.SetBounds(
+                    settings[1],
+                    settings[2],
+                    settings[3],
+                    settings[4]);
+                this.WindowState = (FormWindowState)settings[0];
+            }
+        }
+    }
+    catch { /* Just leave current position if error */ }
+}
+
+I also presented this code in my article Saving and Restoring a Form's Window Position.

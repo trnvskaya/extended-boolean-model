@@ -1,0 +1,200 @@
+Selecting unique rows in a set of two possibilities
+sql mysql sql-server database postgresql
+The problem itself is simple, but I can't figure out a solution that does it in one query, and here's my "abstraction" of the problem to allow for a simpler explanation:
+I will let my original explenation stand, but here's a set of sample data and the result i expect:
+Ok, so here's some sample data, i separated pairs by a blank line
+-------------
+| Key |  Col | (Together they from a Unique Pair)
+--------------
+|  1     Foo |
+|  1     Bar |
+|            |
+|  2     Foo |
+|            |
+|  3     Bar |
+|            |
+|  4     Foo |
+|  4     Bar |
+--------------
+
+And the result I would expect, after running the query once, it need to be able to select this result set in one query:
+1 - Foo
+2 - Foo
+3 - Bar
+4 - Foo
+
+Original explenation:
+I have a table, call it TABLE where I have a two columns say ID and NAME which together form the primary key of the table. Now I want to select something where ID=1 and then first checks if it can find a row where NAME has the value "John", if "John" does not exist it should look for a row where NAME is "Bruce" - but only return "John" if both "Bruce" and "John" exists or only "John" exists of course.
+Also note that it should be able to return several rows per query that match the above criteria but with different ID/Name-combinations of course, and that the above explanation is just a simplification of the real problem.
+I could be completely blinded by my own code and line of thought but I just can't figure this out. 
+
+
+You can use joins instead of the exists and this may improve the query plan in cases where the optimizer is not smart enough:
+SELECT f1.id
+  ,f1.col
+FROM foo f1 
+LEFT JOIN foo f2
+  ON f1.id = f2.id
+  AND f2.col = 'Foo'
+WHERE f1.col = 'Foo' 
+  OR ( f1.col = 'Bar' AND f2.id IS NULL )
+
+
+try this:
+select top 1 * from (
+SELECT 1 as num, * FROM TABLE WHERE ID = 1 AND NAME = 'John'
+union 
+SELECT 2 as num, * FROM TABLE WHERE ID = 1 AND NAME = 'Bruce'
+) t
+order by num
+
+
+You can join the initial table to itself with an OUTER JOIN like this:
+create table #mytest
+   (
+   id           int,
+   Name         varchar(20)
+   );
+go
+
+insert into #mytest values (1,'Foo');
+insert into #mytest values (1,'Bar');
+insert into #mytest values (2,'Foo');
+insert into #mytest values (3,'Bar');
+insert into #mytest values (4,'Foo');
+insert into #mytest values (4,'Bar');
+go
+
+select distinct
+   sc.id,
+   isnull(fc.Name, sc.Name) sel_name
+from
+   #mytest sc
+
+   LEFT OUTER JOIN #mytest fc
+      on (fc.id = sc.id
+          and fc.Name = 'Foo')
+
+like that.
+
+In PostgreSQL, I believe it would be this:
+SELECT DISTINCT ON (id) id, name
+FROM mytable
+ORDER BY id, name = 'John' DESC;
+
+Update - false sorts before true - I had it backwards originally. Note that DISTINCT ON is a PostgreSQL feature and not part of standard SQL. What happens here is that it only shows you the first row for any given id that it comes across. Since we order by weather the name is John, rows named John will be selected over all other names.
+With your second example, it would be:
+SELECT DISTINCT ON (key) key, col
+FROM mytable
+ORDER BY key, col = 'Foo' DESC;
+
+This will give you:
+1 - Foo
+2 - Foo
+3 - Bar
+4 - Foo
+
+
+I came up with a solution myself, but it's kind of complex and slow - nor does it expand well to more advanced queries:
+SELECT *
+FROM users
+WHERE name = "bruce"
+OR (
+    name = "john"
+    AND NOT id
+    IN (
+        SELECT id
+        FROM posts
+        WHERE name = "bruce"
+    )
+)
+
+No alternatives without heavy joins, etc. ?
+
+Ok, so here's some sample data, i separated pairs by a blank line
+-------------
+| Key |  Col | (Together they from a Unique Pair)
+--------------
+|  1     Foo |
+|  1     Bar |
+|            |
+|  2     Foo |
+|            |
+|  3     Bar |
+|            |
+|  4     Foo |
+|  4     Bar |
+--------------
+
+And the result I would expect:
+1 - Foo
+2 - Foo
+3 - Bar
+4 - Foo
+
+I did solve it above, but that query is horribly inefficient for lager tables, any other way?
+
+This is fairly similar to what you wrote, but should be fairly speedy as NOT EXISTS is more efficient, in this case, than NOT IN...
+mysql> select * from foo;
++----+-----+
+| id | col |
++----+-----+
+|  1 | Bar | 
+|  1 | Foo | 
+|  2 | Foo | 
+|  3 | Bar | 
+|  4 | Bar | 
+|  4 | Foo | 
++----+-----+
+
+SELECT id
+     , col
+  FROM foo f1 
+ WHERE col = 'Foo' 
+  OR ( col = 'Bar' AND NOT EXISTS( SELECT * 
+                                     FROM foo f2
+                                    WHERE f1.id  = f2.id 
+                                      AND f2.col = 'Foo' 
+                                 ) 
+     ); 
+
++----+-----+
+| id | col |
++----+-----+
+|  1 | Foo | 
+|  2 | Foo | 
+|  3 | Bar | 
+|  4 | Foo | 
++----+-----+
+
+
+Here's an example that works in SQL Server 2005 and later.  It's a useful pattern where you want to choose the top row (or top n rows) based on a custom ordering.  This will let you not just choose among two values with custom priorities, but any number.  You can use the ROW_NUMBER() function and a CASE expression:
+CREATE TABLE T (id int, col varchar(10));
+
+INSERT T VALUES (1, 'Foo')
+INSERT T VALUES (1, 'Bar')
+INSERT T VALUES (2, 'Foo')
+INSERT T VALUES (3, 'Bar')
+INSERT T VALUES (4, 'Foo')
+INSERT T VALUES (4, 'Bar')
+
+SELECT id,col
+FROM 
+(SELECT id, col,
+    ROW_NUMBER() OVER (
+    PARTITION BY id 
+    ORDER BY 
+    CASE col 
+    WHEN 'Foo' THEN 1
+    WHEN 'Bar' THEN 2 
+    ELSE 3 END
+    ) AS RowNum 
+    FROM T
+) AS X
+WHERE RowNum = 1
+ORDER BY id
+
+
+No need to make this overly complex, you can just use MAX() and group by ...
+select id, max(col) from foo group by id
+

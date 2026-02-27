@@ -1,0 +1,40 @@
+Enforce constraint checking only when inserting rows in MSSQL?
+sql-server database
+Is there a way to enforce constraint checking in MSSQL only when inserting new rows?  I.e. allow the constraints to be violated when removing/updating rows?
+Update: I mean FK constraint.
+
+
+I think your best bet is to remove the explicit constraint and add a cursor for inserts, so you can perform your checking there and raise an error if the constraint is violated.
+
+You could create an INSERT TRIGGER that checks that the conditions are met. That way all updates will go straight through.
+CREATE TRIGGER employee_insupd
+ON employee
+FOR INSERT
+AS
+/* Get the range of level for this job type from the jobs table. */
+DECLARE @min_lvl tinyint,
+   @max_lvl tinyint,
+   @emp_lvl tinyint,
+   @job_id smallint
+SELECT @min_lvl = min_lvl, 
+   @max_lvl = max_lvl, 
+   @emp_lvl = i.job_lvl,
+   @job_id = i.job_id
+FROM employee e INNER JOIN inserted i ON e.emp_id = i.emp_id 
+   JOIN jobs j ON j.job_id = i.job_id
+IF (@job_id = 1) and (@emp_lvl <> 10) 
+BEGIN
+   RAISERROR ('Job id 1 expects the default level of 10.', 16, 1)
+   ROLLBACK TRANSACTION
+END
+ELSE
+IF NOT (@emp_lvl BETWEEN @min_lvl AND @max_lvl)
+BEGIN
+   RAISERROR ('The level for job_id:%d should be between %d and %d.',
+      16, 1, @job_id, @min_lvl, @max_lvl)
+   ROLLBACK TRANSACTION
+END
+
+
+What sort of constraints?  I'm guessing foreign key constraints, since you imply that deleting a row might violate the constraint.  If that's the case, it seems like you don't really need a constraint per se, since you're not concerned with referential integrity.
+Without knowing more about your specific situation, I would echo the intent of the other posters, which seems to be "enforce the insert requirements in your data access layer".  However, I'd quibble with their implementations.  A trigger seems like overkill and any competent DBA should sternly rap you on the knuckles with a wooden ruler for trying to use a cursor to perform a simple insert.  A stored procedure should suffice.

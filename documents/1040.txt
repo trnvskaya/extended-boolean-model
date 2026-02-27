@@ -1,0 +1,66 @@
+How do I delete a file which is locked by another process in C#?
+c# file-locking
+I'm looking for a way to delete a file which is locked by another process using C#. I suspect the method must be able to find which process is locking the file (perhaps by tracking the handles, although I'm not sure how to do this in C#) then close that process before being able to complete the file delete using File.Delete().
+
+
+You can use this program, Handle, to find which process has the lock on your file. It's a command-line tool, so I guess you use the output from that... I'm not sure about finding it programmatically.
+If deleting the file can wait, you could specify it for deletion when your computer next starts up:
+
+Start REGEDT32 (W2K) or REGEDIT (WXP) and navigate to:
+HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Session Manager
+
+W2K and WXP
+
+W2K:EditAdd Value...Data Type: REG_MULTI_SZValue Name: PendingFileRenameOperationsOK
+WXP:EditNewMulti-String Valueenter
+PendingFileRenameOperations
+
+In the Data area, enter "\??\" + filename to be deleted. LFNs may
+be entered without being embedded in quotes. To delete C:\Long Directory Name\Long File Name.exe, enter the following data:
+\??\C:\Long Directory Name\Long File Name.exe
+
+Then press OK.
+The "destination file name" is a null (zero) string. It is entered
+as follows:
+
+W2K:EditBinaryselect Data Format: Hexclick at the end of the hex stringenter 0000 (four zeros)OK
+WXP:Right-click the valuechoose "Modify Binary Data"click at the end of the hex stringenter 0000 (four zeros)OK
+
+Close REGEDT32/REGEDIT and reboot to delete the file.
+
+(Shamelessly stolen from some random forum, for posterity's sake.)
+
+Killing other processes is not a healthy thing to do. If your scenario involves something like uninstallation, you could use the MoveFileEx API function to mark the file for deletion upon next reboot.
+If it appears that you really need to delete a file in use by another process, I'd recommend re-considering the actual problem before considering any solutions.
+
+If you want to do it programatically. I'm not sure... and I'd really recommend against it.
+If you're just troubleshooting stuff on your own machine, SysInternals Process Explorer can help you
+Run it, use the Find Handle command (I think it's either in the find or handle menu), and search for the name of your file. Once the handle(s) is found, you can forcibly close them.
+You can then delete the file and so on.
+Beware, doing this may cause the program which owns the handles to behave strangely, as you've just pulled the proverbial rug out from under it, but it works well when you are debugging your own errant code, or when visual studio / windows explorer is being crap and not releasing file handles even though you told them to close the file ages ago... sigh :-)
+Oh, one big hack I employed years ago, is that Windows won't let you delete files, but it does let you move them.
+Pseudo-sort-of-code:
+mv %WINDIR%\System32\mfc42.dll %WINDIR\System32\mfc42.dll.old
+Install new mfc42.dll
+Tell user to save work and restart applications
+
+When the applications restarted (note we didn't need to reboot the machine), they loaded the new mfc42.dll, and all was well. That, coupled with PendingFileOperations to delete the old one the next time the whole system restarted, worked pretty well.
+
+The typical method is as follows. You've said you want to do this in C# so here goes...
+
+If you don't know which process has the file locked, you'll need to examine each process's handle list, and query each handle to determine if it identifies the locked file. Doing this in C# will likely require P/Invoke or an intermediary C++/CLI to call the native APIs you'll need.
+Once you've figured out which process(es) have the file locked, you'll need to safely inject a small native DLL into the process (you can also inject a managed DLL, but this is messier, as you then have to start or attach to the .NET runtime).
+That bootstrap DLL then closes the handle using CloseHandle etc.
+Essentially: the way to unlock a "locked" file is to inject a DLL into the offending process's address space and close it yourself. You can do this using native or managed code. No matter what, you're going to need a small amount of native code or at least P/Invoke into the same.
+Helpful links:
+
+http://www.codeproject.com/KB/threads/winspy.aspx
+http://damianblog.com/2008/07/02/net-code-injection/
+Good luck!
+This looks promising. A way of killing the file handle....
+http://www.timstall.com/2009/02/killing-file-handles-but-not-process.html
+
+Using Orion Edwards advice I downloaded the SysInternals Process Explorer which in turn allowed me to discover that the file I was havind difficulties deleting was in fact being held not by the Excel.Applications object I thought but rather the fact that my C# code send mail code had created an Attachment object that left a handle to this file open.
+Once I saw this, I quite simple called on the dispose method of the Attachment object, and the handle was released.
+the Sys Internals explorer allowed me to discover this used in conjuction with the VS2005 debugger.
+I highly recommend this tool!

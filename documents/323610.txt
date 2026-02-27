@@ -1,0 +1,49 @@
+Signaling validation errors in assigning a virtual attribute?
+ruby-on-rails validation activerecord virtual-attribute
+This is a Rails/ActiveRecord question.
+I have a model which basically has to represent events or performances. Each event has many attributions: an attribution is basically something like "In this event, Person X had Role Y".
+I concluded that the best way to allow a user to edit this data is by providing a free text field which expects a structured format, which I'll call a role string:
+singer: Elvis Costello, songwriter: Paul McCartney, ...
+where I use autocompletion to complete on both the names of roles (singer, songwriter...) and the names of people. Both roles and people are stored in the database.
+To implement this, I created a virtual attribute in the Event model:
+def role_string
+    # assemble a role string from the associations in the model
+end
+
+def role_string=(s)
+    # parse a string in the above role string format,
+    # look up the People and Events mentioned, and update
+    # what's in the database
+end
+
+This is all fine. The whole thing works quite well, when the role string is well-formed and the associations given by the role string all check out.
+But what if the role string is malformed? Okay, I figure, I can just use a regex together with standard validation to check the format:
+validates_format_of :role_string, :with => /(\w+:\s*\w+)(,\s*\w+:\s*\w+)*/
+
+But what if the associations implied by the role string are invalid? For example, what happens if I give the above role string, and Elvis Costello doesn't reference a valid person?
+I thought, well, I could use validates_each on the attribute :role_string to look up the associations and throw an error if one of the names given doesn't match anything, for example.
+My questions are two: first, I don't like this approach, since to validate the associations I would have to parse the string and look them up, which duplicates what I'd be doing in role_string= itself, except for actually saving the associations to the database.
+Second, ... how would I indicate that an error's occurred in assigning to this virtual attribute?
+
+
+First of all, you're attributing the Person to the Event incorrectly. You should instead pass a Person's ID to the event, rather than a string of the person's name. For instance, what if a Person with an ID of 230404 and a name of "Elvis Costello" changes his name to "Britney Spears?" Well, if that were to happen, the ID would remain the same, but the name would change. However, you would not be able to reference that person any longer.
+You should set up your associations so that the foreign key references people in multiple cases:
+has_one :singer, :class_name => "Person", :foreign_key => "singer_id"
+has_one :songwriter, :class_name => "Person", :foreign_key => "songwriter_id"
+
+This way, you can have multiple people associated with an Event, under different roles, and you can reference multiple attributes that Person may have. For example:
+Event.first.singer.name   # => "Elvis Costello"
+Event.first.songwriter.name   # => "Britney Spears"
+
+You can research the available validations for associations (validates_associated), as well as whether or not an ID is present in a form (validates_presence_of). I would recommend creating your own custom validation to ensure that a Person is valid before_save. Something like (untested):
+def before_save
+  unless Person.exists?(self.songwriter_id)
+    self.errors.add_to_base("Invalid songwriter. Please try again!")
+    return false
+  end
+end
+
+Also, I noticed that you're looking for a way for users to select a user which should be used for the roles in your Event. Here is what you can do in your form partial: 
+select(:event, :singer_id, Person.find(:all).collect {|p| [ p.name, p.id ] }, { :include_blank => 'None' })
+
+Hope this helps!

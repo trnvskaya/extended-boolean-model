@@ -1,0 +1,59 @@
+Can I set a data breakpoint in runtime in System C (or in Plain Vanilla C++)?
+c++ linux debugging
+I have a class in system-C with some data members as such:  
+long double x[8];
+
+I'm initializing it in the construction like this:
+for (i = 0; i < 8; ++i) {
+    x[i] = 0;
+}
+
+But the first time I use it in my code I have garbage there.
+Because of the way the system is built I can't connect a debugger easily.  Are there any methods to set a data breakpoint in the code so that it tells me where in the code the variables were actually changed, but without hooking up a debugger?
+Edit:
+@Prakash: 
+Actually, this is a typo in the question, but not in my code...  Thanks!
+
+
+Sure, it will be garbage!
+The code should have been as 
+for (i = 0; i < 8; ++i) {
+    x[i] = 0;
+}
+
+EDIT: Oops, Sorry for underestimating ;)
+
+Just use printk/syslog.
+It's old-fashioned, but super duper easy.
+
+@Frank
+Actually, that lets me log debug prints to a file.  What I'm looking for is something that will let me print something whenever a variable changes, without me explicitly looking for the variable.
+
+How about Conditional breakpoints? You could try for various conditions like first element value is zero or non zero, etc??
+
+That's assuming I can easily connect a debugger.  The whole point is that I only have a library, but the executable that linked it in isn't readily available.
+
+You could try starting a second thread which spins, looking for changes in the variable:
+
+#include <pthread.h>
+
+void *ThreadProc(void *arg)
+{
+  volatile long double *x = (volatile long double *)arg;
+  while(1)
+  {
+    for(int i = 0; i < 8; i++)
+    {
+      if(x[i] != 0)
+      {
+        __asm__ __volatile__ ("int 3");  // breakpoint (x86)
+      }
+  }
+
+  return 0;  // Never reached, but placate the compiler
+}
+...
+pthread_t threadID;
+pthread_create(&threadID, NULL, ThreadProc, &x[0]);
+
+This will raise a SIGTRAP signal to your application whenever any of the x values is not zero.

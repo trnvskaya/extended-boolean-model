@@ -1,0 +1,58 @@
+Unmanaged Threads Spring Quartz Websphere Hibernate
+java hibernate spring websphere quartz-scheduler
+It appears that our implementation of using Quartz - JDBCJobStore along with Spring, Hibernate and Websphere is throwing unmanaged threads.  
+I have done some reading and found a tech article from IBM stating that the usage of Quartz with Spring will cause that.  They make the suggestion of using CommnonJ to address this issue.
+I have done some further research and the only examples I have seen so far all deal with the plan old JobStore that is not in a database.
+So, I was wondering if anyone has an example of the solution for this issue.
+Thanks
+
+
+We have a working solution for this (two actually).
+1) Alter the quartz source code to use a WorkManager daemon thread for the main scheduler thread.  It works, but requires changing quarts.  We didn't use this though since we didn't want maintain a hacked version of quartz.  (That reminds me, I was going to submit this to the project but completely forgot)
+2) Create a WorkManagerThreadPool to be used as the quartz threadpool.  Implement the interface for the quartz ThreadPool, so that each task that is triggered within quartz is wrapped in a commonj Work object that will then be scheduled in the WorkManager.  The key is that the WorkManager in the WorkManagerThreadPool has to be initialized before the scheduler is started, from a Java EE thread (such as servlet initialization).  The WorkManagerThreadPool must then create a daemon thread which will handle all the scheduled tasks by creating and scheduling the new Work objects.  This way, the scheduler (on its own thread) is passing the tasks to a managed thread (the Work daemon).
+Not simple, and unfortunately I do not have code readily available to include.  
+
+Check this article:
+http://www.ibm.com/developerworks/websphere/techjournal/0609_alcott/0609_alcott.html
+basically, set the taskExecutor property on SchedulerFactoryBean to use a org.springframework.scheduling.commonj.WorkManager TaskExecutor which will use container managed threads.
+
+You can check the below JIRA link raised on quartz regarding this. 
+http://jira.opensymphony.com/browse/QUARTZ-708
+This has the required WebSphereThreadPool implementation which can be used with the changes in quartz.properties as mentioned to meet your requirements. Hope this helps.
+Regards,
+Siva
+
+You will have to use websphere's managed thread pools.  You can do this via spring and commonj.  CommonJ can has a task executor that will create managed threads.  You can even use a reference to a jndi managed thread resource.  You can then inject the commonj task executor into the Spring based Quartz SchedulerFactoryBean.  
+Please see http://open.bekk.no/boss/spring-scheduling-in-websphere/ and scroll to "Quartz with CommonJ" section for more details.
+
+Just a note: the above QUARTZ-708's link is not valid anymore.
+This new issue (in a new Jira) seems to be addressing the problem: http://jira.terracotta.org/jira/browse/QTZ-113 (fixVersion = 1.8.6, 2.0.2)
+
+Adding another answer to the thread, since i found a solution for this, finally.
+My environment: WAS 8.5.5, Quartz 1.8.5, no Spring.
+The problem i had was the (above stated) unmanaged thread causing a NamingException from ctx.lookup(myJndiUrl), that was instead correctly working in other application servers (JBoss, Weblogic); actually, Webpshere was firing an "incident" with the following message:
+
+javax.naming.ConfigurationException: A JNDI operation on a "java:" name cannot be completed because the server runtime is not able to associate the operation's thread with any J2EE application component. This condition can occur when the JNDI client using the "java:" name is not executed on the thread of a server application request. Make sure that a J2EE application does not execute JNDI operations on "java:" names within static code blocks or in threads created by that J2EE application. Such code does not necessarily run on the thread of a server application request and therefore is not supported by JNDI operations on "java:" names.
+
+The following steps solved the problem:
+1)  upgraded to quartz 1.8.6 (no code changes), just maven pom
+2)  added the following dep to classpath (in my case, EAR's /lib folder), to make the new WorkManagerThreadExecutor available
+<dependency>
+  <groupId>org.quartz-scheduler</groupId>
+  <artifactId>quartz-commonj</artifactId>
+  <version>1.8.6</version>
+</dependency>
+
+Note: in QTZ-113 or the official Quartz Documentation 1.x 2.x there's no mention on how to activate this fix.
+3)  added the following to quartz.properties ("wm/default" was the JNDI of the already configured DefaultWorkManager in my WAS 8.5.5, see Resources -> AsynchronousBeans -> WorkManagers in WAS console):
+org.quartz.threadExecutor.class=org.quartz.custom.WorkManagerThreadExecutor
+org.quartz.threadExecutor.workManagerName=wm/default
+
+Note: right class is org.quartz.custom.WorkManagerThreadExecutor for quartz-scheduler-1.8.6 (tested), or org.quartz.commonj.WorkManagerThreadExecutor from 2.1.1 on (not tested, but verified within actual quartz-commonj's jars on maven's repos)
+4)  moved the JNDI lookup in the empty constructor of the quartz job (thanks to m_klovre's "Thread outside of the J2EE container"); that is, the constructor was being invoked by reflection (newInstance() method) from the very same J2EE context of my application, and had access to java:global namespace, while the execute(JobExecutionContext) method was still running in a poorer context, which was missing all of my application's EJBs
+Hope this helps.
+Ps. as a reference, you can find here an example of the quartz.properties file I was using above
+
+The proposal from PaoloC for WAS85 ans Quartz 1.8.6 also works on WAS80 (and Quartz 1.8.6) and does not need Spring. (In my setup Spring 2.5.5 is present, but not in use in that context.)
+That way I was able to override SimpleJobFactory by my own variant, using an InjectionHelper to apply CDI on every newly created job. Injection works for both @EJB (with JNDI lookup of the annotated EJB remote business interface) and @Inject (with JNDI lookup of the CDI BeanManager using a new InitialContext first, and then using this newly fetched BM to lookup the CDI bean itself).
+Thank you PaoloC for that answer! (I hope this text will appear as an "answer to PaoloC" and not as an answer to the main topic. Found no way to differentiate between these.)

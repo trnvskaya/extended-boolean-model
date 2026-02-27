@@ -1,0 +1,38 @@
+How do prepared statements work?
+php sql pdo
+I'm writing some DB routines and I'm using prepared statements.  My environment is PDO with PHP5.
+I understand prepared statements primarily provide a performance benefit, as well as some auxiliary bonuses such as not having to manually SQL-escape input data.
+My question is about the performance part.
+I have two implementations of a getPrice function below that takes a product id and returns its price.
+getPrice_A reuses the same PDOStatement object across subsequent calls within the same script execution.  Is this necessary or recommended?  If so, is there any way to avoid duplicating this extra code across every single get*() in every single model?
+getPrice_B creates a new PDOStatement object on every call.  Will the DBMS recognize this statement has already been prepared and still be able to skip some work?  In other words, does this implementation properly take advantage of the performance benefits of prepared statements?
+Having written all this out and read it over, I imagine getPrice_B is fine and getPrice_A is providing a negligible benefit on top of that, which may or may not be worth the extra complication.
+I'd still like to hear for sure from someone more knowledgable though.
+Assume that $pdo is a valid, connected PDO object in the examples below.
+<?php
+class Product {
+    static function &getPrice_A($id) {
+        static $stmt;
+        if (!$stmt) {
+            $stmt = $pdo->prepare('SELECT price FROM products WHERE id = ?');
+        }
+        $stmt->execute(array($id));
+        return $stmt->fetchColumn(0);
+    }
+
+    static function &getPrice_B($id) {
+        $stmt = $pdo->prepare('SELECT price FROM products WHERE id = ?');
+        $stmt->execute(array($id));
+        return $stmt->fetchColumn(0);
+    }
+}
+
+// example usage:
+$price = Product::getPrice(4982);
+echo "Product 4982 costs $price\n";
+
+
+
+From what I understand, prepared statements will reuse the generated SQL plan if it is the same statement, so the database will see the same prepared statement and not have to do the work to figure out how to query the database. I would say the extra work of saving the prepared statement in Product::getPrice_A is not typically very helpful, more because it can obscure the code rather than an issue of performance.  When dealing with performance, I feel it's always best to focus on code clarity and then performance when you have real statistics that indicate a problem.
+I would say "yes, the extra work is unnecessary" (regardless of if it really boosts performance).  Also, I am not a very big DB expert, but the performance gain of prepared statements is something I heard from others, and it is at the database level, not the code level (so if the code is actually invoking a parameterized statement on the actual DB, then the DB can do these execution plan caching... though depending on the database, you may get the benefit even without the parameterized statement).
+Anyways, if you are really worried about (and seeing) database performance issues, you should look into a caching solution... of which I would highly recommend memcached.  With such a solution, you can cache your query results and not even hit the database for things you access frequently.

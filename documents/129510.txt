@@ -1,0 +1,78 @@
+Is it a bad idea to reload routes dynamically in Rails?
+ruby-on-rails ruby
+I have an application I'm writing where I'm allowing the administrators to add aliases for pages, categories, etc, and I would like to use a different controller/action depending on the alias (without redirecting, and I've found that render doesn't actually call the method. I just renders the template). I have tried a catch all route, but I'm not crazy about causing and catching a DoubleRender exception that gets thrown everytime.
+The solution for this I've come up with is dynamically generated routes when the server is started, and using callbacks from the Alias model to reload routes when an alias is created/updated/destroyed. 
+Here is the code from my routes.rb:
+Alias.find(:all).each do |alias_to_add|
+	map.connect alias_to_add.name, 
+			:controller => alias_to_add.page_type.controller, 
+			:action => alias_to_add.page_type.action,
+			:navigation_node_id => alias_to_add.navigation_node.id
+end
+
+I am using callbacks in my Alias model as follows:
+after_save :rebuild_routes
+after_destroy :rebuild_routes
+
+def rebuild_routes
+	ActionController::Routing::Routes.reload!
+end
+
+Is this against Rails best practices? Is there a better solution?
+
+
+I'm not sure I fully understand the question, but you could use method_missing in your controllers and then lookup the alias, maybe like this:
+class MyController
+  def method_missing(sym, *args)
+    aliased = Alias.find_by_action_name(sym)
+    # sanity check here in case no alias
+
+    self.send( aliased.real_action_name )
+    # sanity check here in case the real action calls a different render explicitly
+    render :action => aliased.real_action_name
+  end
+
+  def normal_action
+    @thing = Things.find(params[:id])
+  end
+end
+
+If you wanted to optimize that, you could put a define_method in the method_missing, so it would only be 'missing' on the first invocation, and would be a normal method from then on.
+
+Quick Solution
+Have a catch-all route at the bottom of routes.rb.  Implement any alias lookup logic you want in the action that route routes you to.  
+In my implementation, I have a table which maps defined URLs to a controller, action, and parameter hash.  I just pluck them out of the database, then call the appropriate action and then try to render the default template for the action.  If the action already rendered something, that throws a DoubleRenderError, which I catch and ignore. 
+You can extend this technique to be as complicated as you want, although as it gets more complicated it makes more sense to implement it by tweaking either your routes or the Rails default routing logic rather than by essentially reimplementing all the routing logic yourself.
+If you don't find an alias, you can throw the 404 or 500 error as you deem appropriate.
+Stuff to keep in mind:
+Caching: Not knowing your URLs a priori can make page caching an absolute bear.  Remember, it caches based on the URI supplied, NOT on the url_for (:action_you_actually_executed).  This means that if you alias 
+/foo_action/bar_method
+
+to
+/some-wonderful-alias
+
+you'll get some-wonderful-alias.html living in your cache directory.  And when you try to sweep foo's bar, you won't sweep that file unless you specify it explicitly.
+Fault Tolerance: Check to make sure someone doesn't accidentally alias over an existing route.  You can do this trivially by forcing all aliases into a "directory" which is known to not otherwise be routable (in which case, the alias being textually unique is enough to make sure they never collide), but that isn't a maximally desirable solution for a few of the applications I can think of of this.
+
+First, as other have suggested, create a catch-all route at the bottom of routes.rb:
+map.connect ':name', :controller => 'aliases', :action => 'show'
+
+Then, in AliasesController, you can use render_component to render the aliased action:
+class AliasesController < ApplicationController
+  def show
+    if alias = Alias.find_by_name(params[:name])
+      render_component(:controller => alias.page_type.controller, 
+                        :action => alias.page_type.action,
+                        :navigation_node_id => alias.navigation_node.id)
+    else
+      render :file => "#{RAILS_ROOT}/public/404.html", :status => :not_found
+    end
+  end
+end
+
+
+Ben,
+I find the method you're already using to be the best. Using Rails 3, you'd have to change the code a bit, to:
+MyNewApplication::Application.reload_routes!
+
+That's all.

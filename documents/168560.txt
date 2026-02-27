@@ -1,0 +1,150 @@
+Best Practices for Performing Sequential Operations
+transactions
+What is the best way to perform a couple of tasks together and if one task fails then the next tasks should not be completed? I know if it were the database operations then I should have used Transactions but I am talking about different types of operations like the following: 
+All tasks must pass: 
+SendEmail
+ArchiveReportsInDatabase
+CreateAFile
+In the above scenario all the tasks must pass or else the whole batch operation must be rollback. 
+
+
+in C#
+return SendEmail() && ArchiveResportsInDatabase() && CreateAFile();
+
+If your language allows it, this is very tidy:
+
+Put your tasks in an array of code blocks or function pointers.
+Iterate over the array.
+Break if any block returns failure.
+
+
+Another idea:
+try {
+    task1();
+    task2();
+    task3();
+    ...
+    taskN();
+}
+catch (TaskFailureException e) {
+    dealWith(e);
+}
+
+
+You didn't mention what programming language/environment you're using.  If it's the .NET Framework, you might want to take a look at this article.  It describes the Concurrency and Control Runtime from Microsoft's Robotics Studio, which allows you to apply all sorts of rules on a set of (asynchronous) events:  for example, you can wait for any number of them to complete, cancel if one event fails, etc.  It can run things in multiple threads as well, so you get a very powerful method of doing stuff.
+
+You don't specify your environment.  In Unix shell scripting, the && operator does just this.
+SendEmail () {
+  # ...
+}
+ArchiveReportsInDatabase () {
+  # ...
+}
+CreateAFile () {
+  # ...
+}
+
+SendEmail && ArchiveReportsInDatabase && CreateAFile
+
+
+A couple of suggestions:
+In a distributed scenario, some sort of two-phase commit protocol may be needed.  Essentially, you send all participants a message saying "Prepare to do X".  Each participant must then send a response saying "OK, I guarantee I can do X" or "No, can't do it."  If all participants guarantee they can complete, then send the message telling them to do it.  The "guarantees" can be as strict as needed.
+Another approach is to provide some sort of undo mechanism for each operation, then have logic like this:
+try:
+    SendEmail()
+    try:
+        ArchiveReportsInDatabase()
+        try:
+             CreateAFile()
+        except:
+            UndoArchiveReportsInDatabase()
+            raise
+    except:
+        UndoSendEmail()
+        raise
+except:
+    // handle failure
+
+(You wouldn't want your code to look like that; this is just an illustration of how the logic should flow.)
+
+If you're using a language which uses sort-circuit evaluation (Java and C# do), you can simply do:
+return SendEmail() && ArchiveResportsInDatabase() && CreateAFile();
+
+This will return true if all the functions return true, and stop as soon as the first one return false.
+
+Exceptions are generally good for this sort of thing. Pseudo-Java/JavaScript/C++ code:
+try {
+    if (!SendEmail()) {
+        throw "Could not send e-mail";
+    }
+
+    if (!ArchiveReportsInDatabase()) {
+        throw "Could not archive reports in database";
+    }
+
+    if (!CreateAFile()) {
+        throw "Could not create file";
+    }
+
+    ...
+
+} catch (Exception) {
+    LogError(Exception);
+    ...
+}
+
+Better still if your methods throw exceptions themselves:
+try {
+    SendEmail();
+    ArchiveReportsInDatabase();
+    CreateAFile();
+    ...
+
+} catch (Exception) {
+    LogError(Exception);
+    ...
+}
+
+A very nice outcome of this style is that your code doesn't get increasingly indented as you move down the task chain; all your method calls remain at the same indentation level. Too much indentation makes the code harder to read.
+Moreover, you have a single point in the code for error handling, logging, rollback etc.
+
+To really do it right you should use an asyncronous messaging pattern. I just finished a project where I did this using nServiceBus and MSMQ.
+Basically, each step happens by sending a message to a queue. When nServiceBus finds messages waiting in the queue it calls your Handle method corresponding to that message type. This way each individual step is independently failable and retryable. If one step fails the message ends up in an error queue so you can easily retry it later.
+These pure-code solutions being suggested aren't as robust since if a step fails you would have no way to retry only that one step in the future and you'd have to implement rollback code which isn't even possible in some cases.
+
+Rollbacks are tough - AFAIK, there's really only 2 ways to go about it. Either a 2 phase commit protocol, or compensating transactions. You really have to find a way to structure your tasks in one of these fashions.
+Usually, the better idea is to take advantage of other folks' hard work and use technologies that already have 2PC or compensation built in. That's one reason that RDBMS are so popular.
+So, the specifics are task dependent...but the pattern is fairly easy:
+class Compensator {
+   Action Action { get; set; }
+   Action Compensate { get; set; }
+}
+
+Queue<Compensator> actions = new Queue<Compensator>(new Compensator[] { 
+   new Compensator(SendEmail, UndoSendEmail),
+   new Compensator(ArchiveReportsInDatabase, UndoArchiveReportsInDatabase),
+   new Compensator(CreateAFile, UndoCreateAFile)
+});
+
+Queue<Compensator> doneActions = new Queue<Compensator>();
+while (var c = actions.Dequeue() != null) {
+   try {
+      c.Action();
+      doneActions.Add(c);
+   } catch {
+      try {
+        doneActions.Each(d => d.Compensate());
+      } catch (EXception ex) {
+        throw new OhCrapException("Couldn't rollback", doneActions, ex);
+      }
+      throw;
+   }
+}
+
+Of course, for your specific tasks - you may be in luck. 
+
+Obviously, the RDBMS work can already be wrapped in a transaction. 
+If you're on Vista or Server 2008, then you get Transactional NTFS to cover your CreateFile scenario.
+Email is a bit trickier - I don't know of any 2PC or Compensators around it (I'd only be slightly surprised if someone pointed out that Exchange has one, though) so I'd probably use MSMQ to write a notification and let a subscriber pick it up and eventually email it. At that point, your transaction really covers just sending the message to the queue, but that's probably good enough.
+
+All of these can participate in a System.Transactions Transaction, so you should be in pretty good shape.

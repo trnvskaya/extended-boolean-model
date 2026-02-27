@@ -1,0 +1,160 @@
+What does the comma operator , do in C?
+c operators comma-operator
+What does the , operator do in C?
+
+
+The expression:
+(expression1,  expression2)
+
+First expression1 is evaluated, then expression2 is evaluated, and the value of expression2 is returned for the whole expression.
+
+It causes the evaluation of multiple statements, but uses only the last one as a resulting value (rvalue, I think).
+So...
+int f() { return 7; }
+int g() { return 8; }
+
+int x = (printf("assigning x"), f(), g() );
+
+should result in x being set to 8.
+
+As earlier answers have stated it evaluates all statements but uses the last one as the value of the expression. Personally I've only found it useful in loop expressions:
+for (tmp=0, i = MAX; i > 0; i--)
+
+
+The only place I've seen it being useful is when you write a funky loop where you want to do multiple things in one of the expressions (probably the init expression or loop expression. Something like:
+bool arraysAreMirrored(int a1[], int a2[], size_t size)
+{
+  size_t i1, i2;
+  for(i1 = 0, i2 = size - 1; i1 < size; i1++, i2--)
+  {
+    if(a1[i1] != a2[i2])
+    {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+Pardon me if there are any syntax errors or if I mixed in anything that's not strict C. I'm not arguing that the , operator is good form, but that's what you could use it for. In the case above I'd probably use a while loop instead so the multiple expressions on init and loop would be more obvious. (And I'd initialize i1 and i2 inline instead of declaring and then initializing.... blah blah blah.)
+
+I've seen used most in while loops:
+string s;
+while(read_string(s), s.len() > 5)
+{
+   //do something
+}
+
+It will do the operation, then do a test based on a side-effect. The other way would be to do it like this:
+string s;
+read_string(s);
+while(s.len() > 5)
+{
+   //do something
+   read_string(s);
+}
+
+
+The comma operator combines the two expressions either side of it into one, evaluating them both in left-to-right order.  The value of the right-hand side is returned as the value of the whole expression.
+ (expr1, expr2) is like { expr1; expr2; } but you can use the result of expr2 in a function call or assignment.
+It is often seen in for loops to initialise or maintain multiple variables like this:
+for (low = 0, high = MAXSIZE; low < high; low = newlow, high = newhigh)
+{
+    /* do something with low and high and put new values
+       in newlow and newhigh */
+}
+
+Apart from this, I've only used it "in anger" in one other case, when wrapping up two operations that should always go together in a macro.  We had code that copied various binary values into a byte buffer for sending on a network, and a pointer maintained where we had got up to:
+unsigned char outbuff[BUFFSIZE];
+unsigned char *ptr = outbuff;
+
+*ptr++ = first_byte_value;
+*ptr++ = second_byte_value;
+
+send_buff(outbuff, (int)(ptr - outbuff));
+
+Where the values were shorts or ints we did this:
+*((short *)ptr)++ = short_value;
+*((int *)ptr)++ = int_value;
+
+Later we read that this was not really valid C, because (short *)ptr is no longer an l-value and can't be incremented, although our compiler at the time didn't mind.  To fix this, we split the expression in two:
+*(short *)ptr = short_value;
+ptr += sizeof(short);
+
+However, this approach relied on all developers remembering to put both statements in all the time.  We wanted a function where you could pass in the output pointer, the value and and the value's type.  This being C, not C++ with templates, we couldn't have a function take an arbitrary type, so we settled on a macro:
+#define ASSIGN_INCR(p, val, type)  ((*((type) *)(p) = (val)), (p) += sizeof(type))
+
+By using the comma operator we were able to use this in expressions or as statements as we wished:
+if (need_to_output_short)
+    ASSIGN_INCR(ptr, short_value, short);
+
+latest_pos = ASSIGN_INCR(ptr, int_value, int);
+
+send_buff(outbuff, (int)(ASSIGN_INCR(ptr, last_value, int) - outbuff));
+
+I'm not suggesting any of these examples are good style!  Indeed, I seem to remember Steve McConnell's Code Complete advising against even using comma operators in a for loop: for readability and maintainability, the loop should be controlled by only one variable, and the expressions in the for line itself should only contain loop-control code, not other extra bits of initialisation or loop maintenance.
+
+The comma operator will evaluate the left operand, discard the result and then evaluate the right operand and that will be the result. The idiomatic use as noted in the link is when initializing the variables used in a for loop, and it gives the following example:
+void rev(char *s, size_t len)
+{
+  char *first;
+  for ( first = s, s += len - 1; s >= first; --s)
+      /*^^^^^^^^^^^^^^^^^^^^^^^*/ 
+      putchar(*s);
+}
+
+Otherwise there are not many great uses of the comma operator, although it is easy to abuse to generate code that is hard to read and maintain.
+From the draft C99 standard the grammar is as follows:
+expression:
+  assignment-expression
+  expression , assignment-expression
+
+and paragraph 2 says:
+
+The left operand of a comma operator is evaluated as a void expression; there is a sequence point after its evaluation. Then the right operand is evaluated; the result has its type and value. 97) If an attempt is made to modify the result of a comma operator or to access it after the next sequence point, the behavior is undefined.
+
+Footnote 97 says:
+
+A comma operator does not yield an lvalue.
+
+which means you can not assign to the result of the comma operator.
+It is important to note that the comma operator has the lowest precedence and therefore there are cases where using () can make a big difference, for example:
+#include <stdio.h>
+
+int main()
+{
+    int x, y ;
+
+    x = 1, 2 ;
+    y = (3,4) ;
+
+    printf( "%d %d\n", x, y ) ;
+}
+
+will have the following output:
+1 4
+
+
+The comma operator does nothing meaningful, it is a 100% superfluous feature. The main use of it is "people trying to be smart" and therefore use it to (unintentionally) obfuscate readable code. The main area of use is to obfuscate for loops, for example:
+for(int i=0, count=0; i<x; i++, count++)
+
+Where int i=0, count=0 is actually not the comma operator, but a declaration list (we're already confused here). i++, count++ is the comma operator, which evaluates the left operand first and then the right operand. The result of the comma operator is the result of the right operand. The result of the left operand is discarded.
+But the above code could be written in a much more readable way without the comma operator:
+int count = 0;
+for(int i=0; i<x; i++) // readable for loop, no nonsense anywhere
+{
+  ...
+  count++;
+}
+
+
+The only real use of the comma operator I have seen, is artificial discussions about sequence points, since the comma operator comes with a sequence point between the evaluation of the left and right operands.
+So if you have some undefined behavior code like this:
+printf("%d %d", i++, i++);
+
+You can actually turn it into merely unspecified behavior (order of evaluation of function parameters) by writing
+printf("%d %d", (0,i++), (0,i++));
+
+There is now a sequence point between each evaluation of i++, so at least the program won't risk to crash and burn any longer, even though the order of evaluation of function parameters remains unspecified.
+Of course nobody would write such code in real applications, it is only useful for language-lawyer discussions about sequence points in the C language.
+The comma operator is banned by MISRA-C:2004 and MISRA-C:2012 with the rationale that it creates less readable code.

@@ -1,0 +1,146 @@
+How hard is it to incorporate full text search with SQL Server?
+c# asp.net sql .net-3.5 full-text-search
+I am building a C#/ASP.NET app with an SQL backend. I am on deadline and finishing up my pages, out of left field one of my designers incorporated a full text search on one of my pages. My "searches" up until this point have been filters, being able to narrow a result set by certain factors and column values. 
+Being that I'm on deadline (you know 3 hours sleep a night, at the point where I am looking like something the cat ate and threw up), I was expecting this page to be very similar to be others and I'm trying to decide whether or not to make a stink. I have never done a full text search on a page before.... is this a mountain to climb or is there a simple solution?
+thank you. 
+
+
+"How hard is it" is a tough question to answer. For example, someone who's already done it 10 times will probably reckon it's a snap. All I can really say is that you're likely to find it a lot easier if you use something like NLucene rather than rolling your own.
+
+Full text search in SQL Server is really easy, a bit of configuration and a slight tweak on the queryside and you are good to go!  I have done it for clients in under 20 minutes before, being familiar with the process
+Here is the 2008 MSDN article, links go out to the 2005 versions from there
+
+First off, you need to enabled Full text Searching indexing on the production servers, so if thats not in scope, your not going to want to go with this.
+However, if that's already ready to go, full text searching is relatively simple.
+T-SQL has 4 predicates used for full text search:
+
+FREETEXT
+FREETEXTTABLE
+CONTAINS
+CONTAINSTABLE
+
+FREETEXT is the simplest, and can be done like this:
+SELECT UserName
+FROM Tbl_Users
+WHERE FREETEXT (UserName, 'bob' )
+
+Results:
+
+JimBob
+Little Bobby Tables
+
+FREETEXTTABLE works the same as FreeTEXT, except it returns the results as a table.
+The real power of T-SQL's full text search comes from the CONTAINS (and CONTAINSTABLE) predicate...This one is huge, so I'll just paste its usage in:
+CONTAINS
+    ( { column | * } , '< contains_search_condition >' 
+    ) 
+
+< contains_search_condition > ::= 
+        { < simple_term > 
+        | < prefix_term > 
+        | < generation_term > 
+        | < proximity_term > 
+        | < weighted_term > 
+        } 
+        | { ( < contains_search_condition > ) 
+        { AND | AND NOT | OR } < contains_search_condition > [ ...n ] 
+        } 
+
+< simple_term > ::= 
+    word | " phrase "
+
+< prefix term > ::= 
+    { "word * " | "phrase * " }
+
+< generation_term > ::= 
+    FORMSOF ( INFLECTIONAL , < simple_term > [ ,...n ] ) 
+
+< proximity_term > ::= 
+    { < simple_term > | < prefix_term > } 
+    { { NEAR | ~ } { < simple_term > | < prefix_term > } } [ ...n ] 
+
+< weighted_term > ::= 
+    ISABOUT 
+        ( { { 
+                < simple_term > 
+                | < prefix_term > 
+                | < generation_term > 
+                | < proximity_term > 
+                } 
+            [ WEIGHT ( weight_value ) ] 
+            } [ ,...n ] 
+        )
+
+This means you can write queries such as:
+SELECT UserName
+FROM Tbl_Users
+WHERE CONTAINS(UserName, '"little*" NEAR tables')
+
+Results:
+
+Little Bobby Tables
+
+Good luck :)
+
+I have used dtSearch before for adding full text searching to files and databases, and their stuff is pretty cheap and easy to use. 
+Short of adding all that and configuring SQL, This script will search through all columns in a database and tell you what columns contain the values you are looking for. I know its not the "proper" solution, but may buy you some time. 
+/*This script will find any text value in the database*/
+/*Output will be directed to the Messages window. Don't forget to look there!!!*/
+
+SET NOCOUNT ON
+DECLARE @valuetosearchfor varchar(128), @objectOwner varchar(64)
+SET @valuetosearchfor = '%staff%' --should be formatted as a like search 
+SET @objectOwner = 'dbo'
+
+DECLARE @potentialcolumns TABLE (id int IDENTITY, sql varchar(4000))
+
+INSERT INTO @potentialcolumns (sql)
+SELECT 
+    ('if exists (select 1 from [' +
+    [tabs].[table_schema] + '].[' +
+    [tabs].[table_name] + 
+    '] (NOLOCK) where [' + 
+    [cols].[column_name] + 
+    '] like ''' + @valuetosearchfor + ''' ) print ''SELECT * FROM [' +
+    [tabs].[table_schema] + '].[' +
+    [tabs].[table_name] + 
+    '] (NOLOCK) WHERE [' + 
+    [cols].[column_name] + 
+    '] LIKE ''''' + @valuetosearchfor + '''''' +
+    '''') as 'sql'
+FROM information_schema.columns cols
+    INNER JOIN information_schema.tables tabs
+    	ON cols.TABLE_CATALOG = tabs.TABLE_CATALOG
+    		AND cols.TABLE_SCHEMA = tabs.TABLE_SCHEMA
+    		AND cols.TABLE_NAME = tabs.TABLE_NAME
+WHERE cols.data_type IN ('char', 'varchar', 'nvchar', 'nvarchar','text','ntext')
+    AND	tabs.table_schema = @objectOwner
+    AND tabs.TABLE_TYPE = 'BASE TABLE'
+ORDER BY tabs.table_catalog, tabs.table_name, cols.ordinal_position
+
+DECLARE @count int
+SET @count = (SELECT MAX(id) FROM @potentialcolumns)
+PRINT 'Found ' + CAST(@count as varchar) + ' potential columns.'
+PRINT 'Beginning scan...'
+PRINT ''
+PRINT 'These columns contain the values being searched for...'
+PRINT ''
+DECLARE @iterator int, @sql varchar(4000)
+SET @iterator = 1
+WHILE @iterator <= (SELECT Max(id) FROM @potentialcolumns)
+BEGIN
+    SET @sql = (SELECT [sql] FROM @potentialcolumns where [id] = @iterator)
+    IF (@sql IS NOT NULL) and (RTRIM(LTRIM(@sql)) <> '')
+    BEGIN
+    	--SELECT @sql --use when checking sql output
+    	EXEC (@sql)
+    END
+    SET @iterator = @iterator + 1
+END
+
+PRINT ''
+PRINT 'Scan completed'
+
+
+I've been there. It works like a charm until you start to consider scalability and advanced search functionalities like search over multiple columns with giving each one different weight values.
+For example, the only way to search over Title and Summary columns is to have a computed column with SearchColumn = CONCAT(Title, Summary) and index over SearchColumn. Weighting? SearchColumn = CONCAT(CONCAT(Title,Title), Summary) something like that. ;) Filtering? Forget about it.

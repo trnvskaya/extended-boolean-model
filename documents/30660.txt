@@ -1,0 +1,35 @@
+MySQL Binary Log Replication: Can it be set to ignore errors?
+mysql replication mysql-error-1062 binlog
+I'm running a master-slave MySQL binary log replication system (phew!) that, for some data, is not in sync (meaning, the master holds more data than the slave). But the slave stops very frequently on the slightest MySQL error, can this be disabled? (perhaps a my.cnf setting for the replicating slave ignore-replicating-errors or some of the sort ;) )
+This is what happens, every now and then, when the slave tries to replicate an item that does not exist, the slave just dies. a quick check at SHOW SLAVE STATUS \G; gives
+       Slave-IO-Running: Yes
+      Slave-SQL-Running: No
+        Replicate-Do-DB: 
+             Last-Errno: 1062
+             Last-Error: Error 'Duplicate entry '15218' for key 1' on query. Default database: 'db'. Query: 'INSERT INTO db.table ( FIELDS ) VALUES ( VALUES )'
+
+which I promptly fix (once I realize that the slave has been stopped) by doing the following:
+STOP SLAVE;
+RESET SLAVE;
+START SLAVE;
+
+... lately this has been getting kind of tiresome, and before I spit out some sort of PHP which does this for me, i was wondering if there's some my.cnf entry which will not kill the slave on the first error.
+Cheers,
+/mp
+
+
+First, do you really want to ignore errors? If you get an error, it is likely that the data is not in sync any more. Perhaps what you want is to drop the slave database and restart the sync process when you get an error.
+Second, I think the error you are getting is not when you replicate an item that does not exist (what would that mean anyway?) - it looks like you are replicating an item that already exists in the slave database.
+I suspect the problem mainly arises from not starting at a clean data copy. It seems that the master has been copied to the slave; then replication has been turned off (or failed); and then it has started up again, but without giving the slave the chance to catch up with what it missed.
+If you ever have a time when the master can be closed for write access long enough to clone the database and import it into the slave, this might get the problems to go away.
+
+Modern mysqldump commands have a couple options to help with setting up consistent replication. Check out --master-data which will put the binary log file and position in the dump and automatically set when loaded into slave. Also --single-transaction will do the dump inside a transaction so that no write lock is needed to do a consistent dump.
+
+Yes, with --slave-skip-errors=xxx in my.cnf, where xxx is 'all' or a comma sep list of error codes.
+
+If the slave isn't used for any writes other than the replication, the authors of High Performance MySQL recommend adding read_only on the slave server to prevent users from mistakenly changing data on the slave as this is will also create the same errors you experienced. 
+
+i think you are doing replication with out sync the database first sync the database and try for replication and servers are generating same unique ids and try to set auto incerment offset
+
+stop slave; set global sql_slave_skip_counter=1; start slave;
+You can ignore only the current error and continue the replication process.

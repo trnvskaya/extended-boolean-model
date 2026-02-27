@@ -1,0 +1,88 @@
+Delphi Multi-Threading Message Loop
+multithreading delphi winapi
+My application has several threads:
+1) Main Thread
+2) 2 Sub-Main Threads (each with Message Loop, as shown below), used by TFQM
+3) n Worker Threads (simple loop, containing Sleep())
+My problem is, when I close my application, the Worker Threads manage to exit properly, but 1 of the 2 Sub-Main Threads hangs (never exits) when I issue WM_QUIT to close them.
+
+procedure ThreadProcFQM(P: Integer); stdcall;
+var
+  Msg: TMsg;
+ _FQM: TFQM;
+begin
+  _FQM := Ptr(P);
+  try
+    _FQM.fHandle := AllocateHwnd(_FQM.WndProc);
+
+    while GetMessage(Msg, 0, 0, 0) do
+    begin
+      TranslateMessage(Msg);
+      DispatchMessage(Msg);
+    end;
+
+  finally
+    DeallocateHWnd(_FQM.fHandle);
+    SetEvent(_FQM.hTerminated);
+  end;
+end;
+
+
+procedure TFQM.Stop;
+begin
+  PostMessage(fHandle, WM_QUIT, 0, 0);
+
+  WaitForSingleObject(hTerminated, INFINITE);
+  if hThread <> INVALID_HANDLE_VALUE then
+  begin
+    CloseHandle(hThread);
+    hThread := INVALID_HANDLE_VALUE;
+  end;
+end;
+
+
+
+I've had the same problem, and I found out I shouldn't create a hidden window just to recieve messages. Threads already have a message system. 
+I think that you're creating your windows handle and store it in fHandle, but GetMessage checks your thread's message loop. Therefore the message PostMessage(fHandle, WM_QUIT, 0, 0); is never recieved by the getmesssage.
+You can post messages to your thread using PostThreadMessage, and in the thread you use GetMessage(CurrentMessage, 0, 0, 0). The only important difference is that you have to start the message loop from your thread by calling 
+PeekMessage(CurrentMessage, 0, WM_USER, WM_USER, PM_NOREMOVE);
+
+You should start with this, than do your setup and than start your loop.
+The reason why you should start with the peek message is to make sure messages which are sent during the initialization of your threadprocedure are not lost.
+The weird thing is, at the moment I can't find the reference where I learned this, but my guess is the newsgroup community.
+
+1) You don't need in AllocateHwnd within your thread. First call to GetMessage will create a separate message queue for this thread. But in order to send message to the thread you should use PostThreadMessage function.
+Be aware that at the moment of calling PostThreadMessage the queue still could not be created. I usually use construction:
+while not PostThreadMessage(ThreadID, idStartMessage, 0, 0) do
+  Sleep(1);
+
+to ensure that message queue created.
+2) For terminating thread loop I define my own message:
+  idExitMessage = WM_USER + 777; // you are free to use your own constant here
+
+3) There is no need for separate event, because you can pass thread handle to
+WaitForSingleObject function. So, your code could look like:
+  PostThreadMessage(ThreadID, idExitMessage, 0, 0);
+  WaitForSingleObject(ThreadHandle, INFINITE);
+
+Take into consideration that ThreadID and ThreadHandle are different values.
+4) So, your ThreadProc will look like:
+procedure ThreadProcFQM; stdcall;
+var
+  Msg: TMsg;
+begin
+  while GetMessage(Msg, 0, 0, 0) 
+    and (Msg.Message <> idExitMessage) do
+  begin
+    TranslateMessage(Msg);
+    DispatchMessage(Msg);
+  end;
+end;
+
+
+If I may point to few problems in your code ...
+1) You're not checking output of AllocateHwnd. Yes, most probably it will never fail, but still ...
+2) AllocateHwnd belogs OUT of try..finally! If it fails, DeallocateHwnd should not be called.
+3) AllocateHwnd is not threadsafe. If you call it from multiple threads at the same time, you can run into poblems. Read more.
+As Davy said, use MsgWaitForMultipleObjects instead of creating hidden message window. Then use PostThreadMessage to send messages to thread.
+If I may put a plug for a totally free product here - use my OmniThreadLibrary instead. Much simpler than messing directly with Windows messaging.

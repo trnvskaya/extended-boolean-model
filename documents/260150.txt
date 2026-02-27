@@ -1,0 +1,80 @@
+How should I treat strings of digits in XML::RPC and Drupal?
+perl drupal xml-rpc
+I am trying to use an XML-RPC server on my Drupal (PHP) backend to make it easier for my Perl backend to talk to it.  However, I've run into an issue and I'm not sure which parts, if any, are bugs.  Essentially, some of the variables I need to pass to Drupal are strings that sometimes are strings full of numbers and the Drupal XML-RPC server is returning an error that when a string is full of numbers it is not properly formed.
+My Perl code looks something like this at the moment.
+use strict;
+use warnings;
+use XML::RPC;
+use Data::Dumper;
+my $xmlrpc = XML::RPC->new(URL);
+my $result = $xmlrpc->call( FUNCTION, 'hello world', '9876352345');
+print Dumper $result;
+
+The output is:
+$VAR1 = {
+      'faultString' => 'Server error. Invalid method parameters.',
+      'faultCode' => '-32602'
+};
+
+When I have the Drupal XML-RPC server print out the data it receives, I notice that the second argument is typed as i4:
+<param>
+<value>
+<i4>9876352345</i4>
+</value>
+
+I think when Drupal then finishes processing the item, it is typing that variable as an int instead of a string.  This means when Drupal later tries to check that the variable value is properly formed for a string, the is_string PHP function returns false.
+foreach ($signature as $key => $type) {
+  $arg = $args[$key];
+  switch ($type) {
+    case 'int':
+    case 'i4':
+      if (is_array($arg) || !is_int($arg)) {
+        $ok = FALSE;
+      }
+      break;
+    case 'base64':
+    case 'string':
+      if (!is_string($arg)) {
+        $ok = FALSE;
+      }
+      break;
+    case 'boolean':
+      if ($arg !== FALSE && $arg !== TRUE) {
+        $ok = FALSE;
+      }
+      break;
+    case 'float':
+    case 'double':
+      if (!is_float($arg)) {
+        $ok = FALSE;
+      }
+      break;
+    case 'date':
+    case 'dateTime.iso8601':
+      if (!$arg->is_date) {
+        $ok = FALSE;
+      }
+      break;
+  }
+  if (!$ok) {
+    return xmlrpc_error(-32602, t('Server error. Invalid method parameters.'));
+  }
+}
+
+What I'm not sure about is on which side of the divide the issue lies or if there is something else I should be using.  Should the request from the Perl side be typing the content as a string instead of i4 or is the Drupal side of the request too stringent for the string type?  My guess is that the issue is the latter, but I don't know enough about how an XML-RPC server is supposed to work to know for sure.
+
+
+The number 9876352345 is too big to fit in a 32bit integer. That might cause the problem.
+
+are you using frontier? perhaps you could declare the string explicitly?
+my $result =
+  $xmlrpc->call( FUNCTION, 'hello world', $xmlrpc->string('9876352345') );
+
+info from the client docs:
+
+By default, you may pass ordinary Perl values (scalars) to be encoded. RPC2 automatically converts them to XML-RPC types if they look like an integer, float, or as a string. This assumption causes problems when you want to pass a string that looks like "0096", RPC2 will convert that to an  because it looks like an integer.
+
+
+I don't have any experience with the XML::RPC package, but I'm the author of the RPC::XML CPAN module. As with the Frontier package, I provide a way to force a value into a specific type when it would otherwise default to something else.
+If I had to guess, I would say that the package you're using simple does a regular-expression match on the data to decide how to type it. I had a similar problem with my package, and given the way Perl handles scalar values the only real way around it is to force it with explicit declaration. As a previous answerer pointed out, the value in question is actually outside the range of the <i4> type (which is a signed 32-bit value). So even if you had intended it to be an integer value, it would have been invalid with regards to the XML-RPC spec.
+I would recommend switching to one of the other XML-RPC packages, which have clearer ways of explicitly typing data. According to the docs for XML::RPC, it is possible to force the typing of data, but I found it to be unclear and not very well explained.

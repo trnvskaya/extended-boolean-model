@@ -1,0 +1,81 @@
+What is the proper way to maintain state in a custom server control?
+c# asp.net custom-server-controls servercontrols
+This works, but is it the proper way to do it???
+I have a custom server control that has an [input] box on it.  I want it to kinda mimic the ASP.NET TextBox, but not completely.  When the textbox is rendered i have a javascript that allows users to select values that are then placed in that input box.
+I have a public text property on the control.  In the get/set i get/set the viewstate for the control - that part is easy, but when the control is populated via the javascript, the Text get is not actually called, what is the proper way to set this exposed property using JavaScript (or even if the user just types in the box) ?
+Edit:
+In the OnInit i ensure the state is maintained by reaching into the form values.
+    protected override void OnInit(EventArgs e)
+    {
+        base.OnInit(e);
+
+        if (HttpContext.Current.Request.Form["MyInputBoxValue"] != "")
+        {
+            ViewState["MyInputBoxValue"] 
+               = HttpContext.Current.Request.Form["MyInputBoxValue"];
+        }
+    }
+
+Then to get the value actually back in place in the HtmlTextWrite, i do this:
+protected override void RenderContents(HtmlTextWriter output)
+{
+
+        // There is an input control here and i set its value property
+        // like this using the Text internal defined.
+        output.Write("<input value=" + Text + ">.....
+
+}
+
+thanks
+
+
+If you need to maintain state on postback, you must provide your own methods
+of recording what the user has done with your control on the client side
+ and either update the server control later on the server with
+the changes, or redo the changes on the client side when the page refreshes. 
+
+I find using IStateManager works the best. 
+For example:
+partial class MyControl : System.Web.UI.UserControl, IStateManager
+{
+    [Serializable()]
+    protected struct MyControlState
+    {
+        public bool someValue;
+        public string name;
+    }
+
+    protected MyControlState state;
+
+    public bool someValue {
+        get { return state.someValue; }
+        set { state.someValue = value; }
+    }
+
+    public bool IsTrackingViewState {
+        get { return true; }
+    }
+
+    protected override void LoadViewState(object state)
+    {
+        if ((state != null) && state is MyControlState) {
+            this.state = state;
+        }
+    }
+
+    protected override object SaveViewState()
+    {
+        return state;
+    }
+
+    protected override void TrackViewState()
+    {
+        base.TrackViewState();
+    }
+}
+
+getDefaultState() would just load some sane defaults into a new state struct. state gets tracked in the viewstate of the page, and ASP will take care of bring it in/out for you.
+(above code ported from VB and not checked, hopefully I didn't make any errors but it should get the point across anyways)
+
+Hmm I wonder if we can use the existing ASP.NET persistence... try inheriting from the most basic post-back state persisting control (I'm thinking asp:hidden). Then just override the render and add all the jazz you want.
+Let me know if it works, then I won't have to test :)

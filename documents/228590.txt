@@ -1,0 +1,139 @@
+What is the best method for getting a database connection/object into a function in PHP?
+php database
+A couple of the options are:
+$connection = {my db connection/object};
+
+function PassedIn($connection) { ... }
+
+function PassedByReference(&$connection) { ... }
+
+function UsingGlobal() {
+    global $connection;
+    ...
+}
+
+So, passed in, passed by reference, or using global. I'm thinking in functions that are only used within 1 project that will only have 1 database connection. If there are multiple connections, the definitely passed in or passed by reference.
+I'm thining passed by reference is not needed when you are in PHP5 using an object, so then passed in or using global are the 2 possibilities.
+The reason I'm asking is because I'm getting tired of always putting in $connection into my function parameters.
+
+
+None of the above.
+All the mysql functions take the database connection argument optionally. If you leave that argument out, the last connection by mysql_connect() is assumed.
+
+My advice is to avoid global in the bulk of the code - it's dangerous, hard to track and will bite you.
+The way that I'd do this is to have a function called getDB() which can either be at class level by way of a constructor injection or static within a common class.
+So the code becomes
+class SomeClass
+{
+    protected $dbc;
+
+    public function __construct($db)
+    {
+    $this->dbc = $db;
+    }
+
+    public function getDB()
+    {
+         return $this->dbc;
+    }
+
+    function read_something()
+    {
+        $db = getDB();
+        $db->query();
+    }
+}
+
+or using a common shared class.
+function read_something()
+{
+    $db = System::getDB();
+    $db->query();
+}
+
+No matter how much elegant system design you do, there are always a few items that are necessarily global in scope (such as DB, Session, Config), and I prefer to keep these as static methods in my System class.
+Having each class require a connection via the constructor is the best way of doing this, by best I mean most reliable and isolated.
+However be aware that using a common shared class to do this can impact on the ability to isolate fully the objects using it and also the ability to perform unit tests on these objects.
+
+Try designing your code in an object-oriented fashion.  Methods that use the database should be grouped in a class, and the class instance should contain the database connection as a class variable.  That way the database connection is available to the functions that need it, but it's not global.
+class MyClass {
+  protected $_db;
+
+  public function __construct($db)
+  {
+    $this->_db = $db;
+  }
+
+  public function doSomething()
+  {
+    $this->_db->query(...);
+  }
+}
+
+
+function usingFunc() {
+  $connection = getConnection();
+  ...
+}
+
+function getConnection() {
+  static $connectionObject = null;
+  if ($connectionObject == null) {
+    $connectionObject = connectFoo("whatever","connection","method","you","choose");
+  }
+  return $connectionObject;
+}
+
+This way, the static $connectionObject is preserved between getConnection calls.
+
+I use a Singleton ResourceManager class to handle stuff like DB connections and config settings through a whole app:
+class ResourceManager {
+	private static $DB;
+	private static $Config;
+
+	public static function get($resource, $options = false) {
+		if (property_exists('ResourceManager', $resource)) {
+			if (empty(self::$$resource)) {
+				self::_init_resource($resource, $options);
+			}
+			if (!empty(self::$$resource)) {
+				return self::$$resource;
+			}
+		}
+		return null;
+	}
+
+	private static function _init_resource($resource, $options = null) {
+		if ($resource == 'DB') {
+			$dsn = 'mysql:host=localhost';
+			$username = 'my_username';
+			$password = 'p4ssw0rd';
+			try {
+				self::$DB = new PDO($dsn, $username, $password);
+			} catch (PDOException $e) {
+				echo 'Connection failed: ' . $e->getMessage();
+			}
+		} elseif (class_exists($resource) && property_exists('ResourceManager', $resource)) {
+			self::$$resource = new $resource($options);
+		}
+	}
+}
+
+And then in functions / objects / where ever:
+function doDBThingy() {
+	$db = ResourceManager::get('DB');
+	if ($db) {
+		$stmt = $db->prepare('SELET * FROM `table`');
+		etc...
+	}
+}
+
+I use it to store messages, error messages and warnings, as well as global variables. There's an interesting question here on when to actually use this type of class.
+
+I see that a lot of people have suggested some kind of static variable.
+Essentially, there is very little difference between a global variable and a static variable. Except for the syntax, they have exactly the same characteristics. As such, you are gaining nothing at all, by replacing a global variable with a static variable. In most examples, there is a level of decoupling in that the static variable isn't referred directly, but rather through a static method (Eg. a singleton or static registry). While slightly better, this still has the problems of a global scope. If you ever need to use more than one database connection in your application, you're screwed. If you ever want to know which parts of your code has side-effects, you need to manually inspect the implementation. That's not stuff that will make or break your application, but it will make it harder to maintain.
+I propose that you chose between one of:
+
+Pass the instance as arguments to the functions that needs it. This is by far the simplest, and it has all the benefits of narrow scope, but it can get rather unwieldy. It is also a source for introducing dependencies, since some parts of your code may end up becoming a middleman. If that happens, go on to ..
+Put the instance in the scope of the object, which has the method that needs it. Eg. if the method Foo->doStuff() needs a database connection, pass it in Foo's constructor and set it as a protected instance variable on Foo. You can still end up with some of the problems of passing in the method, but it's generally less of a problem with unwieldy constructors, than with methods. If your application gets big enough, you can use a dependency injection container to automate this.
+

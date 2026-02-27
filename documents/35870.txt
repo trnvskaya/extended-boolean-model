@@ -1,0 +1,61 @@
+Comparison of Lat, Long Coordinates
+sorting comparison
+I have a list of more than 15 thousand latitude and longitude coordinates.  Given any X,Y coordinates, what is the fastest way to find the closest coordinates on the list?
+
+
+You will want to use a geometric construction called a Voronoi diagram. This divides up the plane into a number of areas, one for each point, that encompass all the points that are closest to each of your given points.
+The code for the exact algorithms to create the Voronoi diagram and arrange the data structure lookups are too large to fit in this little edit box. :)
+@Linor: That's essentially what you would do after creating a Voronoi diagram. But instead of making a rectangular grid, you can choose dividing lines that closely match the lines of the Voronoi diagram (this way you will get fewer areas that cross dividing lines). If you recursively divide your Voronoi diagram in half along the best dividing line for each subdiagram, you can then do a tree search for each point you want to look up. This requires a bit of work up front but saves time later. Each lookup would be on the order of log N where N is the number of points. 16 comparisons is a lot better than 15,000!
+
+Even if you create a voronoi diagram, that still means you need to compare your x, y coordinates to all 15 thousand created areas. To make that easier, the first thing that popped into my mind though was to create some sort of grid over the possible values, so that you can easily place and x/y coordinate into one of the boxes in a grid, if the same is done for the list of areas you should quickly shrink the possible candidates for comparison (because the grid would be more rectangular, it's possible for an area to be in multiple grid positions). 
+
+The general concept you're describing is nearest-neighbour search, and there are a whole raft of techniques which deal with solving these types of queries, either exactly or approximately. The basic idea is to use a spatial partitioning technique to reduce the complexity from O(n) per query to (approximately) O( log n ) per query.
+KD-Trees, and variants of KD-Trees seem to work very well, but quad-trees will also work. The quality of these searches depends on whether your set of 15,000 data points are static (you're not adding a-lot of data points to the reference set). Mount and Arya's work on the Approximate Nearest Neighbour library is both easy to use and understand, even without a good grounding in the math. It also gives you some flexibility in the types and tolerances of your queries. 
+
+Premature optimization is the root of all evil.
+15K coordinates aren't that much. Why not iterate over the 15K coordinates and see if that's really a performance problem? You could save a lot of work and maybe it never gets too slow to even notice.
+
+You didn't specify what you meant by fastest.  If you want to get the answer quickly without writing any code, I would give the gpsbabel radius filter a go.
+
+It rather depends how many times you want to do it, and what resources are available - if you're doing the test once, then the O(log N) techniques are good. If you're doing it a thousand times on a server, constructing a bitmap lookup table would be faster, either giving the result directly or as a first stage of. 2GB of bitmap can map the whole world lat-lon to a 32bit value at 0.011 degree pixels (1.2km at equator), and should fit into memory. If you're only doing single country, or can exclude the poles, you can have a smaller map or higher resolution. For 15,000 points you probably have a much smaller map - I first sized it up as a first step to doing lat-lon to postcode searches, which needs higher resolution. Depending on requirements, you use the mapped value to point at the result directly, or to short list of the candidates (which would allow a smaller map, but requires greater subsequent processing - you're not in O(1) lookup territory any more). 
+
+I did this once for a web site.  I.e. find the dealer within 50 miles of your zip code.  I used the great circle calculation to find the coordinates that were 50 miles north, 50 miles east, 50 miles south, and 50 miles west.  That gave me a min and max lat and a min and max long.  From there then I did a database query: 
+select *
+    from dealers
+    where latitude  >= minlat
+      and latitude  <= maxlat
+      and longitude >= minlong
+      and longitude <= maxlong
+
+Since some of those results will still be more than 50 miles away, then I used the great circle formula once more on that small list of coordinates.  Then I printed out the list along with the distance from the target.
+Of course, if you wanted to search for points near the international date line or the poles, than this won't work.  But it works great for searches inside North America!
+
+How large an area are these coordinates spread out over?  What latitude are they at?  How much accuracy do you require?  If they're fairly close together, you can probably ignore the fact that the earth is round and just treat this as a Cartesian plane rather than messing about with spherical geometry and great circle distances.  Of course, as you get further from the equator, degrees of longitute get smaller compared to degrees of latitude, so some sort of scaling factor may be appropriate. 
+Start with a fairly simple distance formula and a brute force search and see how long that's going to take and if the results are accurate enough before you get fancy.  
+
+Thanks everyone for the answers.
+@Tom, @Chris Upchurch:  The coordinates are fairly close to each others, and they are in a relatively small area of about 800 sq km.  I guess I can assume the surface to be flat.  I need to process the requests over and over again, and the response should be faster enough for more web experience.
+
+Based on your clarifications, I would use a geometrical data structure such as a KD-tree or an R-tree. MySQL has a SPATIAL data type which does this. Other languages/frameworks/databases have libraries to support this. Basically, such a data structure embeds the points in a tree of rectangles, and searches the tree using a radius. This should be fast enough, and I believe is simpler than building a Voronoi diagram. I guess there is some threshold above which you would prefer the added performance of a Voronoi diagram so you will be ready to pay the added complexity.
+
+A grid is very simple, and very fast.  It's basically just a 2D array of lists.  Each array entry represents the points that fall inside a grid cell.  Very easy to set the grid up:
+
+for each point p
+  get cell that contains p
+  add point to that cell's list
+
+and it's very easy to look things up:
+
+given a query point p
+  get cell that contains p
+  check points in that cell (and its 8 neighbors), against query point p
+
+Alejo
+
+This can be solved in several ways. I would first approach this problem by generating a Delaunay network connecting closest points to each other. This can be accomplished with the v.delaunay command in the open source GIS application GRASS. You could complete the problem in GRASS using one of the many network analysis modules in GRASS. Alternatively, you could use the free spatial RDBMS PostGIS to do the distance queries. The PostGIS spatial queries are considerably more powerful than those in MySQL, as they are not constrained to BBOX operations. For example:
+SELECT network_id, ST_Length(geometry) from spatial_table where ST_Length(geometry) < 10;
+
+Since you are using Longitude and Latitude, you probably want to use the Spheroid-Distance functions. With a spatial index, PostGIS scales very well for large datasets.
+
+Just to be contrairian, do you mean close in distance or (driving) time?  In an urban area I'd gladly drive 5 miles (5min) on the highway than 4 miles (20min stop and go) in another direction. 
+Thus if it's a 'closest' metric you need, I'd look into GIS databases with travel time metrics. 

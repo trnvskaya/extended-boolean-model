@@ -1,0 +1,49 @@
+How can I report to users what is consuming the process address space of a windows application while they're running it?
+winapi memory memory-management memory-dump
+I'm writing the memory manager for an application, as part of a team of twenty-odd coders.  We're running out of memory quota and we need to be able to see what's going on, since we only appear to be using about 700Mb.  I need to be able to report where it's all going - fragmentation etc.  Any ideas?
+
+
+You can use existing memory debugging tools for this, I found Memory Validator 1 quite useful, it is able to track both API level (heap, new...) and OS level (Virtual Memory) allocations and show virtual memory maps.
+The other option which I also found very usefull is to be able to dump a map of the whole virtual space based on VirtualQuery function. My code for this looks like this:
+void PrintVMMap()
+{
+  size_t start = 0;
+  // TODO: make portable - not compatible with /3GB, 64b OS or 64b app
+  size_t end = 1U<<31; // map 32b user space only - kernel space not accessible
+  SYSTEM_INFO si;
+  GetSystemInfo(&si);
+  size_t pageSize = si.dwPageSize;
+  size_t longestFreeApp = 0;
+
+  int index=0;
+  for (size_t addr = start; addr<end; )
+  {
+    MEMORY_BASIC_INFORMATION buffer;
+    SIZE_T retSize = VirtualQuery((void *)addr,&buffer,sizeof(buffer));
+    if (retSize==sizeof(buffer) && buffer.RegionSize>0)
+    {
+      // dump information about this region
+      printf(.... some buffer information here ....);
+      // track longest feee region - usefull fragmentation indicator
+      if (buffer.State&MEM_FREE)
+      {
+        if (buffer.RegionSize>longestFreeApp) longestFreeApp = buffer.RegionSize;
+      }
+      addr += buffer.RegionSize;
+      index+= buffer.RegionSize/pageSize;
+    }
+    else
+    {
+      // always proceed
+      addr += pageSize;
+      index++;
+    }
+  }
+  printf("Longest free VM region: %d",longestFreeApp);
+}
+
+
+You can also find out information about the heaps in a process with Heap32ListFirst/Heap32ListNext, and about loaded modules with Module32First/Module32Next, from the Tool Help API.
+'Tool Help' originated on Windows 9x. The original process information API on Windows NT was PSAPI, which offers functions which partially (but not completely) overlap with Tool Help.
+
+Our (huge) application (a Win32 game) started throwing "Not enough quota" exceptions recently, and I was charged with finding out where all the memory was going.  It is not a trivial job - this question and this one were my first attempts at finding out.  Heap behaviour is unexpected, and accurately tracking how much quota you've used and how much is available has so far proved impossible.  In fact, it's not particularly useful information anyway - "quota" and "somewhere to put things" are subtly and annoyingly different concepts.  The accepted answer is as good as it gets, although enumerating heaps and modules is also handy.  I used DebugDiag from MS to view the true horror of the situation, and understand how hard it is to actually thoroughly track everything.

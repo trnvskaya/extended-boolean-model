@@ -1,0 +1,74 @@
+deleting a buffer through a different type of pointer?
+c++ memory-management
+Say I have the following C++:
+char *p = new char[cb];
+SOME_STRUCT *pSS = (SOME_STRUCT *) p;
+delete pSS;
+
+Is this safe according to the C++ standard? Do I need to cast back to a char* and then use delete[]? I know it'll work in most C++ compilers, because it's plain-ordinary-data, with no destructors. Is it guaranteed to be safe?
+
+
+No, it's undefined behaviour - a compiler could plausibly do something different, and as the C++ FAQ entry that thudbang  linked to says, operator delete[] might be overloaded to do something different to operator delete. You can sometimes get away with it, but it's also good practice to get into the habit of matching delete[] with new[] for the cases where you can't.
+
+It's not guaranteed to be safe.  Here's a relevant link in the C++ FAQ lite:
+[16.13] Can I drop the [] when deleting array of some built-in type (char, int, etc.)?
+http://www.parashift.com/c++-faq-lite/freestore-mgmt.html#faq-16.13
+
+While this should work, I don't think you can guarantee it to be safe because the SOME_STRUCT is not a char* (unless it's merely a typedef).
+Additionally, since you're using different types of references, if you continue to use the *p access, and the memory has been deleted, you will get a runtime error.
+
+C++ Standard [5.3.5.2] declares:
+
+If the operand has a class type, the operand is converted to a pointer type by calling the above-mentioned conversion
+  function, and the converted operand is used in place of the original operand for the remainder of this section. In either
+  alternative, the value of the operand of delete may be a null pointer value. If it is not a null pointer value, in the first
+  alternative (delete object), the value of the operand of delete shall be a pointer to a non-array object or a pointer to a
+  subobject (1.8) representing a base class of such an object (clause 10). If not, the behavior is undefined. In the second
+  alternative (delete array), the value of the operand of delete shall be the pointer value which resulted from a previous
+  array new-expression.77) If not, the behavior is undefined. [ Note: this means that the syntax of the delete-expression
+  must match the type of the object allocated by new, not the syntax of the new-expression. âend note ] [ Note: a pointer
+  to a const type can be the operand of a delete-expression; it is not necessary to cast away the constness (5.2.11) of the
+  pointer expression before it is used as the operand of the delete-expression. âend note ]
+
+
+I highly doubt it.
+There are a lot of questionable ways of freeing memory, for example you can use delete on your char array (rather than delete[]) and it will likely work fine. I blogged in detail about this (apologies for the self-link, but it's easier than rewriting it all).
+The compiler is not so much the issue as the platform. Most libraries will use the allocation methods of the underlying operating system, which means the same code could behave differently on Mac vs. Windows vs. Linux. I have seen examples of this and every single one was questionable code.
+The safest approach is to always allocate and free memory using the same data type. If you are allocating chars and returning them to other code, you may be better off providing specific allocate/deallocate methods:
+SOME_STRUCT* Allocate()
+{
+    size_t cb; // Initialised to something
+    return (SOME_STRUCT*)(new char[cb]);
+}
+
+ 
+void Free(SOME_STRUCT* obj)
+{
+    delete[] (char*)obj;
+}
+
+(Overloading the new and delete operators may also be an option, but I have never liked doing this.)
+
+This will work OK if the memory being pointed to and the pointer you are pointing with are both POD. In this case, no destructor would be called anyhow, and the memory allocator does not know or care about the type stored within the memory.
+The only case this is OK with non-POD types, is if the pointee is a subtype of the pointer, (e.g. You are pointing at a Car with a Vehicle*) and the pointer's destructor has been declared virtual.
+
+This isn't safe, and non of the responses so far have emphasized enough the madness of doing this. Simply don't do it, if you consider yourself a real programmer, or ever want to work as a professional programmer in a team. You can only say that your struct contains non destructor at the moment, however you are laying a nasty possibly compiler and system specific trap for the future. Also, your code is unlikely to work as expected. The very best you can hope for is it doesn't crash. However I suspect you will slowly get a memory leak, as array allocations via new very often allocate extra memory in the bytes prior to the returned pointer. You won't be freeing the memory you think you are. A good memory allocation routine should pick up this mismatch, as would tools like Lint etc. 
+Simply don't do that, and purge from your mind whatever thinking process led you to even consider such nonsense.
+
+I've changed the code to use malloc/free. While I know how MSVC implements new/delete for plain-old-data (and SOME_STRUCT in this case was a Win32 structure, so simple C), I just wanted to know if it was a portable technique.
+It's not, so I'll use something that is.
+
+If you use malloc/free instead of new/delete, malloc and free won't care about the type.
+So if you're using a C-like POD (plain old data, like a build-in type, or a struct), you can malloc some type, and free another. note that this is poor style even if it works.
+
+This is a very similar question to the one that I answered here: link text
+In short, no, it's not safe according to the C++ standard. If, for some reason, you need a SOME_STRUCT object allocated in an area of memory that has a size difference from size_of(SOME_STRUCT) (and it had better be bigger!), then you are better off using a raw allocation function like global operator new to perform the allocation and then creating the object instance in raw memory with a placement new. Placement new will be extremely cheap if the object type has no constructor.
+void* p = ::operator new( cb );
+SOME_STRUCT* pSS = new (p) SOME_STRUCT;
+
+// ...
+
+delete pSS;
+
+This will work most of the time. It should always work if SOME_STRUCT is a POD-struct. It will also work in other cases if SOME_STRUCT's constructor does not throw and if SOME_STRUCT does not have a custom operator delete. This technique also removes the need for any casts.
+::operator new and ::operator delete are C++'s closest equivalent to malloc and free and as these (in the absence of class overrides) are called as appropriate by new and delete expressions they can (with care!) be used in combination.

@@ -1,0 +1,73 @@
+PCL raster color graphics distorted. Code included: what am I missing?
+c# graphics printer-control-language
+The function below prints a color raster image to a PCL-5 printer.  The function was adapted from a 2-color (1bpp) printing function we had that worked perfectly, except for the grainy 2-color printing.  The problem is that the image comes out with a large black bar extending from the right of the image to the edge of the page like this:
+  IMAGE#########################################
+  IMAGE#########AREA COMPLETELY BLACK###########
+  IMAGE#########################################
+
+The image itself looks perfect, otherwise.   
+Various PCL-to-PDF tools don't show the image at all, which leads me to believe I've forgotten do to something.  Appropriate resets (\u001bE\u001b%-12345X) were sent before, and page-feeds after.
+Any PCL experts out there?  I've got the PCL 5 Color Technical Reference Manual, and it's gotten me this far.  This last thing is driving me crazy though.
+*Edit:
+I now know what command is causing the problem, but I don't know why:
+  stream("\u001b*r0F");
+
+This should keep the image rotated along with the page (portrait, landscape).  If I remove this, the problem goes away.  I can compensate by rotating the bitmap beforehand, but I really want to know what caused this!
+   static void PrintImage()
+    {
+        // Get an image into memory
+        Image original = Image.FromFile("c:\\temp\\test.jpg");
+        Bitmap newBitmap = new Bitmap(original, original.Width, original.Height);
+
+        stream(String.Format("\u001b*p{0:d}x*p{1:d}Y", 1000, 1000));// Set cursor.
+        stream("\u001b*t300R");                                     // 300 DPI
+        stream(String.Format("\u001b*r{0:d}T", original.Height));   // Height
+        stream(String.Format("\u001b*r{0:d}S", original.Width));    // Width
+
+        stream("\u001b*r3U");      // 8-bit color palette
+        stream("\u001b*r0F");      // Follow logical page layout (landscape, portrait, etc..)
+        // Set palette depth, 3 bytes per pixel RGB
+        stream("\u001b*v6W\u0000\u0003\u0000\u0008\u0008\u0008");  
+        stream("\u001b*r1A");      // Start raster graphics
+        stream("\u001b*b0M");      // Compression 0 = None, 1 = Run Length Encoding
+
+        // Not fast, but fast enough.  
+        List<byte> colors = new List<byte>();
+        for (int y2 = 0; y2 < original.Height; y2++)
+        {
+            colors.Clear();
+            for (int x2 = 0; x2 < original.Width; x2++)
+            {
+                Color c = newBitmap.GetPixel(x2, y2);
+                colors.Add(c.R);
+                colors.Add(c.G);
+                colors.Add(c.B);
+            }
+
+            stream(String.Format("\u001b*b{0}W", colors.Count));     // Length of data to send
+            streamBytes(colors.ToArray());                           // Binary data
+        }
+        stream("\u001b*rB");   // End raster graphics  (also tried *rC -- no effect)
+    }
+
+
+
+There are a few problems with your code.  First off your cursor position code is incorrect, it should read:
+"\u001b*p{0:d}x1:d}Y", 1000, 1000
+
+This equates to:
+<esc>*p1000x1000Y
+
+you had:
+<esc>*p1000x*p1000Y
+
+When joining PCL commands together you match up the same parameterized value and group and then simply add value + parametrized character + value + parametrized character etc.  Ensure that the final parametrized character is a capital letter which signifies the end of the PCL command.
+Also when defining an image I recommend you also specify the width & hight in decipoints, this should help with the scaling of the image (*r3A) on the page so add this (just after your resolution command should be an okay place for it):
+Int32 deciHeight = original.Height / (int)original.HorizontalResolution * 720;
+Int32 deciWidth = original.Width / (int)original.VerticalResolution * 720;
+stream("\u001b*t{0:d}h{1:d}V", deciHeight, deciWidth));
+
+The other recommendation is to write all of this to file (watch your encodings) and use one of the handful of PCL viewers to view your data vs. always printing it.  Should save you some time and a forest or two!  I've tried all of them and wold recommend spending the $89 and purchasing pclWorks.  They also have a complete SDK if you are going to do a lot of PCL.  We don't use that as we hardcode all PCL ourselves but it does look good.
+As for rotation, we've had problems on some device, You could just rotate the the jpg first (original.RotateFlip) an then write it out.
+I don't have much time today but hope that my comments assist.  I can test your code on Monday or Tuesday and work with it and post any further comments.
+Keep in mind that even though PCL is a standard its support from manufacturer to manufacturer and device to device can be a problem and vastly different.  When doing basic things most devices seem okay; however, if you get into macros or complex graphics you will find difference.

@@ -1,0 +1,297 @@
+C#: Test if string is a guid without throwing exceptions?
+c# string parsing guid
+I want to try to convert a string to a Guid, but I don't want to rely on catching exceptions (
+
+for performance reasons - exceptions are expensive
+for usability reasons - the debugger pops up 
+for design reasons - the expected is not exceptional
+
+In other words the code:
+public static Boolean TryStrToGuid(String s, out Guid value)
+{
+    try
+    {
+        value = new Guid(s);
+        return true;
+    }
+    catch (FormatException)
+    {
+        value = Guid.Empty;
+        return false;
+    }
+}
+
+is not suitable.
+I would try using RegEx, but since the guid can be parenthesis wrapped, brace wrapped, none wrapped, makes it hard. 
+Additionally, I thought certain Guid values are invalid(?)
+
+Update 1
+ChristianK had a good idea to catch only FormatException, rather than all. Changed the question's code sample to include suggestion.
+
+Update 2
+Why worry about thrown exceptions? Am I really expecting invalid GUIDs all that often? 
+The answer is yes. That is why I am using TryStrToGuid - I am expecting bad data.
+Example 1 Namespace extensions can be specified by appending a GUID to a folder name. I might be parsing folder names, checking to see if the text after the final . is a GUID.
+c:\Program Files
+c:\Program Files.old
+c:\Users
+c:\Users.old
+c:\UserManager.{CE7F5AA5-6832-43FE-BAE1-80D14CD8F666}
+c:\Windows
+c:\Windows.old
+
+Example 2 I might be running a heavily used web-server wants to check the validity of some posted back data. I don't want invalid data tying up resources 2-3 orders of magnitude higher than it needs to be.
+Example 3 I might be parsing a search expression entered by a user. 
+
+If they enter GUID's I want to process them specially (such as specifically searching for that object, or highlight and format that specific search term in the response text.)
+
+Update 3 - Performance benchmarks
+Test converting 10,000 good Guids, and 10,000 bad Guids.
+Catch FormatException:
+   10,000 good:     63,668 ticks
+   10,000 bad:   6,435,609 ticks
+
+Regex Pre-Screen with try-catch:
+   10,000 good:    637,633 ticks
+   10,000 bad:     717,894 ticks
+
+COM Interop CLSIDFromString
+   10,000 good:    126,120 ticks
+   10,000 bad:      23,134 ticks
+
+p.s. I shouldn't have to justify a question.
+
+
+Run the potential GUID though a RegEx or some custom code that does a sanity check to ensure  the strig at least looks like a GUID and consists only of valid characters (and maybe that it seems to fit the overall format). If it doesn't pass the sanity check return an error - that'll probably weed out the vast majority of invalid strings.
+Then convert the string as you have above, still catching the exception for the few invalid strings that get through the sanity check.
+Jon Skeet did an analysis for something similar for parsing Ints (before TryParse was in the Framework):  Checking if a string can be converted to Int32
+However, as AnthonyWJones indicated you probably shouldn't be worrying about this.
+
+You're not going to like this but what makes you think that catching the exception is going to be slower?
+How many failed attempts to parse a GUID are you expecting in comparison with successful ones?
+My advice is use the function you've just created and profile your code. If you find that this function is truely a hotspot then fix it but not before.
+
+Well, here is the regex you will need...
+^[A-Fa-f0-9]{32}$|^({|\\()?[A-Fa-f0-9]{8}-([A-Fa-f0-9]{4}-){3}[A-Fa-f0-9]{12}(}|\\))?$|^({)?[0xA-Fa-f0-9]{3,10}(, {0,1}[0xA-Fa-f0-9]{3,6}){2}, {0,1}({)([0xA-Fa-f0-9]{3,4}, {0,1}){7}[0xA-Fa-f0-9]{3,4}(}})$
+
+But that is just for starters. You will also have to verify that the various parts such as the date/time are within acceptable ranges. I can't imagine this being any faster than the try/catch method that you have already outlined. Hopefully you aren't receiving that many invalid GUIDs to warrant this type of check!
+
+As far as I know, there is no something like Guid.TryParse in mscrolib. According to Reference Source, Guid type has mega-complex constructor which checks all kinds of guid formats and tries to parse them. There is no helper method you can call, even via reflection. I think you have to search for 3rd party Guid parsers, or write your own.
+
+ bool IsProbablyGuid(string s)
+    {
+        int hexchars = 0;
+        foreach(character c in string s)
+        {
+           if(IsValidHexChar(c)) 
+               hexchars++;          
+        }
+        return hexchars==32;
+    }
+
+
+While it is true that using errors is more expensive, most people believe that a majority of their GUIDs are going to be computer generated so a TRY-CATCH isn't too expensive since it only generates cost on the CATCH. You can prove this to yourself with a simple test of the two (user public, no password). 
+Here you go:
+using System.Text.RegularExpressions;
+
+
+ /// <summary>
+  /// Validate that a string is a valid GUID
+  /// </summary>
+  /// <param name="GUIDCheck"></param>
+  /// <returns></returns>
+  private bool IsValidGUID(string GUIDCheck)
+  {
+   if (!string.IsNullOrEmpty(GUIDCheck))
+   {
+    return new Regex(@"^(\{{0,1}([0-9a-fA-F]){8}-([0-9a-fA-F]){4}-([0-9a-fA-F]){4}-([0-9a-fA-F]){4}-([0-9a-fA-F]){12}\}{0,1})$").IsMatch(GUIDCheck);
+   }
+   return false;
+  }
+
+
+I don't know the answer to this one, but for what it's worth, you are right to not want to use a try/catch block here.  It takes a lot of computation to outweigh the cost of catching an exception plus try/catch is not for regular program flow!
+Of course, if you are not going to have to catch a lot of exceptions in that code, it's not really a big deal.
+
+I would at least rewrite it as:
+try
+{
+  value = new Guid(s);
+  return true;
+}
+catch (FormatException)
+{
+  value = Guid.Empty;
+  return false;
+}
+
+You don't want to say "invalid GUID" on SEHException, ThreadAbortException or other fatal or non-related stuff.
+Update: Starting with .NET 4.0, there is a new set of methods available for Guid:
+
+Guid.TryParse
+Guid.TryParseExact
+
+Really, those should be used (if only for the fact, that they are not "naively" implemented using try-catch internally).
+
+Performance Benchmarks
+Catch exception:
+   10,000 good:    63,668 ticks
+   10,000 bad:  6,435,609 ticks
+
+Regex Pre-Screen:
+   10,000 good:   637,633 ticks
+   10,000 bad:    717,894 ticks
+
+COM Interop CLSIDFromString
+   10,000 good:   126,120 ticks
+   10,000 bad:     23,134 ticks
+
+COM Intertop (Fastest) Answer:
+/// <summary>
+/// Attempts to convert a string to a guid.
+/// </summary>
+/// <param name="s">The string to try to convert</param>
+/// <param name="value">Upon return will contain the Guid</param>
+/// <returns>Returns true if successful, otherwise false</returns>
+public static Boolean TryStrToGuid(String s, out Guid value)
+{
+   //ClsidFromString returns the empty guid for null strings   
+   if ((s == null) || (s == ""))   
+   {      
+      value = Guid.Empty;      
+      return false;   
+   }
+
+   int hresult = PInvoke.ObjBase.CLSIDFromString(s, out value);
+   if (hresult >= 0)
+   {
+      return true;
+   }
+   else
+   {
+      value = Guid.Empty;
+      return false;
+   }
+}
+
+
+namespace PInvoke
+{
+    class ObjBase
+    {
+    	/// <summary>
+    	/// This function converts a string generated by the StringFromCLSID function back into the original class identifier.
+    	/// </summary>
+    	/// <param name="sz">String that represents the class identifier</param>
+    	/// <param name="clsid">On return will contain the class identifier</param>
+    	/// <returns>
+    	/// Positive or zero if class identifier was obtained successfully
+    	/// Negative if the call failed
+    	/// </returns>
+    	[DllImport("ole32.dll", CharSet = CharSet.Unicode, ExactSpelling = true, PreserveSig = true)]
+    	public static extern int CLSIDFromString(string sz, out Guid clsid);
+    }
+}
+
+
+Bottom line: If you need to check if a string is a guid, and you care about performance, use COM Interop. 
+If you need to convert a guid in String representation to a Guid, use
+new Guid(someString);
+
+
+Interop is slower than just catching the exception:
+In the happy path, with 10,000 Guids:
+Exception:    26ms
+Interop:   1,201ms
+
+In the unhappy path:
+Exception: 1,150ms
+  Interop: 1,201ms
+
+It's more consistent, but it's also consistently slower. Seems to me you'd be better off configuring your debugger to only break on unhandled exceptions.
+
+if TypeOf ctype(myvar,Object) Is Guid then .....
+
+
+for usability reasons - the debugger pops up
+
+If you're going for the try/catch approach you can add the [System.Diagnostics.DebuggerHidden] attribute to make sure the debugger doesnât  break even if you've set it to break on throw.
+
+
+Get Reflector
+copy'n'paste Guid's .ctor(String)
+replace every occurance of "throw new ..." with "return false".  
+
+Guid's ctor is pretty much a compiled regex, that way you'll get exactly the same behavior without overhead of the exception.
+
+Does this constitute a reverse engineering? I think it does, and as such might be illegal.
+Will break if GUID form changes.
+
+Even cooler solution would be to dynamically instrument a method, by replacing "throw new" on the fly.
+
+I had a similar situation and I noticed that almost never was the invalid string 36 characters long.  So based on this fact, I changed your code a little to get better performance while still keeping it simple.
+public static Boolean TryStrToGuid(String s, out Guid value)
+{
+
+     // this is before the overhead of setting up the try/catch block.
+     if(value == null || value.Length != 36)
+     {  
+        value = Guid.Empty;
+        return false;
+     }
+
+    try
+    {
+        value = new Guid(s);
+        return true;
+    }
+    catch (FormatException)
+    {
+        value = Guid.Empty;
+        return false;
+    }
+}
+
+
+Private Function IsGuidWithOptionalBraces(ByRef strValue As String) As Boolean
+    If String.IsNullOrEmpty(strValue) Then
+        Return False
+    End If
+
+    Return System.Text.RegularExpressions.Regex.IsMatch(strValue, "^[\{]?[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}[\}]?$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+End Function
+
+
+Private Function IsGuidWithoutBraces(ByRef strValue As String) As Boolean
+    If String.IsNullOrEmpty(strValue) Then
+        Return False
+    End If
+
+    Return System.Text.RegularExpressions.Regex.IsMatch(strValue, "^[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+End Function
+
+
+Private Function IsGuidWithBraces(ByRef strValue As String) As Boolean
+    If String.IsNullOrEmpty(strValue) Then
+        Return False
+    End If
+
+    Return System.Text.RegularExpressions.Regex.IsMatch(strValue, "^\{[0-9a-fA-F]{8}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{4}\-[0-9a-fA-F]{12}\}$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+End Function
+
+
+I vote for the GuidTryParse link posted above by Jon or a similar solution (IsProbablyGuid).  I will be writing one like those for my Conversion library.
+I think it is totally lame that this question has to be so complicated. The "is" or "as" keyword would be just fine IF a Guid could be null.  But for some reason, even though SQL Server is OK with that, .NET is not. Why? What is the value of Guid.Empty? This is just a silly problem created by the design of .NET, and it really bugs me when the conventions of a language step on itself. The best-performing answer so far has been using COM Interop because the Framework doesn't handle it gracefully? "Can this string be a GUID?" should be a question that is easy to answer.
+Relying on the exception being thrown is OK, until the app goes on the internet. At that point I just set myself up for a denial of service attack.  Even if I don't get "attacked", I know some yahoo is going to monkey with the URL, or maybe my marketing department will send out a malformed link, and then my application has to suffer a fairly hefty performance hit that COULD bring down the server because I didn't write my code to handle a problem that SHOULDN'T happen, but we all know WILL HAPPEN.
+This blurs the line a bit on "Exception" - but bottom line, even if the problem is infrequent, if it can happen enough times in a short timespan that your application crashes servicing the catches from it all, then I think throwing an exception is bad form.
+TheRage3K
+
+Once .net 4.0 is available you can use Guid.TryParse().
+
+In .NET 4.0 you can write as following:
+public static bool IsValidGuid(string str)
+{
+    Guid guid;
+    return Guid.TryParse(str, out guid);
+}
+

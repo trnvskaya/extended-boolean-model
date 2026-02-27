@@ -1,0 +1,49 @@
+What's "in" and "out" of OpenGL-ES? (Porting from OpenGL)
+iphone opengl opengl-es porting
+It seems that all of the documentation I can find about OpenGL-ES says something to the effect of "OpenGL-ES is just like OpenGL, but without a lot of stuff.  For example, there's no glBegin or glEnd."
+Ok, that's great.  So, what ELSE isn't there any of?  Or is there a list of what's in?  Or maybe a porting guide?
+(Specifically, I'm trying to move an existing GL app to the iPhone, although I don't want to necessarily limit my Q to the iPhone.)
+
+
+The "OpenGL ES 1.1.12 Difference Specification" (PDF) linked to from the OpenGL ES 1.X info page at Khronos.org goes through the differences between OpenGL ES 1.X and OpenGL 1.5.  OpenGL ES 1.1 is the version used on the iPhone.
+The difference specification is not the simplest document I've ever seen, but it is easier reading than the OpenGL specs in general.  I recommend getting a list of OpenGL functions you call and then searching through the difference document for them.  It will show you if they are supported in OpenGL ES, and if support is only partial you can go to the full spec for more information.
+
+Part of the problem in answering your question is there are many things missing and often it's a set of rarely used or non-applicable bit flags. The best document describing the differences is actually the implementation headers.
+For the framework I'm working on I decided to make it completely cross platform between desktop and iPhone. The approach I take in figuring it out is write code in OpenGL, and see where it breaks. Then look in 
+/Developer/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS2.2.sdk/
+System/Library/Frameworks/OpenGLES.framework/Headers/ES1/gl.h
+and compare it to 
+/Developer/SDKs/MacOSX10.5.sdk/
+System/Library/Frameworks/OpenGL.framework/Versions/A/Headers/gl.h
+These headers are very straightforward and easy to follow.
+The main difference I've discovered so far is there is no GLdouble (anything using GLdouble such as glOrtho and glFrustum has a GLfloat version glOrthof and glFrustumf). Also there is no gluPerspective or gluPerspectivef for some reason. 
+Here is a drop in replacement:
+void gluPerspective( GLfloat fovy, GLfloat aspect, GLfloat zNear, GLfloat zFar )
+{
+   GLfloat xmin, xmax, ymin, ymax;
+
+   ymax = zNear * tan(fovy * M_PI / 360.0);
+   ymin = -ymax;
+   xmin = ymin * aspect;
+   xmax = ymax * aspect;
+
+   glFrustumf( xmin, xmax, ymin, ymax, zNear, zFar );
+}
+
+Since you have no glBegin and glEnd, you have to do everything through glDrawArray or glDrawElements (preferred). A quick and dirty example:
+void draw( short x, short y, short w, short h )
+{
+    const GLshort t[8] = { 0, 0, 1, 0, 1, 1, 0, 1 };
+    const GLshort v[8] = { x, y, x+w, y, x+w, y+h, x, y+h };
+
+    glVertexPointer( 2, GL_SHORT, 0, v );
+    glEnableClientState( GL_VERTEX_ARRAY );
+
+    glTexCoordPointer( 2, GL_SHORT, 0, t );
+    glEnableClientState( GL_TEXTURE_COORD_ARRAY );
+
+    glDrawArrays( GL_TRIANGLE_FAN, 0, 4 );
+}
+
+Check out Apple's Technical Note TN2230 "Optimizing OpenGL ES for iPhone OS" for some other hints that could be useful in porting.
+Porting so far has been fairly pain free for me, and unless your app does some pretty advanced OGL stuff or uses completely unsupported functionality you'll find your problems by hitting the build button and a simple fix will be apparent by digging a little in the gl.h files. In fact, porting to ES kind of forces you to write good optimized rendering code.

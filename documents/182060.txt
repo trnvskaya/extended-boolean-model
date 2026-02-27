@@ -1,0 +1,207 @@
+WHERE IN (array of IDs)
+c# sql-server tsql ado.net sqlparameter
+I have webservice which is passed an array of ints.
+I'd like to do the select statement as follows but keep getting errors. Do I need to change the array to a string?
+[WebMethod]
+public MiniEvent[] getAdminEvents(int buildingID, DateTime startDate)
+{    
+    command.CommandText = @"SELECT id,
+                            startDateTime, endDateTime From
+                            tb_bookings WHERE buildingID IN
+                            (@buildingIDs) AND startDateTime <=
+                            @fromDate";
+
+    SqlParameter buildID = new SqlParameter("@buildingIDs", buildingIDs);
+}
+
+
+
+Visit http://stackoverflow.com/questions/43249/t-sql-stored-procedure-that-accepts-multiple-id-values for ideas on how to do this.
+
+You can't (unfortunately) do that. A Sql Parameter can only be a single value, so you'd have to do:
+WHERE buildingID IN (@buildingID1, @buildingID2, @buildingID3...)
+
+Which, of course, requires you to know how many building ids there are, or to dynamically construct the query.
+As a workaround*, I've done the following:
+WHERE buildingID IN (@buildingID)
+
+command.CommandText = command.CommandText.Replace(
+  "@buildingID", 
+  string.Join(buildingIDs.Select(b => b.ToString()), ",")
+);
+
+which will replace the text of the statement with the numbers, ending up as something like:
+WHERE buildingID IN (1,2,3,4)
+
+
+Note that this is getting close to a Sql injection vulnerability, but since it's an int array is safe. Arbitrary strings are not safe, but there's no way to embed Sql statements in an integer (or datetime, boolean, etc).
+
+
+NOTE: I am not generally for using unparameterized queries. IN THIS INSTANCE, however, given that we are dealing with an integer array, you could do such a thing and it would be more efficient. However, given that everyone seems to want to downgrade the answer because it doesn't meet their criteria of valid advice, I will submit another answer that performs horribly but would probably run in LINK2SQL.
+Assuming, as your question states, that you have an array of ints, you can use the following code to return a string that would contain a comma delimited list that SQL would accept:
+private string SQLArrayToInString(Array a)
+{
+ StringBuilder sb = new StringBuilder();
+ for (int i = 0; i < a.GetUpperBound(0); i++)
+  sb.AppendFormat("{0},", a.GetValue(i));
+ string retVal = sb.ToString();
+ return retVal.Substring(0, retVal.Length - 1);
+}
+
+Then, I would recommend you skip trying to parameterize the command given that this is an array of ints and just use:
+command.CommandText = @"SELECT id,
+            startDateTime, endDateTime From
+            tb_bookings WHERE buildingID IN
+            (" + SQLArrayToInString(buildingIDs) + ") AND startDateTime <=
+            @fromDate";
+
+
+
+[WebMethod]
+public MiniEvent[] getAdminEvents(int buildingID, DateTime startDate)
+...
+SqlParameter buildID= new SqlParameter("@buildingIDs", buildingIDs);
+
+Perhaps I'm being over detailed, but this method accepts a single int, not an array of ints.  If you expect to pass in an array, you will need to update your method definition to have an int array.  Once you get that array, you will need to convert the array to a string if you plan to use it in a SQL query.
+
+First you're going to need a function and a sproc. The function will split your data and return a table:
+CREATE function IntegerCommaSplit(@ListofIds nvarchar(1000))
+returns @rtn table (IntegerValue int)
+AS
+begin
+While (Charindex(',',@ListofIds)>0)
+Begin
+    Insert Into @Rtn 
+    Select ltrim(rtrim(Substring(@ListofIds,1,Charindex(',',@ListofIds)-1)))
+    Set @ListofIds = Substring(@ListofIds,Charindex(',',@ListofIds)+len(','),len(@ListofIds))
+end
+Insert Into @Rtn 
+    Select  ltrim(rtrim(@ListofIds))
+return 
+end
+
+Next you need a sproc to use that:
+create procedure GetAdminEvents 
+    @buildingids nvarchar(1000),
+    @startdate datetime
+as
+SELECT id,startDateTime, endDateTime From
+            tb_bookings t INNER JOIN 
+dbo.IntegerCommaSplit(@buildingids) i
+on i.IntegerValue = t.id
+ WHERE startDateTime <= @fromDate
+
+Finally, your code:
+[WebMethod]
+        public MiniEvent[] getAdminEvents(int[] buildingIDs, DateTime startDate)
+        command.CommandText = @"exec GetAdminEvents";
+ SqlParameter buildID= new SqlParameter("@buildingIDs", buildingIDs);
+
+That goes way beyond what your question asked but it will do what you need.
+Note: should you pass in anything that's not an int, the whole database function will fail. I leave the error handling for that as an exercise for the end user.
+
+A superfast XML Method which requires no unsafe code or user defined functions :
+You can use a stored procedure and pass the comma separated list of Building IDs : 
+Declare @XMLList xml
+SET @XMLList=cast('<i>'+replace(@buildingIDs,',','</i><i>')+'</i>' as xml)
+SELECT x.i.value('.','varchar(5)') from @XMLList.nodes('i') x(i))
+
+All credit goes to Guru Brad Schulz's Blog
+
+You can use this. Execute in SQLServer to create a function on your DB (Only once):
+IF EXISTS(
+    SELECT *
+    FROM sysobjects
+    WHERE name = 'FN_RETORNA_ID_FROM_VARCHAR_TO_TABLE_INT')
+BEGIN
+    DROP FUNCTION FN_RETORNA_ID_FROM_VARCHAR_TO_TABLE_INT
+END
+GO
+
+CREATE FUNCTION [dbo].FN_RETORNA_ID_FROM_VARCHAR_TO_TABLE_INT (@IDList VARCHAR(8000))
+RETURNS
+    @IDListTable TABLE (ID INT)
+AS
+BEGIN
+
+    DECLARE
+        --@IDList VARCHAR(100),
+        @LastCommaPosition INT,
+        @NextCommaPosition INT,
+        @EndOfStringPosition INT,
+        @StartOfStringPosition INT,
+        @LengthOfString INT,
+        @IDString VARCHAR(100),
+        @IDValue INT
+
+    --SET @IDList = '11,12,113'
+
+    SET @LastCommaPosition = 0
+    SET @NextCommaPosition = -1
+
+    IF LTRIM(RTRIM(@IDList)) <> ''
+    BEGIN
+
+        WHILE(@NextCommaPosition <> 0)
+        BEGIN
+
+            SET @NextCommaPosition = CHARINDEX(',',@IDList,@LastCommaPosition + 1)
+
+            IF @NextCommaPosition = 0
+                SET @EndOfStringPosition = LEN(@IDList)
+            ELSE
+                SET @EndOfStringPosition = @NextCommaPosition - 1
+
+            SET @StartOfStringPosition  = @LastCommaPosition + 1
+            SET @LengthOfString = (@EndOfStringPosition + 1) - @StartOfStringPosition
+
+            SET @IDString =  SUBSTRING(@IDList,@StartOfStringPosition,@LengthOfString)                  
+
+            IF @IDString <> ''
+                INSERT @IDListTable VALUES(@IDString)
+
+            SET @LastCommaPosition = @NextCommaPosition
+
+        END --WHILE(@NextCommaPosition <> 0)
+
+    END --IF LTRIM(RTRIM(@IDList)) <> ''
+
+    RETURN
+
+ErrorBlock:
+
+    RETURN
+
+END --FUNCTION
+
+After create the function you have to call this on your code:
+command.CommandText = @"SELECT id,
+                        startDateTime, endDateTime From
+                        tb_bookings WHERE buildingID IN
+                        (SELECT ID FROM FN_RETORNA_ID_FROM_VARCHAR_TO_TABLE_INT(@buildingIDs))) AND startDateTime <=
+                        @fromDate";
+
+command.Parameters.Add(new SqlParameter(){
+                           DbType = DbType.String,
+                           ParameterName = "@buildingIDs",
+                           Value = "1,2,3,4,5" //Enter the parameters here separated with commas
+                       });
+
+This function get the text inner commas on "array" and make an table with this values as int, called ID. When this function is on you DB you can use in any project.
+
+Thanks to Microsoft MSDN.
+Igo S Ventura
+Microsoft MVA
+Sistema Ari de SÃ¡
+igo1-2@hotmail.com
+P.S.: I'm from Brazil. Apologize my english... XD
+
+I use that approach and works for me.
+My variable act = my list of ID's at string.
+
+act = "1, 2, 3, 4"
+
+ command = new SqlCommand("SELECT x FROM y WHERE x.id IN (@actions)", conn);    
+ command.Parameters.AddWithValue("@actions", act);
+ command.CommandText = command.CommandText.Replace("@actions", act);
+

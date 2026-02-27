@@ -1,0 +1,138 @@
+Lambda Expressions in Delphi Prism/Oxygene
+delphi lambda fibonacci oxygene
+I have been experimenting with Lambda expressions in Oxygene. Very simple recursive lambda expression to calculate a fibonacci number :
+var fib : Func<int32, int32>;
+fib := n -> iif(n > 1, fib(n - 1) + fib(n - 2), n);
+fib(3);
+
+When I run this code I get a nullreferenceexception. Any ideas as to what I'm doing wrong?
+
+
+You aren't doing anything wrong. If anything, the compiler should warn you about using fib, an unassigned variable, inside the body of the lambda.
+However the compiler ought to be capturing fib as a location, so that when the assignment completes and the delegate is later invoked, fib is properly assigned and recursion should work as expected.
+The most obvious possible reason for the failure is that Prism isn't capturing locations, but values, which would be grossly unintuitive and at odds with every other closure implementation in non-pure languages.
+For example, try this code in JavaScript (contrary to Craig's assertion in the comments to this post, JavaScript also captures locations, not values):
+<html>
+<head>
+<script language='javascript'>
+function main()
+{
+    var x = 1;
+    var f = function() { return x; };
+    alert(f());
+    x = 2;
+    alert(f());
+}
+</script>
+</head>
+<body>
+<input type=button onclick="javascript:main()"></input>
+</body>
+</html>
+
+The alert boxes after you click on the button show 1 and 2 respectively, while following Prism/Oxygene semantics they would show 1 both times.
+
+I also tried assigning the variable :
+var fib : Func<int32, int32> := nil;
+fib := n -> iif(n > 1, fib(n - 1) + fib(n - 2), n);
+fib(3);
+
+Still with no luck.
+Out of curiosity I tried something similar using anonymous methods.
+Basically I implemented a depth first search on a direct acyclic graph using a recursive anonymous method :
+var dfs : dfsmethod;
+dfs := method(Vertex : IVertex)
+begin
+  var IsDone : Boolean;
+  Visited[Vertex.Key] := True;
+  aMethod(Vertex.Key, Vertex.Weight, var IsDone);  //PreVisit
+  if IsDone then Exit;
+  for each Successor in Vertex.Successors do
+    if not Visited[Successor.Key] then
+      dfs(Successor);
+end;
+dfs(InternalGetVertex(aStart));
+
+This compiled, but I got the same error. NullReferenceException.
+I also tried to re-implement the Fibonacci as a recursive anonymous method :
+  var f : Tfib;
+  f := method(n : Int32): Int32
+  begin
+    if n > 1 then  
+      Result := f(n-1) + f(n-2)
+    else
+      Result := n;
+  end;
+  f(3)
+
+again same problem! Always on the second iteration (i.e. first recursive call)
+
+Prism handles the capture of local variables differently then native Delphi or C#.
+In those 2 all references in your code of those locals will be mapped to fields of the compiler generated class that will hold your anonymous method.
+In prism, these locals stay ordinary locals, yet the fields of this hidden fields are set when you instantiate the anonymous method.
+One way to get a recursive lambda, would be to use a reference type to hold the lambda for you.
+All of this sounds much more complicated then it really is.
+2 methods of accomplishing your goal:
+1)  
+
+    var fib := new class(Call : Func<Integer, Integer> := nil);  
+    fib.Call := n -> iif(n > 1, fib.Call(n - 1) + fib.Call(n - 2), n);  
+    var x := fib.Call(3);  
+
+2)When you do not want to have a reference to this wrapper, you can do it like so:  
+
+    var fib : Func;  
+    with fibWrapper := new class(Call : Func<Integer, Integer> := nil) do  
+    begin  
+        fibWrapper.Call := n -> iif(n > 1, fibWrapper.Call(n - 1) + fibWrapper.Call(n - 2), n);  
+        fib := fibWrapper.Call;  
+    end;
+
+btw, the reason behind Prism not following C# here, is that for threading and loop, this reusing of captured vars makes for hard weird runtime problems.
+In Prism, captures are really captured the moment you assign the anonymous method or lambda. Which has a certain immuatble touch to it...
+Cheers,
+Robert
+
+Does the same apply to Anonymous Methods? I'm guessing it does, but can't quite figure out the syntax to get this to run
+  var f : Tfib;
+  f := method(n : Int32): Int32
+  begin
+    if n > 1 then  
+      Result := f(n-1) + f(n-2)
+    else
+      Result := n;
+  end;
+
+Edit
+It does.
+  var f := new class(call : TFib := nil);
+  f.call := method(n : Int32): Int32
+  begin
+    if n > 1 then  
+      Result := f.call(n-1) + f.call(n-2)
+    else
+      Result := n;
+  end;
+
+
+as a temporary workaround you can use:
+var f := new class(f: Tfib := nil);
+f.f := method(n : Int32): Int32
+begin
+  if n > 1 then  
+    Result := f.f(n-1) + f.f(n-2)
+  else
+    Result := n;
+end;
+f.f(3);
+
+
+Steve:
+The issue has apparently been addressed in Delphi Prism 2010. The following code sample works in the official release.
+ var fib : Func<int32, int32>;
+ fib := n -> iif(n > 1, fib(n - 1) + fib(n - 2), n);
+ var i := fib(9); //1,1,2,3,5,8,13,21,34
+ MessageBox.Show(i.ToString);
+
+The MessageBox shows the value 34.
+In response to Jeroen's question, this code was run in the original, official release build, 3.0.21.661.

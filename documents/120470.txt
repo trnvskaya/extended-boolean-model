@@ -1,0 +1,107 @@
+NHibernate nvarchar/ntext truncation problem
+nhibernate sql-server-ce truncate ntext
+I'm using nhibernate to store some user settings for an app in a SQL Server Compact Edition table.
+This is an excerpt the mapping file:
+<property name="Name" type="string" />
+<property name="Value" type="string" />
+
+Name is a regular string/nvarchar(50), and Value is set as ntext in the DB
+I'm trying to write a large amount of xml to the "Value" property. I get an exception every time:
+@p1 : String truncation: max=4000, len=35287, value='<lots of xml..../>'
+
+I've googled it quite a bit, and tried a number of different mapping configurations:
+<property name="Name" type="string" />
+<property name="Value" type="string" >
+  <column name="Value" sql-type="StringClob" />
+</property>
+
+That's one example. Other configurations include "ntext" instead of "StringClob". Those configurations that don't throw mapping exceptions still throw the string truncation exception.
+Is this a problem ("feature") with SQL CE? Is it possible to put more than 4000 characters into a SQL CE database with nhibernate? If so, can anyone tell me how?
+Many thanks!
+
+
+<property name="Value" type="string" />
+  <column name="Value" sql-type="StringClob" />
+</property>
+
+I'm assuming this is a small typo, since you've closed the property tag twice. Just pointing this out, in case it wasn't a typo.
+
+Try <property name="Value" type="string" length="4001" />
+
+Tried:
+<property name="Value" type="string" length="4001" />
+
+and
+<property name="Value" type="string" >
+  <column name="Value" sql-type="StringClob" length="5000"/>
+</property>
+
+Neither worked, I'm afraid... Same exception - it still says that the max value is 4000.
+
+Okay, with many thanks to Artur in this thread, here's the solution:
+Inherit from the SqlServerCeDriver with a new one, and override the InitializeParamter method:
+using System.Data;
+using System.Data.SqlServerCe;
+using NHibernate.Driver;
+using NHibernate.SqlTypes;
+
+namespace MySqlServerCeDriverNamespace
+{
+    /// <summary>
+    /// Overridden Nhibernate SQL CE Driver,
+    /// so that ntext fields are not truncated at 4000 characters
+    /// </summary>
+    public class MySqlServerCeDriver : SqlServerCeDriver
+    {
+        protected override void InitializeParameter(
+            IDbDataParameter dbParam,
+            string name,
+            SqlType sqlType)
+        {
+            base.InitializeParameter(dbParam, name, sqlType);
+
+            if (sqlType is StringClobSqlType)
+            {
+                var parameter = (SqlCeParameter)dbParam;
+                parameter.SqlDbType = SqlDbType.NText;
+            }
+
+        }
+    }
+}
+
+Then, use this driver instead of NHibernate's in your app.config
+<nhibernateDriver>MySqlServerCeDriverNamespace.MySqlServerCeDriver , MySqlServerCeDriverNamespace</nhibernateDriver>
+
+I saw a lot of other posts where people had this problem, and solved it by just changing the sql-type attribute to "StringClob" - as attempted in this thread.
+I'm not sure why it wouldn't work for me, but I suspect it is the fact that I'm using SQL CE and not some other DB. But, there you have it!
+
+Why are you using the sub-element syntax?
+try:
+<property name='Value' type='StringClob' />
+
+
+On my current deplyoment of SQL CE and NHibernate I use a length of 4001. Then NHibernate generates the stuff as NTEXT instead of NVARCHAR.
+Try that.
+Another thing to use with NHibernate and SQL CE is:
+<session-factory>
+  ...
+  <property name="connection.release_mode">on_close</property>
+</session-factory>
+
+That solves some other problems for me atleast.
+
+After reading your post this modification got it working in my code
+protected override void InitializeParameter(IDbDataParameter dbParam,string name,SqlType sqlType)
+    {
+        base.InitializeParameter(dbParam, name, sqlType);
+
+        var stringType = sqlType as StringSqlType;
+        if (stringType != null && stringType.LengthDefined && stringType.Length > 4000)
+        {
+            var parameter = (SqlCeParameter)dbParam;
+            parameter.SqlDbType = SqlDbType.NText;
+        }
+
+    }
+

@@ -1,0 +1,61 @@
+.NET XmlDocument LoadXML and Entities
+c# xml entity
+When loading XML into an XmlDocument, i.e.
+
+XmlDocument document = new XmlDocument();
+document.LoadXml(xmlData);
+
+is there any way to stop the process from replacing entities? I've got a strange problem where I've got a TM symbol (stored as the entity #8482) in the xml being converted into the TM character. As far as I'm concerned this shouldn't happen as the XML document has the encoding ISO-8859-1 (which doesn't have the TM symbol)
+Thanks
+
+
+I confess things get a little confusing with XML documents and encodings, but I'd hope that it would get set appropriate when you save it again, if you're still using ISO-8859-1 - but that if you save with UTF-8, it wouldn't need to. In some ways, logically the document really contains the symbol rather the entity reference - the latter is just an encoding matter. (I'm thinking aloud here - please don't take this as authoritative information.)
+What are you doing with the document after loading it?
+
+I beleive if you enclose the entity contents in the CDATA section it should leave it all alone e.g.
+<root>
+<testnode>
+<![CDATA[some text &#8482;]]>
+</testnode>
+</root>
+
+
+What are you writing it to? A TextWriter? a Stream? what?
+The following keeps the entity (well, it replaces it with the hex equivalent) - but if you do the same with a StringWriter it detects the unicode and uses that instead:
+    XmlDocument doc = new XmlDocument();
+    doc.LoadXml(@"<xml>&#8482;</xml>");
+    using (MemoryStream ms = new MemoryStream())
+    {
+        XmlWriterSettings settings = new  XmlWriterSettings();
+        settings.Encoding = Encoding.GetEncoding("ISO-8859-1");
+        XmlWriter xw = XmlWriter.Create(ms, settings);
+        doc.Save(xw);
+        xw.Close();
+        Console.WriteLine(Encoding.UTF8.GetString(ms.ToArray()));
+    }
+
+Outputs:
+    <?xml version="1.0" encoding="iso-8859-1"?><xml>&#x2122;</xml>
+
+
+Entity references are not encoding specific. According to the W3C XML 1.0 Recommendation:
+
+If the character reference begins with
+  "&#x", the digits and letters up to
+  the terminating ; provide a
+  hexadecimal representation of the
+  character's code point in ISO/IEC
+  10646.
+
+
+This is a standard misunderstanding of the XML toolset. The whole business with "&#x", is a syntactic feature designed to cope with character encodings. Your XmlDocument isn't a stream of characters - it has been freed of character encoding issues - instead it contains an abstract model of XML type data.  Words for this include DOM and InfoSet, I'm not sure exactly which is accurate. 
+The "&#x" gubbins won't exist in this model because the whole issue is irrelevant, it will return - if appropriate - when you transform the Info Set back into a character stream in some specific encoding.
+This misunderstanding is sufficiently common to have made it into academic literature as part of a collection of similar quirks. Take a look at "Xml Fever" at this location: http://doi.acm.org/10.1145/1364782.1364795
+
+The &#xxxx; entities are considered to be the character they represent.  All XML is converted to unicode on reading and any such entities are removed in favor of the unicode character they represent.  This includes any occurance for them in unicode source such as the string passed to LoadXML.
+Similarly on writing any character that cannot be represented by the stream being written to is converted to a &#xxxx; entity.  There is little point trying to preserve them.</p>
+
+<p>A common mistake is expect to get a String from a DOM by some means that uses an encoding other then unicode.  That just doesn't happen regardless of what the 
+
+Thanks for all of the help.
+I've fixed my problem by writing a HtmlEncode function which actually replaces all of the characters before it spits them out to the webpage (instead of relying on the somewhat broken HtmlEncode() .NET function which only seems to encode a small subset of the characters necessary)

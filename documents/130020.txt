@@ -1,0 +1,945 @@
+Dropdownlist control with <optgroup>s for asp.net (webforms)?
+asp.net drop-down-menu custom-server-controls webforms
+Can anyone recommend a dropdownlist control for asp.net (3.5) that can render option groups? Thanks
+
+
+I've used the standard control in the past, and just added a simple ControlAdapter for it that would override the default behavior so it could render <optgroup>s in certain places. This works great even if you have controls that don't need the special behavior, because the additional feature doesn't get in the way.
+Note that this was for a specific purpose and written in .Net 2.0, so it may not suit you as well, but it should at least give you a starting point. Also, you have to hook it up using a .browserfile in your project (see the end of the post for an example).
+'This codes makes the dropdownlist control recognize items with "--"
+'for the label or items with an OptionGroup attribute and render them
+'as <optgroup> instead of <option>.
+Public Class DropDownListAdapter
+    Inherits System.Web.UI.WebControls.Adapters.WebControlAdapter
+
+    Protected Overrides Sub RenderContents(ByVal writer As HtmlTextWriter)
+        Dim list As DropDownList = Me.Control
+        Dim currentOptionGroup As String
+        Dim renderedOptionGroups As New Generic.List(Of String)
+
+        For Each item As ListItem In list.Items
+            Page.ClientScript.RegisterForEventValidation(list.UniqueID, item.Value)
+            If item.Attributes("OptionGroup") IsNot Nothing Then
+                'The item is part of an option group
+                currentOptionGroup = item.Attributes("OptionGroup")
+                If Not renderedOptionGroups.Contains(currentOptionGroup) Then
+                    'the header was not written- do that first
+                    'TODO: make this stack-based, so the same option group can be used more than once in longer select element (check the most-recent stack item instead of anything in the list)
+                    If (renderedOptionGroups.Count > 0) Then
+                        RenderOptionGroupEndTag(writer) 'need to close previous group
+                    End If
+                    RenderOptionGroupBeginTag(currentOptionGroup, writer)
+                    renderedOptionGroups.Add(currentOptionGroup)
+                End If
+                RenderListItem(item, writer)
+            ElseIf item.Text = "--" Then 'simple separator
+                RenderOptionGroupBeginTag("--", writer)
+                RenderOptionGroupEndTag(writer)
+            Else
+                'default behavior: render the list item as normal
+                RenderListItem(item, writer)
+            End If
+        Next item
+
+        If renderedOptionGroups.Count > 0 Then
+            RenderOptionGroupEndTag(writer)
+        End If
+    End Sub
+
+    Private Sub RenderOptionGroupBeginTag(ByVal name As String, ByVal writer As HtmlTextWriter)
+        writer.WriteBeginTag("optgroup")
+        writer.WriteAttribute("label", name)
+        writer.Write(HtmlTextWriter.TagRightChar)
+        writer.WriteLine()
+    End Sub
+
+    Private Sub RenderOptionGroupEndTag(ByVal writer As HtmlTextWriter)
+        writer.WriteEndTag("optgroup")
+        writer.WriteLine()
+    End Sub
+
+    Private Sub RenderListItem(ByVal item As ListItem, ByVal writer As HtmlTextWriter)
+        writer.WriteBeginTag("option")
+        writer.WriteAttribute("value", item.Value, True)
+        If item.Selected Then
+            writer.WriteAttribute("selected", "selected", False)
+        End If
+
+        For Each key As String In item.Attributes.Keys
+            writer.WriteAttribute(key, item.Attributes(key))
+        Next key
+
+        writer.Write(HtmlTextWriter.TagRightChar)
+        HttpUtility.HtmlEncode(item.Text, writer)
+        writer.WriteEndTag("option")
+        writer.WriteLine()
+    End Sub
+End Class
+
+Here's a C# implementation of the same Class:
+/* This codes makes the dropdownlist control recognize items with "--"
+ * for the label or items with an OptionGroup attribute and render them
+ * as <optgroup> instead of <option>.
+ */
+public class DropDownListAdapter : WebControlAdapter
+{
+    protected override void RenderContents(HtmlTextWriter writer)
+    {
+        //System.Web.HttpContext.Current.Response.Write("here");
+        var list = (DropDownList)this.Control;
+        string currentOptionGroup;
+        var renderedOptionGroups = new List<string>();
+
+        foreach (ListItem item in list.Items)
+        {
+            Page.ClientScript.RegisterForEventValidation(list.UniqueID, item.Value);
+            //Is the item part of an option group?
+            if (item.Attributes["OptionGroup"] != null)
+            {
+                currentOptionGroup = item.Attributes["OptionGroup"];
+                //Was the option header already written, then just render the list item
+                if (renderedOptionGroups.Contains(currentOptionGroup))
+                    RenderListItem(item, writer);
+                //The header was not written,do that first
+                else
+                {
+                    //Close previous group
+                    if (renderedOptionGroups.Count > 0)
+                        RenderOptionGroupEndTag(writer);
+
+                    RenderOptionGroupBeginTag(currentOptionGroup, writer);
+                    renderedOptionGroups.Add(currentOptionGroup);
+                    RenderListItem(item, writer);
+                }
+            }
+            //Simple separator
+            else if (item.Text == "--")
+            {
+                RenderOptionGroupBeginTag("--", writer);
+                RenderOptionGroupEndTag(writer);
+            }
+            //Default behavior, render the list item as normal
+            else
+                RenderListItem(item, writer);
+        }
+
+        if (renderedOptionGroups.Count > 0)
+            RenderOptionGroupEndTag(writer);
+    }
+
+    private void RenderOptionGroupBeginTag(string name, HtmlTextWriter writer)
+    {
+        writer.WriteBeginTag("optgroup");
+        writer.WriteAttribute("label", name);
+        writer.Write(HtmlTextWriter.TagRightChar);
+        writer.WriteLine();
+    }
+    private void RenderOptionGroupEndTag(HtmlTextWriter writer)
+    {
+        writer.WriteEndTag("optgroup");
+        writer.WriteLine();
+    }
+    private void RenderListItem(ListItem item, HtmlTextWriter writer)
+    {
+        writer.WriteBeginTag("option");
+        writer.WriteAttribute("value", item.Value, true);
+        if (item.Selected)
+            writer.WriteAttribute("selected", "selected", false);
+
+        foreach (string key in item.Attributes.Keys)
+            writer.WriteAttribute(key, item.Attributes[key]);
+
+        writer.Write(HtmlTextWriter.TagRightChar);
+        HttpUtility.HtmlEncode(item.Text, writer);
+        writer.WriteEndTag("option");
+        writer.WriteLine();
+    }
+}
+
+My browser file was named "App_Browsers\BrowserFile.browser" and looked like this:
+<!--
+    You can find existing browser definitions at
+    <windir>\Microsoft.NET\Framework\<ver>\CONFIG\Browsers
+-->
+<browsers>
+   <browser refID="Default">
+      <controlAdapters>
+        <adapter controlType="System.Web.UI.WebControls.DropDownList" 
+               adapterType="DropDownListAdapter" />
+      </controlAdapters>
+   </browser>
+</browsers>
+
+
+The Sharp Pieces project on CodePlex solves this (and several other) control limitations. 
+
+Thanks Joel!  everyone... here's C# version if you want it:
+
+
+using System;
+using System.Web.UI.WebControls.Adapters;
+using System.Web.UI;
+using System.Web.UI.WebControls;
+using System.Collections.Generic;
+using System.Web;
+
+//This codes makes the dropdownlist control recognize items with "--"'
+//for the label or items with an OptionGroup attribute and render them'
+//as  instead of .'
+public class DropDownListAdapter : WebControlAdapter
+{
+
+    protected override void RenderContents(HtmlTextWriter writer)
+    {
+        DropDownList list = Control as DropDownList;
+        string currentOptionGroup;
+        List renderedOptionGroups = new List();
+
+        foreach(ListItem item in list.Items)
+        {
+            if (item.Attributes["OptionGroup"] != null)
+            {
+                //'The item is part of an option group'
+                currentOptionGroup = item.Attributes["OptionGroup"];
+                //'the option header was already written, just render the list item'
+                if(renderedOptionGroups.Contains(currentOptionGroup))
+                    RenderListItem(item, writer);
+                else
+                {
+                    //the header was not written- do that first'
+                    if (renderedOptionGroups.Count > 0)
+                        RenderOptionGroupEndTag(writer); //'need to close previous group'
+                    RenderOptionGroupBeginTag(currentOptionGroup, writer);
+                    renderedOptionGroups.Add(currentOptionGroup);
+                    RenderListItem(item, writer);
+                }
+            }
+            else if (item.Text == "--") //simple separator
+            {
+                RenderOptionGroupBeginTag("--", writer);
+                RenderOptionGroupEndTag(writer);
+            }
+            else
+            {
+                //default behavior: render the list item as normal'
+                RenderListItem(item, writer);
+            }
+        }
+
+        if(renderedOptionGroups.Count > 0)
+            RenderOptionGroupEndTag(writer);
+    }
+
+    private void RenderOptionGroupBeginTag(string name, HtmlTextWriter writer)
+    {
+        writer.WriteBeginTag("optgroup");
+        writer.WriteAttribute("label", name);
+        writer.Write(HtmlTextWriter.TagRightChar);
+        writer.WriteLine();
+    }
+
+    private void RenderOptionGroupEndTag(HtmlTextWriter writer)
+    {
+        writer.WriteEndTag("optgroup");
+        writer.WriteLine();
+    }
+
+    private void RenderListItem(ListItem item, HtmlTextWriter writer)
+    {
+        writer.WriteBeginTag("option");
+        writer.WriteAttribute("value", item.Value, true);
+        if (item.Selected)
+            writer.WriteAttribute("selected", "selected", false);
+
+
+        foreach (string key in item.Attributes.Keys)
+            writer.WriteAttribute(key, item.Attributes[key]);
+
+        writer.Write(HtmlTextWriter.TagRightChar);
+        HttpUtility.HtmlEncode(item.Text, writer);
+        writer.WriteEndTag("option");
+        writer.WriteLine();
+    }
+
+}
+
+
+
+
+
+I use the reflector to see why is not supported. There is why. In the render method of the ListControl no condition is there to create the optgroup. 
+protected internal override void RenderContents(HtmlTextWriter writer)
+    {
+        ListItemCollection items = this.Items;
+        int count = items.Count;
+        if (count > 0)
+        {
+            bool flag = false;
+            for (int i = 0; i < count; i++)
+            {
+                ListItem item = items[i];
+                if (item.Enabled)
+                {
+                    writer.WriteBeginTag("option");
+                    if (item.Selected)
+                    {
+                        if (flag)
+                        {
+                            this.VerifyMultiSelect();
+                        }
+                        flag = true;
+                        writer.WriteAttribute("selected", "selected");
+                    }
+                    writer.WriteAttribute("value", item.Value, true);
+                    if (item.HasAttributes)
+                    {
+                        item.Attributes.Render(writer);
+                    }
+                    if (this.Page != null)
+                    {
+                        this.Page.ClientScript.RegisterForEventValidation(this.UniqueID, item.Value);
+                    }
+                    writer.Write('>');
+                    HttpUtility.HtmlEncode(item.Text, writer);
+                    writer.WriteEndTag("option");
+                    writer.WriteLine();
+                }
+            }
+        }
+    }
+
+So i create my own dropdown Control with an override of the method RenderContents. There is my control. Is working fine. I use exactly the same code of Microsoft, just add a little condition to support listItem having attribute optgroup to create an optgroup and not a option.
+Give me some feed back
+public class DropDownListWithOptionGroup : DropDownList
+  {
+    public const string OptionGroupTag = "optgroup";
+    private const string OptionTag = "option";
+    protected override void RenderContents(System.Web.UI.HtmlTextWriter writer)
+    {
+      ListItemCollection items = this.Items;
+      int count = items.Count;     
+      string tag;
+      string optgroupLabel;
+      if (count > 0)
+      {
+        bool flag = false;
+        for (int i = 0; i < count; i++)
+        {
+          tag = OptionTag;
+          optgroupLabel = null;
+          ListItem item = items[i];
+          if (item.Enabled)
+          {
+            if (item.Attributes != null && item.Attributes.Count > 0 && item.Attributes[OptionGroupTag] != null)
+            {
+              tag = OptionGroupTag;
+              optgroupLabel = item.Attributes[OptionGroupTag];
+            }           
+            writer.WriteBeginTag(tag);
+            // NOTE(cboivin): Is optionGroup
+            if (!string.IsNullOrEmpty(optgroupLabel))
+            {
+              writer.WriteAttribute("label", optgroupLabel);
+            }
+            else
+            {
+              if (item.Selected)
+              {
+                if (flag)
+                {
+                  this.VerifyMultiSelect();
+                }
+                flag = true;
+                writer.WriteAttribute("selected", "selected");
+              }
+              writer.WriteAttribute("value", item.Value, true);
+              if (item.Attributes != null && item.Attributes.Count > 0)
+              {
+                item.Attributes.Render(writer);
+              }
+              if (this.Page != null)
+              {
+                this.Page.ClientScript.RegisterForEventValidation(this.UniqueID, item.Value);
+              }
+            }
+            writer.Write('>');
+            HttpUtility.HtmlEncode(item.Text, writer);
+            writer.WriteEndTag(tag);
+            writer.WriteLine();
+          }
+        }
+      }
+
+    }
+  }
+
+
+As the answers above that overload the RenderContents method do work.  You also have to remember to alter the viewstate.  I have come into an issue when using the non-altered viewstate in UpdatePanels. This has parts taken from the Sharp Pieces Project.
+ Protected Overloads Overrides Sub RenderContents(ByVal writer As HtmlTextWriter)
+    Dim list As DropDownList = Me
+
+    Dim currentOptionGroup As String
+    Dim renderedOptionGroups As New List(Of String)()
+
+    For Each item As ListItem In list.Items
+        If item.Attributes("OptionGroup") Is Nothing Then
+            RenderListItem(item, writer)
+        Else
+            currentOptionGroup = item.Attributes("OptionGroup")
+
+            If renderedOptionGroups.Contains(currentOptionGroup) Then
+                RenderListItem(item, writer)
+            Else
+                If renderedOptionGroups.Count > 0 Then
+                    RenderOptionGroupEndTag(writer)
+                End If
+
+                RenderOptionGroupBeginTag(currentOptionGroup, writer)
+                renderedOptionGroups.Add(currentOptionGroup)
+
+                RenderListItem(item, writer)
+            End If
+        End If
+    Next
+
+    If renderedOptionGroups.Count > 0 Then
+        RenderOptionGroupEndTag(writer)
+    End If
+End Sub
+
+Private Sub RenderOptionGroupBeginTag(ByVal name As String, ByVal writer As HtmlTextWriter)
+    writer.WriteBeginTag("optgroup")
+    writer.WriteAttribute("label", name)
+    writer.Write(HtmlTextWriter.TagRightChar)
+    writer.WriteLine()
+End Sub
+
+Private Sub RenderOptionGroupEndTag(ByVal writer As HtmlTextWriter)
+    writer.WriteEndTag("optgroup")
+    writer.WriteLine()
+End Sub
+
+Private Sub RenderListItem(ByVal item As ListItem, ByVal writer As HtmlTextWriter)
+    writer.WriteBeginTag("option")
+    writer.WriteAttribute("value", item.Value, True)
+
+    If item.Selected Then
+        writer.WriteAttribute("selected", "selected", False)
+    End If
+
+    For Each key As String In item.Attributes.Keys
+        writer.WriteAttribute(key, item.Attributes(key))
+    Next
+
+    writer.Write(HtmlTextWriter.TagRightChar)
+    HttpUtility.HtmlEncode(item.Text, writer)
+    writer.WriteEndTag("option")
+    writer.WriteLine()
+End Sub
+Protected Overrides Function SaveViewState() As Object
+    ' Create an object array with one element for the CheckBoxList's
+    ' ViewState contents, and one element for each ListItem in skmCheckBoxList
+    Dim state(Me.Items.Count + 1 - 1) As Object 'stupid vb array
+    Dim baseState As Object = MyBase.SaveViewState()
+
+    state(0) = baseState
+    ' Now, see if we even need to save the view state
+    Dim itemHasAttributes As Boolean = False
+
+    For i As Integer = 0 To Me.Items.Count - 1
+        If Me.Items(i).Attributes.Count > 0 Then
+            itemHasAttributes = True
+            ' Create an array of the item's Attribute's keys and values
+            Dim attribKV(Me.Items(i).Attributes.Count * 2 - 1) As Object 'stupid vb array
+            Dim k As Integer = 0
+            For Each key As String In Me.Items(i).Attributes.Keys
+                attribKV(k) = key
+                k += 1
+                attribKV(k) = Me.Items(i).Attributes(key)
+                k += 1
+            Next
+            state(i + 1) = attribKV
+        End If
+    Next
+    ' return either baseState or state, depending on whether or not
+    ' any ListItems had attributes
+    If (itemHasAttributes) Then
+        Return state
+    Else
+        Return baseState
+    End If
+End Function
+
+
+Protected Overrides Sub LoadViewState(ByVal savedState As Object)
+    If savedState Is Nothing Then Return
+    ' see if savedState is an object or object array
+    If Not savedState.GetType.GetElementType() Is Nothing AndAlso savedState.GetType.GetElementType().Equals(GetType(Object)) Then
+
+        ' we have just the base state
+        MyBase.LoadViewState(savedState(0))
+        'we have an array of items with attributes
+        Dim state() As Object = savedState
+        MyBase.LoadViewState(state(0))   '/ load the base state
+        For i As Integer = 1 To state.Length - 1
+            If Not state(i) Is Nothing Then
+                ' Load back in the attributes
+                Dim attribKV() As Object = state(i)
+                For k As Integer = 0 To attribKV.Length - 1 Step +2
+                    Me.Items(i - 1).Attributes.Add(attribKV(k).ToString(), attribKV(k + 1).ToString())
+                Next
+            End If
+        Next
+    Else
+        'load it normal
+        MyBase.LoadViewState(savedState)
+    End If
+End Sub
+
+
+I have used JQuery to achieve this task. I first added an new attribute for every ListItem from the backend and then used that attribute in JQuery wrapAll() method to create groups
+Backend Code
+
+
+foreach (ListItem item in ((DropDownList)sender).Items)
+            {
+                if (System.Int32.Parse(item.Value) < 5)
+                    item.Attributes.Add("classification", "LessThanFive");
+                else
+                    item.Attributes.Add("classification", "GreaterThanFive");
+
+            } 
+
+
+JQuery Part:
+
+
+<script>
+        $(document).ready(function() {
+            //Create groups for dropdown list
+            $("select.listsmall option[@classification='LessThanFive']").wrapAll("<optgroup label='Less than five'>");
+            $("select.listsmall option[@classification='GreaterThanFive']").wrapAll("<optgroup label='Greater than five'>"); 
+        });
+</script>
+
+
+
+Based on the posts above I've created a c# version of this control with working view state.
+        public const string OptionGroupTag = "optgroup";
+    private const string OptionTag = "option";
+    protected override void RenderContents(System.Web.UI.HtmlTextWriter writer)
+    {
+        ListItemCollection items = this.Items;
+        int count = items.Count;
+        string tag;
+        string optgroupLabel;
+        if (count > 0)
+        {
+            bool flag = false;
+            for (int i = 0; i < count; i++)
+            {
+                tag = OptionTag;
+                optgroupLabel = null;
+                ListItem item = items[i];
+                if (item.Enabled)
+                {
+                    if (item.Attributes != null && item.Attributes.Count > 0 && item.Attributes[OptionGroupTag] != null)
+                    {
+                        tag = OptionGroupTag;
+                        optgroupLabel = item.Attributes[OptionGroupTag];
+                    }
+                    writer.WriteBeginTag(tag);
+                    // NOTE(cboivin): Is optionGroup
+                    if (!string.IsNullOrEmpty(optgroupLabel))
+                    {
+                        writer.WriteAttribute("label", optgroupLabel);
+                    }
+                    else
+                    {
+                        if (item.Selected)
+                        {
+                            if (flag)
+                            {
+                                this.VerifyMultiSelect();
+                            }
+                            flag = true;
+                            writer.WriteAttribute("selected", "selected");
+                        }
+                        writer.WriteAttribute("value", item.Value, true);
+                        if (item.Attributes != null && item.Attributes.Count > 0)
+                        {
+                            item.Attributes.Render(writer);
+                        }
+                        if (this.Page != null)
+                        {
+                            this.Page.ClientScript.RegisterForEventValidation(this.UniqueID, item.Value);
+                        }
+                    }
+                    writer.Write('>');
+                    HttpUtility.HtmlEncode(item.Text, writer);
+                    writer.WriteEndTag(tag);
+                    writer.WriteLine();
+                }
+            }
+        }
+    }
+
+        protected override object SaveViewState()
+    {
+        object[] state = new object[this.Items.Count + 1];
+        object baseState = base.SaveViewState();
+        state[0] = baseState;
+        bool itemHasAttributes = false;
+
+        for (int i = 0; i < this.Items.Count; i++)
+        {
+            if (this.Items[i].Attributes.Count > 0)
+            {
+                itemHasAttributes = true;
+                object[] attributes = new object[this.Items[i].Attributes.Count * 2];
+                int k = 0;
+
+                foreach (string key in this.Items[i].Attributes.Keys)
+                {
+                    attributes[k] = key;
+                    k++;
+                    attributes[k] = this.Items[i].Attributes[key];
+                    k++;
+                }
+                state[i + 1] = attributes;
+            }
+        }
+
+        if (itemHasAttributes)
+            return state;
+        return baseState;
+    }
+
+        protected override void LoadViewState(object savedState)
+    {
+        if (savedState == null)
+            return;
+
+        if (!(savedState.GetType().GetElementType() == null) &&
+            (savedState.GetType().GetElementType().Equals(typeof(object))))
+        {
+            object[] state = (object[])savedState;
+            base.LoadViewState(state[0]);
+
+            for (int i = 1; i < state.Length; i++)
+            {
+                if (state[i] != null)
+                {
+                    object[] attributes = (object[])state[i];
+                    for (int k = 0; k < attributes.Length; k += 2)
+                    {
+                        this.Items[i - 1].Attributes.Add
+                            (attributes[k].ToString(), attributes[k + 1].ToString());
+                    }
+                }
+            }
+        }
+        else
+        {
+            base.LoadViewState(savedState);
+        }
+    }
+
+I hope this helps some people :-)
+
+The above code renders the end tag for the optgroup before any of the options, so the options don't get indented like they should in addition to the markup not properly representing the grouping. Here's my slightly modified version of Tom's code:
+    public class ExtendedDropDownList : System.Web.UI.WebControls.DropDownList
+{
+    public const string OptionGroupTag = "optgroup";
+    private const string OptionTag = "option";
+    protected override void RenderContents(System.Web.UI.HtmlTextWriter writer)
+    {
+        ListItemCollection items = this.Items;
+        int count = items.Count;
+        string tag;
+        string optgroupLabel;
+        if (count > 0)
+        {
+            bool flag = false;
+            string prevOptGroup = null;
+            for (int i = 0; i < count; i++)
+            {
+                tag = OptionTag;
+                optgroupLabel = null;
+                ListItem item = items[i];
+                if (item.Enabled)
+                {
+                    if (item.Attributes != null && item.Attributes.Count > 0 && item.Attributes[OptionGroupTag] != null)
+                    {
+                        optgroupLabel = item.Attributes[OptionGroupTag];
+
+                        if (prevOptGroup != optgroupLabel)
+                        {
+                            if (prevOptGroup != null)
+                            {
+                                writer.WriteEndTag(OptionGroupTag);
+                            }
+                            writer.WriteBeginTag(OptionGroupTag);
+                            if (!string.IsNullOrEmpty(optgroupLabel))
+                            {
+                                writer.WriteAttribute("label", optgroupLabel);
+                            }
+                            writer.Write('>');
+                        }
+                        item.Attributes.Remove(OptionGroupTag);
+                        prevOptGroup = optgroupLabel;
+                    }
+                    else
+                    {
+                        if (prevOptGroup != null)
+                        {
+                            writer.WriteEndTag(OptionGroupTag);
+                        }
+                        prevOptGroup = null;
+                    }
+
+                    writer.WriteBeginTag(tag);
+                    if (item.Selected)
+                    {
+                        if (flag)
+                        {
+                            this.VerifyMultiSelect();
+                        }
+                        flag = true;
+                        writer.WriteAttribute("selected", "selected");
+                    }
+                    writer.WriteAttribute("value", item.Value, true);
+                    if (item.Attributes != null && item.Attributes.Count > 0)
+                    {
+                        item.Attributes.Render(writer);
+                    }
+                    if (optgroupLabel != null)
+                    {
+                        item.Attributes.Add(OptionGroupTag, optgroupLabel);
+                    }
+                    if (this.Page != null)
+                    {
+                        this.Page.ClientScript.RegisterForEventValidation(this.UniqueID, item.Value);
+                    }
+
+                    writer.Write('>');
+                    HttpUtility.HtmlEncode(item.Text, writer);
+                    writer.WriteEndTag(tag);
+                    writer.WriteLine();
+                    if (i == count - 1)
+                    {
+                        if (prevOptGroup != null)
+                        {
+                            writer.WriteEndTag(OptionGroupTag);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    protected override object SaveViewState()
+    {
+        object[] state = new object[this.Items.Count + 1];
+        object baseState = base.SaveViewState();
+        state[0] = baseState;
+        bool itemHasAttributes = false;
+
+        for (int i = 0; i < this.Items.Count; i++)
+        {
+            if (this.Items[i].Attributes.Count > 0)
+            {
+                itemHasAttributes = true;
+                object[] attributes = new object[this.Items[i].Attributes.Count * 2];
+                int k = 0;
+
+                foreach (string key in this.Items[i].Attributes.Keys)
+                {
+                    attributes[k] = key;
+                    k++;
+                    attributes[k] = this.Items[i].Attributes[key];
+                    k++;
+                }
+                state[i + 1] = attributes;
+            }
+        }
+
+        if (itemHasAttributes)
+            return state;
+        return baseState;
+    }
+
+    protected override void LoadViewState(object savedState)
+    {
+        if (savedState == null)
+            return;
+
+        if (!(savedState.GetType().GetElementType() == null) &&
+            (savedState.GetType().GetElementType().Equals(typeof(object))))
+        {
+            object[] state = (object[])savedState;
+            base.LoadViewState(state[0]);
+
+            for (int i = 1; i < state.Length; i++)
+            {
+                if (state[i] != null)
+                {
+                    object[] attributes = (object[])state[i];
+                    for (int k = 0; k < attributes.Length; k += 2)
+                    {
+                        this.Items[i - 1].Attributes.Add
+                            (attributes[k].ToString(), attributes[k + 1].ToString());
+                    }
+                }
+            }
+        }
+        else
+        {
+            base.LoadViewState(savedState);
+        }
+    }
+}
+
+Use it like this:
+            ListItem item1 = new ListItem("option1");
+        item1.Attributes.Add("optgroup", "CatA");
+        ListItem item2 = new ListItem("option2");
+        item2.Attributes.Add("optgroup", "CatA");
+        ListItem item3 = new ListItem("option3");
+        item3.Attributes.Add("optgroup", "CatB");
+        ListItem item4 = new ListItem("option4");
+        item4.Attributes.Add("optgroup", "CatB");
+        ListItem item5 = new ListItem("NoOptGroup");
+
+        ddlTest.Items.Add(item1);
+        ddlTest.Items.Add(item2);
+        ddlTest.Items.Add(item3);
+        ddlTest.Items.Add(item4);
+        ddlTest.Items.Add(item5);
+
+and here's the generated markup (indented for ease of viewing):
+ <select name="ddlTest" id="Select1">
+    <optgroup label="CatA">
+        <option selected="selected" value="option1">option1</option>
+        <option value="option2">option2</option>
+    </optgroup>
+    <optgroup label="CatB">
+        <option value="option3">option3</option>
+        <option value="option4">option4</option>
+    </optgroup>
+    <option value="NoOptGroup">NoOptGroup</option>
+ </select>
+
+
+    // How to use:
+    // 1. Create items in a select element or asp:DropDownList control
+    // 2. Set value of an option or ListItem to "_group_", those will be converted to optgroups
+    // 3. On page onload call createOptGroups(domElement), for example like this:
+    //    - var lst = document.getElementById('lst');
+    //    - createOptGroups(lst, "_group_");
+    // 4. You can change groupMarkerValue to anything, I used "_group_"
+    function createOptGroups(lst, groupMarkerValue) {
+        // Get an array containing the options
+        var childNodes = [];
+        for (var i = 0; i < lst.options.length; i++)
+            childNodes.push(lst.options[i]);
+
+        // Get the selected element so we can preserve selection
+        var selectedIndex = lst.selectedIndex;
+        var selectedChild = childNodes[selectedIndex];
+        var selectedValue = selectedChild.value;
+
+        // Remove all elements
+        while (lst.hasChildNodes())
+            lst.removeChild(lst.childNodes[0]);
+
+        // Go through the array of options and convert some into groups
+        var group = null;
+        for (var i = 0; i < childNodes.length; i++) {
+            var node = childNodes[i];
+            if (node.value == groupMarkerValue) {
+                group = document.createElement("optgroup");
+                group.label = node.text;
+                group.value = groupMarkerValue;
+                lst.appendChild(group);
+                continue;
+            }
+
+            // Add to group or directly under list
+            (group == null ? lst : group).appendChild(node);
+        }
+
+        // Preserve selected, no support for multi-selection here, sorry
+        selectedChild.selected = true;
+    }
+
+Tested on Chrome 16, Firefox 9 and IE8.
+
+A more generic approach to Irfan's jQuery-based solution:
+backend
+private void _addSelectItem(DropDownList list, string title, string value, string group = null) {
+   ListItem item = new ListItem(title, value);
+   if (!String.IsNullOrEmpty(group))
+   {
+       item.Attributes["data-category"] = group;
+   }
+   list.Items.Add(item);
+}
+
+...
+_addSelectItem(dropDown, "Option 1", "1");
+_addSelectItem(dropDown, "Option 2", "2", "Category");
+_addSelectItem(dropDown, "Option 3", "3", "Category");
+...
+
+client
+var groups = {};
+$("select option[data-category]").each(function () {
+     groups[$.trim($(this).attr("data-category"))] = true;
+});
+$.each(groups, function (c) {
+     $("select option[data-category='"+c+"']").wrapAll('<optgroup label="' + c + '">');
+});
+
+
+I've done this using an outer repeater for the select and optgroups and an inner repeater for the items within that group:
+<asp:Repeater ID="outerRepeater" runat="server">
+    <HeaderTemplate>
+        <select id="<%= outerRepeater.ClientID %>">
+    </HeaderTemplate>
+    <ItemTemplate>
+            <optgroup label="<%# Eval("GroupText") %>">
+                <asp:Repeater runat="server" DataSource='<%# Eval("Items") %>'>
+                    <ItemTemplate>
+                        <option value="<%# Eval("Value") %>"><%# Eval("Text") %></option>
+                    </ItemTemplate>
+                </asp:Repeater>
+            </optgroup>
+    </ItemTemplate>
+    <FooterTemplate>
+        </select>
+    </FooterTemplate>
+</asp:Repeater>
+
+The data source for outerRepeater is a simple grouping as follows:
+var data = (from o in thingsToDisplay
+            group oby GetAlphaGrouping(o.Name) into g
+            orderby g.Key
+            select new
+            {
+                Alpha = g.Key,
+                Items = g
+            });
+
+And to get the alpha grouping character:
+private string GetAlphaGrouping(string value)
+{
+    string firstChar = value.Substring(0, 1).ToUpper();
+    int unused;
+
+    if (int.TryParse(firstChar, out unused))
+        return "#";
+
+    return firstChar.ToUpper();
+}
+
+It's not a perfect solution but it works. The correct solution would be to no longer use WebForms, but us MVC instead. :)

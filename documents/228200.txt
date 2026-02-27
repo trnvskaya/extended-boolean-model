@@ -1,0 +1,50 @@
+Why is there not a register that contains the higher bytes of EAX?
+x86 assembly
+%AX = (%AH + %AL)
+So why not %EAX = (%SOME_RESTIER + %AX) for some register %SOME_REGISTER? 
+
+
+In the old 8-bit days, there was the A register.
+In the 16-bit days, there was the 16 bit AX register, which was split into two 8 bit parts, AH and AL, for those times when you still wanted to work with 8 bit values.
+In the 32-bit days, the 32 bit EAX register was introduced, but the AX, AH, and AL registers were all kept. The designers did not feel it necessary to introduce a new 16 bit register that addressed bits 16 through 31 of EAX.
+
+Just for some clarification. In the early microprocessor days of the 1970's, CPUs had only a small number of registers and a very limited instruction set. Typically, the arithmetic unit could only operate on a single CPU register, often referred to as the "accumulator". The accumulator on the 8 bit 8080 & Z80 processors was called "A". There were 6 other general purpose 8 bit registers: B, C, D, E, H & L. These six registers could be paired up to form 3 16 bit registers: BC, DE & HL. Internally, the accumulator was combined with the Flags register to form the AF 16 bit register.
+When Intel developed the 16 bit 8086 family they wanted to be able to port 8080 code, so they kept the same basic register structure:
+8080/Z80  8086
+A         AX
+BC        BX
+DE        CX
+HL        DX
+IX        SI    
+IY        DI
+
+Because of the need to port 8 bit code they needed to be able to refer to the individual 8 bit parts of AX, BX, CX & DX. These are called AL, AH for the low & high bytes of AX and so on for BL/BH, CL/CH & DL/DH. IX & IY on the Z80 were only ever used as 16 bit pointer registers so there was no need to access the two halves of SI & DI.
+When the 80386 was released in the mid 1980s they created "extended" versions of all the registers. So, AX became EAX, BX became EBX etc. There was no need to access to top 16 bits of these new extended registers, so they didn't create an EAXH pseudo register.
+AMD applied the same trick when they produced the first 64 bit processors. The 64 bit version of the AX register is called RAX. So, now you have something that looks like this:
+|63..32|31..16|15-8|7-0|
+               |AH.|AL.|
+               |AX.....|
+       |EAX............|
+|RAX...................|
+
+
+There are a lot of answers posted here, but none really answer the given question:  Why isn't there a register that directly encodes the high 16 bits of EAX, or the high 32 bits of RAX?  The answer boils down to the limitations of the x86 instruction encoding itself.
+16-Bit History Lesson
+When Intel designed the 8086, they used a variable-length encoding scheme for many of the instructions.  This meant that certain extremely-common instructions, like POP AX, could be represented as a single byte (58), while rare (but still potentially useful) instructions like MOV CX, [BX*4+BP+1023] could still be represented, even if it took several bytes to store them (in this example, 8B 8C FF 03).
+This may seem like a reasonable solution, but when they designed it, they filled out most of the available space.  So, for example, there were eight POP instructions for the eight individual registers (AX, CX, DX, BX, SP, BP, SI, DI), and they filled out opcodes 58 through 5F, and opcode 60 was something else entirely (PUSHA), as was opcode 57 (PUSH DI).  There's no room left over for anything after or before those.  Even pushing and popping the segment registers â which is conceptually nearly identical to pushing and popping the general-purpose registers â had to be encoded in a different location (down around 06/0E/16/1E) just because there wasn't room beside the rest of the push/pop instructions.
+Likewise, the "mod r/m" byte used for a complex instruction like MOV CX, [BX*4+BP+1023] only has three bits for encoding the register, which means it can only represent eight registers total.  That's fine if you only have eight registers, but presents a real problem if you want to have more.
+(There's an excellent map of all these byte allocations in the x86 architecture here:  http://i.imgur.com/xfeWv.png .  Notice how there's no space left in the primary map, with some instructions overlapping bytes, and even how much of the secondary "0F" map is used now thanks to the MMX and SSE instructions.)
+Toward 32 and 64 Bits
+So to even allow the CPU design to be extended from 16 bits to 32 bits, they already had a design problem, and they solved that with prefix bytes:  By adding a special "66" byte in front of all of the standard 16-bit instructions, the CPU knows you want the same instruction but the 32-bit version (EAX) instead of the 16-bit version (AX).  The rest of the design stayed the same:  There were still only eight total general-purpose registers in the overall CPU architecture.
+Similar hackery had to be done to extend the architecture to 64-bits (RAX and friends); there, the problem was solved by adding yet another set of prefix codes (REX, 40-4F) that meant "64-bit" (and effectively added another two bits to the "mod r/m" field), and also discarding weird old instructions nobody ever used and reusing their byte codes for newer stuff.
+An Aside on 8-Bit Registers
+One of the bigger questions to ask, then, is how the heck things like AH and AL ever worked in the first place if there's only really room in the design for eight registers.  The first part of the answer is that there's no such thing as "PUSH AL" â some instructions simply can't operate on the byte-sized registers at all!  The only ones that can are a few special oddities (like AAD and XLAT) and special versions of the "mod r/m" instructions:  By having a very specific bit flipped in the "mod r/m" byte, those "extended instructions" could be flipped to operate on the 8-bit registers instead of the 16-bit ones.  It just so happens that there are exactly eight 8-bit registers, too:  AL, CL, DL, BL, AH, CH, DH, and BH (in that order), and that lines up very nicely with the eight register slots available in the "mod r/m" byte.
+Intel noted at the time that the 8086 design was supposed to be "source compatible" with the 8080/8085: There was an equivalent instruction in the 8086 for each of the 8080/8085 instructions, but it didn't use the same byte codes (they aren't even close), and you'd have to recompile (reassemble) your program to get it to use the new byte codes.  But "source compatible" was a way forward for old software, and it allowed the 8085's individual A, B, C, etc. and combo "BC" and "DE" registers to still work on the new processor, even if they were now called "AL" and "BL" and "BX" and "DX" (or whatever the mapping was).
+So that's really the real answer:  It's not that Intel or AMD intentionally "left out" a high 16-bit register for EAX, or a high 32-bit register for RAX:  It's that the high 8-bit registers are a weird leftover historical anomaly, and replicating their design at higher bit sizes would be really difficult given the requirement that the architecture be backward-compatible.
+A Performance Consideration
+There is one other consideration as to why those "high registers" haven't been added since, as well:  Inside modern processor architectures, for performance reasons, the variably-sized registers don't actually overlap for real:  AH and AL aren't part of AX, and AX isn't a part of EAX, and EAX isn't a part of RAX:  They're all separate registers under the hood, and the processor sets an invalidation flag on the others when you manipulate one of them so that it knows it will need to copy the data when you read from the others.
+(For example:  If you set AL = 5, the processor doesn't update AX.  But if you then read from AX, the processor quickly copies that 5 from AL into AX's bottom bits.)
+By keeping the registers separate, the CPU can do all sorts of clever things like invisible register renaming to make your code run faster, but that means that your code runs slower if you do use the old pattern of treating the small registers as pieces of larger registers, because the processor will have to stall and update them.  To keep all of this internal bookkeeping from getting out of hand, the CPU designers wisely chose to add separate registers on the newer processors rather than to add more overlapping registers.
+(And yes, that means that it really is faster on modern processors to explicitly "MOVZX EAX, value" than to do it the old, sloppier way of "MOV AX, value / use EAX".)
+Conclusion
+With all that said, could Intel and AMD add more "overlapping" registers if they really really wanted to?  Sure.  There are ways to worm them in if there was enough demand.  But given the significant historical baggage, the current architectural limitations, the notable performance limitations, and the fact that most code these days is generated by compilers optimized for non-overlapping registers, it's highly unlikely they'll add such things any time soon.

@@ -1,0 +1,499 @@
+Compare equality between two objects in NUnit
+unit-testing nunit automated-tests
+I'm trying to assert that one object is "equal" to another object. 
+The objects are just instances of a class with a bunch of public properties. Is there an easy way to have NUnit assert equality based on the properties?
+This is my current solution but I think there may be something better:
+Assert.AreEqual(LeftObject.Property1, RightObject.Property1)
+Assert.AreEqual(LeftObject.Property2, RightObject.Property2)
+Assert.AreEqual(LeftObject.Property3, RightObject.Property3)
+...
+Assert.AreEqual(LeftObject.PropertyN, RightObject.PropertyN)
+
+What I'm going for would be in the same spirit as the CollectionEquivalentConstraint wherein NUnit verifies that the contents of two collections are identical.
+
+
+Override .Equals for your object and in the unit test you can then simply do this:
+Assert.AreEqual(LeftObject, RightObject);
+
+Of course, this might mean you just move all the individual comparisons to the .Equals method, but it would allow you to reuse that implementation for multiple tests, and probably makes sense to have if objects should be able to compare themselves with siblings anyway.
+
+If you can't override Equals for any reason, you can build a helper method that iterates through public properties by reflection and assert each property. Something like this:
+public static class AssertEx
+{
+    public static void PropertyValuesAreEquals(object actual, object expected)
+    {
+        PropertyInfo[] properties = expected.GetType().GetProperties();
+        foreach (PropertyInfo property in properties)
+        {
+            object expectedValue = property.GetValue(expected, null);
+            object actualValue = property.GetValue(actual, null);
+
+            if (actualValue is IList)
+                AssertListsAreEquals(property, (IList)actualValue, (IList)expectedValue);
+            else if (!Equals(expectedValue, actualValue))
+                Assert.Fail("Property {0}.{1} does not match. Expected: {2} but was: {3}", property.DeclaringType.Name, property.Name, expectedValue, actualValue);
+        }
+    }
+
+    private static void AssertListsAreEquals(PropertyInfo property, IList actualList, IList expectedList)
+    {
+        if (actualList.Count != expectedList.Count)
+            Assert.Fail("Property {0}.{1} does not match. Expected IList containing {2} elements but was IList containing {3} elements", property.PropertyType.Name, property.Name, expectedList.Count, actualList.Count);
+
+        for (int i = 0; i < actualList.Count; i++)
+            if (!Equals(actualList[i], expectedList[i]))
+                Assert.Fail("Property {0}.{1} does not match. Expected IList with element {1} equals to {2} but was IList with element {1} equals to {3}", property.PropertyType.Name, property.Name, expectedList[i], actualList[i]);
+    }
+}
+
+
+I prefer not to override Equals just to enable testing. Don't forget that if you do override Equals you really should override GetHashCode also or you may get unexpected results if you are using your objects in a dictionary for example.
+I do like the reflection approach above as it caters for the addition of properties in the future.
+For a quick and simple solution however its often easiest to either create a helper method that tests if the objects are equal, or implement IEqualityComparer on a class you keep private to your tests. When using IEqualityComparer solution you dont need to bother with the implementation of GetHashCode. For example:
+// Sample class.  This would be in your main assembly.
+class Person
+{
+    public string Name { get; set; }
+    public int Age { get; set; }
+}
+
+// Unit tests
+[TestFixture]
+public class PersonTests
+{
+    private class PersonComparer : IEqualityComparer<Person>
+    {
+        public bool Equals(Person x, Person y)
+        {
+            if (x == null && y == null)
+            {
+                return true;
+            }
+
+            if (x == null || y == null)
+            {
+                return false;
+            }
+
+            return (x.Name == y.Name) && (x.Age == y.Age);
+        }
+
+        public int GetHashCode(Person obj)
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    [Test]
+    public void Test_PersonComparer()
+    {
+        Person p1 = new Person { Name = "Tom", Age = 20 }; // Control data
+
+        Person p2 = new Person { Name = "Tom", Age = 20 }; // Same as control
+        Person p3 = new Person { Name = "Tom", Age = 30 }; // Different age
+        Person p4 = new Person { Name = "Bob", Age = 20 }; // Different name.
+
+        Assert.IsTrue(new PersonComparer().Equals(p1, p2), "People have same values");
+        Assert.IsFalse(new PersonComparer().Equals(p1, p3), "People have different ages.");
+        Assert.IsFalse(new PersonComparer().Equals(p1, p4), "People have different names.");
+    }
+}
+
+
+I agree with ChrisYoxall -- implementing Equals in your main code purely for testing purposes is not good.
+If you are implementing Equals because some application logic requires it, then that's fine, but keep pure testing-only code out of cluttering up stuff (also the semantics of checking the same for testing may be different than what your app requires).
+In short, keep testing-only code out of your class.
+Simple shallow comparison of properties using reflection should be enough for most classes, although you may need to recurse if your objects have complex properties. If following references, beware of circular references or similar.
+Sly
+
+Deserialize both classes, and do a string compare.
+EDIT:
+Works perfectly, this is the output I get from NUnit;
+Test 'Telecom.SDP.SBO.App.Customer.Translator.UnitTests.TranslateEaiCustomerToDomain_Tests.TranslateNew_GivenEaiCustomer_ShouldTranslateToDomainCustomer_Test("ApprovedRatingInDb")' failed:
+  Expected string length 2841 but was 5034. Strings differ at index 443.
+  Expected: "...taClasses" />\r\n  <ContactMedia />\r\n  <Party i:nil="true" /..."
+  But was:  "...taClasses" />\r\n  <ContactMedia>\r\n    <ContactMedium z:Id="..."
+  ----------------------------------------------^
+ TranslateEaiCustomerToDomain_Tests.cs(201,0): at Telecom.SDP.SBO.App.Customer.Translator.UnitTests.TranslateEaiCustomerToDomain_Tests.Assert_CustomersAreEqual(Customer expectedCustomer, Customer actualCustomer)
+ TranslateEaiCustomerToDomain_Tests.cs(114,0): at Telecom.SDP.SBO.App.Customer.Translator.UnitTests.TranslateEaiCustomerToDomain_Tests.TranslateNew_GivenEaiCustomer_ShouldTranslateToDomainCustomer_Test(String custRatingScenario)
+
+EDIT TWO:
+The two objects can be identical, but the order that properties are serialized in are not the same. Therefore the XML is different. DOH!
+EDIT THREE:
+This does work. I am using it in my tests. But you must add items to collection properties in the order the code under test adds them.
+
+Try FluentAssertions library:
+dto.ShouldHave(). AllProperties().EqualTo(customer);
+
+http://www.fluentassertions.com/
+It can also be installed using NuGet.
+
+Do not override Equals just for testing purposes. It's tedious and affects domain logic.
+Instead,
+Use JSON to compare the object's data
+No additional logic on your objects. No extra tasks for testing. 
+Just use this simple method:
+public static void AreEqualByJson(object expected, object actual)
+{
+    var serializer = new System.Web.Script.Serialization.JavaScriptSerializer();
+    var expectedJson = serializer.Serialize(expected);
+    var actualJson = serializer.Serialize(actual);
+    Assert.AreEqual(expectedJson, actualJson);
+}
+
+It seems to work out great. The test runner results info will show the JSON string comparison (the object graph) included so you see directly what's wrong.
+Also note! If you have bigger complex objects and just want to compare parts of them you can (use LINQ for sequence data) create anonymous objects to use with above method.
+public void SomeTest()
+{
+    var expect = new { PropA = 12, PropB = 14 };
+    var sut = loc.Resolve<SomeSvc>();
+    var bigObjectResult = sut.Execute(); // This will return a big object with loads of properties 
+    AssExt.AreEqualByJson(expect, new { bigObjectResult.PropA, bigObjectResult.PropB });
+}
+
+
+Another option is to write a custom constraint by implementing the NUnit abstract Constraint class. With a helper class to provide a little syntactic sugar, the resulting test code is pleasantly terse and readable e.g. 
+Assert.That( LeftObject, PortfolioState.Matches( RightObject ) ); 
+
+For an extreme example, consider class which has 'read-only' members, is not IEquatable, and you could not change the class under test even if you wanted to:
+public class Portfolio // Somewhat daft class for pedagogic purposes...
+{
+    // Cannot be instanitated externally, instead has two 'factory' methods
+    private Portfolio(){ }
+
+    // Immutable properties
+    public string Property1 { get; private set; }
+    public string Property2 { get; private set; }  // Cannot be accessed externally
+    public string Property3 { get; private set; }  // Cannot be accessed externally
+
+    // 'Factory' method 1
+    public static Portfolio GetPortfolio(string p1, string p2, string p3)
+    {
+        return new Portfolio() 
+        { 
+            Property1 = p1, 
+            Property2 = p2, 
+            Property3 = p3 
+        };
+    }
+
+    // 'Factory' method 2
+    public static Portfolio GetDefault()
+    {
+        return new Portfolio() 
+        { 
+            Property1 = "{{NONE}}", 
+            Property2 = "{{NONE}}", 
+            Property3 = "{{NONE}}" 
+        };
+    }
+}
+
+The contract for the Constraint class requires one to override Matches and WriteDescriptionTo (in the case of a mismatch, a narrative for the expected value) but also overriding WriteActualValueTo (narrative for actual value) makes sense:
+public class PortfolioEqualityConstraint : Constraint
+{
+    Portfolio expected;
+    string expectedMessage = "";
+    string actualMessage = "";
+
+    public PortfolioEqualityConstraint(Portfolio expected)
+    {
+        this.expected = expected;
+    }
+
+    public override bool Matches(object actual)
+    {
+        if ( actual == null && expected == null ) return true;
+        if ( !(actual is Portfolio) )
+        { 
+            expectedMessage = "<Portfolio>";
+            actualMessage = "null";
+            return false;
+        }
+        return Matches((Portfolio)actual);
+    }
+
+    private bool Matches(Portfolio actual)
+    {
+        if ( expected == null && actual != null )
+        {
+            expectedMessage = "null";
+            expectedMessage = "non-null";
+            return false;
+        }
+        if ( ReferenceEquals(expected, actual) ) return true;
+
+        if ( !( expected.Property1.Equals(actual.Property1)
+                 && expected.Property2.Equals(actual.Property2) 
+                 && expected.Property3.Equals(actual.Property3) ) )
+        {
+            expectedMessage = expected.ToStringForTest();
+            actualMessage = actual.ToStringForTest();
+            return false;
+        }
+        return true;
+    }
+
+    public override void WriteDescriptionTo(MessageWriter writer)
+    {
+        writer.WriteExpectedValue(expectedMessage);
+    }
+    public override void WriteActualValueTo(MessageWriter writer)
+    {
+        writer.WriteExpectedValue(actualMessage);
+    }
+}
+
+Plus the helper class:
+public static class PortfolioState
+{
+    public static PortfolioEqualityConstraint Matches(Portfolio expected)
+    {
+        return new PortfolioEqualityConstraint(expected);
+    }
+
+    public static string ToStringForTest(this Portfolio source)
+    {
+        return String.Format("Property1 = {0}, Property2 = {1}, Property3 = {2}.", 
+            source.Property1, source.Property2, source.Property3 );
+    }
+}
+
+Example usage:
+[TestFixture]
+class PortfolioTests
+{
+    [Test]
+    public void TestPortfolioEquality()
+    {
+        Portfolio LeftObject 
+            = Portfolio.GetDefault();
+        Portfolio RightObject 
+            = Portfolio.GetPortfolio("{{GNOME}}", "{{NONE}}", "{{NONE}}");
+
+        Assert.That( LeftObject, PortfolioState.Matches( RightObject ) );
+    }
+}
+
+
+Max Wikstrom's JSON solution (above) makes the most sense to me, it's short, clean and most importantly it works.  Personally though I'd prefer to implement the JSON conversion as a separate method and place the assert back inside the unit test like this...
+HELPER METHOD:
+public string GetObjectAsJson(object obj)
+    {
+        System.Web.Script.Serialization.JavaScriptSerializer oSerializer = new System.Web.Script.Serialization.JavaScriptSerializer();
+        return oSerializer.Serialize(obj);
+    }
+
+UNIT TEST :
+public void GetDimensionsFromImageTest()
+        {
+            Image Image = new Bitmap(10, 10);
+            ImageHelpers_Accessor.ImageDimensions expected = new ImageHelpers_Accessor.ImageDimensions(10,10);
+
+            ImageHelpers_Accessor.ImageDimensions actual;
+            actual = ImageHelpers_Accessor.GetDimensionsFromImage(Image);
+
+            /*USING IT HERE >>>*/
+            Assert.AreEqual(GetObjectAsJson(expected), GetObjectAsJson(actual));
+        }
+
+FYI - You may need to add a reference to System.Web.Extensions in your solution.
+
+I would build on the answer of @Juanma. However, I believe this should not be implemented with unit test assertions. This is a utility that could very well be used in some circumstances by non-test code. 
+I wrote an article on the matter http://timoch.com/blog/2013/06/unit-test-equality-is-not-domain-equality/
+My proposal is as follow:
+/// <summary>
+/// Returns the names of the properties that are not equal on a and b.
+/// </summary>
+/// <param name="a"></param>
+/// <param name="b"></param>
+/// <returns>An array of names of properties with distinct 
+///          values or null if a and b are null or not of the same type
+/// </returns>
+public static string[] GetDistinctProperties(object a, object b) {
+    if (object.ReferenceEquals(a, b))
+        return null;
+    if (a == null)
+        return null;
+    if (b == null)
+        return null;
+
+    var aType = a.GetType();
+    var bType = b.GetType();
+
+    if (aType != bType)
+        return null;
+
+    var props = aType.GetProperties();
+
+    if (props.Any(prop => prop.GetIndexParameters().Length != 0))
+        throw new ArgumentException("Types with index properties not supported");
+
+    return props
+        .Where(prop => !Equals(prop.GetValue(a, null), prop.GetValue(b, null)))
+        .Select(prop => prop.Name).ToArray();
+} 
+
+Using this with NUnit
+Expect(ReflectionUtils.GetDistinctProperties(tile, got), Empty);
+
+yields the following message on mismatch.
+Expected: <empty>
+But was:  < "MagmaLevel" >
+at NUnit.Framework.Assert.That(Object actual, IResolveConstraint expression, String message, Object[] args)
+at Undermine.Engine.Tests.TileMaps.BasicTileMapTests.BasicOperations() in BasicTileMapTests.cs: line 29
+
+
+https://github.com/kbilsted/StatePrinter has been written specifically to dump object graphs to string representation with the aim of writing easy unit tests. 
+
+It comes witg Assert methods that output a properly escaped string easy copy-paste into the test to correct it.
+It allows unittest to be automatically re-written
+It integrates with all unit testing frameworks
+Unlike JSON serialization, circular references are supported
+You can easily filter, so only parts of types are dumped
+
+Given
+class A
+{
+  public DateTime X;
+  public DateTime Y { get; set; }
+  public string Name;
+}
+
+You can in a type safe manner, and using auto-completion of visual studio include or exclude fields. 
+  var printer = new Stateprinter();
+  printer.Configuration.Projectionharvester().Exclude<A>(x => x.X, x => x.Y);
+
+  var sut = new A { X = DateTime.Now, Name = "Charly" };
+
+  var expected = @"new A(){ Name = ""Charly""}";
+  printer.Assert.PrintIsSame(expected, sut);
+
+
+I've tried several approaches mentioned here. Most involve serializing your objects and doing a string compare. While super easy and generally very effective, I've found it comes up a little short when you have a failure and something like this gets reported:
+Expected string length 2326 but was 2342. Strings differ at index 1729.
+
+Figuring out where where the differences are is a pain to say the least.
+With FluentAssertions' object graph comparisons (i.e. a.ShouldBeEquivalentTo(b)), you get this back:
+Expected property Name to be "Foo" but found "Bar"
+
+That's much nicer. Get FluentAssertions now, you'll be glad later (and if you upvote this, please also upvote dkl's answer where FluentAssertions was first suggested).
+
+Just install ExpectedObjects from Nuget, you can easily compare two objects's property value, each object value of collection, two composed object's value and partial compare property value by anonymous type.
+I have some examples on github: https://github.com/hatelove/CompareObjectEquals
+Here were some examples that contain scenarios of comparing object:
+    [TestMethod]
+    public void Test_Person_Equals_with_ExpectedObjects()
+    {
+        //use extension method ToExpectedObject() from using ExpectedObjects namespace to project Person to ExpectedObject
+        var expected = new Person
+        {
+            Id = 1,
+            Name = "A",
+            Age = 10,
+        }.ToExpectedObject();
+
+        var actual = new Person
+        {
+            Id = 1,
+            Name = "A",
+            Age = 10,
+        };
+
+        //use ShouldEqual to compare expected and actual instance, if they are not equal, it will throw a System.Exception and its message includes what properties were not match our expectation.
+        expected.ShouldEqual(actual);
+    }
+
+    [TestMethod]
+    public void Test_PersonCollection_Equals_with_ExpectedObjects()
+    {
+        //collection just invoke extension method: ToExpectedObject() to project Collection<Person> to ExpectedObject too
+        var expected = new List<Person>
+        {
+            new Person { Id=1, Name="A",Age=10},
+            new Person { Id=2, Name="B",Age=20},
+            new Person { Id=3, Name="C",Age=30},
+        }.ToExpectedObject();
+
+        var actual = new List<Person>
+        {
+            new Person { Id=1, Name="A",Age=10},
+            new Person { Id=2, Name="B",Age=20},
+            new Person { Id=3, Name="C",Age=30},
+        };
+
+        expected.ShouldEqual(actual);
+    }
+
+    [TestMethod]
+    public void Test_ComposedPerson_Equals_with_ExpectedObjects()
+    {
+        //ExpectedObject will compare each value of property recursively, so composed type also simply compare equals.
+        var expected = new Person
+        {
+            Id = 1,
+            Name = "A",
+            Age = 10,
+            Order = new Order { Id = 91, Price = 910 },
+        }.ToExpectedObject();
+
+        var actual = new Person
+        {
+            Id = 1,
+            Name = "A",
+            Age = 10,
+            Order = new Order { Id = 91, Price = 910 },
+        };
+
+        expected.ShouldEqual(actual);
+    }
+
+    [TestMethod]
+    public void Test_PartialCompare_Person_Equals_with_ExpectedObjects()
+    {
+        //when partial comparing, you need to use anonymous type too. Because only anonymous type can dynamic define only a few properties should be assign.
+        var expected = new
+        {
+            Id = 1,
+            Age = 10,
+            Order = new { Id = 91 }, // composed type should be used anonymous type too, only compare properties. If you trace ExpectedObjects's source code, you will find it invoke config.IgnoreType() first.
+        }.ToExpectedObject();
+
+        var actual = new Person
+        {
+            Id = 1,
+            Name = "B",
+            Age = 10,
+            Order = new Order { Id = 91, Price = 910 },
+        };
+
+        // partial comparing use ShouldMatch(), rather than ShouldEqual()
+        expected.ShouldMatch(actual);
+    }
+
+Reference:
+
+ExpectedObjects github 
+Introduction of ExpectedObjects
+
+
+Property constraints, added in NUnit 2.4.2, allow a solution that is more readable than the OP's original one, and it produces much better failure messages. It's not in any way generic, but if you don't need to do it for too many classes, it's a very adequate solution.
+Assert.That(ActualObject, Has.Property("Prop1").EqualTo(ExpectedObject.Prop1)
+                          & Has.Property("Prop2").EqualTo(ExpectedObject.Prop2)
+                          & Has.Property("Prop3").EqualTo(ExpectedObject.Prop3)
+                          // ...
+
+Not as general-purpose as implementing Equals but it does give a much better failure message than
+Assert.AreEqual(ExpectedObject, ActualObject);
+
+
+Have a look at the following link. Its a solution from code project and I have used it too. It works fine for comparing the objects.
+http://www.codeproject.com/Articles/22709/Testing-Equality-of-Two-Objects?msg=5189539#xx5189539xx
+
+This is a pretty old thread but I was wondering if there's a reason why no answer proposed NUnit.Framework.Is.EqualTo and NUnit.Framework.Is.NotEqualTo?
+Such as:
+Assert.That(LeftObject, Is.EqualTo(RightObject)); 
+
+and
+Assert.That(LeftObject, Is.Not.EqualTo(RightObject)); 
+

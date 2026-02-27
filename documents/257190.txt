@@ -1,0 +1,67 @@
+MySQL: get differences of each sorted column in set of rows
+mysql stored-procedures
+Here is a simple scenario with table characters:
+CharacterName GameTime Gold Live
+Foo 10 100 3 
+Foo 20 100 2 
+Foo 30 95 2
+
+How do I get this output for the query SELECT Gold, Live FROM characters WHERE name = 'Foo' ORDER BY GameTime:
+Gold Live
+100 3
+0 -1
+-5 0
+
+using MySQL stored procedure (or query) if it's even possible? I thought of using 2 arrays like how one would normally do in a server-side language, but MySQL doesn't have array types.
+While I'm aware it's probably easier to do in PHP (my server-side langauge), I want to know if it's possible to do in MySQL, just as a learning material.
+
+
+Do you have an ID on your Table.
+GameID      CharacterName GameTime    Gold        Live
+----------- ------------- ----------- ----------- -----------
+1           Foo           10          100         3
+2           Foo           20          100         2
+3           Foo           30          95          2
+
+If so you could do a staggered join onto itself
+SELECT
+    c.CharacterName, 
+    CASE WHEN c_offset.Gold IS NOT NULL THEN c.Gold - c_offset.Gold ELSE c.Gold END AS Gold,
+    CASE WHEN c_offset.Live IS NOT NULL THEN c.Live - c_offset.Live ELSE c.Live END AS Live
+FROM Characters c 
+    LEFT OUTER JOIN Characters c_offset
+    	ON c.GameID - 1 = c_offSet.GameID
+ORDER BY
+    c.GameTime
+
+Essentially it joins each game row to the previous game row and does a diff between the values. That returns the following for me.
+CharacterName Gold        Live
+------------- ----------- -----------
+Foo           100         3
+Foo           0           -1
+Foo           -5          0
+
+
+One possible solution using a temporary table:
+CREATE TABLE characters_by_gametime (
+  id INTEGER AUTO_INCREMENT PRIMARY KEY,
+  gold INTEGER,
+  live INTEGER);
+
+INSERT INTO characters_by_gametime (gold, live)
+SELECT gold, live
+FROM characters
+ORDER BY game_time;
+
+SELECT
+  c1.id,
+  c1.gold - IFNULL(c2.gold, 0) AS gold,
+  c1.live - IFNULL(c2.live, 0) AS live
+FROM
+  characters_by_gametime c1
+  LEFT JOIN characters_by_gametime c2
+    ON c1.id = c2.id + 1
+ORDER BY
+  c1.id;
+
+Of course Eoin's solution is better if your id column follows the order you want in the output.

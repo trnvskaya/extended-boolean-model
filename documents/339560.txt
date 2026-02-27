@@ -1,0 +1,120 @@
+T-SQL Query Optimization
+sql sql-server
+I'm working on some upgrades to an internal web analytics system we provide for our clients (in the absence of a preferred vendor or Google Analytics), and I'm working on the following query:
+select 
+    path as EntryPage, 
+    count(Path) as [Count] 
+from 
+    (
+    	/* Sub-query 1 */
+    	select 
+    		pv2.path
+    	from 
+    		pageviews pv2 
+    			inner join
+    				(
+    					/* Sub-query 2 */
+    					select
+    						pv1.sessionid,
+    						min(pv1.created) as created
+    					from
+    						pageviews pv1 
+    							inner join Sessions s1 on pv1.SessionID = s1.SessionID
+    							inner join Visitors v1 on s1.VisitorID = v1.VisitorID
+    					where
+    						pv1.Domain = isnull(@Domain, pv1.Domain) and
+    						v1.Campaign = @Campaign
+    					group by
+    						pv1.sessionid
+    				) t1 on pv2.sessionid = t1.sessionid and pv2.created = t1.created
+    ) t2
+group by 
+    Path;
+
+I've tested this query with 2 million rows in the PageViews table and it takes about 20 seconds to run. I'm noticing a clustered index scan twice in the execution plan, both times it hits the PageViews table. There is a clustered index on the Created column in that table.
+The problem is that in both cases it appears to iterate over all 2 million rows, which I believe is the performance bottleneck. Is there anything I can do to prevent this, or am I pretty much maxed out as far as optimization goes?
+For reference, the purpose of the query is to find the first page view for each session.
+EDIT: After much frustration, despite the help received here, I could not make this query work. Therefore, I decided to simply store a reference to the entry page (and now exit page) in the sessions table, which allows me to do the following:
+select
+    pv.Path,
+    count(*)
+from
+    PageViews pv
+    	inner join Sessions s on pv.SessionID = s.SessionID
+    		and pv.PageViewID = s.ExitPage
+    	inner join Visitors v on s.VisitorID = v.VisitorID
+where
+    (
+        @Domain is null or 
+        pv.Domain = @Domain
+    ) and
+    v.Campaign = @Campaign
+group by pv.Path;
+
+This query runs in 3 seconds or less. Now I either have to update the entry/exit page in real time as the page views are recorded (the optimal solution) or run a batch update at some interval. Either way, it solves the problem, but not like I'd intended. 
+Edit Edit: Adding a missing index (after cleaning up from last night) reduced the query to mere milliseconds). Woo hoo!
+
+
+For starters,
+    where pv1.Domain = isnull(@Domain, pv1.Domain)
+
+won't SARG. You can't optimize a match on a function, as I remember.
+
+To continue from doofledorf. 
+Try this:
+where
+   (@Domain is null or pv1.Domain = @Domain) and
+   v1.Campaign = @Campaign
+
+Ok, I have a couple of suggestions
+
+Create this covered index: 
+ create index idx2 on [PageViews]([SessionID], Domain, Created, Path)
+
+If you can amend the Sessions table so that it stores the entry page, eg. EntryPageViewID you will be able to heavily optimise this. 
+
+
+Your inner query (pv1) will require a nonclustered index on (Domain).
+The second query (pv2) can already find the rows it needs due to the clustered index on Created, but pv1 might be returning so many rows that SQL Server decides that a table scan is quicker than all the locks it would need to take.  As pv1 groups on SessionID (and hence has to order by SessionID), a nonclustered index on SessionID, Created, and including path should permit a MERGE join to occur.  If not, you can force a merge join with "SELECT .. FROM pageviews pv2 INNER MERGE JOIN ..."
+The two indexes listed above will be:
+CREATE NONCLUSTERED INDEX ncixcampaigndomain ON PageViews (Domain)
+CREATE NONCLUSTERED INDEX ncixsessionidcreated ON PageViews(SessionID, Created) INCLUDE (path)
+
+I'm back. To answer your first question, you could probably just do a union on the two conditions, since they are obviously disjoint.
+Actually, you're trying to cover both the case where you provide a domain, and where you don't. You want two queries. They may optimize entirely differently.
+
+What's the nature of the data in these tables?  Do you find most of the data is inserted/deleted regularly?  
+Is that the full schema for the tables?  The query plan shows different indexing..
+Edit: Sorry, just read the last line of text.  I'd suggest if the tables are routinely cleared/insertsed, you could think about ditching the clustered index and using the tables as heap tables.. just a thought
+Definately should put non-clustered index(es) on Campaign, Domain as John suggested
+
+SELECT  
+    sessionid,  
+    MIN(created) AS created  
+FROM  
+    pageviews pv  
+JOIN  
+    visitors v ON pv.visitorid = v.visitorid  
+WHERE  
+    v.campaign = @Campaign  
+GROUP BY  
+    sessionid
+
+so that gives you the sessions for a campaign. Now let's see what you're doing with that.
+OK, this gets rid of your grouping:
+SELECT  
+    campaignid,  
+    sessionid,   
+    pv.path  
+FROM  
+    pageviews pv  
+JOIN  
+    visitors v ON pv.visitorid = v.visitorid  
+WHERE  
+    v.campaign = @Campaign  
+    AND NOT EXISTS (  
+        SELECT 1 FROM pageviews  
+        WHERE sessionid = pv.sessionid  
+        AND created < pv.created  
+    )
+

@@ -1,0 +1,108 @@
+How do I test if another installation is already in progress?
+c# windows windows-installer
+Assuming I'm trying to automate the installation of something on windows and I want to try to test whether another installation is in progress before attempting install. I don't have control over the installer and have to do this in the automation framework. Is there a better way to do this, some win32 api?, than just testing if msiexec is running?
+[Update 2]
+Improved the previous code I had been using to just access the mutex directly, this is a lot more reliable:
+using System.Threading;
+
+[...]
+
+/// <summary>
+/// Wait (up to a timeout) for the MSI installer service to become free.
+/// </summary>
+/// <returns>
+/// Returns true for a successful wait, when the installer service has become free.
+/// Returns false when waiting for the installer service has exceeded the timeout.
+/// </returns>
+public static bool WaitForInstallerServiceToBeFree(TimeSpan maxWaitTime)
+{
+    // The _MSIExecute mutex is used by the MSI installer service to serialize installations
+    // and prevent multiple MSI based installations happening at the same time.
+    // For more info: http://msdn.microsoft.com/en-us/library/aa372909(VS.85).aspx
+    const string installerServiceMutexName = "Global\\_MSIExecute";
+
+    try
+    {
+        Mutex MSIExecuteMutex = Mutex.OpenExisting(installerServiceMutexName, 
+            System.Security.AccessControl.MutexRights.Synchronize);
+        bool waitSuccess = MSIExecuteMutex.WaitOne(maxWaitTime, false);
+        MSIExecuteMutex.ReleaseMutex();
+        return waitSuccess;
+    }
+    catch (WaitHandleCannotBeOpenedException)
+    {
+        // Mutex doesn't exist, do nothing
+    }
+    catch (ObjectDisposedException)
+    {
+        // Mutex was disposed between opening it and attempting to wait on it, do nothing
+    }
+    return true;
+}
+
+
+
+See the description of the _MSIExecute Mutex on MSDN.
+
+I was getting an unhandled exception using the code above.  I cross referenced this article witt this one
+Here's my updated code:
+  /// <summary>
+/// Wait (up to a timeout) for the MSI installer service to become free.
+/// </summary>
+/// <returns>
+/// Returns true for a successful wait, when the installer service has become free.
+/// Returns false when waiting for the installer service has exceeded the timeout.
+/// </returns>
+public static bool IsMsiExecFree(TimeSpan maxWaitTime)
+{
+    // The _MSIExecute mutex is used by the MSI installer service to serialize installations
+    // and prevent multiple MSI based installations happening at the same time.
+    // For more info: http://msdn.microsoft.com/en-us/library/aa372909(VS.85).aspx
+    const string installerServiceMutexName = "Global\\_MSIExecute";
+    Mutex MSIExecuteMutex = null;
+    var isMsiExecFree = false;
+    try
+    {
+            MSIExecuteMutex = Mutex.OpenExisting(installerServiceMutexName,
+                            System.Security.AccessControl.MutexRights.Synchronize);
+            isMsiExecFree = MSIExecuteMutex.WaitOne(maxWaitTime, false);
+    }
+        catch (WaitHandleCannotBeOpenedException)
+        {
+            // Mutex doesn't exist, do nothing
+            isMsiExecFree = true;
+        }
+        catch (ObjectDisposedException)
+        {
+            // Mutex was disposed between opening it and attempting to wait on it, do nothing
+            isMsiExecFree = true;
+        }
+        finally
+        {
+            if(MSIExecuteMutex != null && isMsiExecFree)
+            MSIExecuteMutex.ReleaseMutex();
+        }
+    return isMsiExecFree;
+
+}
+
+
+Sorry for hijacking you post! 
+I have been working on this - for about a week - using your notes (Thank you) and that from other sites - too many to name (Thank you all).
+I stumbled across information revealing that the Service could yield enough information to determine if the MSIEXEC service is already in use. The Service being 'msiserver' - Windows Installer - and it's information being both state and acceptstop.
+The following VBScript code checks this.
+Set objWMIService = GetObject("winmgmts:\\.\root\cimv2")
+Check = False
+Do While Not Check
+   WScript.Sleep 3000
+   Set colServices = objWMIService.ExecQuery("Select * From Win32_Service Where Name="'msiserver'")
+   For Each objService In colServices
+      If (objService.Started And Not objService.AcceptStop)  
+         WScript.Echo "Another .MSI is running."
+      ElseIf ((objService.Started And objService.AcceptStop) Or Not objService.Started) Then
+         WScript.Echo "Ready to install an .MSI application."
+         Check = True
+      End If
+   Next
+Loop
+

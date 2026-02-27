@@ -1,0 +1,169 @@
+How do I persist a ByRef variable into .net winforms dialog form?
+.net winforms reference modal-dialog
+I am creating a "department picker" form that is going to serve as a modal popup form with many of my "primary" forms of a Winforms application. Ideally the user is going to click on an icon next to a text box that will pop up the form, they will select the department they need, and when they click OK, the dialog will close and I will have the value selected for me to update the textbox with.
+I've already done the route with passing the owner of the dialog box into the dialog form and having the OK button click event do the proper update, but this forces me to do a DirectCast to the form type and I can then only reuse the picker on the current form.
+I have been able to use a ByRef variable in the constructor and successfully update a value, but it works only in the constructor. If I attempt to assign the ByRef value to some internal variable in the Department Picker class, I lose the reference aspect of it. This is my basic code attached to my form:
+Public Class DeptPicker
+
+   Private m_TargetResult As String
+
+   Public Sub New(ByRef TargetResult As String)
+
+      InitializeComponent()
+
+      ' This works just fine, my "parent" form has the reference value properly updated.
+      TargetResult = "Booyah!"
+
+      ' Once I leave the constructor, m_TargetResult is a simple string value that won't update the parent
+      m_TargetResult = TargetResult
+
+   End Sub
+
+   Private Sub btnOK_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles btnOK.Click
+
+      DialogResult = Windows.Forms.DialogResult.OK
+
+      ' I get no love here. m_TargetResult is just a string and doesn't push the value back to the referenced variable I want.
+      m_TargetResult = "That department I selected."
+      Me.Close()
+
+   End Sub
+
+   Private Sub btnCancel_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles btnCancel.Click
+
+      DialogResult = Windows.Forms.DialogResult.Cancel
+      Me.Close()
+
+   End Sub
+
+End Class
+
+Can somebody tell me what I'm missing here or a different approach to make this happen?
+Note: Code sample is in VB.NET, but I'll take any C# answers too. 8^D
+
+
+In such cases, I usually either
+
+Write a ShowDialog function that does what I want (e.g. return the value) or
+Just let the result be a property in the dialog. This is how the common file dialogs do it in the BCL. The caller must then read the property to get the result. That's fine in my opinion.
+
+You can also combine these methods, by making the result value a property in the dialog and creating a ShowDialog method that returns that property value, either as ByRef as you want or as a return value, depending on your needs.
+I'll add this as a usage instruction, for example (sorry, no VB over here, and you said C# is welcome):
+using (var dlg = new DeptPicker()) {
+    if (dlg.ShowDialog() == DialogResult.OK) {
+        myTextBoxOrWhatEver.Text = dlg.TargetResult;
+    }
+}
+
+In the dialog itself, just do this:
+void okButton_Click(object sender, EventArgs e)
+{
+    TargetResult = whatever; // can also do this when the selection changes
+    DialogResult = DialogResult.OK;
+    Close();
+}
+
+I didn't use the new ShowDialog implementation in this sample though.
+
+The problem is that assigning TargetResult in the constructor is using the string as a reference.  The m_TargetResult string is just a copy of the ref string, not a reference to the original string.
+As for how to make a "pointer" to the original, I don't know.
+This is made even harder by the fact that VB.NET doesn't support unsafe code blocks, so you can't make a pointer reference to the string.
+
+You could pass the textbox reference to the modal form.
+Let the user choose any department. When user clicks OK, set the referred textbox's text property to chosen department's text or id (depends on what you need)
+I am using the code provided by you.
+
+
+Public Class DeptPicker
+
+   Private m_TargetTextBox As TextBox
+
+   Public Sub New(ByRef TargetTextBox As TextBox)
+      InitializeComponent()
+
+      m_TargetTextBox = TargetTextBox
+
+   End Sub
+
+   Private Sub btnOK_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles btnOK.Click
+
+      DialogResult = Windows.Forms.DialogResult.OK
+
+      ' I get no love here. m_TargetResult is just a string and doesn't push the value back to the referenced variable I want.
+      m_TargetTextBox.Text = "That department I selected."
+      Me.Close()
+
+   End Sub
+
+   Private Sub btnCancel_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles btnCancel.Click
+
+      DialogResult = Windows.Forms.DialogResult.Cancel
+      Me.Close()
+
+   End Sub
+
+End Class
+
+
+
+
+
+Public Class DeptPicker
+
+    dim dlgResult as DialogResult
+
+    Public Function GetSelectedDepartment() As String
+        Me.Show vbModal
+        If (dlgResult = Windows.Forms.DialogResult.OK) Then
+    	    return "selected department string here"
+        Else
+    		return "sorry, you didnt canceled on the form"
+        End If
+    End Function
+
+    Private Sub btnOK_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles btnOK.Click
+    	dlgResult = Windows.Forms.DialogResult.OK
+    	Me.Close()
+    End Sub
+
+    Private Sub btnCancel_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles btnCancel.Click
+    	dlgResult = Windows.Forms.DialogResult.Cancel
+    	Me.Close()
+    End Sub
+End Class
+
+
+Note: I haven't tested this. I hope you get idea of what I mean.
+OregonGhost: Does this look better?
+The user can call new DeptPicker().GetSelectedDepartment().
+I didnt know that I need not post the answer again & could use the same post.
+Thanks OregonGhost. Now, does it look ok?
+
+This may work:
+    // This code in your dialog form.  Hide the base showdialog method 
+    // and implement your own versions
+    public new string ShowDialog() {
+        return this.ShowDialog(null);
+    }
+
+    public new string ShowDialog(IWin32Window owner) {
+        // Call the base implementation of show dialog
+        base.ShowDialog(owner);
+
+        // You get here after the close button is clicked and the form is hidden.  Capture the data you want.
+        string s = this.someControl.Text;
+
+        // Now really close the form and return the value
+        this.Close();
+        return s;
+    }
+
+    // On close, just hide.  Close in the show dialog method
+    private void closeButton_Click(object sender, EventArgs e) {
+        this.Hide();
+    }
+
+    // This code in your calling form
+    MyCustomForm f = new MyCustomForm();
+    string myAnswer = f.ShowDialog();
+

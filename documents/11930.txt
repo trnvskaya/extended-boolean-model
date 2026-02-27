@@ -1,0 +1,285 @@
+How can I determine the IP of my router/gateway in Java?
+java sockets ip router
+How can I determine the IP of my router/gateway in Java? I can get my IP easily enough. I can get my internet IP using a service on a website. But how can I determine my gateway's IP?
+This is somewhat easy in .NET if you know your way around. But how do you do it in Java?
+
+
+That is not as easy as it sounds.  Java is platform independent, so I am not sure how to do it in Java.  I am guessing that .NET contacts some web site which reports it back.  There are a couple ways to go.  First, a deeper look into the ICMP protocol may give you the information you need.  You can also trace the IP you go through (your route).  When you encounter an IP that is not in the following ranges:
+
+10.0.0.0 â 10.255.255.255
+172.16.0.0 â 172.31.255.255
+192.168.0.0 â 192.168.255.255
+
+it is the IP one hop away from yours, and probably shares a few octets of information with your IP.
+Best of luck.  I'll be curious to hear a definitive answer to this question.
+
+Try shelling out to traceroute if you have it.
+'traceroute -m 1 www.amazon.com' will emit something like this:
+traceroute to www.amazon.com (72.21.203.1), 1 hops max, 40 byte packets
+ 1  10.0.1.1 (10.0.1.1)  0.694 ms  0.445 ms  0.398 ms
+
+Parse the second line.  Yes, it's ugly, but it'll get you going until someone posts something nicer.
+
+You may be better off using something like checkmyip.org, which will determine your public IP address - not necessarily your first hop router: at Uni I have a "real" IP address, whereas at home it is my local router's public IP address.
+You can parse the page that returns, or find another site that allows you to just get the IP address back as the only string.
+(I'm meaning load this URL in Java/whatever, and then get the info you need).
+This should be totally platform independent.
+
+Matthew: Yes, that is what I meant by "I can get my internet IP using a service on a website." Sorry about being glib.
+Brian/Nick: Traceroute would be fine except for the fact that lots of these routers have ICMP disabled and thus it always stalls.
+I think a combination of traceroute and uPnP will work out. That is what I was planning on doing, I as just hoping I was missing something obvious.
+Thank you everyone for your comments, so it sounds like I'm not missing anything obvious. I have begun implementing some bits of uPnP in order to discover the gateway.
+
+Java doesn't make this as pleasant as other languages, unfortunately. Here's what I did:
+import java.io.*;
+import java.util.*;
+
+public class ExecTest {
+    public static void main(String[] args) throws IOException {
+        Process result = Runtime.getRuntime().exec("traceroute -m 1 www.amazon.com");
+
+        BufferedReader output = new BufferedReader(new InputStreamReader(result.getInputStream()));
+        String thisLine = output.readLine();
+        StringTokenizer st = new StringTokenizer(thisLine);
+        st.nextToken();
+        String gateway = st.nextToken();
+        System.out.printf("The gateway is %s\n", gateway);
+    }
+}
+
+This presumes that the gateway is the second token and not the third. If it is, you need to add an extra st.nextToken(); to advance the tokenizer one more spot.
+
+Regarding UPnP: be aware that not all routers support UPnP. And if they do it could be switched off (for security reasons). So your solution might not always work.
+You should also have a look at NatPMP.
+A simple library for UPnP can be found  at http://miniupnp.free.fr/, though it's in C...
+
+To overcome the issues mentioned with traceroute (ICMP-based, wide area hit) you could consider:
+
+traceroute to your public IP (avoids wide-area hit, but still ICMP)
+Use a non-ICMP utility like ifconfig/ipconfig (portability issues with this though).
+What seems the best and most portable solution for now is to shell & parse netstat (see the code example here) 
+
+
+On windows parsing the output of IPConfig will get you the default gateway, without waiting for a trace.
+
+On Windows, OSX, Linux, etc then Chris Bunch's answer can be much improved by using 
+netstat -rn
+
+in place of a traceroute command.
+Your gateway's IP address will appear in the second field of the line that starts either default or 0.0.0.0.
+This gets around a number of problems with trying to use traceroute:
+
+on Windows traceroute is actually tracert.exe, so there's no need for O/S dependencies in the code
+it's a quick command to run - it gets information from the O/S, not from the network
+traceroute is sometimes blocked by the network
+
+The only downside is that it will be necessary to keep reading lines from the netstat output until the right line is found, since there'll be more than one line of output.
+EDIT: The Default Gateway's IP Address is in the second field of the line that starts with 'default' if you are on a MAC (tested on Lion), or in the third field of the line that starts with '0.0.0.0' (tested on Windows 7)
+Windows:
+
+
+Network Destination        Netmask          Gateway       Interface  Metric
+0.0.0.0              0.0.0.0    192.168.2.254     192.168.2.46     10
+
+
+Mac:
+
+
+Destination        Gateway            Flags        Refs      Use   Netif Expire
+default            192.168.2.254      UGSc          104        4     en1
+
+
+
+try{
+
+    Process result = Runtime.getRuntime().exec("netstat -rn");
+
+    BufferedReader output = new BufferedReader
+	(new InputStreamReader(result.getInputStream()));
+
+    String line = output.readLine();
+    while(line != null){
+	if ( line.startsWith("default") == true )
+	    break;		
+	line = output.readLine();
+    }
+
+
+    StringTokenizer st = new StringTokenizer( line );
+    st.nextToken();
+    gateway = st.nextToken();
+
+    st.nextToken();
+    st.nextToken();
+    st.nextToken();
+
+    adapter = st.nextToken();
+
+}catch( Exception e ) { 
+    System.out.println( e.toString() );
+    gateway = new String();
+    adapter = new String();
+}
+
+
+You can query the URL "http://whatismyip.com/automation/n09230945.asp".
+For example:
+	BufferedReader buffer = null;
+	try {
+		URL url = new URL("http://whatismyip.com/automation/n09230945.asp");
+		InputStreamReader in = new InputStreamReader(url.openStream());
+		buffer = new BufferedReader(in);
+
+		String line = buffer.readLine();
+		System.out.println(line);
+	} catch (IOException e) {
+		e.printStackTrace();
+	} finally {
+		try {
+			if (buffer != null) {
+				buffer.close();
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+
+output of netstat -rn is locale specific.
+on my system (locale=de) the output looks like:
+...
+Standardgateway:         10.22.0.1
+so there is no line starting with 'default'.
+so using netstat might be no good idea.
+
+This Version connects to www.whatismyip.com, reads the content of the site and searches via regular expressions the ip adress and prints it to the cmd. Its a little improvement of MosheElishas Code
+import java.io.BufferedReader;  
+import java.io.IOException;  
+import java.io.InputStreamReader; 
+import java.net.URL;  
+import java.util.regex.Matcher;  
+import java.util.regex.Pattern;  
+
+public class Main {
+
+    public static void main(String[] args) {
+        BufferedReader buffer = null;
+        try {
+            URL url = new URL(
+                    "http://www.whatismyip.com/tools/ip-address-lookup.asp");
+            InputStreamReader in = new InputStreamReader(url.openStream());
+            buffer = new BufferedReader(in);
+            String line = buffer.readLine();
+            Pattern pattern = Pattern
+                    .compile("(.*)value=\"(\\d+).(\\d+).(\\d+).(\\d+)\"(.*)");
+            Matcher matcher;
+            while (line != null) {
+                matcher = pattern.matcher(line);
+                if (matcher.matches()) {
+                    line = matcher.group(2) + "." + matcher.group(3) + "."
+                            + matcher.group(4) + "." + matcher.group(5);
+                    System.out.println(line);
+                }
+                line = buffer.readLine();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+
+        } finally {
+            try {
+                if (buffer != null) {
+                    buffer.close();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}
+
+import java.io.BufferedReader;  
+import java.io.IOException;  
+import java.io.InputStreamReader; 
+import java.net.URL;  
+import java.util.regex.Matcher;  
+import java.util.regex.Pattern;  
+
+public class Main {
+
+    public static void main(String[] args) {
+        BufferedReader buffer = null;
+        try {
+            URL url = new URL(
+                    "http://www.whatismyip.com/tools/ip-address-lookup.asp");
+            InputStreamReader in = new InputStreamReader(url.openStream());
+            buffer = new BufferedReader(in);
+            String line = buffer.readLine();
+            Pattern pattern = Pattern
+                    .compile("(.*)value=\"(\\d+).(\\d+).(\\d+).(\\d+)\"(.*)");
+            Matcher matcher;
+            while (line != null) {
+                matcher = pattern.matcher(line);
+                if (matcher.matches()) {
+                    line = matcher.group(2) + "." + matcher.group(3) + "."
+                            + matcher.group(4) + "." + matcher.group(5);
+                    System.out.println(line);
+                }
+                line = buffer.readLine();
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+
+        } finally {
+            try {
+                if (buffer != null) {
+                    buffer.close();
+                }
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+    }
+}
+
+
+In windows you can just use the following command:
+ipconfig | findstr /i "Gateway"
+
+Which will give you output like:
+Default Gateway . . . . . . . . . : 192.168.2.1
+Default Gateway . . . . . . . . . : ::
+
+However I can't run this command with Java, gonna post when I figure this out.
+
+You can use netstat -rn command which is available on Windows, OSX, Linux, etc platform. Here is my code:
+private String getDefaultAddress() {
+        String defaultAddress = "";
+        try {
+            Process result = Runtime.getRuntime().exec("netstat -rn");
+
+            BufferedReader output = new BufferedReader(new InputStreamReader(
+                    result.getInputStream()));
+
+            String line = output.readLine();
+            while (line != null) {
+                if (line.contains("0.0.0.0")) {
+
+                    StringTokenizer stringTokenizer = new StringTokenizer(line);
+                    stringTokenizer.nextElement(); // first element is 0.0.0.0
+                    stringTokenizer.nextElement(); // second element is 0.0.0.0
+                    defaultAddress = (String) stringTokenizer.nextElement();
+                    break;
+                }
+
+                line = output.readLine();
+
+            } // while
+        } catch (IOException e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
+        return defaultAddress;
+
+} // getDefaultAddress
+

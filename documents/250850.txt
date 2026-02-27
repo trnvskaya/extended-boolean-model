@@ -1,0 +1,78 @@
+right approach to handling bad xml data
+c# xml xsd xmlreader xmlschemaset
+I've got a little c# windows service that periodically pulls xml from a web service and stores the data in a database table.
+Unfortunately it's failing because the web service has occasional bad data in it - strings instead of decimals.  I don't have any control over the web service (unvalidated user input from software we can't change) but I would like to log the bad data so that it can be re-input.
+It's simple data that looks something like this:
+<ROWS>
+  <ROW>
+    <COL1>5405</COL1>
+    <COL2>102.24</COL1>
+  </ROW>
+  <ROW>
+    <COL1>5406</COL1>
+    <COL2>2.25</COL1>
+  </ROW>
+</ROWS>
+
+The table just has two columns, COL1 (NUMBER, 10), COL2 (NUMBER, 10,2).
+I was using a validating XmlReader and this XSD:   
+ <?xml version="1.0" encoding="utf-8"?>
+    <xs:schema id="ROWS" xmlns="" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+      <xs:element name="ROWS" msdata:IsDataSet="true" msdata:Locale="en-US">
+        <xs:complexType>
+          <xs:choice minOccurs="0" maxOccurs="unbounded">
+            <xs:element name="ROW">
+              <xs:complexType>
+                <xs:sequence>
+                  <xs:element name="COL1" type="xs:decimal" minOccurs="0" />
+                  <xs:element name="COL2" type="xs:decimal" minOccurs="0" />
+                </xs:sequence>
+              </xs:complexType>
+            </xs:element>
+          </xs:choice>
+        </xs:complexType>
+      </xs:element>
+    </xs:schema>
+
+then a dataset.ReadXml() and Update()ing the dataset.
+Whenever it hits bad data I get the following exception:
+
+System.Xml.Schema.XmlSchemaValidationException
+  was unhandled
+Message="The 'COL1'
+  element is invalid - The value 'A40'
+  is invalid according to its datatype
+  'http://www.w3.org/2001/XMLSchema:decimal'
+  - The string 'A40' is not a valid Decimal value."
+
+I can think of several ways of ways of getting around the problem but they all feel like a bit of a kludge and I'd like to learn something more elegant, and improve my knowledge. Here's what I've come up with so far:
+
+Pre-process the XML provided by the web service before loading into the validating XML reader, removing any bad nodes entirely.
+Catch the XmlSchemaValidationExceptions and try to continue from them gracefully (not sure about that one)
+Don't use a validating XML reader, but instead catch exceptions when loading the unvalidated xml into the dataset. (again not sure about that)
+have string columns in the dataset, and ignore bad data until I update it, and catch anything the database rejects.
+go and stand over the users with a large mallet until they learn to get it right first time (too time consuming)
+something else?
+
+UPDATE: The data can be bad because it comes from a application that doesn't validate the user input for COL1 - but the numbers in COL2 are calculated correctly, and COL1 should correspond with a different system. Any invalid entries should be recorded so they can be corrected.  After the data is written to the database, another system verifies that COL1 is valid, and the users will soon spot if it doesn't show correctly in the other system - they used to load it by hand anyway :) 
+
+
+
+Pre-process the XML provided by the
+  web service before loading into the
+  validating XML reader, removing any
+  bad nodes entirely.
+
+This is the option I would choose, it would allow you to grab the bad input before the exception and store it somewhere so it can be looked at later. Then you can find the offending user and use another of your methods 
+
+go and stand over the users with a
+  large mallet until they learn to get
+  it right first time
+
+
+The question for me is: What do you want to do with the erroneus data?
+Do you want to ignore it, sanitize it (remove the 'A' from 'A40'), or collect it to one day finally show it to the users (speaking of a large mallet;-) ?
+If you just want to leave out any rows with incorrect data, the strip out the ones with errors before doing anything else. You have to decide yourself if you still need to validate the remaining xml before entering it into the DB. If you do the stripping in a restrictive way, it should no longer be necessary.
+
+If it's only occasional, I'd probably cache the last known good result and ignore any bad feeds altogether. (Maybe log a warning.) I'd try to avoid trying to correct a bad feed. If it's not even valid against the schema, who's to say the actual data is correct.
+Also, you should definitely raise the issue with the feed provider to try to get them to correct the issue.

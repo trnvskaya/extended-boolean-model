@@ -1,0 +1,68 @@
+Force windows to refresh a disk FAT
+windows winapi
+I have a separate partition on my disk formatted with FAT32. When I hibernate windows, I want to be able to load another OS, create/modify files that are on that partition, then bring Windows out of hibernation and be able to see the changes that I've made.
+I know what you're going to type, "Well, you're not supposed to do that!" and then link me to some specs about how what I'm trying to do is wrong/impossible/going to break EVERYTHING. However, I'm sure there's some way I can get around that. :)
+I don't need the FAT32 partition in Windows, except to read the files that were written there, then I'm done - so whatever the solution is, it's acceptable for the disk to be completely inaccessible for a period of time. Unfortunately, I can't take the entire physical disk offline because it is just a partition of the same physical device that windows is installed on -- just the partition.
+These are the things I've tried so far...
+
+Google it. I got at least one "this is NEVER going to happen" answer. Unacceptable! :)
+Unmount the disk before hibernating. Mount after coming out of hibernation. This seems to have no effect. Windows still thinks the FAT is the same as it was before, so whatever data I wrote to disk is lost, and any files I resized are corrupted. If any of the file was cached, it's even worse.
+Use DeviceIoControl to call IOCTL_DISK_UPDATE_PROPERTIES to try and refresh the disk (but the partition table hasn't changed, so this doesn't really do anything).
+
+Is there any way to invalidate the disk/volume read cache to force windows to go back to the disk? 
+I thought about opening the partition and reading/writing directly by using libfat and bypassing the cache or something is overkill.
+
+
+My memory is that the FAT table is read during the OS boot and mounting of the volume.  Can't you do a shutdown, then modify the FAT, then reboot Windows?
+
+Well, you're not supposed to do that! ;-)
+Since the operating system (Windows in this case, but Linux is the same) writes some of its internal filesystem structures in the hibernation image, it is going to be very confused if the disk contents change while it's "running" (think of hibernation as just a long pause in the operating system's execution).
+What I can suggest is that you completely bypass the issue: format the partition as ext2. There are Windows programs to read an ext2 partition, which you can use to get data out of it, and most modern operating systems should be able to read/write it (since it's a quite common Unix-style filesystem). Avoid ext2 IFS drivers; you want to take the filesystem access out of the kernel and into a program which you can open and close at will.
+
+Use Linux to create the partition as a hidden FAT32 partition.  Linux will let you mount the partition and write files.  Windows will not let you mount the partition and read files, and Windows will not corrupt the partition.  But there are third party libraries that will read the partition while Windows is running.
+To clarify, hidden means that the partition type is different from an ordinary FAT32 partition type.  If your ordinary partition type is 0x0C then the corresponding hidden type is 0x1C.
+
+As far as I can tell, Windows does caching at the disk level.  However, if a partition has a type that Windows refuses to read or write (ext2, hidden FAT32, etc.) then that partition's contents should never get into Windows caches in the first place.
+
+So I finally got a solution to my problem. In my mind, I associated Mount Point with Mount. These are NOT the same thing. Removing all of the volume mount points does not make the volume unmounted. It's still mounted but not in the sense that you have a path you can access in explorer.
+This is the article that started it all.
+It also goes to show that searching for your EXACT problem, as opposed to the perceived problem can help a lot!
+So there were a couple of solutions, one was to constantly call NtSetSystemInformation() in a tight loop to set the "SYSTEMCACHEINFORMATION" property to essentially empty/clear the cache whenever the system is going to hibernation. Then stop the loop when you come out. This, to me, seemed like it could affect system performance. So I discarded it.
+Even better though, is the recommended solution to a slightly different problem presented in this MSDN article, which provides direction to an even better solution to the problem: Dismounting Volumes in a Hibernate Once/Resume Many Configuration
+Now I have a service which will flush the write caches, then lock and dismount the volume whenever the system goes into hibernation/sleep and release the lock on the volume as soon as it comes out. 
+Here's a little bit of code.
+OnHibernate>
+volumeHandle = CreateFile(volumePath,
+                          GENERIC_READ|GENERIC_WRITE, 
+                          FILE_SHARE_READ|FILE_SHARE_WRITE,
+                          NULL,
+                          OPEN_EXISTING, 
+                          FILE_ATTRIBUTE_NORMAL,
+                          0 );
+FlushFileBuffers( volumeHandle );
+DeviceIoControl( volumeHandle, FSCTL_LOCK_VOLUME, NULL, 0, NULL, 0, &cbReturned, NULL ) ;
+DeviceIoControl( volumeHandle, FSCTL_DISMOUNT_VOLUME, NULL, 0, NULL, 0, &cbReturned, NULL );
+//Keep the handle open here.
+//System hibernates.
+
+OnResume>
+DeviceIoControl( volumeHandle, FSCTL_UNLOCK_VOLUME, NULL, 0, NULL, 0, &cbReturned, NULL )
+CloseHandle(volumeHandle)
+
+Hopefully this helps someone else out in the future :)
+
+On a related but different problem, I used the following:
+Running cmd as administrator (works from batch file)
+
+DISKPART
+  SELECT G
+  REMOVE
+  ASSIGN LETTER=G
+EXIT
+This unmounts the volume (G:) and then remounts it. Any read of the disk (in my case a device pretending to be a USB Mass Storage Device formatted as FAT16) will actually read the device, so the read cache is effectively flushed.
+Downside is that starting DISKPART takes about 4 seconds, but that's probably not a problem in a hibernating situation.
+
+With DOS, it was typing ctrl+c, twice if I recall well.
+With Linux,  sync; echo 3 > /proc/sys/vm/drop_caches  or a script thereof, of course ;-)
+With Windows, interpolate ;-) Or install VirtualBox and Ubuntu+Wine to develop compatibly.
+Well, I vaguely remember that former Windows used a diskcache program to start a process and that diskcache could be used to send the process a signal to flush and purge the whole cache.  If things have evolved gently, you might be able to send such a signal to a Windows process.  Sorry I'm no longer using Windows partly because of such obscurity.

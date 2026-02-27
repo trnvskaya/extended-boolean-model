@@ -1,0 +1,216 @@
+What control is this? ("Open" Button with Drop Down)
+.net winforms .net-2.0
+The "Open" button on the open file dialog used in certain windows applications includes a dropdown arrow with a list of additional options -- namely "Open with..".  
+I haven't seen this in every windows application, so you may have to try a few to get it, but SQL Server Management Studio and Visual Studio 2005 will both show the button that way if you go to the menu and choose File->Open->File...
+I want to use a button like this with a built-in list in one of my applications, but I can't find the control they're using anywhere in visual studio.  I should clarify that I'm looking for that specific button, not the entire dialog.  Any thoughts?
+
+
+I don't think there's a built-in control that can do it in .NET.  I'm poking around in the MSDN documentation for the standard Windows Button control, but it doesn't look like it's there.
+I did find a Code Project article with a custom implementation; this might help a little.
+
+I've not familiar with using either of these, but try searching msdn for splitbutton or dropdownbutton.  I think those are similar to what you're looking for.
+
+I think what you are looking for is called a toolStripSplitButton. It is only available in a toolStrip. But you can add a toolStripContainer anywhere on your form and then put the toolStrip and toolStripSplitButton inside your container. 
+You won't want to show the grips so you'll want to set your gripMargin = 0. You can also set your autosize=true so that the toolstrip conforms to your button.  The button will just look like a normal button (except for the split part) on your form.
+
+Since I found the control in Windows itself, I was hoping to find it built-in somewhere already so I didn't have to add anything to my code-base to use it.  But the split button at this link (found via the msdn suggestion) looks pretty promising.
+I'll try it later myself, but I don't know how well it will handle visual styles.
+
+Here's my split button implementation.  It does not draw the arrow, and the focus/unfocus behavior is a little different.
+Both mine and the originals handle visual styles and look great with Aero.
+Based on http://wyday.com/splitbutton/
+using System;
+using System.Collections.Generic;
+using System.Text;
+using System.Windows.Forms;
+using System.Windows.Forms.VisualStyles;
+using System.Drawing;
+using System.ComponentModel;
+using System.Diagnostics;
+
+// Original: http://blogs.msdn.com/jfoscoding/articles/491523.aspx
+// Wyatt's fixes: http://wyday.com/splitbutton/
+// Trimmed down and redone significantly from that version (Nick 5/6/08)
+namespace DF
+{
+    public class SplitButton : Button
+    {
+        private ContextMenuStrip m_SplitMenu = null;
+        private const int SplitSectionWidth = 14;
+        private static int BorderSize = SystemInformation.Border3DSize.Width * 2;
+        private bool mBlockClicks = false;
+        private Timer mTimer;
+
+        public SplitButton()
+        {
+            this.AutoSize = true;
+            mTimer = new Timer();
+            mTimer.Interval = 100;
+            mTimer.Tick += new EventHandler(mTimer_Tick);
+        }
+
+        private void mTimer_Tick(object sender, EventArgs e)
+        {
+            mBlockClicks = false;
+            mTimer.Stop();
+        }
+
+        #region Properties
+        [DefaultValue(null)]
+        public ContextMenuStrip SplitMenu
+        {
+            get
+            {
+                return m_SplitMenu;
+            }
+            set
+            {
+                if (m_SplitMenu != null)
+                    m_SplitMenu.Closing -= 
+                        new ToolStripDropDownClosingEventHandler(m_SplitMenu_Closing);
+
+                m_SplitMenu = value;
+
+                if (m_SplitMenu != null)
+                    m_SplitMenu.Closing += 
+                        new ToolStripDropDownClosingEventHandler(m_SplitMenu_Closing);
+            }
+        }
+
+        private void m_SplitMenu_Closing(object sender, ToolStripDropDownClosingEventArgs e)
+        {
+            HideContextMenuStrip();
+            // block click events for 0.5 sec to prevent re-showing the menu
+
+        }
+
+        private PushButtonState _state;
+        private PushButtonState State
+        {
+            get
+            {
+                return _state;
+            }
+            set
+            {
+                if (!_state.Equals(value))
+                {
+                    _state = value;
+                    Invalidate();
+                }
+            }
+        }
+
+        #endregion Properties
+
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            if (Enabled)
+                State = PushButtonState.Normal;
+            else
+                State = PushButtonState.Disabled;
+
+            base.OnEnabledChanged(e);
+        }
+
+        protected override void OnMouseClick(MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left)
+                return;
+            if (State.Equals(PushButtonState.Disabled))
+                return;
+            if (mBlockClicks)
+                return;
+
+            if (!State.Equals(PushButtonState.Pressed))
+                ShowContextMenuStrip();
+            else
+                HideContextMenuStrip();
+        }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            if (!State.Equals(PushButtonState.Pressed) && !State.Equals(PushButtonState.Disabled))
+            {
+                State = PushButtonState.Hot;
+            }
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            if (!State.Equals(PushButtonState.Pressed) && !State.Equals(PushButtonState.Disabled))
+            {
+                if (Focused)
+                {
+                    State = PushButtonState.Default;
+                }
+
+                else
+                {
+                    State = PushButtonState.Normal;
+                }
+            }
+        }
+
+        protected override void OnPaint(PaintEventArgs pevent)
+        {
+            base.OnPaint(pevent);
+
+            Graphics g = pevent.Graphics;
+            Rectangle bounds = this.ClientRectangle;
+
+            // draw the button background as according to the current state.
+            if (State != PushButtonState.Pressed && IsDefault && !Application.RenderWithVisualStyles)
+            {
+                Rectangle backgroundBounds = bounds;
+                backgroundBounds.Inflate(-1, -1);
+                ButtonRenderer.DrawButton(g, backgroundBounds, State);
+
+                // button renderer doesnt draw the black frame when themes are off =(
+                g.DrawRectangle(SystemPens.WindowFrame, 0, 0, bounds.Width - 1, bounds.Height - 1);
+            }
+            else
+            {
+                ButtonRenderer.DrawButton(g, bounds, State);
+            }
+
+            StringFormat format = new StringFormat();
+            format.Alignment = StringAlignment.Center;
+            format.LineAlignment = StringAlignment.Center;
+
+            g.DrawString(Text, Font, SystemBrushes.ControlText, bounds, format);
+        }
+
+        private void ShowContextMenuStrip()
+        {
+            State = PushButtonState.Pressed;
+            if (m_SplitMenu != null)
+            {
+                m_SplitMenu.Show(this, new Point(0, Height), ToolStripDropDownDirection.BelowRight);
+            }
+        }
+
+        private void HideContextMenuStrip()
+        {
+            State = PushButtonState.Normal;
+            m_SplitMenu.Hide();
+            mBlockClicks = true;
+            mTimer.Start();
+        }
+    }
+}
+
+
+I used the draggable search in Spy++ (installed with VS) to look at the split open button on the file-open dialog of VS.
+This revealed that it's an ordinary windows button with a style which includes BS_DEFSPLITBUTTON.   That's a magic keyword which gets you to some interesting places, including
+http://www.codeplex.com/windowsformsaero/SourceControl/FileView.aspx?itemId=212902&changeSetId=9930
+and here
+http://msdn.microsoft.com/en-us/library/bb775949.aspx#using_splits
+Hope this helps you.  
+EDIT:
+I've actually just tried that code from CodePlex and it does create a split button - but you do have to make sure you've set the button's FlatStyle to 'System' rather than 'Standard' which is the default.   I've not bothered to hook-up the event handling stuff for the drop-down, but that's covered in the MSDN link, I think.
+Of course, this is Vista-only (but doesn't need Aero enabled, despite the name on codeplex) - if you need earlier OS support, you'll be back to drawing it yourself.
+
+I remembered that Ketarin has a button like that. 
+Using Reflector I found great open source control called wyDay.SplitButton.
+

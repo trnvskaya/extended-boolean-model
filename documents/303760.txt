@@ -1,0 +1,43 @@
+What are use-cases for a coroutine?
+use-case coroutine
+The concept of a coroutine sounds very interesting, but I don't know, if it makes sense in a real productive environment? What are use-cases for coroutines, that can be solved more elegant, simpler or more efficient as with other methods?
+
+
+True coroutines require support from your tooling - they need to be implemented by the compiler and supported by the underlying framework.
+One real world example of Coroutines is found with the "yield return" keyword provided in C# 2.0, which allows you to write a method that returns multiple values for looping. 
+The "yield return" does have limitations, however - the implementation uses a helper class to capture state, and it only supports a specific case of coroutine as generator (iterator).
+In the more general case, the advantage of Coroutines is that they make certain state based computations much easier to express and easier to understand - implementing a state machine as a set of coroutines can be more elegant than more common approaches. But, doing this requires support and tooling that doesn't yet exist in C# or Java.
+
+Coroutines are useful to implement producer/consumer patterns.
+For example, Python introduced coroutines in a language feature called generators, which was intended to simplify the implementation of iterators.
+They can also be useful to implement cooperative multitasking, where each task is a coroutine that yields to a scheduler/reactor.
+
+Some good answers describing what coroutines are.
+But for an actual use-case. Take a web server. It has multiple simultaneous connections, and it wants to schedule reading and writing all of them.
+This can be implemented using coroutines. Each connection is a coroutine that reads/writes a small amount of data, then "yields" control to the scheduler, which passes to the next coroutine (which does the same thing) as we cycle through all the available connections.
+
+Lots of them, for example:
+grep TODO *.c *.h | wc -l
+
+The pipeline above is exactly a coroutine: the grep command generates a sequence of lines which go to a buffer, the wc command "eats them up"; if the buffer fills, the grep "blocks" until the buffer empties, and if the buffer is empty, the wc command waits for new input.
+The thing about coroutines is that they are most often now used either in more constrained patterns, like the Python generators mentioned, or as pipelines.
+If you want to look more at them, see the Wikipedia articles, especially on coroutines and iterators.
+
+As a more-specific example in the producer/consumer line, something as simple as the humble batch reporting program could actually use co-routines.
+The key hint for that example is having a nontrivial work to consume input data (e.g. parsing data or accumulating charges and payments on an account), and non-trivial work to produce the output. When you have these characteristics:
+
+It is easy to organize/understand the input-side code if you can "emit" units of work at various places.
+It is likewise easy to organize/understand the output-side code if it can "grab" the next unit of work in a nested control structure.
+
+then coroutines and queues are both nice techniques to have at your disposal.
+
+Coroutines can be useful any time a system has two or more pieces of code whose most natural representation would be as a sequential series of steps which involve a lot of waiting.
+For example, consider a device which has an LCD-and-keypad user interface and a modem, and it needs to use the modem to periodically call and report its status independent of what the user at the keypad is doing.  The nicest way to write the user interface may be to use functions like "input_numeric_value(&CONV_SPEED_FORMAT, &conveyor_speed);" which will return when a user has entered a value, and the nicest way to handle the communication may be use functions like "wait_for_carrier();" which will return when the unit has either connected or determined it's not going to.
+Without coroutines, either the UI subsystem or the modem subsystem would have to be implemented using a state machine.  Using coroutines makes it possible for both subsystems to be written in the most natural style.  Note that it's important that neither subsystem ever goes very long without putting things into a "consistent" state and calling yield(), nor calls yield() without putting things into a "consistent" state first, but it's usually not hard to meet those constraints.
+Note that while one could use full-blown multitasking, that requires the use of locks all over the place any time shared state is altered.  Since the coroutine switcher won't ever switch things except at yield() calls, either routine can freely alter shared state so long as it ensures that everything in in order before the next yield, and is prepared for the other routine to alter state "during" the yield().
+
+I know this is almost 5 years since the question was asked, but I am surprised no one mentioned the use case of games where coroutines are used a lot to essentially time slice a computation.
+To maintain a consistent frame rate in a game, lets say 60 fps, you have about 16.6ms to execute code in each frame. That includes physics simulation, input processing, drawing/painting.
+Lets say your method is executed in every frame. If your method takes a long time and ends up spanning multiple frames, you are going to stagger rest of the computation in the game loop which results in the user seeing "jank". 
+What coroutines let you do is somehow time slice this computation so that it runs a little bit in each frame. 
+For that to happen, coroutines essentially allows the method to "yield" the computation back to the "caller" (in this case the game loop) so that the next time the method is called it resumes from where it left off.

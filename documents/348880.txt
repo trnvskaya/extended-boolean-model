@@ -1,0 +1,134 @@
+Getting week number off a date in MS SQL Server 2005?
+sql-server tsql
+Is it possible to create an sql statement that selects the week number (NOT the day of week - or the day number in a week). I'm creating a view to select this extra information along with a couple of other fields and thus can not use a stored procedure. I'm aware that it's possible to create a UDF to do the trick, but if at all possible i'd rather only have to add a view to this database, than both a view and a function.
+Any ideas? Also where i come from, the week starts monday and week 1 is the first week of the year with atleast 4 days.
+Related:
+
+How do I calculate the week number given a date?
+
+
+
+Looks like the DATEPART mssql function should help you out with ...
+DATEPART(wk, âJan 1, xxxxâ) = 1
+
+Well I'll be.. turns out there is a way to set the first day of the week, DATEFIRST
+SET DATEFIRST 1 -- for monday
+
+Update: Now I understand better, what the OP wants.. which is custom-logic for this. I don't think MSSQL would have functions with such rich level of customization. But I may be wrong... I think you'll have to roll your own UDF here...sorry 
+
+SELECT DATEPART( wk, 'enter the date over here' )
+This will return you the week number of date entered in quotes
+
+Looks like datepart will get you part of the way there, but you'll have to adjust to get your correct week number, based on the day of week of Jan 1 of the given year.  I'm not familiar enough with T-SQL to do that, but it should be possible.  Pity there isn't a mode argument as in MySQL
+
+Be aware that there are differences in what is regarded the correct week number, depending on the culture. Week numbers depend on a couple of assumptions that differ from country to country, see Wikipedia article on the matter. There is an ISO standard (ISO 8601) that applies to week numbers.
+The SQL server integrated DATEPART() function does not necessarily do The Right Thing. SQL Server assumes day 1 of week 1 would be January 1, for many applications that's wrong.
+Calculating week numbers correctly is non-trivial, and different implementations can be found on the web. For example, there's an UDF that calculates the ISO week numbers from 1930-2030, being one among many others. You'll have to check what works for you.
+This one is from Books Online (though you probably want to use the one from Jonas Lincoln's answer, the BOL version seems to be incorrect):
+CREATE FUNCTION ISOweek  (@DATE DATETIME)
+RETURNS INT
+AS
+BEGIN
+   DECLARE @ISOweek INT
+   SET @ISOweek = DATEPART(wk,@DATE) 
+                  +1 
+                  -DATEPART(wk,CAST(DATEPART(yy,@DATE) AS CHAR(4))+'0104')
+   -- Special cases: Jan 1-3 may belong to the previous year
+   IF (@ISOweek=0)
+      SET @ISOweek = dbo.ISOweek(CAST(DATEPART(yy,@DATE) - 1
+                     AS CHAR(4))+'12'+ CAST(24+DATEPART(DAY,@DATE) AS CHAR(2)))+1
+   -- Special case: Dec 29-31 may belong to the next year
+   IF ((DATEPART(mm,@DATE)=12) AND
+      ((DATEPART(dd,@DATE)-DATEPART(dw,@DATE))>= 28))
+      SET @ISOweek=1
+   RETURN(@ISOweek)
+END
+GO
+
+
+You need the ISO week. From http://www.sqlteam.com/forums/topic.asp?TOPIC_ID=60510, here's an implementation:
+drop function dbo.F_ISO_WEEK_OF_YEAR
+go
+create function dbo.F_ISO_WEEK_OF_YEAR
+    (
+    @Date	datetime
+    )
+returns 	int
+as
+/*
+Function F_ISO_WEEK_OF_YEAR returns the
+ISO 8601 week of the year for the date passed.
+*/
+begin
+
+declare @WeekOfYear 	int
+
+select
+    -- Compute week of year as (days since start of year/7)+1
+    -- Division by 7 gives whole weeks since start of year.
+    -- Adding 1 starts week number at 1, instead of zero.
+    @WeekOfYear =
+    (datediff(dd,
+    -- Case finds start of year
+    case
+    when	NextYrStart <= @date
+    then	NextYrStart
+    when	CurrYrStart <= @date
+    then	CurrYrStart
+    else	PriorYrStart
+    end,@date)/7)+1
+from
+    (
+    select
+    	-- First day of first week of prior year
+    	PriorYrStart =
+    	dateadd(dd,(datediff(dd,-53690,dateadd(yy,-1,aa.Jan4))/7)*7,-53690),
+    	-- First day of first week of current year
+    	CurrYrStart =
+    	dateadd(dd,(datediff(dd,-53690,aa.Jan4)/7)*7,-53690),
+    	-- First day of first week of next year
+    	NextYrStart =
+    	dateadd(dd,(datediff(dd,-53690,dateadd(yy,1,aa.Jan4))/7)*7,-53690)
+    from
+    	(
+    	select
+    		--Find Jan 4 for the year of the input date
+    		Jan4	= 
+    		dateadd(dd,3,dateadd(yy,datediff(yy,0,@date),0))
+    	) aa
+    ) a
+
+return @WeekOfYear
+
+end
+go
+
+
+have you considered using the WEEK function?
+This will get you the week of the year for the specified date that you pass in.
+SELECT { fn WEEK(GETDATE()) } AS WeekNumber, { fn WEEK(CONVERT(DATETIME, '2008-01-01 00:00:00', 102)) } AS FirstWeekOfYear, { fn WEEK(CONVERT(DATETIME, '2008-12-31 00:00:00', 102)) } AS LastWeekOfYear
+
+This outputs the following  SQL2000 and SQL2005:
+
+WeekNumber: 50    
+FirstWeekOfYear: 1
+LastWeekOfYear: 53
+
+I Hope this helps :)
+
+FORGET THE OTHER ANSWERS
+The question specifies "the week starts monday and week 1 is the first week of the year with atleast 4 days." This is ISO 8601 standard and what this answer provides. This function is used in production on our site.
+This is all you need:
+CREATE FUNCTION ISOweek  (@DATE DATETIME)
+RETURNS INT
+AS
+BEGIN
+    RETURN (datepart(DY, datediff(d, 0, @DATE) / 7 * 7 + 3)+6) / 7
+END
+GO
+
+
+Why yet again, people make mountains out of mole-hills, it astounds me?
+So simple...
+select DATEPART(wk, GETDATE())
+

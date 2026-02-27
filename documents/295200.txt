@@ -1,0 +1,41 @@
+How to pass an unpersisted modified object from view back to controller without a form?
+asp.net-mvc model-binding
+Short: how does modelbinding pass objects from view to controller?
+Long:
+First, based on the parameters given by the user through a search form, some objects are retrieved from the database.
+These objects are given meta data that are visible(but not defining) to the customer (e.g: naming and pricing of the objects differ from region to region).
+Later on in the site, the user can click links that should show details of these objects.
+Because these meta data are important for displaying, but not defining, I need to get the previously altered object back in the controller.
+When I use the default asp.net mvc modelbinding, the .ToString() method is used. This off course doesn't return a relevant string for recreating the complete object.
+I would have figured the ISerializable interface would be involved, but this is not so.
+How should I go about to get the desired effect? I can't imagine I'm the first one to be faced with this question, so I guess I'm missing something somewhere...
+
+
+The default model binding takes form parameters by name and matches them up with the properties of the type specified in the argument list.  For example, your model has properties "Price" and "Name", then the form would need to contain inputs with ids/names "Price" and "Name" (I suspect it does a case insensitive match).  The binder uses reflection to convert the form values associated with these keys into the appropriate type and assigns it to the properties of a newly created object of the type specified by the parameter (again derived by reflection).
+You can actually look at (and download) the source for this at http://www.codeplex.com/aspnet, although you'll have to drill down into the MVC source from there.  I'd give a link to the DefaultModelBinder source, but the way they are constructed, I believe the link changes as revisions are introduced.
+So, to answer your question, you need to have parameters (could be hidden) on your form that correspond to the properties of the object that you want to recreate.  When you POST the form (in the view) to the controller, the binder should reconstitute an object of the specified type using the form parameters.  If  you need to do translation from the values in the form parameter to the object properties, you'll probably need to implement your own custom model binder.
+[EDIT]  In response to your second post:
+Let's say that we want to have a link back to an action that uses a customized object.  We can store the customized object in TempData (or the Session if we need it to last more through more than one postback) with a particular key.  We can then construct the action link and provide the key of the object as value to the ActionLink in an anonymous class.  This will pass back the key as a Request parameter.  In our action we can use the key from this parameter to retrieve the object from TempData.
+<%= Html.ActionLink( ViewData["CustomObject1",
+                     "Select",
+                     new { TempDataKey = ViewData["CustomObject1_Key"] }
+                   ) %>
+&nbsp;
+
+public ActionResult Select()
+{
+    Entity custObj = null;
+    string objKey = Request.Params["TempDataKey"];
+    if (!string.IsNullOrEmpty(objKey))
+    {
+       custObj = (Entity)TempData[objKey];
+    }
+
+    ... continue processing
+}
+
+
+@tvanfosson
+Thanks for your explanation, but what about links? (no forms involved)
+Currently the Html.ActionLink(c=>c.Action(parameter), "label") takes objects as parameter. These have to be translated into URL parts. For this, MVC ALWAYS goes to the .ToString() method. I don't want to serialize my object in the ToString method.
+Shouldn't I be able to somehow help the framework serialize my object? Say through the ISerialize interface or something?

@@ -1,0 +1,183 @@
+How do I call controller/view methods from the console in Rails?
+ruby-on-rails console
+When I load script/console, some times I want play with the output of a controller or a view helper method.
+Are there ways to:
+
+simulate a request?
+call methods from a controller instance on said request?
+test helper methods, either via said controller instance or another way?
+
+
+
+Here's one way to do this through the console:
+>> foo = ActionView::Base.new
+=> #<ActionView::Base:0x2aaab0ac2af8 @assigns_added=nil, @assigns={}, @helpers=#<ActionView::Base::ProxyModule:0x2aaab0ac2a58>, @controller=nil, @view_paths=[]>
+
+>> foo.extend YourHelperModule
+=> #<ActionView::Base:0x2aaab0ac2af8 @assigns_added=nil, @assigns={}, @helpers=#<ActionView::Base::ProxyModule:0x2aaab0ac2a58>, @controller=nil, @view_paths=[]>
+
+>> foo.your_helper_method(args)
+=> "<html>created by your helper</html>"
+
+Creating a new instance of ActionView::Base gives you access to the normal view methods that your helper likely uses.  Then extending YourHelperModule mixes its methods into your object letting you view their return values.
+
+Another way to do this is to use the rails debugger. There's a Rails Guide about debugging at http://guides.rubyonrails.org/debugging_rails_applications.html
+Basically, start the server with the -u option:
+./script/server -u
+
+And then insert a breakpoint into your script where you would like to have access to the controllers/helpers/etc..
+class EventsController < ApplicationController
+  def index
+    debugger
+  end
+end
+
+And when you make a request and hit that part in the code, the server console will return a prompt where you can then make requests, view objects, etc.. from a command prompt. When finished, just type 'cont' to continue execution. There are also options for extended debugging, but this should at least get you started.
+
+To call helpers, use the helper â¦hmmâ¦ helper.
+$ ./script/console
+>> helper.number_to_currency('123.45')
+=> "R$ 123,45"
+
+If you want to use a helper that's not included by default (say, because you removed helper :all from ApplicationController), just include the helper.
+>> include BogusHelper
+>> helper.bogus
+=> "bogus output"
+
+As for dealing with controllers, I quote Nick's answer:
+
+> app.get '/posts/1'
+> response = app.response
+# you now have a rails response object much like the integration tests
+
+> response.body            # get you the HTML
+> response.cookies         # hash of the cookies
+
+# etc, etc
+
+
+
+The earlier answers are calling helpers but the following will help for calling controller methods.  I have used this on rails 2.3.2.
+first add the following code to your .irbrc file (which can be in your home directory)
+class Object
+   def request(options = {})
+     url=app.url_for(options)
+     app.get(url)
+     puts app.html_document.root.to_s    
+  end
+end
+
+then in the rails console you can type something like...
+request(:controller => :show, :action => :show_frontpage)
+
+...and the html will be dumped to the console.
+
+An easy way to call a controller action from script/console and view/manipulate the response object is:
+> app.get '/posts/1'
+> response = app.response
+# you now have a rails response object much like the integration tests
+
+> response.body            # get you the HTML
+> response.cookies         # hash of the cookies
+
+# etc, etc
+
+The app object is an instance of ActionController::Integration::Session
+This works for me using Rails 2.1 and 2.3, I did not try earlier versions.
+
+If method is POST method then
+app.post 'controller/action?parameter1=value1&parameter2=value2'
+
+[ here parameters will be as per your applicability ]
+else if it is GET method then
+app.get 'controller/action'
+
+
+If you need to test from the console (tested on Rails 3.1 and 4.1):
+Call Controller Actions:
+app.get '/'              
+   app.response            
+   app.response.headers  # => { "Content-Type"=>"text/html", ... }
+   app.response.body     # => "<!DOCTYPE html>\n<html>\n\n<head>\n..." 
+
+ApplicationController methods:
+foo = ActionController::Base::ApplicationController.new
+foo.public_methods(true||false).sort
+foo.some_method 
+
+Route Helpers:
+app.myresource_path     # => "/myresource" 
+app.myresource_url      # => "http://www.example.com/myresource"
+
+View Helpers:
+foo = ActionView::Base.new
+
+foo.javascript_include_tag 'myscript' #=> "<script src=\"/javascripts/myscript.js\"></script>"
+
+helper.link_to "foo", "bar" #=> "<a href=\"bar\">foo</a>"
+
+ActionController::Base.helpers.image_tag('logo.png')  #=> "<img alt=\"Logo\" src=\"/images/logo.png\" />"
+
+Render:
+views = Rails::Application::Configuration.new(Rails.root).paths["app/views"]
+views_helper = ActionView::Base.new views
+views_helper.render 'myview/mytemplate'
+views_helper.render file: 'myview/_mypartial', locals: {my_var: "display:block;"}
+views_helper.assets_prefix  #=> '/assets'
+
+ActiveSupport methods:
+require 'active_support/all'
+1.week.ago
+=> 2013-08-31 10:07:26 -0300
+a = {'a'=>123}
+a.symbolize_keys
+=> {:a=>123}
+
+Lib modules:
+> require 'my_utils'
+ => true 
+> include MyUtils
+ => Object 
+> MyUtils.say "hi"
+evaluate: hi
+ => true 
+
+
+In rails 3, try this:
+session = ActionDispatch::Integration::Session.new(Rails.application)
+session.get(url)
+body = session.response.body
+
+Body will contain the HTML of the url.
+How to route and render (dispatch) from a model in Rails 3
+
+You can access your methods in Rails Console like following
+controller.method_name
+helper.method_name
+
+
+Here is how to make an authenticated POST request, using Refinery as an example:
+# Start Rails console
+rails console
+# Get the login form
+app.get '/community_members/sign_in'
+# View the session
+app.session.to_hash
+# Copy the CSRF token "_csrf_token" and place it in the login request.
+# Log in from the console to create a session
+app.post '/community_members/login', {"authenticity_token"=>"gT7G17RNFaWUDLC6PJGapwHk/OEyYfI1V8yrlg0lHpM=",  "refinery_user[login]"=>'chloe', 'refinery_user[password]'=>'test'}
+# View the session to verify CSRF token is the same
+app.session.to_hash
+# Copy the CSRF token "_csrf_token" and place it in the request. It's best to edit this in Notepad++
+app.post '/refinery/blog/posts', {"authenticity_token"=>"gT7G17RNFaWUDLC6PJGapwHk/OEyYfI1V8yrlg0lHpM=", "switch_locale"=>"en", "post"=>{"title"=>"Test", "homepage"=>"0", "featured"=>"0", "magazine"=>"0", "refinery_category_ids"=>["1282"], "body"=>"Tests do a body good.", "custom_teaser"=>"", "draft"=>"0", "tag_list"=>"", "published_at(1i)"=>"2014", "published_at(2i)"=>"5", "published_at(3i)"=>"27", "published_at(4i)"=>"21", "published_at(5i)"=>"20", "custom_url"=>"", "source_url_title"=>"", "source_url"=>"", "user_id"=>"56", "browser_title"=>"", "meta_description"=>""}, "continue_editing"=>"false", "locale"=>:en}
+
+You might find these useful too if you get an error:
+app.cookies.to_hash
+app.flash.to_hash
+app.response # long, raw, HTML
+
+
+One possible aproach for Helper method testing in rails console is
+Struct.new(:t).extend(YourHelper).your_method(*arg)
+and for reload and do
+reload!; Struct.new(:t).extend(YourHelper).your_method(*arg)

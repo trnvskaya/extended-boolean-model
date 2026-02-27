@@ -1,0 +1,51 @@
+How to simulate memory allocation errors
+c linux unit-testing gcc memory-management
+My C application uses 3rd libraries, which do their own memory management.
+In order to be robust, my application has code to deal with failures of library functions due to lack of free memory.
+I would like to test this code, and for this, I need to simulate failures due to lack of memory.
+What tool/s are recommended for this?
+My environment is Linux/gcc.
+
+
+Create your own malloc wrapper which will randomly return null instead of a valid pointer. Well, or which fails consistently if you want to unit test.
+
+You can write your own mock library with the same interface as your 3rd party library instead of it.  You can also use LD_PRELOAD to override selected functions of the 3rd party library.
+/Allan
+
+I can give a Linux (maybe POSIX) specific version: __malloc_hook, __realloc_hook, __free_hook. These are declared in malloc.h.
+EDIT: A little elaboration: these are function pointers (see malloc.h and their man-page for the exact declaration), but beware: these are not exactly standards, just GNU extensions. So if portability is an issue, don't use this.
+A little less platform-dependent solution might be that you declare a malloc macro. If you're testing, this calls a hook and the real malloc.
+memhook.h:
+#define malloc(s)    (my_malloc(s))
+
+memhook.c:
+#include "memhook.h"
+#undef malloc
+#include <stdlib.h>
+
+etc.
+You can use this to detect leaks, randomly fail the allocation, etc.
+
+You can use ulimit to limit the amount of resources a user can use, including memory. So you create a test user, limit their memory use to something just enough to launch your program, and watch it die :)
+Example:
+ulimit -m 64
+
+Sets a memory limit of 64kb.
+
+You want the ulimit command in bash.  Try 
+help ulimit at a bash shell prompt.
+
+In addition, you should use Valgrind to test it all and get real useful reports about memory behavior of your program
+
+(As a complement to some of the previous answers)
+Checkout "Electric Fence" for an example of a malloc-intercepting library that you can use with your executable (using the LD_PRELOAD trick, for instance). 
+Once you've intercepted malloc, you can use whatever you want to trigger failures. A randomly triggered failure would be a good stress test for the various parts of the system. You could also modify the failure probability based on the amount of memory requested.
+Yours is an interesting idea, by the way, clearly something I'd like to do on some of my code...
+
+On operating systems that overcommit memory (for example, Linux or Windows), it is simply not possible to handle out-of-memory errors.  malloc may return a valid pointer and later, when you try to dereference it, your operating system may determine that you are out of memory and kill the process.
+http://www.reddit.com/comments/60vys/how_not_to_write_a_shared_library/ is a good write-up on this.
+
+You might want to look at some of the recovery oriented computing sites, such as the Berkeley/Stanford ROC group.  I've heard some of these folks talk before, and they use code to randomly inject errors in the C runtime.  There's a link to their FIT tool at the bottom of their page.
+
+Have a look at the way sqlite3 does this.  They perform extensive unit testing, including out of memory testing.
+You may also want to look at their page on malloc, particularly Section 4.0.

@@ -1,0 +1,50 @@
+Is it possible to store and retrieve a boolean value in a varchar field using Java JDBC?
+java jdbc types resultset
+quick question: my customer has a situation where he has his database with a varchar field and the corresponding jdbc code is storing/retrieving a boolean.
+I guess that the boolean values false and true are going to be translated to "0" and "1" but I would like to have a confirmation of this (I can't find the precise behavior specification online, maybe it depends on each driver, Oracle in this case).
+I know I could experiment by myself, but I want to have a try at stackoverflow.com!
+Thanks for your answer,
+Eric.
+
+
+Unfortunately, BOOLEAN semantics are highly database-specific.  I'm guessing that the Oracle driver is going to translate boolean values to a VARCHAR field into "true" and "false", rather than 0 and 1, but you should verify this yourself.
+
+I agree with the answer that the semantics are highly database specific, which is why I think the important answer is that you shouldn't do this.  A change in JDBC driver or something similar could cause the implicit behaviour to break.
+Instead, If using raw JDBC, have the code take the boolean and convert it to an appropriate String ('true' or 'false' are obvious choices) and then set this value to the VARCHAR column.  On read from the VARCHAR column do the reverse, throwing or handling the exception case where the String is not one of the boolean values as expected.
+
+It works with MySQL, the table holds 0 for false and 1 for true.
+The output:
+123 => true
+456 => false
+
+The source code:
+package com.lurz.jdbc;
+import java.sql.*;
+// Test using Varchar for Boolean
+public class BoolTest {
+   public static void main(String[] args) throws ClassNotFoundException, SQLException {
+      Class.forName("com.mysql.jdbc.Driver");
+      Connection conn = DriverManager.getConnection("jdbc:mysql://localhost/booltest", "booltest", "booltest");
+      conn.prepareStatement("create table booltest (id bigint, truefalse varchar(10));").execute();
+      PreparedStatement stmt = conn.prepareStatement("insert into booltest (id, truefalse) values (?, ?);");
+      stmt.setLong(1, (long)123);
+      stmt.setBoolean(2, true);
+      stmt.execute();
+      stmt.setLong(1, (long)456);
+      stmt.setBoolean(2, false);
+      stmt.execute();
+      ResultSet rs = conn.createStatement().executeQuery("select id, truefalse from booltest");
+      while (rs.next()) {
+         System.out.println(rs.getLong(1)+ " => " + rs.getBoolean(2));
+      }  
+   }
+}
+
+
+Thanks for all your answers,
+After a bit of experimentation I saw that Oracle was indeed using the values 0 and 1 to store boolean values in varchar2 columns without any mapping in the JDBC code.
+That said, if I can give a bit of context, we're going to fix that situation where things would just work "by accident". I just wanted to know if, in the meantime, the application would blow up.
+And, as I said, I wanted to see how effective the stackoverflow community was after having listened to the Joel/Jeff podcasts since the beginning!
+It is indeed effective!
+
+It is possible to use VARCHAR(2) for representing a Java Boolean in Oracle. However, I would advise against it and suggest you use a NUMBER(1) instead.  If the Boolean column has an index on it and you use it in a WHERE clause Oracle will apply the to_number numeric function on it to turn the "0" into a 0 or the "1" into a 1. Application of that function negates the use of the index on that column and will cause you to incur a full table scan.

@@ -1,0 +1,33 @@
+Can any processing be done on the model? [MVC]
+model-view-controller
+I've decided to make a big push towards MVC for all new sites I make.  I have a question about whether or not you can have any processing on the model level.
+The case that brought up this question is a video site.  I have a Video class (model) and one of the things I need to do when a user views the video I need the view to be logged in the database.  I'm not sure if I need to add a query in the controller or if I can add a addView method in the Video class.
+The basic underlying question for me is what kind of methods am I limited to in the models?  Can it be anything or does it have to be only accessor (a.k.a getValue/setValue) methods?
+
+
+I think your model is exactly the place to handle this.  Now, your model is necessarily composed of just your entity classes.  Your model, in my opinion, would include your entities as well as any business logic that you need to implement.  Your controller should just be handling I/O for the view, invoking model methods to accomplish the actions invoked by the user via the user interface (view).
+
+Since you can use whatever model code you want with MVC (not just limited to LINQ) the short answer is yes. What should be done in the model is perhaps a better question. To my taste, I would add a ViewCount property (which probably maps to a column in the Video table, unless you are tracking per user in which case it would be in the UserVideo table). Then from the controller you can increment the value of this property.
+
+Ruby on Rails has the motto skinny controller, fat model. This doesn't apply to just Rails and should be practiced with any mvc framework.
+
+Keep in mind, there are many variations on MVC and no real "right way" to do things. Ultimately, how you design your classes comes down to personal preference. However, since you asked for design advice, here are my two cents:
+Business logic belongs in the controller. Keep it out of the model and view.
+Out of the many variations on the MVC pattern, the passive view style seems to be the easiest to test. In the passive view, your classes are designed as follows:
+
+Your controller is "smart: it makes changes to the database, updates the model, and syncronizes the view with the model. Apart from a reference to the model and view, the controller should hold as little stateful information as possible.
+The model is "stupid", meaning it only holds the state of the view and no additional business logic. Models should not hold a reference to either the view or controller.
+The view is "stupid", meaning it only copies information from the model to the UI, and it invokes event handlers which are handled by the controller. The view should contain no additional business logic. Views should not hold a reference to the controller or model.
+
+If you're an MVC purist, then it would not make sense for the model to update itself or the database since those responsibilities belong to the controller, so it would not be appropriate to create an addView method to your Video class.
+
+Here how I would do this.  It should be valid in pretty much any language.
+The View would initiate a method call to the controller's OnView() method, then display whatever the controller spits back to it (in a controlled way, of course... I'm thinking your view is going to contain a video player component, so you're going to get a video of some kind back from the controller)
+In your controller, have a method OnView() that does 3 things: instantiate the Video object (i.e. uses your data layer to get a model object), call the updateViewCount() method on the Video object, and display the video (by returning the Video object to the View, presumably).
+The Video model object contains data representing your video and any houskeeping stuff you need, which includes updateViewCount().  The justification for this is that a Video has a view count (aggregation).  If "view count" needs to be a complex object instead of just an integer, so be it.  Your data layer that creates Video objects from their primitive representation on disk (database?) will also be responsible for loading and creating the corresponding view count object as part of the creation of the Video.
+So, that's my $0.02.  You can see that I've created a 4th thing (the first three being Model, View, and Controller) that is the data layer.  I don't like Model objects loading and saving themselves because then they have to know about your database.  I don't like Controllers doing the loading and saving directly because it will result in duplicated code across Controllers.  Thus, a separate data layer that should only be directly accessed by Controllers.
+As a final note, here's how I look at views: everything the user does, and everything the user sees, should go through the view.  If there's a button on the screen that says "play", it shouldn't directly call a controller method (in many languages, there's no danger of doing this, but some, such as PHP, could potentially allow this).  Now, the view's "play" method would just turn around and call the appropriate method on the controller (which in the example is OnView), and do nothing else, but that layer is conceptually important even though it's functionally irrelevant.  Likewise, in most situations I'd expect your view to play a video stream, so the data returned by the controller to the view would be a stream in the format the view wants, which might not necessarily be your exact Model object (and adding that extra layer of decoupling may be advisable even if you can use the Video object directly).  This means that I might actually make my OnView method take a parameter indicating what video format I want to get back, or perhaps create separate view methods on the controller for each format, etc.
+Long winded enough for ya? :D  I anticipate a few flames from the Ruby developers, who seem to have a slightly different (though not incompatible) idea of MVC.
+
+With MVC, people seem to be struggling with fitting four layers into three. 
+The MVC paradigm does not properly address the data storage. And that's the "fourth layer". The Model has the the processing; but since it also addresses the data, programmers put SQL in there, too. Wrong. Make a data abstraction layer which is the only place that should talk to back-end storage. MVC should be DMVC.

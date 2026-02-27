@@ -1,0 +1,70 @@
+Finalizers and Dispose
+c# dispose idisposable finalizer disposable
+I've got a class named BackgroundWorker that has a thread constantly running. To turn this thread off, an instance variable named stop to needs to be true. 
+To make sure the thread is freed when the class is done being used, I've added IDisposable and a finalizer that invokes Dispose(). Assuming that stop = true does indeed cause this thread to exit, is this sippet correct? It's fine to invoke Dispose from a finalizer, right?
+Finalizers should always call Dispose if the object inherits IDisposable, right?
+/// <summary>
+/// Force the background thread to exit.
+/// </summary>
+public void Dispose()
+{
+    lock (this.locker)
+    {
+        this.stop = true;
+    }
+}
+
+~BackgroundWorker()
+{
+    this.Dispose();
+}
+
+
+
+Is the "stop" instance variable a property?  If not, there's no particular point in setting it during the finalizer - nothing is referencing the object anymore, so nothing can query the member.
+If you're actually releasing a resource, then having Dispose() and the finalizer perform the same work (first testing whether the work still needs to be done) is a good pattern.
+
+You need the full disposable pattern but the stop has to be something the thread can access. If it is a member variable of the class being disposed, that's no good because it can't reference a disposed class. Consider having an event that the thread owns and signaling that on dispose instead.
+
+First off, a severe warning.  Don't use a finalizer like you are.  You are setting yourself up for some very bad effects if you take locks within a finalizer.  Short story is don't do it.  Now to the original question.
+public void Dispose()
+{
+    Dispose(true);
+    GC.SuppressFinalize(this);
+}
+
+/// <summary>
+/// Force the background thread to exit.
+/// </summary>
+protected virtual void Dispose(bool disposing)
+{
+    if (disposing)
+    {
+        lock (this.locker)
+        {
+            this.stop = true;
+        }
+    }
+}
+
+~BackgroundWorker()
+{
+    Dispose(false);
+}
+
+The only reason to have a finalizer at all is to allow sub-classes to extend and release unmanaged resources.  If you don't have subclasses then seal your class and drop the finalizer completely.
+
+Out of interest, any reason this couldn't use the regular BackgroundWorker, which has full support for cancellation?
+Re the lock - a volatile bool field might be less troublesome.
+However, in this case your finalizer isn't doing anything interesting, especially given the "if(disposing)" - i.e. it only runs the interesting code during Dispose(). Personally I'd be tempted to stick with just IDisposable, and not provide a finalizer: you should be cleaning it up with Dispose().
+
+Your code is fine, although locking in a finalizer is somewhat "scary" and I would avoid it - if you get a deadlock... I am not 100% certain what would happen but it would not be good. However, if you are safe this should not be a problem. Mostly. The internals of garbage collection are painful and I hope you never have to see them ;)
+As Marc Gravell points out, a volatile bool would allow you to get rid of the lock, which would mitigate this issue. Implement this change if you can.
+nedruod's code puts the assignment inside the if (disposing) check, which is completely wrong - the thread is an unmanaged resource and must be stopped even if not explicitly disposing. Your code is fine, I am just pointing out that you should not take the advice given in that code snippet.
+Yes, you almost always should call Dispose() from the finalizer if implementing the IDisposable pattern. The full IDisposable pattern is a bit bigger than what you have but you do not always need it - it merely provides two extra possibilities:
+
+detecting whether Dispose() was called or the finalizer is executing (you are not allowed to touch any managed resources in the finalizer, outside of the object being finalized);
+enabling subclasses to override the Dispose() method.
+
+
+The object that implements the finalizer needs a reference to a flag--stored in another object--which the thread will be able to see; the thread must not have any strong reference, direct or indirect, to the object that implements the finalizer.  The finalizer should set the flag using something like a CompareExchange, and the thread should use a similar means to test it.  Note that if the finalizer of one object accesses another object, the other object may have been finalized but it will still exist.  It's fine for a finalizer to reference other objects if it does so in a way that won't be bothered by their finalization.  If all you're doing is setting a flag, you're fine.

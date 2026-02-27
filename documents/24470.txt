@@ -1,0 +1,97 @@
+SQL Server: Examples of PIVOTing String data
+sql-server tsql pivot
+Trying to find some simple SQL Server PIVOT examples.  Most of the examples that I have found involve counting or summing up numbers.  I just want to pivot some string data.  For example, I have a query returning the following.
+Action1 VIEW  
+Action1 EDIT  
+Action2 VIEW  
+Action3 VIEW  
+Action3 EDIT  
+
+I would like to use PIVOT (if even possible) to make the results like so:
+Action1 VIEW EDIT  
+Action2 VIEW NULL  
+Action3 VIEW EDIT  
+
+Is this even possible with the PIVOT functionality?
+
+
+Well, for your sample and any with a limited number of unique columns, this should do it.
+select 
+    distinct a,
+    (select distinct t2.b  from t t2  where t1.a=t2.a and t2.b='VIEW'),
+    (select distinct t2.b from t t2  where t1.a=t2.a and t2.b='EDIT')
+from t t1
+
+
+Remember that the MAX aggregate function will work on text as well as numbers. This query  will only require the table to be scanned once.
+SELECT Action,
+       MAX( CASE data WHEN 'View' THEN data ELSE '' END ) ViewCol, 
+       MAX( CASE data WHEN 'Edit' THEN data ELSE '' END ) EditCol
+ FROM t
+ GROUP BY Action
+
+
+If you specifically want to use the SQL Server PIVOT function, then this should work, assuming your two original columns are called act and cmd. (Not that pretty to look at though.)
+SELECT act AS 'Action', [View] as 'View', [Edit] as 'Edit'
+FROM (
+    SELECT act, cmd FROM data
+) AS src
+PIVOT (
+    MAX(cmd) FOR cmd IN ([View], [Edit])
+) AS pvt
+
+
+From http://blog.sqlauthority.com/2008/06/07/sql-server-pivot-and-unpivot-table-examples/:
+SELECT CUST, PRODUCT, QTY
+FROM Product) up
+PIVOT
+( SUM(QTY) FOR PRODUCT IN (VEG, SODA, MILK, BEER, CHIPS)) AS pvt) p
+UNPIVOT
+(QTY FOR PRODUCT IN (VEG, SODA, MILK, BEER, CHIPS)
+) AS Unpvt
+GO
+
+
+Table setup:
+CREATE TABLE dbo.tbl (
+    action VARCHAR(20) NOT NULL,
+    view_edit VARCHAR(20) NOT NULL
+);
+
+INSERT INTO dbo.tbl (action, view_edit)
+VALUES ('Action1', 'VIEW'),
+       ('Action1', 'EDIT'),
+       ('Action2', 'VIEW'),
+       ('Action3', 'VIEW'),
+       ('Action3', 'EDIT');
+
+Your table: 
+SELECT action, view_edit FROM dbo.tbl
+
+
+Query without using PIVOT: 
+SELECT Action, 
+[View] = (Select view_edit FROM tbl WHERE t.action = action and view_edit = 'VIEW'),
+[Edit] = (Select view_edit FROM tbl WHERE t.action = action and view_edit = 'EDIT')
+FROM tbl t
+GROUP BY Action
+
+Query using PIVOT: 
+SELECT [Action], [View], [Edit] FROM
+(SELECT [Action], view_edit FROM tbl) AS t1 
+PIVOT (MAX(view_edit) FOR view_edit IN ([View], [Edit]) ) AS t2
+
+Both queries result: 
+
+
+With pivot_data as
+(
+select 
+action, -- grouping column
+view_edit -- spreading column
+from tbl
+)
+select action, [view], [edit]
+from   pivot_data
+pivot  ( max(view_edit) for view_edit in ([view], [edit]) ) as p;
+

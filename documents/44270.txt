@@ -1,0 +1,110 @@
+Order an Array like another Array in C#
+c# arrays
+I'm looking for the best algorithm to take array A {0,1,2,3} and make order it like array B {3,1,0,2}.  Any ideas?
+
+
+So if you have two arrays and they hold the same data just in different order then just do this:
+A = B
+I suspect that is not your situation so I think we need more info.
+
+In the example you gave (an array of numbers), there would be no point in re-ordering A, since you could just use B.
+So, presumably these are arrays of objects which you want ordered by one of their properties.
+Then, you will need a way to look up items in A based on the property in question (like a hashtable).  Then you can iterate B (which is in the desired sequence), and operate on the corresponding element in A.
+
+Both array's contain the same values (or nearly so) but I need to force them to be in the same order.  For example, in array A the value "3045" is in index position 4 and in array B it is in index position 1.  I want to reorder B so that the index positions of like values are the same as A.
+
+If they are nearly the same then here is some pseudo code:
+Make an ArrayList
+Copy the contents of the smaller array to the arraylist
+for each item I in the larger array
+    FInd I in the ArrayList
+    Append I to a new array
+    Remove I from the arraylist
+
+
+What you need to do is determine the ordering of B and then apply that ordering to A.  One way to accomplish this is to undo the ordering of B and keep track of what happens along the way.  Then you can do the reverse to A.
+Here's some sketchy C# (sorry, I haven't actually run this)...
+Take a copy of B:
+List<int> B2 = new List<int>(B);
+
+Now sort it, using a sort function that records the swaps:
+List<KeyValuePair<int,int>> swaps = new List<KeyValuePair<int,int>>();
+B2.Sort( delegate( int x, int y ) {
+   if( x<y ) return -1;
+   if( x==y ) return 0;
+   // x and y must be transposed, so assume they will be:
+   swaps.Add( new KeyValuePair<int,int>(x,y) );
+   return 1;
+});
+
+Now apply the swaps, in reverse order, to A:
+swaps.Reverse();
+foreach( KeyValuePair<int,int> x in swaps )
+{
+   int t = A[x.key];
+   A[x.key] = A[x.value];
+   A[x.value] = t;
+}
+
+Depending how the built-in sort algorithm works, you might need to roll your own.  Something nondestructive like a merge sort should give you the correct results.
+
+Could the issue be resolved using a Dictionary so the elements have a relationship that isn't predicated on sort order at all?
+
+Here's my implementation of the comparer (uses LINQ, but can be easily adapted to older .net versions). You can use it for any sorting algorithms such as Array.Sort, Enumerable.OrderBy, List.Sort, etc.
+var data = new[] { 1, 2, 3, 4, 5 };
+var customOrder = new[] { 2, 1 };
+Array.Sort(data, new CustomOrderComparer<int>(customOrder));
+foreach (var v in data)
+    Console.Write("{0},", v);
+
+The result is 2,1,3,4,5, - any items not listed in the customOrder are placed at the end in the default for the given type (unless a fallback comparator is given)
+public class CustomOrderComparer<TValue> : IComparer<TValue>
+{
+    private readonly IComparer<TValue> _fallbackComparer;
+    private const int UseDictionaryWhenBigger = 64; // todo - adjust
+
+    private readonly IList<TValue> _customOrder;
+    private readonly Dictionary<TValue, uint> _customOrderDict;
+
+    public CustomOrderComparer(IList<TValue> customOrder, IComparer<TValue> fallbackComparer = null)
+    {
+        if (customOrder == null) throw new ArgumentNullException("customOrder");
+
+        _fallbackComparer = fallbackComparer ?? Comparer<TValue>.Default;
+
+        if (UseDictionaryWhenBigger < customOrder.Count)
+        {
+            _customOrderDict = new Dictionary<TValue, uint>(customOrder.Count);
+            for (int i = 0; i < customOrder.Count; i++)
+                _customOrderDict.Add(customOrder[i], (uint) i);
+        }
+        else
+            _customOrder = customOrder;
+    }
+
+    #region IComparer<TValue> Members
+
+    public int Compare(TValue x, TValue y)
+    {
+        uint indX, indY;
+        if (_customOrderDict != null)
+        {
+            if (!_customOrderDict.TryGetValue(x, out indX)) indX = uint.MaxValue;
+            if (!_customOrderDict.TryGetValue(y, out indY)) indY = uint.MaxValue;
+        }
+        else
+        {
+            // (uint)-1 == uint.MaxValue
+            indX = (uint) _customOrder.IndexOf(x);
+            indY = (uint) _customOrder.IndexOf(y);
+        }
+
+        if (indX == uint.MaxValue && indY == uint.MaxValue)
+            return _fallbackComparer.Compare(x, y);
+
+        return indX.CompareTo(indY);
+    }
+
+    #endregion
+}
+

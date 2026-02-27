@@ -1,0 +1,245 @@
+How can I get Axis 1.4 to not generate several prefixes for the same XML namespace?
+java xml soap namespaces axis
+I am receiving SOAP requests from a client that uses the Axis 1.4 libraries. The requests have the following form:
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" 
+                  xmlns:xsd="http://www.w3.org/2001/XMLSchema" 
+                  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <soapenv:Body>
+    <PlaceOrderRequest xmlns="http://example.com/schema/order/request">
+      <order>
+        <ns1:requestParameter xmlns:ns1="http://example.com/schema/common/request">
+          <ns1:orderingSystemWithDomain>
+            <ns1:orderingSystem>Internet</ns1:orderingSystem>
+            <ns1:domainSign>2</ns1:domainSign>
+          </ns1:orderingSystemWithDomain>
+        </ns1:requestParameter>
+        <ns2:directDeliveryAddress ns2:addressType="0" ns2:index="1" 
+                                   xmlns:ns2="http://example.com/schema/order/request">
+          <ns3:address xmlns:ns3="http://example.com/schema/common/request">
+            <ns4:zipcode xmlns:ns4="http://example.com/schema/common">12345</ns4:zipcode>
+            <ns5:city xmlns:ns5="http://example.com/schema/common">City</ns5:city>
+            <ns6:street xmlns:ns6="http://example.com/schema/common">Street</ns6:street>
+            <ns7:houseNum xmlns:ns7="http://example.com/schema/common">1</ns7:houseNum>
+            <ns8:country xmlns:ns8="http://example.com/schema/common">XX</ns8:country>
+          </ns3:address>
+[...]
+
+As you can see, several prefixes are defined for the same namespace, e.g. the namespace http://example.com/schema/common has the prefixes ns4, ns5, ns6, ns7 and ns8. Some long requests define several hundred prefixes for the same namespace.
+This causes a problem with the Saxon XSLT processor, that I use to transform the requests. Saxon limits the the number of different prefixes for the same namespace to 255 and throws an exception when you define more prefixes.
+Can Axis 1.4 be configured to define smarter prefixes, so that there is only one prefix for each namespace?
+
+
+I have the same issue.  For the moment, I've worked around it by writing a BasicHandler extension, and then walking the SOAPPart myself and moving the namespace reference up to a parent node.  I don't like this solution, but it does seem to work.
+I really hope somebody comes along and tells us what we have to do.
+EDIT
+This is way too complicated, and like I said, I don't like it at all, but here we go.  I actually broke the functionality into a few classes (This wasn't the only manipulation that we needed to do in that project, so there were other implementations)  I really hope that somebody can fix this soon.  This uses dom4j to process the XML passing through the SOAP process, so you'll need dom4j to make it work.
+public class XMLManipulationHandler extends BasicHandler {
+private static Log log = LogFactory.getLog(XMLManipulationHandler.class);
+private static List processingHandlers;
+
+public static void setProcessingHandlers(List handlers) {
+	processingHandlers = handlers;
+}
+
+protected Document process(Document doc) {
+	if (processingHandlers == null) {
+		processingHandlers = new ArrayList();
+		processingHandlers.add(new EmptyProcessingHandler());
+	}
+	log.trace(processingHandlers);
+	treeWalk(doc.getRootElement());
+	return doc;
+}
+
+protected void treeWalk(Element element) {
+	for (int i = 0, size = element.nodeCount(); i < size; i++) {
+		Node node = element.node(i);
+		for (int handlerIndex = 0; handlerIndex < processingHandlers.size(); handlerIndex++) {
+			ProcessingHandler handler = (ProcessingHandler) processingHandlers.get(handlerIndex);
+			handler.process(node);
+		}
+		if (node instanceof Element) {
+			treeWalk((Element) node);
+		}
+	}
+}
+
+public void invoke(MessageContext context) throws AxisFault {
+	if (!context.getPastPivot()) {
+		SOAPMessage message = context.getMessage();
+		SOAPPart soapPart = message.getSOAPPart();
+		ByteArrayOutputStream baos = new ByteArrayOutputStream();
+
+		try {
+			message.writeTo(baos);
+			baos.flush();
+			baos.close();
+
+			ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());
+			SAXReader saxReader = new SAXReader();
+			Document doc = saxReader.read(bais);
+			doc = process(doc);
+			DocumentSource ds = new DocumentSource(doc);
+			soapPart.setContent(ds);
+			message.saveChanges();
+		} catch (Exception e) {
+			throw new AxisFault("Error Caught processing document in XMLManipulationHandler", e);
+		}
+	}
+}
+
+}
+
+
+public interface ProcessingHandler {
+    public Node process(Node node);
+}
+
+
+public class NamespaceRemovalHandler implements ProcessingHandler {
+private static Log log = LogFactory.getLog(NamespaceRemovalHandler.class);
+private Namespace namespace;
+private String targetElement;
+private Set ignoreElements;
+
+public NamespaceRemovalHandler() {
+	ignoreElements = new HashSet();
+}
+
+public Node process(Node node) {
+	if (node instanceof Element) {
+		Element element = (Element) node;
+		if (element.isRootElement()) {
+			// Evidently, we never actually see the root node when we're called from
+			// SOAP...
+		} else {
+			if (element.getName().equals(targetElement)) {
+				log.trace("Found the target Element.  Adding requested namespace");
+				Namespace already = element.getNamespaceForURI(namespace.getURI());
+				if (already == null) {
+					element.add(namespace);
+				}
+			} else if (!ignoreElements.contains(element.getName())) {
+				Namespace target = element.getNamespaceForURI(namespace.getURI());
+				if (target != null) {
+					element.remove(target);
+					element.setQName(new QName(element.getName(), namespace));
+				}
+			}
+			Attribute type = element.attribute("type");
+			if (type != null) {
+				log.trace("Replacing type information: " + type.getText());
+				String typeText = type.getText();
+				typeText = typeText.replaceAll("ns[0-9]+", namespace.getPrefix());
+				type.setText(typeText);
+			}
+		}
+	}
+
+	return node;
+}
+
+public Namespace getNamespace() {
+	return namespace;
+}
+
+public void setNamespace(Namespace namespace) {
+	this.namespace = namespace;
+}
+
+/**
+ * @return the targetElement
+ */
+public String getTargetElement() {
+	return targetElement;
+}
+
+/**
+ * @param targetElement the targetElement to set
+ */
+public void setTargetElement(String targetElement) {
+	this.targetElement = targetElement;
+}
+
+/**
+ * @return the ignoreElements
+ */
+public Set getIgnoreElements() {
+	return ignoreElements;
+}
+
+/**
+ * @param ignoreElements the ignoreElements to set
+ */
+public void setIgnoreElements(Set ignoreElements) {
+	this.ignoreElements = ignoreElements;
+}
+
+public void addIgnoreElement(String element) {
+	this.ignoreElements.add(element);
+}
+}
+
+No warranty, etc, etc.
+
+Alter your client's wsdd to set enableNamespacePrefixOptimization to true
+<globalConfiguration >
+  <parameter name="enableNamespacePrefixOptimization" value="true"/>
+
+
+For the Request I use this to remove namespaces types:
+String endpoint = "http://localhost:5555/yourService";
+
+// Parameter to be send
+Integer secuencial = new Integer(11);  // 0011
+
+// Make the call
+Service  service = new Service();
+
+Call call = (Call) service.createCall();
+
+// Disable sending Multirefs
+call.setOption( org.apache.axis.AxisEngine.PROP_DOMULTIREFS, new java.lang.Boolean( false) ); 
+
+// Disable sending xsi:type
+call.setOption(org.apache.axis.AxisEngine.PROP_SEND_XSI, new java.lang.Boolean( false));  
+
+// XML with new line
+call.setOption(org.apache.axis.AxisEngine.PROP_DISABLE_PRETTY_XML, new java.lang.Boolean( false)); 
+
+// Other Options. You will not need them
+call.setOption(org.apache.axis.AxisEngine.PROP_ENABLE_NAMESPACE_PREFIX_OPTIMIZATION, new java.lang.Boolean( true)); 
+call.setOption(org.apache.axis.AxisEngine.PROP_DOTNET_SOAPENC_FIX, new java.lang.Boolean( true));
+
+call.setTargetEndpointAddress(new java.net.URL(endpoint));
+call.setSOAPActionURI("http://YourActionUrl");//Optional
+
+// Opertion Name
+//call.setOperationName( "YourMethod" );
+call.setOperationName(new javax.xml.namespace.QName("http://yourUrl", "YourMethod"));      
+
+// Do not send encoding style
+call.setEncodingStyle(null);
+
+// Do not send xmlns in the xml nodes
+call.setProperty(org.apache.axis.client.Call.SEND_TYPE_ATTR, Boolean.FALSE);
+
+/////// Configuration of namespaces
+org.apache.axis.description.OperationDesc oper;
+org.apache.axis.description.ParameterDesc param;
+oper = new org.apache.axis.description.OperationDesc();
+oper.setName("InsertaTran");
+param = new org.apache.axis.description.ParameterDesc(new javax.xml.namespace.QName("http://yourUrl", "secuencial"), org.apache.axis.description.ParameterDesc.IN, new javax.xml.namespace.QName("http://www.w3.org/2001/XMLSchema", "int"), int.class, false, false);
+oper.addParameter(param);
+
+oper.setReturnType(new javax.xml.namespace.QName("http://www.w3.org/2001/XMLSchema", "int"));
+oper.setReturnClass(int.class);
+oper.setReturnQName(new javax.xml.namespace.QName("http://yourUrl", "yourReturnMethod"));
+oper.setStyle(org.apache.axis.constants.Style.WRAPPED);
+oper.setUse(org.apache.axis.constants.Use.LITERAL);
+
+call.setOperation(oper);
+
+Integer ret = (Integer) call.invoke( new java.lang.Object [] 
+            { secuencial });
+

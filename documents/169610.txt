@@ -1,0 +1,132 @@
+strcat() new line, duplicate string
+c string
+I'm writing a function that gets the path environment variable of a system, splits up each path, then concats on some other extra characters onto the end of each path.
+Everything works fine until I use the strcat() function (see code below).
+char* prependPath( char* exeName )
+{
+    char* path = getenv("PATH");  
+    char* pathDeepCopy = (char *)malloc(strlen(path) + 1);
+    char* token[80];
+    int j, i=0; // used to iterate through array
+
+    strcpy(pathDeepCopy, path);
+
+    //parse and split
+
+    token[0] = strtok(pathDeepCopy, ":"); //get pointer to first token found and store in 0
+    //place in array
+    while(token[i]!= NULL) { //ensure a pointer was found
+        i++;
+        token[i] = strtok(NULL, ":"); //continue to tokenize the string
+    }
+
+    for(j = 0; j <= i-1; j++) {
+        strcat(token[j], "/");
+        //strcat(token[j], exeName);
+
+        printf("%s\n", token[j]); //print out all of the tokens
+    }
+}
+
+My shell output is like this (I'm concatenating "/which" onto everything):
+...
+/usr/local/applic/Maple/bin/which
+which/which
+/usr/local/applic/opnet/8.1.A.wdmguru/sys/unix/bin/which
+which/which
+Bus error (core dumped)
+
+I'm wondering why strcat is displaying a new line and then repeating which/which.
+I'm also wondering about the Bus error (core dumped) at the end.
+Has anyone seen this before when using strcat()?
+And if so, anyone know how to fix it?
+Thanks
+
+
+strtok() tokenizes in place.  When you start appending characters to the tokens, you're overwriting the next token's data.
+Also, in general it's not safe to simply concatenate to an existing string unless you know that the size of the buffer the string is in is large enough to hold the resulting string.  This is a major cause of bugs in C programs (including the dreaded buffer overflow security bugs).
+So even if strtok() returned brand-new strings unrelated to your original string (which it doesn't), you'd still be overrunning the string buffers when you concatenated to them.
+Some safer alternatives to strcpy()/strcat() that you might want to look into (you may need to track down implementations for some of these - they're not all standard):
+
+strncpy() - includes the target buffer size to avoid overruns.  Has the drawback of not always terminating the result string
+strncat()
+strlcpy() - similar to strncpy(), but intended to be simpler to use and more robust (http://en.wikipedia.org/wiki/Strlcat)
+strlcat()
+strcpy_s()  - Microsoft variants of these functions
+strncat_s()
+
+And the API you should strive to use if you can use C++:  the std::string class.  If you use the C++ std::string class, you pretty much do not have to worry about the buffer containing the string - the class manages all of that for you.
+
+strtok does not duplicate the token but instead just points to it within the string. So when you cat '/' onto the end of a token, you're writing a '\0' either over the start of the next token, or past the end of the buffer.
+Also note that even if strtok did returning copies of the tokens instead of the originals (which it doesn't), it wouldn't allocate the additional space for you to append characters so it'd still be a buffer overrun bug.
+
+strtok() does not give you a new string.
+It mutilates the input string by inserting the char '\0' where the split character was.
+So your use of strcat(token[j],"/") will put the '/' character where the '\0' was.
+Also the last token will start appending 'which' past the end of your allocated memory into uncharted memory.
+You can use strtok() to split a string into chunks. But if you want to append anything onto a token you need to make a copy of the token otherwise what your appending will spill over onto the next token.
+Also you need to take more care with your memory allocation you are leaking memory all over the place :-)
+PS. If you must use C-Strings. use strdup() to copy the string.
+char* prependPath( char* exeName )
+{
+    char* path         = getenv("PATH");
+    char* pathDeepCopy = strdup(path);
+    char* token[80];
+    int j, i; // used to iterate through array
+
+    token[0] = strtok(pathDeepCopy, ":");
+    for(i = 0;(token[i] != NULL) && (i < 80);++i)
+    {
+        token[i] = strtok(NULL, ":");
+    }
+
+    for(j = 0; j <= i; ++j)
+    {
+        char*  tmp = (char*)malloc(strlen(token[j]) + 1 + strlen(exeName) + 1);
+        strcpy(tmp,token[j]);
+        strcat(tmp,"/");
+        strcat(tmp,exeName);
+        printf("%s\n",tmp); //print out all of the tokens
+        free(tmp);
+    }
+    free(pathDeepCopy);
+}
+
+
+replace that with
+strcpy(pathDeepCopy, path);
+  //parse and split
+    token[0] = strtok(pathDeepCopy, ":");//get pointer to first token found and store in 0
+    //place in array
+    while(token[i]!= NULL) { //ensure a pointer was found
+    i++;
+    token[i] = strtok(NULL, ":"); //continue to tokenize the string
+    }
+
+// use new array for storing the new tokens 
+// pardon my C lang skills. IT's been a "while" since I wrote device drivers in C.
+const int I = i;
+const int MAX_SIZE = MAX_PATH;
+char ** newTokens = new char [MAX_PATH][I];
+for (int k = 0; k < i; ++k) {
+   sprintf(newTokens[k], "%s%c", token[j], '/');
+   printf("%s\n", newtoken[j]); //print out all of the tokens
+}
+
+this will replace overwriting the contents and prevent the core dump.
+
+If you're using C++, consider boost::tokenizer as discussed over here.
+If you're stuck in C, consider using strtok_r because it's re-entrant and thread-safe.  Not that you need it in this specific case, but it's a good habit to establish.
+Oh, and use strdup to create your duplicate string in one step.
+
+OK, first of all, be careful. You are losing memory.
+Strtok() returns a pointer to the next token and you are storing it in an array of chars. 
+Instead of char token[80] it should be char *token.
+Be careful also when using strtok. strtok practically destroys the char array called pathDeepCopy because it will replace every occurrence of ":" with '\0'.As Mike F told you above.
+Be sure to initialize pathDeppCopy using memset of calloc.
+So when you are coding token[i] there is no way of knowing what is being point at.
+And as token has no data valid in it, it is likely to throw a core dump because you are trying to concat. a string to another that has no valida data (token). 
+Perphaps th thing you are looking for is and array of pointers to char in which to store all the pointer to the token that strtok is returnin in which case, token will be like char *token[];
+Hope this helps a bit. 
+
+and don't forget to check if malloc returns NULL!

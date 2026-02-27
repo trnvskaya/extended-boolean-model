@@ -1,0 +1,39 @@
+SQL Server 2005 Linked Server to DB2 Performance issue
+sql-server db2
+I have a SQL Server 2005 machine with a JDE DB2 set up as a linked server.
+For some reason the performance of any queries from this box to the db2 box are horrible.
+For example. The following takes 7 mins to run from Management Studio
+SELECT     *
+FROM       F42119 
+WHERE     SDUPMJ >= 107256
+
+Whereas it takes seconds to run in iSeries Navigator
+Any thoughts? I'm assuming some config issue.
+
+
+My first thought would go to the drivers. Years ago I had to link DB2 to SQL Server 2000 and it was extremely difficult to find the correct combination of drivers and setup parameters that would work... 
+So maybe I'm biased because of that, but I would try upgrading or downgrading the driver or changing the setup so that the DB2 driver can run INPROC (if it's not already doing so).
+
+It might be a memory issue on your SQL Server machine. I recently learned that linked server queries use memory allocation by the OS. Whereas native SQL Server queries use memory pre-allocated by SQL Server. If your SQL Server machine is configured to use 90% or more of the server's memory, I would scale that back a bit. Maybe 60% is the right place to be.
+Another thing to check is the SQL Server processor priority. Make sure "Boost SQL Server priority" is not enabled.
+I assume you are going through ODBC for access. Remember that you are not writing native db2 queries here, but instead ODBC sql queries. If you only need read-only data, you may want to try configuring your ODBC datasource to read-only mode (if that is an option).
+
+I've had several issues with DB2 as a linked a server. I do not know if it will address your problems, but here is what fixed mine:
+1) Enabled lazy close support and pre-fetch during EXECUTE in the ODBC settings
+2) Add "FOR FETCH ONLY" on all selects
+3) Query using the SELECT * FROM OPENROWSET(LinkedServerName, 'SQL Command') method
+
+In certain searches SQL Server will decide to pull the entire table down to itself and sort and search the data within SQL Server instead of sending the query to the remote server.  This is usually a problem with collation settings.  
+Make sure the provider has the following options set:
+Data Access,
+Collation Compatible,
+Use Remote Collation
+Then create a new Linked Server using the provider and select the following provider options
+Dynamic Parameters,
+Nested Queries,
+Allow In Process
+After setting the options change the query slightly to get a new query plan.
+
+In a project with DB2 integration, I replaced every query via direct select or view by stored procedures calling the OPENQUERY function. 
+My interpretation is that SqlServer fetches the whole table before applying the WHERE conditions, whereas OPENQUERY passes the SQL statement directly to the db driver.
+Anyway, performance was acceptable after the modifications.

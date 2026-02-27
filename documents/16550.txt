@@ -1,0 +1,148 @@
+Best .NET build tool
+.net build-process nant
+
+Possible Duplicate:
+NAnt or MSBuild, which one to choose and when? 
+
+What is the best build tool for .NET?
+I currently use NAnt but only because I have experience with Ant. Is MSBuild preferred?
+
+
+Generally speaking, I get the impression that NAnt offers more flexibility compared to MSBuild, whereas (with my relatively simple needs) I've been fine with the latter so far.
+
+We use MSBuild, because we started with Visual Studio 2005 (now Visual Studio 2008), and MSBuild was already "built in" to the SDK - there is less maintenance on the build server. It's a NAnt clone, really - both tools are infinitely flexible in that they let you create custom build tasks in code, and both have a decent set of community build tasks already created.
+
+MSBuild Community Tasks
+NAntContrib
+
+
+We actually use a combination of NAnt and MSBuild with CruiseControl. NAnt is used for script flow control and calls MSBuild to compile projects. After the physical build is triggered, NAnt is used to publish the individual project build outputs to a shared location.
+I am not sure this is the best process. I think many of us are still looking for a great build tool. One promising thing I heard recently on .NET Rocks, episode 362, is James Kovac's PSake, a build system he based entirely on PowerShell. It sounds really promising since what you can do with PowerShell is fairly limitless in theory.
+
+I've used both and prefer NAnt. It's really hard for me to say one is "better" than the other.
+
+I have used both MSBuild and NAnt, and I much prefer MSBuild, mainly because it requires a lot less configuration by default. Although you can over-complicate things and load MSBuild down with a lot of configuration junk too, at its simplest, you can just point it at a solution/project file and have it go which, most of the time, for most cases, is enough.
+
+It also depends on what you're building. The MSBuild SDC Task library has a couple of special tasks. For example, for AD, BizTalk, etc.
+
+There are over 300 tasks included in
+  this library including tasks for:
+  creating websites, creating
+  application pools, creating
+  ActiveDirectory users, running FxCop,
+  configuring virtual servers, creating
+  zip files, configuring COM+, creating
+  folder shares, installing into the
+  GAC, configuring SQL Server,
+  configuring BizTalk 2004 and BizTalk
+  2006, etc.
+
+
+I'd just like to throw FinalBuilder in to the mix. It's not free, but if you're fed up with editing XML files and want a somewhat nicer (IMO) environment to work in I would give it a go.
+I've worked with all of them and have always went back to FinalBuilder.
+
+I use MSBuild completely for building.  Here's my generic MSBuild script that searches the tree for .csproj files and builds them:
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" DefaultTargets="Build">
+  <UsingTask AssemblyFile="$(MSBuildProjectDirectory)\bin\xUnit\xunitext.runner.msbuild.dll" TaskName="XunitExt.Runner.MSBuild.xunit"/>
+  <PropertyGroup>
+	<Configuration Condition="'$(Configuration)'==''">Debug</Configuration>
+    <DeployDir>$(MSBuildProjectDirectory)\Build\$(Configuration)</DeployDir>
+	<ProjectMask>$(MSBuildProjectDirectory)\**\*.csproj</ProjectMask>
+	<ProjectExcludeMask></ProjectExcludeMask>
+    <TestAssembliesIncludeMask>$(DeployDir)\*.Test.dll</TestAssembliesIncludeMask>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectFiles Include="$(ProjectMask)" Exclude="$(ProjectExcludeMask)"/>
+  </ItemGroup>
+
+  <Target Name="Build" DependsOnTargets="__Compile;__Deploy;__Test"/>
+
+  <Target Name="Clean">
+    <MSBuild Projects="@(ProjectFiles)" Targets="Clean"/>
+    <RemoveDir Directories="$(DeployDir)"/>
+  </Target>
+
+  <Target Name="Rebuild" DependsOnTargets="Clean;Build"/>
+
+  <!--
+  ===== Targets that are meant for use only by MSBuild =====
+  -->
+  <Target Name="__Compile">
+    <MSBuild Projects="@(ProjectFiles)" Targets="Build">
+      <Output TaskParameter="TargetOutputs" ItemName="AssembliesBuilt"/>
+    </MSBuild>
+    <CreateItem Include="@(AssembliesBuilt -> '%(RootDir)%(Directory)*')">
+      <Output TaskParameter="Include" ItemName="DeployFiles"/>
+    </CreateItem>
+  </Target>
+
+  <Target Name="__Deploy">
+    <MakeDir Directories="$(DeployDir)"/>
+    <Copy SourceFiles="@(DeployFiles)" DestinationFolder="$(DeployDir)"/>
+    <CreateItem Include="$(TestAssembliesIncludeMask)">
+      <Output TaskParameter="Include" ItemName="TestAssemblies"/>
+    </CreateItem>
+  </Target>
+
+  <Target Name="__Test">
+    <xunit Assembly="@(TestAssemblies)"/>
+  </Target>
+</Project>
+
+(Sorry if it's a little dense.  Markdown seems to be stripping out the blank lines.)
+It's pretty simple though once you understand the concepts and all the dependencies are handled automatically.  I should note that we use Visual Studio project files, which have a lot of logic built into them, but this system allows people to build almost identically both within the Visual Studio IDE or at the command line and still gives you the flexibility of adding things to the canonical build like the xUnit testing you see in the script above.
+The one PropertyGroup is where all the configuration happens and things can be customized, like excluding certain projects from the build or adding new test assembly masks.
+The ItemGroup is where the logic happens that finds all the .csproj files in the tree.
+Then there are the targets, which most people familiar with make, nAnt or MSBuild should be able to follow.  If you call the Build target, it calls _Compile, _Deploy and __Test.  The Clean target calls MSBuild on all the project files for them to clean up their directories and then the global deployment directory is deleted.  Rebuild calls Clean and then Build.
+
+Using a dynamic scripting language like Python, BOO, Ruby, etc. to create and maintain build scripts might be a good alternative to an XML based one like NAnt. (They tend to be cleaner to read than XML.)
+
+I use a commercial software, Automated Build Studio for the build purpose. 
+
+UppercuT uses NAnt to build and it is the insanely easy to use Build Framework.
+Automated Builds as easy as (1) solution name, (2) source control path, (3) company name for most projects!
+http://projectuppercut.org/
+Some good explanations here: UppercuT
+
+There is another new build tool (a very intelligent wrapper) called NUBuild. It's lightweight, open source and extremely easy to setup and provides almost no-touch maintenance. I really like this new tool, and we have made it a standard tool for our continuous build and integration of our projects (we have about 400 projects across 75 developers). Try it out.
+http://nubuild.codeplex.com/
+
+Easy to use command line interface
+Ability to target all .NET Framework
+versions, that is, 1.1, 2.0, 3.0 and 3.5
+Supports XML based configuration
+Supports both project and file
+references
+Automatically generates the âcomplete
+ordered build listâ for a given
+project â No touch maintenance.
+Ability to detect and display
+circular dependencies
+Perform parallel build -
+automatically decides which of the
+projects in the generated build list
+can be built independently.
+Ability to handle proxy assemblies
+Provides a visual clue to the build
+process, for example, showing â% completedâ,
+âcurrent statusâ, etc.
+Generates detailed execution log both
+in XML and text format
+Easily integrated with
+CruiseControl.NET continuous
+integration system
+Can use custom logger like XMLLogger
+when targeting 2.0 + version
+Ability to parse error logs
+Ability to deploy built assemblies to
+user specified location
+Ability to synchronize source code
+with source-control system
+Version management capability
+
+
+We're using Bounce, a framework for cleaner build scripts in C#.
+
+Rake and Albacore is an excellent combination. The power of Ruby and no XML.
+.NET Open Source 5 - .NET Automation with Rake and Albacore by Liam McLennan [Tekpub.com]

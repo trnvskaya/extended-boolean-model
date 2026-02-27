@@ -1,0 +1,59 @@
+C# - Optimising binary serialization for multi-dimensional generic arrays
+c# .net serialization binary
+I have a class that I need to binary serialize. The class contains one field as below:
+private T[,] m_data;
+
+These multi-dimensional arrays can be fairly large (hundreds of thousands of elements) and of any primitive type. When I tried standard .net serialization on an object the file written to disk was large and I think .net is storing a lot of repeated data about element types and possibly not as efficiently as could be done.
+I have looked around for custom serializers but have not seen any that deal with multi-dimensional generic arrays. I have also experimented with built-in .net compression on a byte array of the memory stream following serializing with some success, but not as quick / compressed as I had hoped.
+My question is, should I try and write a custom serializer to optimally serialize this array for the appropriate type (this seems a little daunting), or should I use standard .net serialization and add compression?
+Any advice on the best approach would be most appreciated, or links to resources showing how to tackle serialization of a multi-dimensional generic array - as mentioned existing examples I have found do not support such structures.
+
+
+The best code length/output size ratio would be to encode your array using BitConverter, converting all elements into their compact binary format. It's manual, I know, but will save 80-90% space compared to .NET binary serialization.
+
+Here's what I came up with.  The code below makes an int[1000][10000] and writes it out using the BinaryFormatter to 2 files - one zipped and one not.  
+The zipped file is 1.19 MB (1,255,339 bytes)
+Unzipped is 38.2 MB (40,150,034 bytes)
+        int width = 1000;
+        int height = 10000;
+        List<int[]> list = new List<int[]>();
+        for (int i = 0; i < height; i++)
+        {
+            list.Add(Enumerable.Range(0, width).ToArray());
+        }
+        int[][] bazillionInts = list.ToArray();
+        using (FileStream fsZ = new FileStream("c:\\temp_zipped.txt", FileMode.Create))
+        using (FileStream fs = new FileStream("c:\\temp_notZipped.txt", FileMode.Create))
+        using (GZipStream gz = new GZipStream(fsZ, CompressionMode.Compress))
+        {
+            BinaryFormatter f = new BinaryFormatter();
+            f.Serialize(gz, bazillionInts);
+            f.Serialize(fs, bazillionInts);
+        }
+
+I can't think of a better/easy way to do this.  The zipped version is pretty damn tight.
+I'd go with the BinaryFormatter + GZipStream.  Making something custom would not be fun at all.
+
+[edit by MG]
+I hope you won't be offended by an edit, but the uniform repeated Range(0,width) is skewing things vastly; change to:
+        int width = 1000;
+        int height = 10000;
+        Random rand = new Random(123456);
+        int[,] bazillionInts = new int[width, height];
+        for(int i = 0 ; i < width;i++)
+            for (int j = 0; j < height; j++)
+            {
+                bazillionInts[i, j] = rand.Next(50000);
+            }
+
+And try it; you'll see temp_notZipped.txt at 40MB, temp_zipped.txt at 62MB. Not so appealing...
+
+Can you define "large"? The 1000x10000xint example (another post) comes out at 40Mb; and 1000x10000x4 bytes (=int) is 38MB. As overheads go, that isn't terrible.
+What sort of data is T likely to be? Just primatives?
+I'm thinking that I could probably edit protobuf-net to support rectangular arrays* - but to keep some kind of wire-compatibility we'd probably need a header (one byte) per element - i.e. 9MB of overhead for the 1000x10000 example.
+This probably isn't worth it for things like float, double, etc (since they are stored verbatim under "protocol buffers") - but there may be savings for things like int simply due to how it packs ints... (especially if they tend to be on the smaller side [magnitude]). Finally, if T is actually objects like Person etc, then it should be a lot better than binary serialization, since it is very good at packing objects.
+It wouldn't be trivial to shoe-horn in rectangular arrays, but let me know if this is something you'd be interested in trying.
+*: it doesn't at the moment since the "protocol buffers" spec doesn't support them, but we can hack around that...
+
+The reason there needs to be so much data about the types is that your array of T could be any type, but more specifically, T could be of type SomeBaseClass, and you could still store SomeDerivedClass in that array, and the deserializer would need to know this.
+But this redundant data makes it a good candidate for compression, as others have noted.

@@ -1,0 +1,145 @@
+What are the common undefined/unspecified behavior for C that you run into?
+c compiler-construction
+An example of unspecified behavior in the C language is the order of evaluation of arguments to a function.  It might be left to right or right to left, you just don't know. This would affect how foo(c++, c) or foo(++c, c) gets evaluated.
+What other unspecified behavior is there that can surprise the unaware programmer?
+
+
+Be sure to always initialize your variables before you use them! When I had just started with C, that caused me a number of headaches.
+
+A language lawyer question. Hmkay.
+My personal top3: 
+
+violating the strict aliasing rule
+violating the strict aliasing rule
+violating the strict aliasing rule
+:-)
+
+Edit Here is a little example that does it wrong twice:
+(assume 32 bit ints and little endian)
+float funky_float_abs (float a)
+{
+  unsigned int temp = *(unsigned int *)&a;
+  temp &= 0x7fffffff;
+  return *(float *)&temp;
+}
+
+That code tries to get the absolute value of a float by bit-twiddling with the sign bit directly in the representation of a float.
+However, the result of creating a pointer to an object by casting from one type to another is not valid C. The compiler may assume that pointers to different types don't point to the same chunk of memory. This is true for all kind of pointers except void* and char* (sign-ness does not matter). 
+In the case above I do that twice. Once to get an int-alias for the float a, and once to convert the value back to float. 
+There are three valid ways to do the same.
+Use a char or void pointer during the cast. These always alias to anything, so they are safe.
+float funky_float_abs (float a)
+{
+  float temp_float = a;
+  // valid, because it's a char pointer. These are special.
+  unsigned char * temp = (unsigned char *)&temp_float;
+  temp[3] &= 0x7f;
+  return temp_float;
+}
+
+Use memcopy. Memcpy takes void pointers, so it will force aliasing as well. 
+float funky_float_abs (float a)
+{
+  int i;
+  float result;
+  memcpy (&i, &a, sizeof (int));
+  i &= 0x7fffffff;
+  memcpy (&result, &i, sizeof (int));
+  return result;
+}
+
+The third valid way: use unions. This is explicitly not undefined since C99:
+float funky_float_abs (float a)
+{
+  union 
+  {
+     unsigned int i;
+     float f;
+  } cast_helper;
+
+  cast_helper.f = a;
+  cast_helper.i &= 0x7fffffff;
+  return cast_helper.f;
+}
+
+
+My favorite is this:
+// what does this do?
+x = x++;
+
+To answer some comments, it is undefined behaviour according to the standard. Seeing this, the compiler is allowed to do anything up to and including format your hard drive.
+See for example this comment here. The point is not that you can see there is a possible reasonable expectation of some behaviour. Because of the C++ standard and the way the sequence points are defined, this line of code is actually undefined behaviour.
+For example, if we had x = 1 before the line above, then what would the valid result be afterwards? Someone commented that it should be 
+
+x is incremented by 1
+
+so we should see x == 2 afterwards. However this is not actually true, you will find some compilers that have x == 1 afterwards, or maybe even x == 3. You would have to look closely at the generated assembly to see why this might be, but the differences are due to the underlying problem. Essentially, I think this is because the compiler is allowed to evaluate the two assignments statements in any order it likes, so it could do the x++ first, or the x = first.
+
+Using the macro versions of functions like "max" or "isupper". The macros evaluate their arguments twice, so you will get unexpected side effects when you call max(++i, j), or isupper(*p++)
+The above is for standard C. In C++ these problems have largely disappeared. The max function is now a templated function.
+
+forgetting to add static float foo(); in the header file, only to get floating point exceptions being thrown when it would return 0.0f;
+
+Dividing something by a pointer to something. Just won't compile for some reason... :-)
+result = x/*y;
+
+
+My personal favourite undefined behaviour is that if a non-empty source file doesn't end in a newline, behaviour is undefined.
+I suspect it's true though that no compiler I will ever see has treated a source file differently according to whether or not it is newline terminated, other than to emit a warning. So it's not really something that will surprise unaware programmers, other than that they might be surprised by the warning.
+So for genuine portability issues (which mostly are implementation-dependent rather than unspecified or undefined, but I think that falls into the spirit of the question):
+
+char is not necessarily (un)signed.
+int can be any size from 16 bits.
+floats are not necessarily IEEE-formatted or conformant.
+integer types are not necessarily two's complement, and integer arithmetic overflow causes undefined behaviour (modern hardware won't crash, but some compiler optimizations will result in behavior different from wraparound even though that's what the hardware does. For example if (x+1 < x) may be optimized as always false when x has signed type: see -fstrict-overflow option in GCC). 
+"/", "." and ".." in a #include have no defined meaning and can be treated differently by different compilers (this does actually vary, and if it goes wrong it will ruin your day).
+
+Really serious ones that can be surprising even on the platform you developed on, because behaviour is only partially undefined / unspecified:
+
+POSIX threading and the ANSI memory model. Concurrent access to memory is not as well defined as novices think. volatile doesn't do what novices think. Order of memory accesses is not as well defined as novices think. Accesses can be moved across memory barriers in certain directions. Memory cache coherency is not required.
+Profiling code is not as easy as you think. If your test loop has no effect, the compiler can remove part or all of it. inline has no defined effect.
+
+And, as I think Nils mentioned in passing:
+
+VIOLATING THE STRICT ALIASING RULE.
+
+
+A compiler doesn't have to tell you that you're calling a function with the wrong number of parameters/wrong parameter types if the function prototype isn't available.
+
+The EE's here just discovered that a>>-2 is a bit fraught.
+I nodded and told them it was not natural.
+
+Another issue I encountered (which is defined, but definitely unexpected).
+char is evil.
+
+signed or unsigned depending on what the compiler feels 
+not mandated as 8 bits
+
+
+The clang developers posted some great examples a while back, in a post every C programmer should read. Some interesting ones not mentioned before:
+
+Signed integer overflow - no it's not ok to wrap a signed variable past its max.
+Dereferencing a NULL Pointer - yes this is undefined, and might be ignored, see part 2 of the link.
+
+
+I can't count the number of times I've corrected printf format specifiers to match their argument. Any mismatch is undefined behavior.
+
+No, you must not pass an int (or long) to %x - an unsigned int is required
+No, you must not pass an unsigned int to %d - an int is required
+No, you must not pass a size_t to %u or %d - use %zu
+No, you must not print a pointer with %d or %x - use %p and cast to a void *
+
+
+I've seen a lot of relatively inexperienced programmers bitten by multi-character constants.
+This:
+"x"
+
+is a string literal (which is of type char[2] and decays to char* in most contexts).
+This:
+'x'
+
+is an ordinary character constant (which, for historical reasons, is of type int).
+This:
+'xy'
+
+is also a perfectly legal character constant, but its value (which is still of type int) is implementation-defined. It's a nearly useless language feature that serves mostly to cause confusion.

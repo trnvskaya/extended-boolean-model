@@ -1,0 +1,57 @@
+Serialization problem
+c# serialization
+The situation is like this : Main project A. and a class library B. A references B
+Project B has the classes that will be serialized. The classes are used in A. Now, the problem appears when from Project A I try to serialize the objects from B. An exception is thrown that says a class from A cannot be serialized. This is the strange part since in the classes in B I cant have a reference to those in A. (a circular dependency would be created).
+How can I track down the problem ? because the exception method doesn't say where the Problem appeared ?
+Edit : 
+Ok, I found the problem with the help of Kent Boogaart's small app :D . I have a PropertyChanged listener in a class in project A that is not marked Serializable - and I don't want to mark it so. ( it would serialize that class to right ?)
+I've solved the problem with the event by following this link : .NET 2.0 solution to serialization of objects that raise events.
+There still is a problem , but it's probably something similar.
+PS: Great tool from Kent Boogaart
+
+
+Perhaps your objects from B are storing references to objects from A using classes/interfaces that are not part of A or B, For example, if B is storing objects from A using an object (System.Object) reference
+
+I have written a tool called sertool that will tell you what in your object graph cannot be serialized and how it is being referenced.
+
+You will first need to isolate the problem to a specific class. Then you can implement custom serialization and debug it to find the real problem.
+Just a simple implementation to let you step through the process:
+using System;
+using System.Runtime.Serialization;
+using System.Security.Permissions;
+
+[Serializable]
+public class Test : ISerializable
+{
+    private Test(SerializationInfo info, StreamingContext context)
+    {
+        PropertyDescriptorCollection properties = TypeDescriptor.GetProperties(typeof(Test));
+
+        foreach (SerializationEntry entry in info)
+        {
+            PropertyDescriptor property = properties.Find(entry.Name, false);
+            property.SetValue(this, entry.Value);
+        }
+    }
+
+    [SecurityPermission(SecurityAction.LinkDemand, SerializationFormatter = true)]
+    void ISerializable.GetObjectData(SerializationInfo info, StreamingContext context)
+    {
+        PropertyDescriptorCollection properties = TypeDescriptor.GetProperties(typeof(Test));
+
+        foreach (PropertyDescriptor property in properties)
+        {
+            info.AddValue(property.Name, property.GetValue(this));
+        }
+    }
+}
+
+Kent's tool also looks very nice and will, without doubt, help you.
+
+Let's say TA and TB are types defined in A and B. Let's say there's an interface I either in B or an assembly both B and A reference. TA implements I. TB has a public, settable property of type I named P.
+You can now do this:
+TB b = new TB();
+b.P = new TA();
+
+Since TA implements I, this is possible.
+Now your object graph has an instance of a type that may not be serializable and comes from assembly A.

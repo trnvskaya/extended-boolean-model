@@ -1,0 +1,67 @@
+How to ignore whitespace while reading a file to produce an XML DOM
+java xml whitespace
+I'm trying to read a file to produce a DOM Document, but the file has whitespace and newlines and I'm trying to ignore them, but I couldn't:
+DocumentBuilderFactory docfactory=DocumentBuilderFactory.newInstance();
+docfactory.setIgnoringElementContentWhitespace(true);
+
+I see in Javadoc that setIgnoringElementContentWhitespace method operates only when the validating flag is enabled, but I haven't the DTD or XML Schema for the document.
+What can I do?
+Update
+I don't like the idea of introduce mySelf < !ELEMENT... declarations and i have tried the
+solution proposed in the forum pointed by Tomalak, but it doesn't work, i have used java 1.6 in an linux environment. I think if no more is proposed i will make a few methods to ignore whitespace text nodes
+
+
+âIgnoringElementContentWhitespaceâ is not about removing all pure-whitespace text nodes, only whitespace nodes whose parents are described in the schema as having ELEMENT contentâââthat is to say, they only contain other elements and never text.
+If you don't have a schema (DTD or XSD) in use, element content defaults to MIXED, so this parameter will never have any effect. (Unless the parser provides a non-standard DOM extension to treat all unknown elements as containing ELEMENT content, which as far as I know the ones available for Java do not.)
+You could hack the document on the way into the parser to include the schema information, for example by adding an internal subset to the < !DOCTYPE ... [...] > declaration containing < !ELEMENT ... > declarations, then use the IgnoringElementContentWhitespace parameter.
+Or, possibly easier, you could just strip out the whitespace nodes, either in a post-process, or as they come in using an LSParserFilter.
+
+This is a (really) late answer, but here is how I solved it.  I wrote my own implementation of a NodeList class.  It simply ignores text nodes that are empty.  Code follows:
+private static class NdLst implements NodeList, Iterable<Node> {
+
+    private List<Node> nodes;
+
+    public NdLst(NodeList list) {
+        nodes = new ArrayList<Node>();
+        for (int i = 0; i < list.getLength(); i++) {
+            if (!isWhitespaceNode(list.item(i))) {
+                nodes.add(list.item(i));
+            }
+        }
+    }
+
+    @Override
+    public Node item(int index) {
+        return nodes.get(index);
+    }
+
+    @Override
+    public int getLength() {
+        return nodes.size();
+    }
+
+    private static boolean isWhitespaceNode(Node n) {
+        if (n.getNodeType() == Node.TEXT_NODE) {
+            String val = n.getNodeValue();
+            return val.trim().length() == 0;
+        } else {
+            return false;
+        }
+    }
+
+    @Override
+    public Iterator<Node> iterator() {
+        return nodes.iterator();
+    }
+}
+
+You then wrap all of your NodeLists in this class and it will effectively ignore all whitespace nodes.  (Which I define as Text Nodes with 0-length trimmed text.)
+It also has the added benefit of being able to be used in a for-each loop.
+
+I made it works by doing this 
+DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
+        dbFactory.setIgnoringElementContentWhitespace(true);
+        dbFactory.setSchema(schema);
+        dbFactory.setNamespaceAware(true);
+NodeList nodeList = element.getElementsByTagNameNS("*", "associate");
+

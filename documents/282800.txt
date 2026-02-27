@@ -1,0 +1,127 @@
+C++ odd compile error: error: changes meaning of "Object" from class "Object"
+c++ xcode
+I don't even know where to go with this. Google wasn't very helpful. As with my previous question. I'm using TextMate's Command+R to compile the project. 
+
+game.h:16:error: declaration of âPlayer* HalfSet::Player() constâ
+players.h:11:error: changes meaning of âPlayerâ from âclass Playerâ
+game.h:21:error: âPlayerâ is not a type
+
+player.h file (partial)
+#ifndef PLAYERS_H
+#define PLAYERS_H
+using namespace std;
+
+#include <string>
+#include <vector>
+#include <istream>
+#include <iomanip>
+#include "generics.h"
+
+class Player{ //Line 11
+public:
+	//getters
+	long Id() const;
+	string FirstName() const;
+	string LastName() const;
+	string Country() const;
+	//setters
+	void setId(long id);
+	void setFirstName(string s);
+	void setLastName(string s);
+	void setCountry(string s);
+	//serializing functions
+	void display(ostream &out);
+	void read(istream &in);
+	void write(ostream &out);
+	//Initalizers
+	Player();
+	Player(istream &in);
+	Player(string firstName, string lastName);
+	Player(string firstName, string lastName, string country);
+	Player(long id, string firstName, string lastName, string country);
+	~Player();
+private:
+	long _id;
+	string _firstName;
+	string _lastName;
+	string _country;
+};
+
+game.h file (partial)
+#ifndef GAME_H
+#define GAME_H
+
+#include "generics.h"
+#include "players.h"
+#include <string>
+#include <vector>
+#include <istream>
+#include <iomanip>
+
+using namespace std;
+
+class HalfSet{
+public:
+	//getters
+	Player* Player() const; //Line 16
+	int GamesWon() const;
+	int TotalPoints() const;
+	int Errors() const;
+	//setters
+	void setPlayer(Player* p);
+	void setGamesWon(int games);
+	void setTotalPoints(int points);
+	void setErrors(int errors);
+	//Serialization
+	void display(ostream &out) const;
+	void read(istream &in) const;
+	void write(ostream &out) const;
+	//Initalizers
+	HalfSet();
+	~HalfSet();
+private:
+	Player* _player;
+	int _gamesWon;
+	int _points;
+	int _errors;
+};
+
+What is going on here?
+
+
+In C++ you cannot name a function the same name as a class/struct/typedef.  You have a class named "Player" and so the HalfSet class has a function named "Player" ("Player *Player()").  You need to rename one of these (probably changing HalfSet's Player() to getPlayer() or somesuch).
+
+Your problem is that names are looked up in scopes. Within the declaration of HalfSet::setPlayer(Player*), the unqualified name Player needs to be looked up. The first scope tried is class HalfSet. In that scope, the lookup of Player finds function HalfSet::Player, not global class ::Player.
+The solution is to use a qualified name, ::Player. This tells the compiler which scope to use for lookup (global) which in turn means HalfSet::Player is not even considered.
+
+The current answer to this question is just incorrect, it says:
+
+In C++ you cannot name a function the same name as a class/struct/typedef
+
+Name hiding of a class by a function is allowed, if we go to the draft Pre C++11 standard section 3.3.7 Name hiding it says:
+
+A class name (9.1) or enumeration name (7.2) can be hidden by the name
+  of an object, function, or enumerator declared in the same scope. If a
+  class or enumeration name and an object, function, or enumerator are
+  declared in the same scope (in any order) with the same name, the
+  class or enumeration name is hidden wherever the object, function, or
+  enumerator name is visible.
+
+So the fact that you have the function and a class named Player is not the issue, in fact the following code is valid:
+class Player
+{
+} ;
+
+Player* Player() ;
+
+and we can use an elaborated type specifier to un-hide the class type.
+As far as I can tell this is violating section 3.3.6 Class scope paragraph 2 which says:
+
+A name N used in a class S shall refer to the same declaration in its
+  context and when re-evaluated in the completed scope of S. No
+  diagnostic is required for a violation of this rule.
+
+So in this case Player changes meaning from class to a function, it is not clear to me it was intended so strictly but I can see how it could be read that way. This seems to be the message gcc uses when it detects this violation as we can see from a similar question.
+Using an elaborated type specifier prevents the change of meaning:
+class Player* Player() const ;
+

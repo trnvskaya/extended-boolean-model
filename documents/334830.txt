@@ -1,0 +1,64 @@
+MySQL Composite PK with Nullable FKs
+mysql database-design foreign-keys data-modeling nullable
+First off, let me preface this question by stating that I'm really a pretty terrible data modeler.  I know only enough to be dangerous.
+The table I'm building has four foreign keys, two of which reference the same table.  Here's the create statement for that table.
+CREATE  TABLE IF NOT EXISTS `abnr`.`reputation_event_log` (
+  `id` INT NOT NULL AUTO_INCREMENT ,
+  `reputation_event_id` INT NULL ,
+  `giver_user_id` INT NULL ,
+  `receiver_user_id` INT NULL ,
+  `review_id` INT NULL ,
+  `giver_point_value` SMALLINT NULL DEFAULT 0 ,
+  `receiver_point_value` SMALLINT NULL DEFAULT 0 ,
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ,
+  PRIMARY KEY (`id`) ,
+  INDEX `fk_reputation_log_user` (`giver_user_id` ASC) ,
+  INDEX `fk_reputation_log_user1` (`receiver_user_id` ASC) ,
+  INDEX `fk_reputation_log_review` (`review_id` ASC) ,
+  INDEX `fk_reputation_log_reputation_event` (`reputation_event_id` ASC) ,
+  CONSTRAINT `fk_reputation_log_user`
+    FOREIGN KEY (`giver_user_id` )
+    REFERENCES `abnr`.`user` (`id` )
+    ON DELETE NO ACTION
+    ON UPDATE NO ACTION,
+  CONSTRAINT `fk_reputation_log_user1`
+    FOREIGN KEY (`receiver_user_id` )
+    REFERENCES `abnr`.`user` (`id` )
+    ON DELETE NO ACTION
+    ON UPDATE NO ACTION,
+  CONSTRAINT `fk_reputation_log_review`
+    FOREIGN KEY (`review_id` )
+    REFERENCES `abnr`.`review` (`id` )
+    ON DELETE NO ACTION
+    ON UPDATE NO ACTION,
+  CONSTRAINT `fk_reputation_log_reputation_event`
+    FOREIGN KEY (`reputation_event_id` )
+    REFERENCES `abnr`.`reputation_event` (`id` )
+    ON DELETE NO ACTION
+    ON UPDATE NO ACTION)
+ENGINE = InnoDB
+DEFAULT CHARACTER SET = utf8
+COLLATE = utf8_general_ci;
+
+The indexes I'm concerned with for this post are fk_reputation_log_user and fk_reputation_log_user1.  Every reputation event has a giver, but only some have a receiver.  I would like this FK to be nullable, but I don't know how to do that, or if it's even "allowed".
+I also toyed with the idea of making all FK columns part of the primary key to have database-level protection against duplicate log entries - but that won't work since PK columns have to be NOT NULL.
+If you need more detail, please state that in the comments.  Thanks!
+(Yes, this is for a reputation system not too dissimilar from what SO has)
+
+
+CREATE  TABLE IF NOT EXISTS `abnr`.`reputation_event_log` (
+  `id`                  INT NOT NULL AUTO_INCREMENT ,
+  `reputation_event_id` INT NULL ,
+  `giver_user_id`       INT NOT NULL , -- mandatory giver_user_id
+  `receiver_user_id`    INT NULL ,     -- optional receiver_user_id
+  . . .
+
+Yes, you can have NULL in a column with a foreign key constraint declared on it.  The NOT NULL constraint on a column is independent from any foreign key constraint(s) on that column.  
+A foreign key means that if the column has a non-NULL value, then that value must exist in the primary key of the table referenced by the foreign key constraint.
+edit: As for your UNIQUE requirement, are you aware that you can declare a UNIQUE constraint on nullable columns.  The column may contain NULLs (unlike the primary key constraint).  This is standard SQL behavior, and is supported by MySQL.
+  . . .
+  PRIMARY KEY (`id`),
+  CONSTRAINT UNIQUE (`giver_user_id`, `receiver_user_id`, 
+                     `review_id`, `reputation_event_id`),
+  . . .
+

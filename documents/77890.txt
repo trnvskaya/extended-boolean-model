@@ -1,0 +1,118 @@
+In Delphi, How do I get an enumerator from LocalPolicy.CurrentProfile.GloballyOpenPorts in the Firewall API
+delphi firewall
+I am writing some code to see if there is a hole in the firewall exception list for WinXP and Vista for a specific port used by our client software. 
+I can see that I can use the NetFwMgr.LocalPolicy.CurrentProfile.GloballyOpenPorts to get a list of the current Open port exceptions.  But i can not figure out how to get that enumerated list in to something that I can use in my Delphi program. 
+My latest try is listed below. It's giving me an access violation when I use port_list.Item. I know that's wrong, it was mostly wishful thinking on my part. Any help would be appreciated.
+function TFirewallUtility.IsPortInExceptionList(iPortNumber: integer): boolean;
+var
+  i, h: integer;
+  port_list, port: OleVariant;
+begin
+  Result := False;
+  port_list := mxFirewallManager.LocalPolicy.CurrentProfile.GloballyOpenPorts;
+  for i := 0 to port_list.Count - 1 do
+  begin
+    port := port_list.Item[i];
+    if (port.PortNumber = iPortNumber) then
+    begin
+      Result := True;
+      break;
+    end;
+  end;
+end;
+
+
+
+Without setting up an application to test with, I'll suggest the following.  Let me know if it works.
+I looked at the C# example here, and it looks like you need to do something like the following:
+Result := False;
+port_enum := mxFirewallManager.LocalPolicy.CurrentProfile.GloballyOpenPorts._NewEnum;
+while port_enum.MoveNext <> Null do // try assigned if that doesn't work
+begin
+  port = e.Current as INetFwOpenPort;
+  if (port.PortNumber = iPortNumber) then
+  begin
+    Result := True;
+    break;
+  end;
+end;
+
+Not sure if that will compile, but the _NewEnum, MoveNext and Current are the members you want to use.
+
+OK, I think that I have it figured out. 
+I had to create a type library file of the hnetcfg.dll. I did that when I first started but have learned a lot about the firewall objects since then. It didn't work then, but its working now. You can create your own file from Component|Import Component. And then follow the wizard. 
+The wrapping code uses exceptions which I normally don't like to do, but I don't know how to tell whether an Interface that is returning an Interface is actually returning data that I can work off of... So that would be an improvement if somebody can point me in the right direction.
+And now to the code, with a thanks to Jim for his response.
+constructor TFirewallUtility.Create;
+begin
+  inherited Create;
+  CoInitialize(nil);
+  mxCurrentFirewallProfile := INetFwMgr(CreateOLEObject('HNetCfg.FwMgr')).LocalPolicy.CurrentProfile;
+end;
+
+function TFirewallUtility.IsPortInExceptionList(iPortNumber: integer): boolean;
+begin
+  try
+    Result := mxCurrentFirewallProfile.GloballyOpenPorts.Item(iPortNumber, NET_FW_IP_PROTOCOL_TCP).Port = iPortNumber;
+  except
+    Result := False;
+  end;
+end;
+
+function TFirewallUtility.IsPortEnabled(iPortNumber: integer): boolean;
+begin
+  try
+    Result := mxCurrentFirewallProfile.GloballyOpenPorts.Item(iPortNumber, NET_FW_IP_PROTOCOL_TCP).Enabled;
+  except
+    Result := False;
+  end;
+end;
+
+procedure TFirewallUtility.SetPortEnabled(iPortNumber: integer; sPortName: string; xProtocol: TFirewallPortProtocol);
+begin
+  try
+   mxCurrentFirewallProfile.GloballyOpenPorts.Item(iPortNumber, CFirewallPortProtocalConsts[xProtocol]).Enabled := True;
+  except
+    HaltIf(True, 'xFirewallManager.TFirewallUtility.IsPortEnabled: Port not in exception list.');
+  end;
+end;
+
+procedure TFirewallUtility.AddPortToFirewall(sPortName: string; iPortNumber: Cardinal; xProtocol: TFirewallPortProtocol);
+var
+  port: INetFwOpenPort;
+begin
+  port := INetFwOpenPort(CreateOLEObject('HNetCfg.FWOpenPort'));
+  port.Name := sPortName;
+  port.Protocol := CFirewallPortProtocalConsts[xProtocol];
+  port.Port := iPortNumber;
+  port.Scope := NET_FW_SCOPE_ALL;
+  port.Enabled := true;
+  mxCurrentFirewallProfile.GloballyOpenPorts.Add(port);
+end;
+
+
+You can loop through the enum like this:
+type
+  IEnumVariant = interface(IUnknown)
+  ['{00020404-0000-0000-C000-000000000046}']
+    function Next(celt: LongWord; var rgvar : OleVariant;
+                 pceltFetched: PLongWord): HResult; stdcall;
+    function Skip(celt: LongWord): HResult; stdcall;
+    function Reset: HResult; stdcall;
+    function Clone(out Enum : IEnumVariant) : HResult; stdcall;
+  end;
+
+var
+  Enum : IEnumVariant;
+  Port : OleVariant;
+  Count : Integer;
+...
+Count := 1;
+IUnknown (Profile.GloballyOpenPorts._NewEnum).QueryInterface (IEnumVariant, Enum);
+Enum.Reset;
+while (Enum.Next (1, FirewallPort, @Count) = S_OK) do
+  begin
+  if (FirewallPort.Port = Port) then
+    Exit (True)
+  end;
+

@@ -1,0 +1,753 @@
+Passing PHP associative arrays to and from XML 
+php xml xml-serialization
+Is there an easy way to marshal a PHP associative array to and from XML? For example, I have the following array:
+$items = array("1", "2",
+    array(
+        "item3.1" => "3.1",
+        "item3.2" => "3.2"
+        "isawesome" => true
+    )
+);
+
+How would I turn it into something similar to the following XML in as few lines as possible, then back again?
+<items>
+    <item>1</item>
+    <item>2</item>
+    <item>
+        <item3_1>3.1</item3_1>
+        <item3_2>3.2</item3_2>
+        <isawesome>true</isawesome>
+    </item>
+</items>
+
+I don't really care if I have to change the array structure a bit or if the XML that comes out is different to the above example. I've been trying to work with PHP's XMLReader and XMLWriter, but the documentation is so poor and the code I've produced as a consequence looks nothing like what I feel it should look like:
+$xml = SomeXMLWriter::writeArrayToXml($items);
+$array = SomeXMLWriter::writeXmlToArray($xml);
+
+Does it really have to be any harder than that to get a basic, raw XML dump of a PHP array without writing my own custom class?
+I try to avoid PEAR. In addition to the configuration headaches I've had with it, I've never stuck with any of the packages I've ever used from it.
+
+
+Have you seen the PEAR package XML_Serializer?
+pear_php_XML_Serializer
+
+SimpleXML works great for your use.
+
+Try Zend_Config and Zend Framework in general. 
+I imagine it would be a 2 step process: array to Zend_Config, Zend_Config to XML.
+
+Sounds like a job for SimpleXML.  
+I would suggest a slightly different XML structure.. 
+And wonder why you need to convert from an array -> XML and back.. If you can modify the array structure as you said why not just generate XML instead?  If some piece of code already exists that takes that array configuration, just modify it to accept the XML instead.  Then you have 1 data format/ input type, and don't need to convert at all..
+<items>
+  <item id="1"/>
+  <item id="2"/>
+  <item id="3">
+  <subitems>     
+    <item id="3.1"/>
+    <item id="3.2" isawesome="true"/>
+  </subitems>
+  </item>
+</items>
+
+
+I agree this is one area that PHP's documentation has dropped the ball, but for me I've always used the SimpleXML mixed with something like the xml2Array functions. The Xml you get from simpleXML isn't that hard to navigate with the help of a dumping function like print_r.
+
+I've had some of these same issues, and so I created two classes:
+bXml
+A class that extends SimpleXml and corrects some of the problems it has. Like not being able to add CData nodes or Comment nodes. I also added some additional features, like using the php streams functionality to add child nodes $oXml->AddChild("file:///user/data.xml") or add XML string child nodes like $oXml->AddChild("<more><xml>yes</xml></more>"); but basically I just wanted to fix the simpleXML problems.
+bArray
+I extended the ArrayObject class so that all array functionality could be object oriented and consistent, so you don't need to remember that array_walk operates on the array by reference, while array_filter operates on the array by value. So you can do things like $oArray->flip()->Reverse()->Walk(/*callback*/); then still access the value the same way you normally would like $oArray[key].
+Both of the methods output themselves as Arrays and Xml so you can jump seamlessly between them. So you can $oXml->AsArray(); or $oArray->AsXml(); I found that it was easier to do this than to constantly pass things back and forth between array2xml or xml2array methods.
+http://code.google.com/p/blibrary/source
+Both classes are can be overridden to make a custom class of your choosing and can be used independently of one another.
+
+Following class uses simplexml to achieve the same, you just need to loop through the array and call addchild of ximplexml.
+http://snipplr.com/view.php?codeview&id=3491
+
+For those of you not using the PEAR packages, but you've got PHP5 installed.  This worked for me: 
+    /**
+ * Build A XML Data Set
+ *
+ * @param array $data Associative Array containing values to be parsed into an XML Data Set(s)
+ * @param string $startElement Root Opening Tag, default fx_request
+ * @param string $xml_version XML Version, default 1.0
+ * @param string $xml_encoding XML Encoding, default UTF-8
+ * @return string XML String containig values
+ * @return mixed Boolean false on failure, string XML result on success
+ */
+public function buildXMLData($data, $startElement = 'fx_request', $xml_version = '1.0', $xml_encoding = 'UTF-8'){
+  if(!is_array($data)){
+     $err = 'Invalid variable type supplied, expected array not found on line '.__LINE__." in Class: ".__CLASS__." Method: ".__METHOD__;
+     trigger_error($err);
+     if($this->_debug) echo $err;
+     return false; //return false error occurred
+  }
+  $xml = new XmlWriter();
+  $xml->openMemory();
+  $xml->startDocument($xml_version, $xml_encoding);
+  $xml->startElement($startElement);
+
+  /**
+   * Write XML as per Associative Array
+   * @param object $xml XMLWriter Object
+   * @param array $data Associative Data Array
+   */
+  function write(XMLWriter $xml, $data){
+      foreach($data as $key => $value){
+          if(is_array($value)){
+              $xml->startElement($key);
+              write($xml, $value);
+              $xml->endElement();
+              continue;
+          }
+          $xml->writeElement($key, $value);
+      }
+  }
+  write($xml, $data);
+
+  $xml->endElement();//write end element
+  //Return the XML results
+  return $xml->outputMemory(true); 
+}
+
+
+Here's a function that I wrote to take XML and converts it to a PHP Associative Array. One Caveat is that id does not currently handle attributes or c-data. Though it will handle repeated XML Tag at the same level by placing them into an array named after the tag.
+
+<?php
+
+$xml_req1 = <<<XML
+<?xml version="1.0"?>
+<Vastera:CustomerValidation_RequestInfo
+      xmlns:Vastera="http://ndc-ah-prd.am.mot.com:10653/MotVastera_CustomerValidation/MC000078/Docs/">
+  <PartnerID>5550000100-003</PartnerID>
+  <PartnerType>PTNR_INTER_CONSIGNEE</PartnerType>
+  <OperatingUnit>100</OperatingUnit>
+  <Status>ACTIVE</Status>
+  <CustomerSeqNumber>111</CustomerSeqNumber>
+  <CustomerName>Greg Co</CustomerName>
+  <Address1>123 Any Ln</Address1>
+  <Address2>?</Address2>
+  <Address3>?</Address3>
+  <Address4>?</Address4>
+  <Address5>?</Address5>
+  <City>Someplace</City>
+  <PostalCode>603021</PostalCode>
+  <State>CA</State>
+  <CountryCode>US</CountryCode>
+  <TaxReference>222</TaxReference>
+  <PartyRelated>Y</PartyRelated>
+  <BusinessUnit>GSBU</BusinessUnit>
+  <Region>GSRGN</Region>
+  <LocationName>DBA Mac Head Computing</LocationName>
+  <LoadOnly>N</LoadOnly>
+  <VSTM>333</VSTM>
+  <MilitaryCustomerFlag>Y</MilitaryCustomerFlag>
+  <USFederalGovernmentCustomer>Y</USFederalGovernmentCustomer>
+  <Non-USGovernmentCustomer>Y</Non-USGovernmentCustomer>
+  <Vastera:EPCIActivity>
+    <EPCIActivityNuclearCode>NUCLEAR</EPCIActivityNuclearCode>
+    <EPCIActivityNuclearValue>N</EPCIActivityNuclearValue>
+    <EPCIActivityNuclearApproveDate>2011-05-16:07:19:37</EPCIActivityNuclearApproveDate>
+    <EPCIActivityNuclearExpireDate>2056-12-31:12:00:00</EPCIActivityNuclearExpireDate>
+    <EPCIActivityNuclearCountry>US</EPCIActivityNuclearCountry>
+    <EPCIActivityChemBioCode>CHEM_BIO</EPCIActivityChemBioCode>
+    <EPCIActivityChemBioValue>N</EPCIActivityChemBioValue>
+    <EPCIActivityChemBioApproveDate>2011-05-16:07:19:37</EPCIActivityChemBioApproveDate>
+    <EPCIActivityChemBioExpireDate>2056-12-31:12:00:00</EPCIActivityChemBioExpireDate>
+    <EPCIActivityChemBioCountry>US</EPCIActivityChemBioCountry>
+    <EPCIActivityMissileCode>MISSILE</EPCIActivityMissileCode>
+    <EPCIActivityMissileValue>N</EPCIActivityMissileValue>
+    <EPCIActivityMissileApproveDate>2011-05-16:07:19:37</EPCIActivityMissileApproveDate>
+    <EPCIActivityMissileExpireDate>2056-12-31:12:00:00</EPCIActivityMissileExpireDate>
+    <EPCIActivityMissileCountry>US</EPCIActivityMissileCountry>
+  </Vastera:EPCIActivity>
+  <SourceSystem>GSB2BSS</SourceSystem>
+  <CreatedDate>2011-05-16:07:18:55</CreatedDate>
+  <CreatedBy>c18530</CreatedBy>
+  <LastModifiedDate>2011-05-16:07:18:55</LastModifiedDate>
+  <LastModifiedBy>c18530</LastModifiedBy>
+  <ContactName>Greg, "Da Man" Skluacek</ContactName>
+  <ContactTitle>Head Honcho</ContactTitle>
+  <ContactPhone>555-555-5555</ContactPhone>
+  <ContactFax>666-666-6666</ContactFax>
+  <ContactEmail>gskluzacek@gregco.com</ContactEmail>
+  <ContactWeb>www.gregco.com</ContactWeb>
+</Vastera:CustomerValidation_RequestInfo>
+XML;
+
+$xml_req2 = <<<XML
+<?xml version="1.0"?>
+<order>
+    <orderNumber>123</orderNumber>
+    <customerAddress>
+        <type>Ship To</type>
+        <name>Bob McFly</name>
+        <addr1>123 Lincoln St</addr1>
+        <city>Chicago</city>
+        <state>IL</state>
+        <zip>60001</zip>
+    </customerAddress>
+    <customerAddress>
+        <type>Bill To</type>
+        <name>McFly Products Inc.</name>
+        <addr1>P.O. Box 6695</addr1>
+        <city>New York</city>
+        <state>NY</state>
+        <zip>99081-6695</zip>
+    </customerAddress>
+    <item>
+        <line>1</line>
+        <part>123001A</part>
+        <qty>5</qty>
+        <price>10.25</price>
+    </item>
+    <item>
+        <line>2</line>
+        <part>456002B</part>
+        <qty>3</qty>
+        <price>20.50</price>
+    </item>
+    <item>
+        <line>3</line>
+        <part>789003C</part>
+        <qty>1</qty>
+        <price>41.00</price>
+    </item>
+    <orderSubTotal>133.25</orderSubTotal>
+    <tax>6.66</tax>
+    <shipping>10.00</shipping>
+    <orderTotal>149.91</orderTotal>
+</order>
+XML;
+
+$doc = new DOMDocument();
+$doc->preserveWhiteSpace = false;
+$doc->loadXML($xml_req1);
+
+$arr = xml_to_arr($doc->documentElement);
+
+print "\n\n----\n\n";
+
+print_r($arr);
+
+print "\n\n----\n\n";
+
+$doc2 = new DOMDocument();
+$doc2->preserveWhiteSpace = false;
+$doc2->loadXML($xml_req2);
+
+$arr2 = xml_to_arr($doc2->documentElement);
+
+print "\n\n----\n\n";
+
+print_r($arr2);
+
+print "\n\n----\n\n";
+
+exit;
+
+function xml_to_arr($curr_node) {
+    $val_array = array();
+    $typ_array = array();
+
+    foreach($curr_node->childNodes as $node) {
+        if ($node->nodeType == XML_ELEMENT_NODE) {
+
+            $val = xml_to_arr($node);
+
+            if (array_key_exists($node->tagName, $val_array)) {
+
+                if (!is_array($val_array[$node->tagName]) || $type_array[$node->tagName] == 'hash') {
+                    $existing_val = $val_array[$node->tagName];
+                    unset($val_array[$node->tagName]);
+                    $val_array[$node->tagName][0] = $existing_val;
+                    $type_array[$node->tagName] = 'array';
+                }
+                $val_array[$node->tagName][] = $val;
+
+            } else {
+
+                $val_array[$node->tagName] = $val;
+                if (is_array($val)) {
+                    $type_array[$node->tagName] = 'hash';
+                }
+
+            } // end if array key exists
+
+        } // end if elment node
+    }// end for each
+
+    if (count($val_array) == 0) {
+        return $curr_node->nodeValue;
+    } else {
+        return $val_array;
+    }
+
+} // end function xml to arr
+
+?>
+
+example output
+
+----
+
+Array
+(
+    [PartnerID] => 5550000100-003
+    [PartnerType] => PTNR_INTER_CONSIGNEE
+    [OperatingUnit] => 100
+    [Status] => ACTIVE
+    [CustomerSeqNumber] => 111
+    [CustomerName] => Greg Co
+    [Address1] => 123 Any Ln
+    [Address2] => ?
+    [Address3] => ?
+    [Address4] => ?
+    [Address5] => ?
+    [City] => Somplace
+    [PostalCode] => 60123
+    [State] => CA
+    [CountryCode] => US
+    [TaxReference] => 222
+    [PartyRelated] => Y
+    [BusinessUnit] => GSBU
+    [Region] => GSRGN
+    [LocationName] => DBA Mac Head Computing
+    [LoadOnly] => N
+    [VSTM] => 333
+    [MilitaryCustomerFlag] => Y
+    [USFederalGovernmentCustomer] => Y
+    [Non-USGovernmentCustomer] => Y
+    [Vastera:EPCIActivity] => Array
+        (
+            [EPCIActivityNuclearCode] => NUCLEAR
+            [EPCIActivityNuclearValue] => N
+            [EPCIActivityNuclearApproveDate] => 2011-05-16:07:19:37
+            [EPCIActivityNuclearExpireDate] => 2056-12-31:12:00:00
+            [EPCIActivityNuclearCountry] => US
+            [EPCIActivityChemBioCode] => CHEM_BIO
+            [EPCIActivityChemBioValue] => N
+            [EPCIActivityChemBioApproveDate] => 2011-05-16:07:19:37
+            [EPCIActivityChemBioExpireDate] => 2056-12-31:12:00:00
+            [EPCIActivityChemBioCountry] => US
+            [EPCIActivityMissileCode] => MISSILE
+            [EPCIActivityMissileValue] => N
+            [EPCIActivityMissileApproveDate] => 2011-05-16:07:19:37
+            [EPCIActivityMissileExpireDate] => 2056-12-31:12:00:00
+            [EPCIActivityMissileCountry] => US
+        )
+
+    [SourceSystem] => GSB2BSS
+    [CreatedDate] => 2011-05-16:07:18:55
+    [CreatedBy] => c18530
+    [LastModifiedDate] => 2011-05-16:07:18:55
+    [LastModifiedBy] => c18530
+    [ContactName] => Greg, "Da Man" Skluacek
+    [ContactTitle] => Head Honcho
+    [ContactPhone] => 555-555-5555
+    [ContactFax] => 666-666-6666
+    [ContactEmail] => gskluzacek@gregco.com
+    [ContactWeb] => www.gregco.com
+)
+
+----
+
+Array
+(
+    [orderNumber] => 123
+    [customerAddress] => Array
+        (
+            [0] => Array
+                (
+                    [type] => Ship To
+                    [name] => Bob McFly
+                    [addr1] => 123 Lincoln St
+                    [city] => Chicago
+                    [state] => IL
+                    [zip] => 60001
+                )
+
+            [1] => Array
+                (
+                    [type] => Bill To
+                    [name] => McFly Products Inc.
+                    [addr1] => P.O. Box 6695
+                    [city] => New York
+                    [state] => NY
+                    [zip] => 99081-6695
+                )
+
+        )
+
+    [item] => Array
+        (
+            [0] => Array
+                (
+                    [line] => 1
+                    [part] => 123001A
+                    [qty] => 5
+                    [price] => 10.25
+                )
+
+            [1] => Array
+                (
+                    [line] => 2
+                    [part] => 456002B
+                    [qty] => 3
+                    [price] => 20.50
+                )
+
+            [2] => Array
+                (
+                    [line] => 3
+                    [part] => 789003C
+                    [qty] => 1
+                    [price] => 41.00
+                )
+
+        )
+
+    [orderSubTotal] => 133.25
+    [tax] => 6.66
+    [shipping] => 10.00
+    [orderTotal] => 149.91
+)
+
+--------
+
+
+Hey @Conrad I just modify your code to work well with numeric arrays:
+/**
+ * Build A XML Data Set
+ *
+ * @param array $data Associative Array containing values to be parsed into an XML Data Set(s)
+ * @param string $startElement Root Opening Tag, default fx_request
+ * @param string $xml_version XML Version, default 1.0
+ * @param string $xml_encoding XML Encoding, default UTF-8
+ * @return string XML String containig values
+ * @return mixed Boolean false on failure, string XML result on success
+ */
+public static function arrayToXML($data, $startElement = 'fx_request', $xml_version = '1.0', $xml_encoding = 'UTF-8'){
+    if(!is_array($data)){
+        $err = 'Invalid variable type supplied, expected array not found on line '.__LINE__." in Class: ".__CLASS__." Method: ".__METHOD__;
+        trigger_error($err);
+        if($this->_debug) echo $err;
+        return false; //return false error occurred
+    }
+    $xml = new XmlWriter();
+    $xml->openMemory();
+    $xml->startDocument($xml_version, $xml_encoding);
+    $xml->startElement($startElement);
+
+    /**
+     * Write XML as per Associative Array
+     * @param object $xml XMLWriter Object
+     * @param array $data Associative Data Array
+     */
+    function write(XMLWriter $xml, $data){
+        foreach($data as $key => $value){
+            if (is_array($value) && isset($value[0])){
+                foreach($value as $itemValue){
+                    //$xml->writeElement($key, $itemValue);
+
+                    if(is_array($itemValue)){
+                        $xml->startElement($key);
+                        write($xml, $itemValue);
+                        $xml->endElement();
+                        continue;
+                    } 
+
+                    if (!is_array($itemValue)){
+                        $xml->writeElement($key, $itemValue."");
+                    }
+                }
+            }else if(is_array($value)){
+                $xml->startElement($key);
+                write($xml, $value);
+                $xml->endElement();
+                continue;
+            } 
+
+            if (!is_array($value)){
+                $xml->writeElement($key, $value."");
+            }
+        }
+    }
+    write($xml, $data);
+
+    $xml->endElement();//write end element
+    //returns the XML results
+    return $xml->outputMemory(true);
+}
+
+so yo can convert this:
+$mArray["invitations"]["user"][0]["name"] = "paco";
+$mArray["invitations"]["user"][0]["amigos"][0] = 82;
+$mArray["invitations"]["user"][0]["amigos"][1] = 29;
+$mArray["invitations"]["user"][0]["amigos"][2] = 6;
+
+$mArray["invitations"]["user"][1]["name"] = "jose";
+$mArray["invitations"]["user"][1]["amigos"][0] = 43;
+$mArray["invitations"]["user"][1]["amigos"][1]["tuyos"] = 32;
+$mArray["invitations"]["user"][1]["amigos"][1]["mios"] = 79;
+$mArray["invitations"]["user"][1]["amigos"][2] = 11;
+
+$mArray["invitations"]["user"][2]["name"] = "luis";
+$mArray["invitations"]["user"][2]["amigos"][0] = 65;
+
+into this xml:
+<invitations>
+<user>
+    <name>paco</name>
+    <amigos>82</amigos>
+    <amigos>29</amigos>
+    <amigos>6</amigos>
+</user>
+<user>
+    <name>jose</name>
+    <amigos>43</amigos>
+    <amigos>
+        <tuyos>32</tuyos>
+        <mios>79</mios>
+    </amigos>
+    <amigos>11</amigos>
+</user>
+<user>
+    <name>luis</name>
+    <amigos>65</amigos>
+</user>
+
+
+I hope I can help someone with this
+
+class Xml {
+
+    public static function from_array($arr, $xml = NULL)
+    {
+        $first = $xml;
+        if($xml === NULL) $xml = new SimpleXMLElement('<root/>');
+        foreach ($arr as $k => $v) 
+        {
+            is_array($v)
+                ? self::from_array($v, $xml->addChild($k))
+                : $xml->addChild($k, $v);
+        }
+        return ($first === NULL) ? $xml->asXML() : $xml;
+    }
+
+    public static function to_array($xml)
+    {
+        $xml = simplexml_load_string($xml);
+        $json = json_encode($xml);
+        return json_decode($json,TRUE);
+    }
+
+}
+
+$xml = xml::from_array($array);
+$array = xml::to_array($xml);
+
+
+The most simple way to get assoc array from xml string:
+<?
+$data_array = (array) simplexml_load_string($xml_string);
+?>
+
+
+This builds on Ãngel LÃ³pez's answer. Added support for attributes. If an element has attributes, prefix them with @, and refer to the actual element content with an empty string as the key.
+/**
+ * Build an XML Data Set
+ *
+ * @param array $data Associative Array containing values to be parsed into an XML Data Set(s)
+ * @param string $startElement Root Opening Tag, default fx_request
+ * @param string $xml_version XML Version, default 1.0
+ * @param string $xml_encoding XML Encoding, default UTF-8
+ * @return string XML String containig values
+ * @return mixed Boolean false on failure, string XML result on success
+ */
+function arrayToXML($data, $startElement = 'fx_request', $xml_version = '1.0', $xml_encoding = 'UTF-8'){
+  if(!is_array($data)){
+    $err = 'Invalid variable type supplied, expected array not found on line '.__LINE__." in Class: ".__CLASS__." Method: ".__METHOD__;
+    trigger_error($err);
+    //if($this->_debug) echo $err;
+    return false; //return false error occurred
+  }
+  $xml = new XmlWriter();
+  $xml->openMemory();
+  $xml->startDocument($xml_version, $xml_encoding);
+  $xml->startElement($startElement);
+
+  /**
+   * Write keys in $data prefixed with @ as XML attributes, if $data is an array. When an @ prefixed key is found, a '' key is expected to indicate the element itself.
+   * @param object $xml XMLWriter Object
+   * @param array $data with attributes filtered out
+   */
+  function writeAttr(XMLWriter $xml, $data) {
+    if(is_array($data)) {
+      $nonAttributes = array();
+      foreach($data as $key => $val) {
+        //handle an attribute with elements
+        if($key[0] == '@') {
+          $xml->writeAttribute(substr($key, 1), $val);
+        } else if($key == '') {
+          if(is_array($val)) $nonAttributes = $val;
+          else $xml->text("$val");
+        }
+
+        //ignore normal elements
+        else $nonAttributes[$key] = $val;
+      }
+      return $nonAttributes;
+    }
+    else return $data;
+  }
+
+  /**
+   * Write XML as per Associative Array
+   * @param object $xml XMLWriter Object
+   * @param array $data Associative Data Array
+   */
+  function writeEl(XMLWriter $xml, $data) {
+    foreach($data as $key => $value) {
+      if(is_array($value) && isset($value[0])) { //numeric array
+        foreach($value as $itemValue){
+          if(is_array($itemValue)) {
+            $xml->startElement($key);
+            $itemValue = writeAttr($xml, $itemValue);
+            writeEl($xml, $itemValue);
+            $xml->endElement();
+          } else {
+            $itemValue = writeAttr($xml, $itemValue);
+            $xml->writeElement($key, "$itemValue");
+          }
+        }
+      } else if(is_array($value)) { //associative array
+        $xml->startElement($key);
+        $value = writeAttr($xml, $value);
+        writeEl($xml, $value);
+        $xml->endElement();
+      } else { //scalar
+        $value = writeAttr($xml, $value);
+        $xml->writeElement($key, "$value");
+      }
+    }
+  }
+  writeEl($xml, $data);
+
+  $xml->endElement();//write end element
+  //returns the XML results
+  return $xml->outputMemory(true);
+}
+
+so yo can convert this:
+$mArray["invitations"]["user"][0]["@name"] = "paco";
+$mArray["invitations"]["user"][0][""]["amigos"][0] = 82;
+$mArray["invitations"]["user"][0][""]["amigos"][1] = 29;
+$mArray["invitations"]["user"][0][""]["amigos"][2] = 6;
+
+$mArray["invitations"]["user"][1]["@name"] = "jose";
+$mArray["invitations"]["user"][1][""]["amigos"][0] = 43;
+$mArray["invitations"]["user"][1][""]["amigos"][1]["tuyos"] = 32;
+$mArray["invitations"]["user"][1][""]["amigos"][1]["mios"] = 79;
+$mArray["invitations"]["user"][1][""]["amigos"][2] = 11;
+
+$mArray["invitations"]["user"][2]["@name"] = "luis";
+$mArray["invitations"]["user"][2][""]["amigos"][0] = 65;
+
+into this xml:
+<invitations>
+  <user name="paco">
+    <amigos>82</amigos>
+    <amigos>29</amigos>
+    <amigos>6</amigos>
+  </user>
+  <user name="jose">
+    <amigos>43</amigos>
+    <amigos>
+      <tuyos>32</tuyos>
+      <mios>79</mios>
+    </amigos>
+    <amigos>11</amigos>
+  </user>
+  <user name="luis">
+    <amigos>65</amigos>
+  </user>
+</invitations>
+
+Thanks Ãngel.
+
+/**
+ * Write XML as per Associative Array
+ * @param object $xml XMLWriter Object
+ * @param array $data Associative Data Array
+ */
+function writeXmlRecursive(XMLWriter $xml, $data){
+    foreach($data as $key => $value){
+        if (is_array($value) && isset($value[0])){
+            $xml->startElement($key);
+            foreach($value as $itemValue){
+
+                if(is_array($itemValue)){
+                    writeXmlRecursive($xml, $itemValue);
+                }
+                else
+                {
+                    $xml->writeElement($key, $itemValue."");
+                }
+            }
+            $xml->endElement();
+
+        }else if(is_array($value)){
+            $xml->startElement($key);
+            writeXmlRecursive($xml, $value);
+            $xml->endElement();
+            continue;
+        }
+
+        if (!is_array($value)){
+            $xml->writeElement($key, $value."");
+        }
+    }
+}
+
+This is final version, that give ahat i want from array with 4 nested level
+<items>
+<item>
+  <id_site>59332</id_site>
+  <id>33</id>
+  <code>196429985</code>
+  <tombid>23</tombid>
+  <tombcode>196429985</tombcode>
+  <religion></religion>
+  <lastname>lastname</lastname>
+  <firstname>name</firstname>
+  <patronymicname>patronymicname</patronymicname>
+  <sex>1</sex>
+  <birthday>2</birthday>
+  <birthmonth>4</birthmonth>
+  <birthyear>1946</birthyear>
+  <deathday>13</deathday>
+  <deathmonth>5</deathmonth>
+  <deathyear>2006</deathyear>
+  <s_comments></s_comments>
+  <graveyard>17446</graveyard>
+  <latitude></latitude>
+  <longitude></longitude>
+  <images>
+   <image>
+    <siteId>52225</siteId>
+    <fileId>62</fileId>
+    <prefix>0</prefix>
+    <path>path</path>
+   </image>
+   <image>
+    <siteId>52226</siteId>
+    <fileId>63</fileId>
+    <prefix>0</prefix>
+    <path>path</path>
+   </image>
+  </images>
+ </item>
+<items>
+

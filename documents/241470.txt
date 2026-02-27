@@ -1,0 +1,115 @@
+"Join" of time series
+c# linq linq-to-objects time-series
+I am designing a simple internal framework for handling time series data.
+Given that LINQ is my current toy hammer, I want to hit everything with it.
+I want to implement methods in class TimeSeries (Select(), Where() and so on) so that I can use LINQ syntax to handle time series data
+Some things are straight forward, e.g. (from x in A select x+10), giving a new time series.
+What is the best syntax design for combining two or more time series?
+(from a in A from b in B select a+b) is not great, since it expresses a nested loop.
+Maybe some join? This should correspond to join on the implicit time variable.
+(What I have in mind corresponds to the lisp 'zip' function)
+
+EDIT: Some clarification is necessary.
+A time series is a kind of function depending on time, e.g. stock quotes.
+A combination of time series could be the difference between two stock prices, as a function of time.
+Stock1.MyJoin(Stock2, (a,b)=>a-b)
+
+is possible, but can this be expressed neatly using some LINQ syntax? 
+I am expecting to implement LINQ methods in class MyTimeSeries myself.
+
+
+Union sounds like the right way to go - no query expression support, but I think it expresses what you mean.
+You might be interested in looking at the Range-based classes in MiscUtil which can be nicely used for times. Combined with a bit of extension method fun, you can do:
+foreach (DateTime day in 19.June(1976).To(DateTime.Today).Step(1.Day()))
+{
+    Console.WriteLine("I'm alive!");
+}
+
+I'm not suggesting this should replace whatever you're doing, just that you might be able to take some ideas to make it even neater. Feel free to contribute back, too :)
+
+If I'm understanding the question correctly, you want to join multiple sequences based on their position within the sequence?
+There isn't anything in the System.Linq.Enumerable class to do this as both the Join and GroupJoin methods are based on join keys. However, by coincidence I wrote a PositionalJoin method for just this purpose a few days back, used as in your example:
+sequenceA.PositionalJoin(sequenceB, (a, b) => new { a, b });
+
+The semantics of the method shown below is that it does not require the sequences to be of equal length, but it would be trivial to modify it to require this. I also commented out where the argument checking should be as it was using our internal helper classes.
+public static IEnumerable<TResult> PositionalJoin<T1, T2, TResult>(
+    this IEnumerable<T1> source1, 
+    IEnumerable<T2> source2, 
+    Func<T1, T2, int, TResult> selector)
+{
+    // argument checking here
+    return PositionalJoinIterator(source1, source2, selector);
+}
+
+private static IEnumerable<TResult> PositionalJoinIterator<T1, T2, TResult>(
+    IEnumerable<T1> source1, 
+    IEnumerable<T2> source2, 
+    Func<T1, T2, TResult> selector)
+{
+    using (var enumerator1 = source1.GetEnumerator())
+    using (var enumerator2 = source2.GetEnumerator())
+    {
+        bool gotItem;
+        do
+        {
+            gotItem = false;
+
+            T1 item1;
+            if (enumerator1.MoveNext())
+            {
+                item1 = enumerator1.Current;
+                gotItem = true;
+            }
+            else
+            {
+                item1 = default(T1);
+            }
+
+            T2 item2;
+            if (enumerator2.MoveNext())
+            {
+                item2 = enumerator2.Current;
+                gotItem = true;
+            }
+            else
+            {
+                item2 = default(T2);
+            }
+
+            if (gotItem)
+            {
+                yield return selector(item1, item2);
+            }
+        }
+        while (gotItem);
+    }
+}
+
+Not sure if this is exactly what you're looking for, but hopefully of some help.
+
+From my NExtension project:
+public static IEnumerable<TResult> Zip<T1, T2, TResult>(
+    this IEnumerable<T1> source1, 
+    IEnumerable<T2> source2, 
+    Func<T1, T2, TResult> combine)
+{
+    if (source1 == null)
+        throw new ArgumentNullException("source1");
+    if (source2 == null)
+        throw new ArgumentNullException("source2");
+    if (combine == null)
+        throw new ArgumentNullException("combine");
+
+    IEnumerator<T1> data1 = source1.GetEnumerator();
+    IEnumerator<T2> data2 = source2.GetEnumerator();
+    while (data1.MoveNext() && data2.MoveNext())
+    {
+        yield return combine(data1.Current, data2.Current);
+    }
+}
+
+Syntax is:
+Stock1.Zip(Stock2, (a,b)=>a-b)
+
+
+Bjarke, take a look at NEsper, it's an open source Complex Event Processing app that amongst other things does SQL-like time series queries.  You can either learn how they've done it, or perhaps even leverage their code to achieve your goal.  link here http://esper.codehaus.org/about/nesper/nesper.html

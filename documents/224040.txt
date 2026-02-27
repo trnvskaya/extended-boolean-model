@@ -1,0 +1,106 @@
+How do I calculate the previous business day in ksh shell script?
+shell date ksh
+What is the most elegant way to calculate the previous business day in shell ksh script ?
+What I got until now is :
+#!/bin/ksh
+
+set -x
+
+DAY_DIFF=1
+case `date '+%a'` in
+"Sun")
+   DAY_DIFF=2
+   ;;
+"Mon")
+   DAY_DIFF=3
+   ;;
+esac
+
+PREV_DT=`perl -e '($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime(time()-${DAY_DIFF}*24*60*60);printf "%4d%02d%02d",$year+1900,$mon+1,$mday;'`
+
+echo $PREV_DT
+
+How do I make the ${DAY_DIFF} variable to be transmitted as value and not as  string ?
+
+
+Well, if running Perl counts as part of the script, then develop the answer in Perl.  The next question is - what defines a business day?  Are you a shop/store that is open on Sunday?  Saturday?  Or a 9-5 Monday to Friday business?  What about holidays?
+Assuming you're thinking Monday to Friday and holidays are temporarily immaterial, then you can use an algorithm in Perl that notes that wday will be 0 on Sunday through 6 on Saturday, and therefore if wday is 1, you need to subtract 3 * 86400 from time(); if wday is 0, you need to subtract 2 * 86400; and if wday is 6, you need to subtract 1 * 86400.  That's what you've got in the Korn shell stuff - just do it in the Perl instead:
+#!/bin/perl -w
+use strict;
+use POSIX;
+use constant SECS_PER_DAY => 24 * 60 * 60;
+my(@days) = (2, 3, 1, 1, 1, 1, 1);
+my($now) = time;
+my($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst)=localtime($now);
+print strftime("%Y-%m-%d\n", localtime($now - $days[$wday] * SECS_PER_DAY));
+
+This does assume you have the POSIX module; if not, then you'll need to do roughly the same printf() as you used.  I also use ISO 8601 format for dates by preference (also used by XSD and SQL) - hence the illustrated format.
+
+Here is a solution that doesn't use Perl.  It works both with ksh and sh.
+#!/bin/ksh
+
+diff=-1
+[ `date +%u` == 1 ] && diff=-3
+
+seconds=$((`date +%s` + $diff * 24 * 3600))
+format=+%Y-%m-%d
+
+if date --help 2>/dev/null | grep -q -- -d ; then
+    # GNU date (e.g., Linux)
+    date -d "1970-01-01 00:00 UTC + $seconds seconds" $format
+else
+    # For BSD date (e.g., Mac OS X)
+    date -r $seconds $format
+fi
+
+
+#!/bin/ksh
+# GNU date is a veritable Swiss Army Knife...
+((D=$(date +%w)+2))
+if [ $D -gt 3 ]; then D=1; fi
+PREV_DT=$(date -d "-$D days" +%F)
+
+
+This should work for Solaris and Linux. It's realy complicating on Unix that you can not use the same commandline arguments on all Unix derivates.
+On Linux you can use date -d '-d24 hour ago' to get the last day
+on Solaris its TZ=CET+24 date. I guess other UNIX'es works the same way as Solaris does.
+#!/usr/bin/ksh
+
+lbd=5               # last business day (1=Mon, 2=Thu ... 6=Sat, 7=Sun)
+lbd_date=""         # last business day date
+
+function lbdSunOS
+{
+    typeset back=$1
+    typeset tz=`date '+%Z'`     # timezone
+
+    lbd_date=`TZ=${tz}+$back date '+%Y%m%d'`
+}
+
+function lbdLinux
+{
+    typeset back=$1
+
+    lbd_date=`date -d "-d$back hour ago"`
+}
+
+function calcHoursBack
+{
+    typeset lbd=$1
+    typeset dow=`date '+%u'`    # day of the week
+
+    if [ $dow -ge $lbd ]
+    then
+        return $(((dow-lbd)*24))
+    else
+        return $(((dow-lbd+7)*24))
+    fi
+}
+
+# Main
+
+calcHoursBack $lbd
+lbd`uname -s` $?
+
+echo $lbd_date
+

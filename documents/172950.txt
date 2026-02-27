@@ -1,0 +1,28 @@
+Add (external) relationship (tagging) to existing Hibernate entities
+hibernate database-design
+I need to add a new many-to-many relationship to an existing Hibernate entity.
+I do not want to touch the original Hibernate entity bean or its configuration.
+What I am adding is a "tagging" feature that can be viewed as an external contribution and not part of the entity's data itself.
+I want to have a simple join table with only two columns, the entity primary key, and the tag id.
+Can I use Hibernate to manage this table without introducting a new (artificial) entity type that contains a single tag mapping?
+Or am I misguided and should actually want to have this "relationship-entity", so that I can add attributes (such as timestamps) later?
+
+
+The idea behind Hibernate is being able to traverse a Java object tree from a given starting point.  If you want to define a many-to-many relationship from the original object to a tag object, you can still define it on the tag object, and it will properly allow you to get a list of the original objects that have that tag.
+The drawback is that you won't be able to query the original object for it's list of tags (that would require an annotation to reverse the relationship and an accessor that returned a list of Set of tag objects).  You will however be able to retrieve a list of the original objects that marked with a given tag.
+Here's an example ... Let's assume that the object to be tagged is a Post.  If so, here's the code to add a many-to-many relationship to the Tag, so that you can look up a list of Posts that have a specific Tag:
+@ManyToMany
+@JoinTable(
+    name = "TAG-POST",
+    joinColumns = {@JoinColumn(name = "TAG-ID")},
+    inverseJoinColumns = {@JoinColumn(name = "POST-ID")}
+)
+private Set<Posts> posts = new HashSet<Post>();
+
+Normally, you'd also want to be able to look up all the Tags related to a Post, but you can leave out the reverse mapping.  If you do need the reverse mapping, you'll need to add something like this to your Post object:
+@ManyToMany(mappedBy = "tags")
+private Set<Tag> tags = new HashSet<Tag>();
+
+Now you can also look up the tags that are related to a Post.
+After rereading your post (and viewing your comment), I realize that you're also interested in skipping the creation of a Tag entity.  If there is nothing but tag name, you could conceivably only use the table you've described, but you need to shift your mindset a bit.  What you're really describing is a one-to-many relationship between the Post and its Tag entries.  In this case, you'll need to map a post to a series of tag records, that have two columns ... a POST-ID and a TAG-NAME.  Without altering the original object, you can still query the table for a list of Posts with a specific TAG-NAME or for a list of TAG-NAME rows that are related to a specific Post.
+Note that this doesn't actually eliminate an entity ... You won't have the Tag entity, but the many-to-many lookup table will have to be created as a many-to-one relationship, which makes it an entity itself.  This approach does however use one less table.

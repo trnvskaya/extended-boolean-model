@@ -1,0 +1,65 @@
+How do I unit test a custom ant task?
+ant junit
+I am writing a custom ant task that extends Task. I am using the log() method in the task. What I want to do is use a unit test while deveoping the task, but I don't know how to set up a context for the task to run in to initialise the task as if it were running in ant.
+This is the custom Task:
+public class CopyAndSetPropertiesForFiles extends Task {
+    public void execute() throws BuildException {
+    	log("CopyAndSetPropertiesForFiles begin execute()");
+
+    	log("CopyAndSetPropertiesForFiles end execute()");
+    }
+}
+
+This is the unit test code:
+CopyAndSetPropertiesForFiles task = new CopyAndSetPropertiesForFiles();
+task.execute();
+
+When the code is run as a test it gives a NullPointerException when it calls log.
+java.lang.NullPointerException
+    at org.apache.tools.ant.Task.log(Task.java:346)
+    at org.apache.tools.ant.Task.log(Task.java:334)
+    at uk.co.tbp.ant.custom.CopyAndSetPropertiesForFiles.execute(CopyAndSetPropertiesForFiles.java:40)
+    at uk.co.tbp.ant.custom.test.TestCopyAndSetPropertiesForFiles.testCopyAndSetPropertiesForFiles(TestCopyAndSetPropertiesForFiles.java:22)
+
+Does anybody know a way to provide a context or stubs or something similar to the task?
+Thanks,
+Rob.
+Accepted answer from Abarax. I was able to call task.setProject(new Project());
+The code now executes OK (except no logging appears in th console - at least I can exercise the code :-) ).
+
+
+Looking at the Ant source code these are the two relevent classes: ProjectComponent and Task
+You are calling the log method from Task: 
+public void log(String msg) {
+     log(msg, Project.MSG_INFO);
+}
+
+Which calls:
+public void log(String msg, int msgLevel) {
+  if (getProject() != null) {
+    getProject().log(this, msg, msgLevel);
+  } else {
+    super.log(msg, msgLevel);
+  }
+}
+
+Since you do not have project set it will call "super.log(msg, msgLevel)"
+public void log(String msg, int msgLevel) {
+  if (getProject() != null) {
+     getProject().log(msg, msgLevel);
+  } else {
+    // 'reasonable' default, if the component is used without
+    // a Project ( for example as a standalone Bean ).
+    // Most ant components can be used this way.
+    if (msgLevel <= Project.MSG_INFO) {
+      System.err.println(msg);
+    }
+  }
+}
+
+It looks like this may be your problem.  Your task needs a project context.
+
+Or better yet, decouple the task object itself from the logic (lets call it TaskImpl) inside the task - so that you can pass in your own dependencies (e.g., the logger). Then, instead of testing the task object, you test TaskImpl -> which you can pass in the logger, and any other weird bits and pieces it might need to do its job. Then unit testing is a matter of mocking the dependencies. 
+
+Ant has a handy class called BuildFileTest that extends the JUnit TestCase class.  You can use it to test the behaviour of individual targets in a build file.  Using this would take care of all the annoying context.
+There's a Test The Task chapter in the Apache Ant Writing Tasks Tutorial that describes this.

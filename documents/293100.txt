@@ -1,0 +1,119 @@
+Vb6: Need some help with a loop
+vb6 loops
+So I have a loop that's supposed to do three things, go through a text file line by line, the text file contains pathnames and filenames(C:\Folder\file1.txt)
+If the line contains a certain string, it then copies a file to that location, renames it to what it is named in the text file, and then replaces a string within the copied file(still with me?).  If not it goes on to the next line.  I thought this would be fairly straight forward but I doesn't seem to be working, I'm currently unable to even compile as I'm getting errors saying the loop's syntax is wrong.  Any help would be appreciated, here's the entire function's code:
+Private Sub Command2_Click()
+
+Dim LineData As String 
+Dim FileHandle As Integer
+
+
+FileHandle = FreeFile
+Open "C:\textfile.txt" For Input As #FileHandle
+
+Do While Not EOF(FileHandle)
+Line Input #FileHandle, LineData
+If InStr(LineData, ".log") Then
+FileCopy "C:\thefile.log",LineData
+Open LineData For Input As #3
+ #3 = Replace$(#3, "abc", "xyz")
+Else
+End If  
+Loop
+Close #FileHandle
+Close #3
+
+
+
+
+
+
+ MsgBox "Copy, Replace, Complete!"
+
+End Sub
+
+Thanks in Advance!
+
+
+One problem I see is that you're opening filehandle, then #3, but you close them in the same order, and you should be closing #3, then filehandle.
+What I see happening is that filehandle is opened, then it searches for a line that contains ".log", then it does something - so far, so good. However, it then opens #3, does something else, and then loops. It needs to close #3 when it's done with it.
+Moving "Close #3" up 4 lines (to the next statement after the "#3 = Replace..." should do what you expect and should compile okay.
+
+I don't believe
+#3 = Replace$(#3, "abc", "xyz")
+
+is valid.
+You will need to read the contents of that file in, preferable line by line (or some sensible chunk at a time), do your replacement, then write it back out to a new file.  As you are copying the file anyway I would suggest reading it from the source location, and writing the new version to the location that the file would have been copied to anyway.
+for example...
+Private Sub Command2_Click()
+ Dim LineData As String
+ Dim FileHandle As Integer
+ Dim sourceHandle as Integer
+ Dim destHandle as Integer
+ dim temp as string
+ FileHandle = FreeFile
+ Open "C:\textfile.txt" For Input As #FileHandle
+ Do While Not EOF(FileHandle)
+  Line Input #FileHandle, LineData
+  If InStr(LineData, ".log") Then
+   sourceHandle=FreeFile
+   Open "C:\thefile.log" For Input as #sourceHandle
+   destHandle=FreeFile
+   Open LineData For Output as #destHandle
+   Do while Not EOF(sourceHandle)
+    Line Input #sourceHandle,temp
+    temp=replace$(temp,"abc","xyz")
+    Print #destHandle,temp
+   Loop
+   Close #destHandle
+   Close #sourceHandle
+  End If
+ Loop
+Close #FileHandle
+MsgBox "Copy, Replace, Complete!"
+End Sub
+
+Sorry if there are any errors, this isn't tested as I don't have a VB IDE installed on this computer.
+
+#3 = Replace$... is your problem line... fixing that and other stuff results in this:
+Private Sub Command2_Click()
+  Dim LineData As String
+  Dim FileHandle As Integer
+  Dim Buffer As String
+  FileHandle = FreeFile
+  Open "C:\thefile.log" For Binary Access Read As #FileHandle
+  Buffer = Space(LOF(FileHandle))
+  Get #FileHandle, , Buffer
+  Buffer = Replace(Buffer, "abc", "xyz")
+  Close #FileHandle
+  FileHandle = FreeFile
+  Open "C:\textfile.txt" For Input As #FileHandle
+  Do Until EOF(FileHandle)
+    Line Input #FileHandle, LineData
+    If InStr(LineData, ".log") Then
+      Open LineData For Output As #3
+      Print #3, Buffer;
+      Close #3
+    End If
+  Loop
+  Close #FileHandle
+  MsgBox "Copy, Replace, Complete!"
+End Sub
+
+If you prefer minimalism and short code you could go with this instead:
+Private Sub Command2_Click()
+  ''// This code requires a reference to Microsoft Scripting runtime (Project -> References)
+  Dim FSO As New Scripting.FileSystemObject
+  Dim Files() As String
+  Dim File As String
+  Dim Data As String
+  Data = Replace(FSO.OpenTextFile("C:\thefile.log").ReadAll(), "abc", "xyz")
+  Files = Split(FSO.OpenTextFile("C:\textfile.txt").ReadAll(), vbCrLf)
+  For Each File In Files
+    If InStr(File, ".log") > 0 Then FSO.CreateTextFile(File, True).Write Data
+  Next
+  MsgBox "Copy, Replace, Complete!"
+End Sub
+
+
+I'd like to suggest a different approach to you. I've done something like this except I knew before hand I was making a copy, and my method was to open the source and a new target (copy). I then read the source file line by line make the needed changes to the variable I read the line into before writing it back out to the copy. My files were never more than a couple of k and this was plenty quick enough and eliminates one of your loops. You would have to have a variable inside your loop to tell you what to rename the file to once done, or delete the file if you did not find the line you were looking for and do not need the copy.

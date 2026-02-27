@@ -1,0 +1,25 @@
+How do I restrict the number of records to be processed in an SSIS package?
+sql-server ssis
+I have a table with 7M records I want to trim down to 10k for dev.  I tried a delete, but the whole world was nearly overpowered by the transaction log size, so I truncated the table.
+Now I wish to insert 10k records from the original table, into my dev table, but it has a identity column, and many, many other columns, so I'd thought I'd try SSIS (through the wizard), which handles the identity nicely, but gives me no place to edit a query.  So I quickly made a view with a top clause, and changed the RowSet property of the source to the view.  Now everything fails because nothing sees the view, although I copied and pasted the view name from my create view statement, which fails a second time because, lo, the view actually does exist.  
+Does SSIS define which DB objects are used when a package is created, which would exclude the new view, and if so, how can I refresh that?
+
+
+Did you try closing and reopening the package?  I wouldn't expect you to have to do this though.  My first thought would be it is a security issue - that you haven't granted yourself select on it.
+
+Are you using the fully qualified name to the view?  Doe sit have a different owner than the default owner?  OPen up the data source and do a preview of the data to make sure it's all hooked up.
+
+There's really no need to use SSIS to do this.  You should be able to insert the records using SQL.  First, you will need to set IDENTITY_INSERT to on.  Then, you should be able to execute something like this:
+SET IDENTITY_INSERT db.schema.dev_table ON
+INSERT INTO dev_table SELECT TOP (10000) * FROM prod_table
+
+Ed is correct, SSIS is overkill for this task - especially as you are only inserting 10K records.
+Assuming the DEV table's schema is identical to the production, the script Ed displayed will work just fine.
+If the schema is different, you can specify the columns specifically - including the identity column (remembering to set the identity insert OFF afterwards). For example:
+SET IDENTITY_INSERT dbo.dev_table ON
+INSERT INTO dev_table (Id, Col1,Col2,Col3,Col4)
+SELECT TOP 10000 Id, Col1, Col2, Col3, Col4 FROM prod_table
+SET IDENTITY_INSERT dbo.dev_table OFF
+
+
+You could also have used the row sampling control to extract a random number of records from the overall data rather than just getting the top 10000 rows.  This would give a better sampling for use in development/testing since you would not be developing against only your 10000 oldest (if your distribution is like most tables I have seen) records, but instead a sampling from across your entire file.

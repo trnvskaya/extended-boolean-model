@@ -1,0 +1,184 @@
+How to count lines of code including sub-directories
+linux bash unix wc
+Suppose I want to count the lines of code in a project. If all of the files are in the same directory I can execute:
+cat * | wc -l
+
+However, if there are sub-directories, this doesn't work. For this to work cat would have to have a recursive mode. I suspect this might be a job for xargs, but I wonder if there is a more elegant solution?
+
+
+Try using the find command, which recurses directories by default:
+find . -type f -execdir cat {} \; | wc -l
+
+I think you're probably stuck with xargs
+find -name '*php' | xargs cat | wc -l
+
+chromakode's method gives the same result but is much much slower. If you use xargs your cating and wcing can start as soon as find starts finding.
+Good explanation at Linux: xargs vs. exec {}
+
+First you do not need to use cat to count lines. This is an antipattern called Useless Use of Cat (UUoC). To count lines in files in the current directory, use wc:
+wc -l * 
+
+Then the find command recurses the sub-directories:
+find . -name "*.c" -exec wc -l {} \;
+
+
+. is the name of the top directory to start searching from
+-name "*.c" is the pattern of the file you're interested in 
+-exec gives a command to be executed
+{} is the result of the find command to be passed to the  command (here wc-l)
+\; indicates the end of the command 
+
+This command produces a list of all files found with their line count, if you want to have the sum for all the files found, you can use find to list the files (with the -print option) and than use xargs to pass this list as argument to wc-l.
+find . -name "*.c" -print | xargs wc -l 
+
+EDIT to address Robert Gamble comment (thanks): if you have spaces or newlines (!) in file names, then you have to use -print0 option instead of -print and xargs -null so that the list of file names are exchanged with null-terminated strings. 
+find . -name "*.c" -print0 | xargs -0 wc -l
+
+The Unix philosophy is to have tools that do one thing only, and do it well.
+
+
+If you want a code-golfing answer: 
+grep '' -R . | wc -l 
+
+The problem with just using wc -l on its own is it cant descend well, and the oneliners using 
+find . -exec wc -l {} \;
+
+Won't give you a total line count because it runs wc once for every file, ( loL! ) 
+and 
+find . -exec wc -l {} + 
+
+Will get confused as soon as find hits the ~200k1,2   character argument limit for parameters and instead calls wc multiple times, each time only giving you a partial summary. 
+Additionally, the above grep trick will not add more than 1 line to the output when it encounters a binary file, which could be circumstantially beneficial. 
+For the cost of 1 extra command character, you can ignore binary files completely: 
+ grep '' -IR . | wc -l
+
+If you want to run line counts on binary files too
+ grep '' -aR . | wc -l 
+
+
+Footnote on limits:
+
+The docs are a bit vague as to whether its a string size limit or a number of tokens limit.
+cd /usr/include;
+find -type f -exec perl -e 'printf qq[%s => %s\n], scalar @ARGV, length join q[ ], @ARGV' {} + 
+# 4066 => 130974
+# 3399 => 130955
+# 3155 => 130978
+# 2762 => 130991
+# 3923 => 130959
+# 3642 => 130989
+# 4145 => 130993
+# 4382 => 130989
+# 4406 => 130973
+# 4190 => 131000
+# 4603 => 130988
+# 3060 => 95435
+
+This implies its going to chunk very very easily.
+
+The correct way is:
+find . -name "*.c" -print0 | xargs -0 cat | wc -l
+
+You must use -print0 because there are only two invalid characters in Unix filenames: The null byte and "/" (slash). So for example "xxx\npasswd" is a valid name. In reality, you're more likely to encounter names with spaces in them, though. The commands above would count each word as a separate file.
+You might also want to use "-type f" instead of -name to limit the search to files.
+
+Using cat or grep in the solutions above is wasteful if you can use relatively recent GNU tools, including Bash:
+
+wc -l --files0-from=<(find . -name \*.c -print0)
+
+This handles file names with spaces, arbitrary recursion and any number of matching files, even if they exceed the command line length limit.
+
+If you want to generate only a total line count and not a line count for each file something like:
+find . -type f -exec wc -l {} \; | awk '{total += $1} END{print total}'
+
+works well. This saves you the need to do further text filtering in a script.
+
+I like to use find and head together for "a recursively cat" on all the files in a project directory, for example:
+find . -name "*rb" -print0 | xargs -0 head -10000
+
+The advantage is that head will add your the filename and path:
+==> ./recipes/default.rb <==
+DOWNLOAD_DIR = '/tmp/downloads'
+MYSQL_DOWNLOAD_URL = 'http://cdn.mysql.com/Downloads/MySQL-5.6/mysql-5.6.10-debian6.0-x86_64.deb'
+MYSQL_DOWNLOAD_FILE = "#{DOWNLOAD_DIR}/mysql-5.6.10-debian6.0-x86_64.deb"
+
+package "mysql-server-5.5"
+...
+
+==> ./templates/default/my.cnf.erb <==
+#
+# The MySQL database server configuration file.
+#
+...
+
+==> ./templates/default/mysql56.sh.erb <==
+PATH=/opt/mysql/server-5.6/bin:$PATH 
+
+For the complete example here, please see my blog post : 
+http://haildata.net/2013/04/using-cat-recursively-with-nicely-formatted-output-including-headers/
+Note I used 'head -10000', clearly if I have files over 10,000 lines this is going to truncate the output ... however I could use head 100000 but for "informal project/directory browsing" this approach works very well for me. 
+
+Here's a Bash script that counts the lines of code in a project. It traverses a source tree recursively, and it excludes blank lines and single line comments that use "//".
+# $excluded is a regex for paths to exclude from line counting
+excluded="spec\|node_modules\|README\|lib\|docs\|csv\|XLS\|json\|png"
+
+countLines(){
+  # $total is the total lines of code counted
+  total=0
+  # -mindepth exclues the current directory (".")
+  for file in `find . -mindepth 1 -name "*.*" |grep -v "$excluded"`; do
+    # First sed: only count lines of code that are not commented with //
+    # Second sed: don't count blank lines
+    # $numLines is the lines of code
+    numLines=`cat $file | sed '/\/\//d' | sed '/^\s*$/d' | wc -l`
+    total=$(($total + $numLines))
+    echo "  " $numLines $file
+  done
+  echo "  " $total in total
+}
+
+echo Source code files:
+countLines
+echo Unit tests:
+cd spec
+countLines
+
+Here's what the output looks like for my project:
+Source code files:
+   2 ./buildDocs.sh
+   24 ./countLines.sh
+   15 ./css/dashboard.css
+   53 ./data/un_population/provenance/preprocess.js
+   19 ./index.html
+   5 ./server/server.js
+   2 ./server/startServer.sh
+   24 ./SpecRunner.html
+   34 ./src/computeLayout.js
+   60 ./src/configDiff.js
+   18 ./src/dashboardMirror.js
+   37 ./src/dashboardScaffold.js
+   14 ./src/data.js
+   68 ./src/dummyVis.js
+   27 ./src/layout.js
+   28 ./src/links.js
+   5 ./src/main.js
+   52 ./src/processActions.js
+   86 ./src/timeline.js
+   73 ./src/udc.js
+   18 ./src/wire.js
+   664 in total
+Unit tests:
+   230 ./ComputeLayoutSpec.js
+   134 ./ConfigDiffSpec.js
+   134 ./ProcessActionsSpec.js
+   84 ./UDCSpec.js
+   149 ./WireSpec.js
+   731 in total
+
+Enjoy! --Curran
+
+find . -name "*.h" -print | xargs wc -l
+
+
+wc -cl `find . -name "*.php" -type f`
+

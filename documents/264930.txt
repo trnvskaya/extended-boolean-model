@@ -1,0 +1,179 @@
+Count Duplicate URLs, fastest method possible
+language-agnostic url duplicates text-processing
+I'm still working with this huge list of URLs, all the help I have received has been great.
+At the moment I have the list looking like this (17000 URLs though):
+http://www.domain.com/page?CONTENT_ITEM_ID=1
+http://www.domain.com/page?CONTENT_ITEM_ID=3
+http://www.domain.com/page?CONTENT_ITEM_ID=2
+http://www.domain.com/page?CONTENT_ITEM_ID=1
+http://www.domain.com/page?CONTENT_ITEM_ID=2
+http://www.domain.com/page?CONTENT_ITEM_ID=3
+http://www.domain.com/page?CONTENT_ITEM_ID=3
+I can filter out the duplicates no problem with a couple of methods, awk etc.  What I am really looking to do it take out the duplicate URLs but at the same time taking a count of how many times the URL exists in the list and printing the count next to the URL with a pipe separator.  After processing the list it should look like this:
+url | count
+http://www.domain.com/page?CONTENT_ITEM_ID=1 | 2
+http://www.domain.com/page?CONTENT_ITEM_ID=2 | 2
+http://www.domain.com/page?CONTENT_ITEM_ID=3 | 3
+What method would be the fastest way to achieve this?
+Cheers
+
+
+This is probably as fast as you can get without writing code.
+
+    $ cat foo.txt
+    http://www.domain.com/page?CONTENT_ITEM_ID=1
+    http://www.domain.com/page?CONTENT_ITEM_ID=3
+    http://www.domain.com/page?CONTENT_ITEM_ID=2
+    http://www.domain.com/page?CONTENT_ITEM_ID=1
+    http://www.domain.com/page?CONTENT_ITEM_ID=2
+    http://www.domain.com/page?CONTENT_ITEM_ID=3
+    http://www.domain.com/page?CONTENT_ITEM_ID=3
+    $ sort foo.txt | uniq -c
+          2 http://www.domain.com/page?CONTENT_ITEM_ID=1
+          2 http://www.domain.com/page?CONTENT_ITEM_ID=2
+          3 http://www.domain.com/page?CONTENT_ITEM_ID=3
+
+Did a bit of testing, and it's not particularly fast, although for 17k it'll take little more than 1 second (on a loaded P4 2.8Ghz machine)
+
+$ wc -l foo.txt
+174955 foo.txt
+vinko@mithril:~/i3media/2008/product/Pending$ time sort foo.txt | uniq -c
+  54482 http://www.domain.com/page?CONTENT_ITEM_ID=1
+  48212 http://www.domain.com/page?CONTENT_ITEM_ID=2
+  72261 http://www.domain.com/page?CONTENT_ITEM_ID=3
+
+real    0m23.534s
+user    0m16.817s
+sys     0m0.084s
+
+$ wc -l foo.txt
+14955 foo.txt
+$ time sort foo.txt | uniq -c
+   4233 http://www.domain.com/page?CONTENT_ITEM_ID=1
+   4290 http://www.domain.com/page?CONTENT_ITEM_ID=2
+   6432 http://www.domain.com/page?CONTENT_ITEM_ID=3
+
+real    0m1.349s
+user    0m1.216s
+sys     0m0.012s
+
+Although O() wins the game hands down, as usual. Tested S.Lott's solution and
+
+
+$ cat pythoncount.py
+from collections import defaultdict
+myFile = open( "foo.txt", "ru" )
+fq= defaultdict( int )
+for n in myFile:
+    fq[n] += 1
+for n in fq.items():
+    print "%s|%s" % (n[0].strip(),n[1])
+
+$ wc -l foo.txt
+14955 foo.txt
+
+$ time python pythoncount.py
+http://www.domain.com/page?CONTENT_ITEM_ID=2|4290
+http://www.domain.com/page?CONTENT_ITEM_ID=1|4233
+http://www.domain.com/page?CONTENT_ITEM_ID=3|6432
+
+real    0m0.072s
+user    0m0.028s
+sys     0m0.012s
+
+$ wc -l foo.txt
+1778955 foo.txt
+
+$ time python pythoncount.py
+http://www.domain.com/page?CONTENT_ITEM_ID=2|504762
+http://www.domain.com/page?CONTENT_ITEM_ID=1|517557
+http://www.domain.com/page?CONTENT_ITEM_ID=3|756636
+
+real    0m2.718s
+user    0m2.440s
+sys     0m0.072s
+
+
+See Converting a list of tuples into a dict in python.
+Essentially, you're doing the same thing with an int instead of a list.
+This may be faster than the system sort because it's O(n).  However, it's also Python, not C.
+from collections import defaultdict
+myFile = open( "urlFile", "ru" )
+fq= defaultdict( int )
+for n in myFile:
+    fq[n] += 1
+
+for url, count in fq.iteritems():
+    print url.rstrip(), "|", count
+
+On my little Dell D830, this processes 17000 URL's in 0.015 seconds.
+
+In perl
+[disclaimer: not able to test this code at the moment]
+while (<>) {
+    chomp;
+    $occurences{$_}++;
+}
+foreach $url (sort keys %occurences) {
+    printf "%s|%d\n", $url, $occurences{$url};
+}
+
+
+Are you're going to do this over and over again?  If not, then "fastest" as in fastest to implement is probably
+sort </file/of/urls | uniq --count | awk '{ print $2, " | ", $1}'
+
+(not tested, I'm not near a UNIX command line)
+
+Here is another version in Python:
+import fileinput, itertools
+
+urls = sorted(fileinput.input())
+for url, sameurls in itertools.groupby(urls):
+    print url.rstrip(), "|", sum(1 for _ in sameurls)
+
+Example:
+$ cat foo.txt
+http://www.domain.com/page?CONTENT_ITEM_ID=1
+http://www.domain.com/page?CONTENT_ITEM_ID=3
+http://www.domain.com/page?CONTENT_ITEM_ID=2
+http://www.domain.com/page?CONTENT_ITEM_ID=1
+http://www.domain.com/page?CONTENT_ITEM_ID=2
+http://www.domain.com/page?CONTENT_ITEM_ID=3
+http://www.domain.com/page?CONTENT_ITEM_ID=3
+
+$ python countuniq.py foo.txt
+http://www.domain.com/page?CONTENT_ITEM_ID=1 | 2
+http://www.domain.com/page?CONTENT_ITEM_ID=2 | 2
+http://www.domain.com/page?CONTENT_ITEM_ID=3 | 3
+
+Performance:
+C:\> timethis "sort urls17000.txt|uniq -c"
+...
+TimeThis :  Elapsed Time :  00:00:00.688
+
+C:\> timethis python countuniq.py urls17000.txt
+...
+TimeThis :  Elapsed Time :  00:00:00.625
+
+C:\> timethis python slott.py urls17000.txt
+...
+TimeThis :  Elapsed Time :  00:00:00.562
+
+C:\> timethis perl toolkit.pl urls17000.txt
+...
+TimeThis :  Elapsed Time :  00:00:00.187
+
+Conclusion: All solutions are under 1 second. The pipe is the slowest, S.Lott's solution is faster then the above python's version and toolkit's perl solution is the fastest. 
+
+C:\> timethis perl toolkit.pl urls1778955.txt
+...
+TimeThis :  Elapsed Time :  00:00:17.656
+
+C:\> timethis "sort urls1778955.txt|uniq -c"
+...
+TimeThis :  Elapsed Time :  00:01:54.234
+
+$ wc urls1778955.txt
+1778955  1778955 81831930 urls1778955.txt
+
+Hashing beats sorting for a large number of urls.

@@ -1,0 +1,125 @@
+Why is using '*' to build a view bad?
+sql view
+Why is using '*' to build a view bad ?
+Suppose that you have a complex join and all fields may be used somewhere.
+Then you just have to chose fields needed.
+SELECT field1, field2 FROM aview WHERE ...
+
+The view "aview" could be SELECT table1.*, table2.* ... FROM table1 INNER JOIN table2 ...
+We have a problem if 2 fields have the same name in table1 and table2.
+Is this only the reason why using '*' in a view is bad?
+With '*', you may use the view in a different context because the information is there.
+What am I missing ?
+Regards
+
+
+It's because you don't always need every variable, and also to make sure that you are thinking about what you specifically need.
+There's no point getting all the hashed passwords out of the database when building a list of users on your site for instance, so a select * would be unproductive.
+
+I don't think there's much in software that is "just bad", but there's plenty of stuff that is misused in bad ways :-)
+The example you give is a reason why * might not give you what you expect, and I think there are others.  For example, if the underlying tables change, maybe columns are added or removed, a view that uses * will continue to be valid, but might break any applications that use it.  If your view had named the columns explicitly then there was more chance that someone would spot the problem when making the schema change.
+On the other hand, you might actually want your view to blithely
+accept all changes to the underlying tables, in which case a * would
+be just what you want.
+Update: I don't know if the OP had a specific database vendor in mind, but it is now clear that my last remark does not hold true for all types.  I am indebted to user12861 and Jonny Leeds for pointing this out, and sorry it's taken over 6 years for me to edit my answer.
+
+Once upon a time, I created a view against a table in another database (on the same server) with
+Select * From dbname..tablename
+
+Then one day, a column was added to the targetted table.  The view started returning totally incorrect results until it was redeployed.
+
+Totally incorrect : no rows.
+This was on Sql Server 2000.
+I speculate that this is because of syscolumns values that the view had captured, even though I used *.
+
+Using '*' for anything production is bad. It's great for one-off queries, but in production code you should always be as explicit as possible.
+For views in particular, if the underlying tables have columns added or removed, the view will either be wrong or broken until it is recompiled.
+
+Another reason why "*" is risky, not only in views but in queries, is that columns can change name or change position in the underlying tables.  Using a wildcard means that your view accommodates such changes easily without needing to be changed.  But if your application references columns by position in the result set, or if you use a dynamic language that returns result sets keyed by column name, you could experience problems that are hard to debug.
+I avoid using the wildcard at all times.  That way if a column changes name, I get an error in the view or query immediately, and I know where to fix it.  If a column changes position in the underlying table, specifying the order of the columns in the view or query compensates for this.
+
+Although many of the comments here are very good and reference one common problem of using wildcards in queries, such as causing errors or different results if the underlying tables change, another issue that hasn't been covered is optimization.  A query that pulls every column of a table tends to not be quite as efficient as a query that pulls only those columns you actually need.  Granted, there are those times when you need every column and it's a major PIA having to reference them all, especially in a large table, but if you only need a subset, why bog down your query with more columns than you need.
+
+It's generally a bad idea to use *. Some code certification engines mark this as a warning and advise you to explicitly refer only the necessary columns. The use of * can lead to performance louses as you might only need some columns and not all. But, on the other hand, there are some cases where the use of * is ideal. Imagine that, no matter what, using the example you provided, for this view (aview) you would always need all the columns in these tables. In the future, when a column is added, you wouldn't need to alter the view. This can be good or bad depending the case you are dealing with. 
+
+Using SELECT * within the view does not incur much of a performance overhead if columns aren't used outside the view - the optimizer will optimize them out; SELECT * FROM TheView can perhaps waste bandwidth, just like any time you pull more columns across a network connection.
+In fact, I have found that views which link almost all the columns from a number of huge tables in my datawarehouse have not introduced any performance issues at all, even through relatively few of those columns are requested from outside the view.  The optimizer handles that well and is able to push the external filter criteria down into the view very well.
+However, for all the reasons given above, I very rarely use SELECT *.
+I have some business processes where a number of CTEs are built on top of each other, effectively building derived columns from derived columns from derived columns (which will hopefully one day being refactored as the business rationalizes and simplifies these calculations), and in that case, I need all the columns to drop through each time, and I use SELECT * - but SELECT * is not used at the base layer, only in between the first CTE and the last.
+
+I think it depends on the language you are using. I prefer to use select * when the language or DB driver returns a dict(Python, Perl, etc.) or associative array(PHP) of the results. It makes your code alot easier to understand if you are referring to the columns by name instead of as an index in an array.
+
+These other answers all have good points, but on SQL server at least they also have some wrong points.  Try this:
+create table temp (i int, j int)
+go
+create view vtemp as select * from temp
+go
+insert temp select 1, 1
+go
+alter table temp add k int
+go
+insert temp select 1, 1, 1
+go
+select * from vtemp
+
+SQL Server doesn't learn about the "new" column when it is added.  Depending on what you want this could be a good thing or a bad thing, but either way it's probably not good to depend on it.  So avoiding it just seems like a good idea.
+To me this weird behavior is the most compelling reason to avoid select * in views.
+The comments have taught me that MySQL has similar behavior and Oracle does not (it will learn about changes to the table).  This inconsistency to me is all the more reason not to use select * in views.
+
+No one else seems to have mentioned it, but within SQL Server you can also set up your view with the schemabinding attribute. 
+This prevents modifications to any of the base tables (including dropping them) that would affect the view definition. 
+This may be useful to you for some situations. I realise that I haven't exactly answered your question, but thought I would highlight it nonetheless.
+
+A SQL query is basically a functional unit designed by a programmer for use in some context. For long-term stability and supportability (possibly by someone other than you) everything in a functional unit should be there for a purpose, and it should be reasonably evident (or documented) why it's there - especially every element of data.
+If I were to come along two years from now with the need or desire to alter your query, I would expect to grok it pretty thoroughly before I would be confident that I could mess with it. Which means I would need to understand why all the columns are called out. (This is even more obviously true if you are trying to reuse the query in more than one context. Which is problematic in general, for similar reasons.) If I were to see columns in the output that I couldn't relate to some purpose, I'd be pretty sure that I didn't understand what it did, and why, and what the consequences would be of changing it.
+
+And if you have joins using select * automatically means you are returning more data than you need as the data in the join fields is repeated.  This is wasteful of database and network resources. 
+If you are naive enough to use views that call other views, using select * can make them even worse performers (This is technique that is bad for performance on its own, calling mulitple columns you don't need makes it much worse).
+
+The situation on SQL Server is actually even worse than the answer by @user12861 implies:  if you use SELECT * against multiple tables, adding columns to a table referenced early in the query will actually cause your view to return the values of the new columns under the guise of the old columns.  See the example below:
+-- create two tables
+CREATE TABLE temp1 (ColumnA INT, ColumnB DATE, ColumnC DECIMAL(2,1))
+CREATE TABLE temp2 (ColumnX INT, ColumnY DATE, ColumnZ DECIMAL(2,1))
+GO
+
+
+-- populate with dummy data
+INSERT INTO temp1 (ColumnA, ColumnB, ColumnC) VALUES (1, '1/1/1900', 0.5)
+INSERT INTO temp2 (ColumnX, ColumnY, ColumnZ) VALUES (1, '1/1/1900', 0.5)
+GO
+
+
+-- create a view with a pair of SELECT * statements
+CREATE VIEW vwtemp AS 
+SELECT *
+FROM temp1 INNER JOIN temp2 ON 1=1
+GO
+
+
+-- SELECT showing the columns properly assigned
+SELECT * FROM vwTemp 
+GO
+
+
+-- add a few columns to the first table referenced in the SELECT 
+ALTER TABLE temp1 ADD ColumnD varchar(1)
+ALTER TABLE temp1 ADD ColumnE varchar(1)
+ALTER TABLE temp1 ADD ColumnF varchar(1)
+GO
+
+
+-- populate those columns with dummy data
+UPDATE temp1 SET ColumnD = 'D', ColumnE = 'E', ColumnF = 'F'
+GO
+
+
+-- notice that the original columns have the wrong data in them now, causing any datatype-specific queries (e.g., arithmetic, dateadd, etc.) to fail
+SELECT *
+FROM vwtemp
+GO
+
+-- clean up
+DROP VIEW vwTemp
+DROP TABLE temp2
+DROP TABLE temp1
+

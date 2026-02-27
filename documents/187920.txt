@@ -1,0 +1,77 @@
+DBCC CHECKIDENT on a temporary table throwing permissions error for wrong user
+sql-server-2005 stored-procedures permissions temp-tables
+I'm logged into a SQL Server 2005 database as a non-sa user, 'bhk', that is a member of the 'public' server role only. The following code tries to execute within a stored procedure called by user 'bhk'. This line of code...
+TRUNCATE TABLE #Table1
+DBCC CHECKIDENT('#Table1', RESEED, @SequenceNumber) WITH NO_INFOMSGS
+
+causes this error...
+
+User 'guest' does not have permission
+  to run DBCC CHECKIDENT for object
+  '#Table1__00000000007F'.
+
+I'm aware of the permissions required to run DBCC CHECKIDENT...
+*Caller must own the table, or be a member of the sysadmin fixed server role, the db_owner fixed database role, or the db_ddladmin fixed database role.*
+So I have two questions:
+
+Since 'bhk' is calling a stored
+procedure that creates a temporary
+table, shouldn't 'bhk' be the owner
+and be allowed to run DBCC
+CHECKIDENT?
+Why does the error
+    message return that user 'guest'
+    doesn't have permission?  To my knowledge, I'm not
+    logged in as 'guest'.
+
+Any help would be greatly appreciated.
+
+
+You wrote:
+
+"Caller must own the table, or be a
+  member of the sysadmin fixed server
+  role, the db_owner fixed."
+
+So (if it's not a bug), according to Lieutenant Columbo's impeccable logic, each of the premisses must be false. That means, the caller does not own the table, even if he created it.
+In fact, it seems that all objects created in tempd are owned by dbo by default. You can examine it, if you do following in Query Analyzer:
+
+Connect to your database using the low-permission user.
+Execute: CREATE TABLE #NotMyTable (TestID int identity)
+Connect to tempdb of the same SQL Server as dbo 
+Execute: SELECT user_name(uid) FROM sysobjects WHERE name LIKE '#NotMyTable%' 
+
+You'll see that dbo is the owner of the temporary table.
+So, what could be a solution?
+(Foreword: I don't like that kind of manipulation, but the intellectual stimulus is driving me... ;-)  )
+So, you could write another stored procedure which updates the UID in sysobjects of the tempdb to the value of your user (shiver!). I tested it only in Query Analyzer. After the Update I could execute your DBCC CHECKIDENT command.
+
+An alternate solution to doing the TRUNCATE and CHECKIDENT commands would be to simply drop and re-create your temporary table. E.g.
+DROP TABLE #Table1
+
+CREATE TABLE #Table1
+(
+   ....
+)
+
+This may not be the most efficient solution though.
+
+Here is an alternate solution, that may work if you need to re-seed with a sequence number of more than 1.
+TRUNCATE #Table1
+
+SET IDENTITY_INSERT #Table1 ON
+
+INSERT INTO #Table1 (TableID) -- This is your primary key field
+VALUES (@SequenceNumber - 1)
+
+SET IDENTITY_INSERT #Table1 OFF
+
+DELETE FROM #Table1
+
+What this is doing is to set the IDENTITY_INSERT on your temporary table, to allow you to add a row with an explicit ID. You can then delete this row, but further inserts should start from the last sequence number.
+
+You can accomplish this by fully qualifying the tempdb table.  
+DBCC CHECKIDENT([tempdb..#Table1], RESEED, @SequenceNumber) WITH NO_INFOMSGS
+
+
+I just ran into this. The answer I came to was to give the relevant account the permissions in the tempdb database where, apparantly, these tables were created.

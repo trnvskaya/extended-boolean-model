@@ -1,0 +1,123 @@
+Force PHP integer overflow
+c# php integer-overflow
+We have some integer arithmetic which for historical reasons has to work the same on PHP as it does in a few statically typed languages.  Since we last upgraded PHP the behavior for overflowing integers has changed.  Basically we are using following formula:
+function f($x1, $x2, $x3, $x4)
+{
+   return (($x1 + $x2) ^ $x3) + $x4;
+}
+
+However, even with conversions:
+function f($x1, $x2, $x3, $x4)
+{
+   return intval(intval(intval($x1 + $x2) ^ $x3) + $x4);
+}
+
+I am still ending up with the completely wrong number...
+For example, with $x1 = -1580033017, $x2 = -2072974554, $x3 = -1170476976) and $x4 = -1007518822, I end up with -30512150 in PHP and 1617621783 in C#.
+Just adding together $x1 and $x2 I cannot get the right answer:
+In C# I get
+(-1580033017 + -2072974554) = 641959725
+
+In PHP:
+intval(intval(-1580033017) + intval(-2072974554)) = -2147483648
+
+which is the same as:
+intval(-1580033017 + -2072974554) = -2147483648
+
+I don't mind writing a "IntegerOverflowAdd" function or something, but I can't quite figure out how (-1580033017 + -2072974554) equals 641959725.  (I do recognize that it is -2147483648 + (2 * 2^31), but -2147483648 + 2^31 is -1505523923 which is greater than Int.Min so why is do you add 2*2^31 and not 2^31?)
+Any help would be appreciated...
+
+
+I think it may have to do with the integer in PHP being unsigned 32 bits as in C# they are signed 32 bits by default.
+You are playing with numbers on the edge of the normal 31-32 bits range.
+Please see additional documentation in the PHP manual:
+http://www.php.net/manual/en/language.types.integer.php
+The size of an integer is platform-dependent, although a maximum value of about two billion is the usual value (that's 32 bits signed). PHP does not support unsigned integers. Integer size can be determined using the constant PHP_INT_SIZE, and maximum value using the constant PHP_INT_MAX since PHP 4.4.0 and PHP 5.0.5.
+
+Will this work?
+echo (-1580033017 + -2072974554) & 0xffffffff
+
+To generalise, you could do (pardon any syntax errors, I've not touched PHP for a long time):
+function s32add($a, $b) {
+    return ($a + $b) & 0xffffffff;
+}
+
+
+Internally, PHP uses an "integer" type for most numbers. However, these only go so far: if you add a large integer to a large integer, PHP will see that the result is too big to fit into a normal integer and will assign it to a floating-point number. Floating-point numbers (floats) themselves only go so high, however, and there's a point around the sixteen-digit mark where PHP will just lose the plot entirely. 
+There is an option to use arbitrary-precision mathematics which supports numbers of any size and precision, represented as strings. See more here: http://us2.php.net/bc
+
+Check your version number of PHP - I believe it is possible you will get different results with different versions of PHP that may have differing support for long integers.  I believe that there was a bug with long integers in at last one of the PHP 5 versions.
+In version PHP 5.2.0 - the answer is EXACTLY the same as you got in C# 
+1617621783, 
+utilizing the exact function you have above.
+You can use the phpinfo() command to find your version number, easily.
+$x1 = -1580033017; 
+$x2 = -2072974554; 
+$x3 = -1170476976 ; 
+$x4 = -1007518822;
+echo f($x1, $x2, $x3, $x4);
+
+function f($x1, $x2, $x3, $x4)
+{
+   return intval(intval(intval($x1 + $x2) ^ $x3) + $x4);
+}
+
+
+So I solved the problem, and discovered a lot about PHP (at least in the way it handles Integer overflow).  
+1) It completely depended on a cross between which platform the machine was running on, which version of PHP, whether or not it had Suhosin Hardened PHP running, and how many bits it was compiled for (32 or 64).  6 machines behaved the way I expected (which was actually wrong, at least wrong according to their documentation) and 3 machines behaved in a way I still can't explain, and 3 machines behaved according to what the intval command says it does in the documentation.
+2) Intval is supposed to return PHP_MAX_INT when int > PHP_MAX_INT (not int & 0xffffffff), but this only happens on some versions of PHP4 and PHP5.  Different versions of PHP return different values when int > PHP_MAX_INT.
+3) The following code can return 3 different results (see 1):
+<?php
+echo "Php max int: ".PHP_INT_MAX."\n";
+echo "The Val: ".(-1580033017 + -2072974554)."\n";
+echo "Intval of the val: ".intval(-3653007571)."\n";
+echo "And 0xffffffff of the val: ".(-3653007571 & 0xffffffff)."\n";
+?>
+
+It can return (which appears to be right for Intval but wrong for & 0xffffff)
+Php max int: 2147483647
+The Val: -3653007571
+Intval of the val: -2147483648
+And of the val: -2147483648
+
+And it can return (which contradicts the PHP documentation for intval):
+Php max int: 2147483647
+The Val: -3653007571
+Intval of the val: -641959725
+And of the val: -641959725
+
+And on 64 Bit machines it returns (which is correct):
+Php max int: 2147483647
+The Val: -3653007571
+Intval of the val: -3653007571
+And of the val: -641959725
+
+Solution
+Anyhow, I needed a solution that would work on all these platforms, and not be dependent upon quirks of a particular version of PHP compiled with a particular Max int.  Thus I cam up with the following cross-PHP thirtyTwoBitIntval function:
+function thirtyTwoBitIntval($value)
+{
+    if ($value < -2147483648)
+    {
+        return -(-($value) & 0xffffffff);
+    }
+    elseif ($value > 2147483647)
+    {
+        return ($value & 0xffffffff);
+    }
+    return $value;
+}
+
+Comment
+I do think the designers of PHP should have said an Int is a 32 Bit Int no matter whether it is running on a 32 or 64 or 128 bit machine (like the DotNet CLR for example), and didn't randomly upconvert it to a float depending on the number of Bits that PHP is compiler under.
+
+If you want to have 100% working solution for 32-bit intval both on 32 and 64 bit platforms, then I suggest you to use the following solution:
+function intval32bits($value)
+{
+    $value = ($value & 0xFFFFFFFF);
+
+    if ($value & 0x80000000)
+        $value = -((~$value & 0xFFFFFFFF) + 1);
+
+    return $value;
+}
+

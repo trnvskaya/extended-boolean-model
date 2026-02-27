@@ -1,0 +1,120 @@
+How do I render a partial of a different format in Rails?
+ruby-on-rails format render partial actionview
+I'm trying to generate a JSON response that includes some HTML.  Thus, I have /app/views/foo/bar.json.erb:
+{
+  someKey: 'some value',
+  someHTML: "<%= h render(:partial => '/foo/baz') -%>"
+}
+
+I want it to render /app/views/foo/_baz.html.erb, but it will only render /app/views/foo/_baz.json.erb.  Passing :format => 'html' doesn't help.
+
+
+You have two options:
+1) use render :file => "foo/_baz.json.erb"
+2) change template format to html by setting @template_format variable
+<% @template_format = "html" %>
+<%= h render(:partial => '/foo/baz') %>
+
+
+Building on roninek's response, I've found the best solution to be the following:
+in /app/helpers/application.rb:
+def with_format(format, &block)
+  old_format = @template_format
+  @template_format = format
+  result = block.call
+  @template_format = old_format
+  return result
+end
+
+In /app/views/foo/bar.json:
+<% with_format('html') do %>
+  <%= h render(:partial => '/foo/baz') %>
+<% end %>
+
+An alternate solution would be to redefine render to accept a :format parameter.
+I couldn't get render :file to work with locals and without some path wonkiness.
+
+What's wrong with
+render :partial => '/foo/baz.html.erb'
+
+?  I just tried this to render an HTML ERB partial from inside an Atom builder template and it worked fine.  No messing around with global variables required (yeah, I know they have "@" in front of them, but that's what they are).
+Your with_format &block approach is cool though, and has the advantage that you only specify the format, whereas the simple approach specifies the template engine (ERB/builder/etc) as well.
+
+I came across this thread when I was trying to render an XML partial in another xml.builder view file.
+Following is a nice way to do it
+xml.items :type => "array" do
+    @items.each do |item|
+        xml << render(:partial => 'shared/partial.xml.builder', :locals => { :item => item })
+    end
+end
+
+And yeah... Full file name works here as well...
+
+For Rails 3, the with_format block works, but it's a little different:
+  def with_format(format, &block)
+    old_formats = formats
+    self.formats = [format]
+    block.call
+    self.formats = old_formats
+    nil
+  end
+
+
+Just elaborating on what zgchurch wrote:
+
+taking exceptions into account
+returning the result of the called block
+
+Thought it might be useful.
+def with_format(format, &block)
+  old_formats = formats
+  begin
+    self.formats = [format]
+    return block.call
+  ensure
+    self.formats = old_formats
+  end
+end
+
+
+In Rails 3, the View has a formats array, which means you can set it to look for [:mobile, :html]. Setting that will default to looking for :mobile templates, but fall back to :html templates. The effects of setting this will cascade down into inner partials.
+The best, but still flawed way, that I could find to set this was to put this line at the top of each full mobile template (but not partials). 
+<% self.formats = [:mobile, :html] %>
+
+The flaw is that you have to add that line to multiple templates. If anyone knows a way to set this once, from application_controller.rb, I'd love to know it. Unfortunately, it doesn't work to add that line to your mobile layout, because the templates are rendered before the layout.
+
+Beginning with Rails 3.2.3, when calling render :partial use 
+:formats => [:html]
+
+instead of
+:format => 'html'
+
+
+It seems that passing a formats option will render it properly in newer Rails version, at least 3.2:
+{
+  someKey: 'some value',
+  someHTML: "<%= h render('baz', formats: :html) -%>"
+}
+
+
+Rails 4 will allow you to pass a formats parameter.  So you can do 
+render(:partial => 'form', :formats => [:html])} 
+
+Note you can do something similar in Rails 3 but it wouldn't pass that format to any sub partials (if form calls other partials).
+You can have the Rails 4 ability in Rails 3 by creating config/initializers/renderer.rb:
+class ActionView::PartialRenderer
+  private
+  def setup_with_formats(context, options, block)
+    formats = Array(options[:formats])
+    @lookup_context.formats = formats | @lookup_context.formats
+    setup_without_formats(context, options, block)
+  end
+
+  alias_method_chain :setup, :formats
+end
+
+See http://railsguides.net/2012/08/29/rails3-does-not-render-partial-for-specific-format/
+
+I had a file named 'api/item.rabl' and I wanted to render it from an HTML view so I had to use:
+render file: 'api/item', formats: [:json]
+(file because the file have no underscore in the name, formats and not format (and passes and array))

@@ -1,0 +1,248 @@
+non-member non-friend function syntax
+c++ class-design
+Is their a way to use a non-member non-friend function on an object using the same "dot" notation as member functions?
+Can I pull a (any) member out of a class, and have users use it in the same way they always have?
+Longer Explanation:
+Scott Meyers, Herb Sutter, et all, argue that non-member non-friend functions are a part of an object's interface, and can improve encapsulation.  I agree with them.
+However, after recently reading this article: http://www.gotw.ca/gotw/084.htm I find myself questioning the syntax implications.
+In that article, Herb proposes having a single insert, erase, and replace member, and several non-member non-friend functions of the same name.
+Does this mean, as I think it does, that Herb thinks some functions should be used with the dot notation, and others as a global function?
+std::string s("foobar");
+
+s.insert( ... ); /* One like this */
+insert( s , ...); /* Others like this */
+
+Edit:
+Thanks everyone for your very useful answers, however, I think the point of my question has been overlooked.
+I specifically did not mention the specific case of operators, and how they retain the "natural" notation.  Nor that you should wrap everything in a namespace.  These things are written in the article I linked to.
+The question itself was:
+In the article, Herb suggests that one insert() method be a member, while the rest are non-member non-friend functions.
+This implies that to use one form of insert() you have to use dot notation, while for the others, you do not.
+Is it just me, or does that sound crazy?
+I have a hunch that perhaps you can use a single syntax.  (Im thinking how Boost::function can take a *this parameter for mem_fun).
+
+
+Yes, they should be either global or namespace-scoped.
+Non-member non-friend functions look much prettier in C# where they do use dot notation (they are called extension methods).
+
+There is no way to write a non member non friend with dot notation, namely because "operator." is not capable of being overloaded. 
+You should always wrap non member non friend classes in either the anonymous namespace (if only the current translation unit needs the functions) or in some meaningful namespace for users.
+
+Yes, it means that part of the interface of an object is composed of non member functions.
+And you're right about the fact it involves the use of the following notation, for an object of class T:
+void T::doSomething(int value) ;     // method
+void doSomething(T & t, int value) ; // non-member non-friend function
+
+If you want the doSomething function/method return void, and have an int parameter called "value".
+But two things are worth mentioning.
+The first is that the functions part of the interface of a class should be in the same namespace. This is yet another reason (if another reason was needed) to use namespaces, if only to "put together" an object and the functions that are part of its interface.
+The good part is that it promotes good encapsulation. But bad part is that it uses a function-like notation I, personally, dislike a lot.
+The second is that operators are not subject to this limitation. For example, the += operator for a class T can be written two ways:
+T & operator += (T & lhs, const T & rhs) ;
+{
+   // do something like lhs.value += rhs.value
+   return lhs ;
+}
+
+T & T::operator += (const T & rhs) ;
+{
+   // do something like this->value += rhs.value
+   return *this ;
+}
+
+But both notations are used as:
+void doSomething(T & a, T & b)
+{
+   a += b ;
+}
+
+which is, from an aesthetic viewpoint, quite better than the function-like notation.
+Now, it would be a very cool syntactic sugar to be able to write a function from the same interface, and still be able to call it through the "." notation, like in C#, as mentioned by michalmocny.
+Edit: Some examples
+Let's say I want, for whatever reason, to create two "Integer-like" classes.
+The first will be IntegerMethod:
+class IntegerMethod
+{
+   public :
+      IntegerMethod(const int p_iValue) : m_iValue(p_iValue) {}
+      int getValue() const { return this->m_iValue ; }
+      void setValue(const int p_iValue) { this->m_iValue = p_iValue ; }
+
+      IntegerMethod & operator += (const IntegerMethod & rhs)
+      {
+         this->m_iValue += rhs.getValue() ;
+         return *this ;
+      }
+
+      IntegerMethod operator + (const IntegerMethod & rhs) const
+      {
+         return IntegerMethod (this->m_iValue + rhs.getValue()) ;
+      }
+
+      std::string toString() const
+      {
+         std::stringstream oStr ;
+         oStr << this->m_iValue ;
+         return oStr.str() ;
+      }
+
+   private :
+      int m_iValue ;
+} ;
+
+This class has 6 methods which can acess its internals.
+The second is IntegerFunction:
+class IntegerFunction
+{
+   public :
+      IntegerFunction(const int p_iValue) : m_iValue(p_iValue) {}
+      int getValue() const { return this->m_iValue ; }
+      void setValue(const int p_iValue) { this->m_iValue = p_iValue ; }
+
+   private :
+      int m_iValue ;
+} ;
+
+IntegerFunction & operator += (IntegerFunction & lhs, const IntegerFunction & rhs)
+{
+   lhs.setValue(lhs.getValue() + rhs.getValue()) ;
+   return lhs ;
+}
+
+IntegerFunction operator + (const IntegerFunction & lhs, const IntegerFunction & rhs)
+{
+   return IntegerFunction(lhs.getValue() + rhs.getValue()) ;
+}
+
+std::string toString(const IntegerFunction & p_oInteger)
+{
+   std::stringstream oStr ;
+   oStr << p_oInteger.getValue() ;
+   return oStr.str() ;
+}
+
+It has only 3 methods, and such, reduces the quantity of code that can access its internals. It has 3 non-member non-friend functions.
+The two classes can be used as:
+void doSomething()
+{
+   {
+      IntegerMethod iMethod(25) ;
+      iMethod += 35 ;
+      std::cout << "iMethod   : " << iMethod.toString() << std::endl ;
+
+      IntegerMethod result(0), lhs(10), rhs(20) ;
+      result = lhs + 20 ;
+      // result = 10 + rhs ; // WON'T COMPILE
+      result = 10 + 20 ;
+      result = lhs + rhs ;
+   }
+
+   {
+      IntegerFunction iFunction(125) ;
+      iFunction += 135 ;
+      std::cout << "iFunction : " << toString(iFunction) << std::endl ;
+
+      IntegerFunction result(0), lhs(10), rhs(20) ;
+      result = lhs + 20 ;
+      result = 10 + rhs ;
+      result = 10 + 20 ;
+      result = lhs + rhs ;
+   }
+}
+
+When we compare the operator use ("+" and "+="), we see that making an operator a member or a non-member has no difference in its apparent use. Still, there are two differences:
+
+the member has access to all its internals. The non-member must use public member methods
+From some binary operators, like +, *, it is interesting to have type promotion, because in one case (i.e., the lhs promotion, as seen above), it won't work for a member method.
+
+Now, if we compare the non-operator use ("toString"), we see the member non-operator use is more "natural" for Java-like developers than the non-member function. Despite this unfamiliarity, for C++ it is important to accept that, despite its syntax, the non-member version is better from a OOP viewpoint because it does not have access to the class internals.
+As a bonus: If you want to add an operator (resp. a non-operator function) to an object which has none (for example, the GUID structure of <windows.h>), then you can, without needing to modify the structure itself. For the operator, the syntax will be natural, and for the non-operator, well...
+Disclaimer: Of course these class are dumb: the set/getValue are almost direct access to its internals. But replace the Integer by a String, as proposed by Herb Sutter in Monoliths "Unstrung", and you'll see a more real-like case.
+
+
+However, after recently reading this article: http://www.gotw.ca/gotw/084.htm I find myself questioning the syntax implications.
+
+The syntax implications are something that can be seen everywhere in well-written C++ libraries: C++ uses free functions all over the place. This is unusual for people with a background in OOP but it's best-practice in C++. As an example, consider the STL header <algorithm>.
+Using the dot notation thus becomes the exception to the rule, not the other way round.
+Notice that other languages choose other methods; this has led to the introduction of âextension methodsâ in C# and VB that allow to emulate the method-calling syntax for static functions (i.e. exactly what you had in mind). Then again, C# and VB are strictly object-oriented languages so having a single notation for method calls might be more important.
+Apart from that, functions always belong in a namespace âÂ although I myself violate this rule occasionally (but only in one compilation unit, namely my equivalent to main.cpp, where this doesn't play a role).
+
+Personally, i like the extensibility of free functions. A size function is an excellent example for this:
+// joe writes this container class:
+namespace mylib {
+    class container { 
+        // ... loads of stuff ...
+    public:
+        std::size_t size() const { 
+            // do something and return
+        }
+    };
+
+    std::size_t size(container const& c) {
+        return c.size();
+    } 
+}
+
+// another programmer decides to write another container...
+namespace bar {
+    class container {
+        // again, lots of stuff...
+    public:
+        std::size_t size() const {
+            // do something and return
+        }
+    };
+
+    std::size_t size(container const& c) {
+        return c.size();
+    } 
+}
+
+// we want to get the size of arrays too
+template<typename T, std::size_t n>
+std::size_t size(T (&)[n]) {
+    return n;
+}
+
+Consider now code that uses the free size function:
+int main() {
+    mylib::container c;
+    std::size_t c_size = size(c);
+
+    char data[] = "some string";
+    std::size_t data_size = size(data);
+}
+
+As you see, you can just use size(object) without needing to care about the namespace the type is in (depending on the argument type, the compiler figures out the namespace itself), and without caring what is going on behind the scenes. Consider also uses like begin and end as free function. This is exactly what boost::range does too. 
+
+You can use a single syntax, but perhaps not the one you like. Instead of placing one insert() inside your class scope, you make it a friend of your class. Now you can write
+mystring s;
+insert(s, "hello");
+insert(s, other_s.begin(), other_s.end());
+insert(s, 10, '.');
+
+For any non-virtual, public method, it's equivalent to define it as a non-member friend function. If mixed dot/no-dot syntax bothers you then by all means make those methods friend functions instead. There's no difference.
+In the future we will also be able to write polymorphic functions like this, so maybe this is the C++ way, rather than artificially trying to force free functions into the dot syntax.
+
+If you want to preserve the dot notation but also separate functions which don't need to be friends out of the class (so they can't access private members thus breaking encapsulation), you could probably write a mixin class. Either make the "regular" insert pure virtual in the mixin, or keep it non-virtual and use CRTP:
+template<typename DERIVED, typename T>
+struct OtherInsertFunctions {
+    void insertUpsideDown(T t) {
+        DERIVED *self = static_cast<DERIVED*>(this);
+        self->insert(t.turnUpsideDown());
+    }
+    void insertBackToFront(T t) // etc.
+    void insert(T t, Orientation o) // this one is tricksy because it's an
+                                    // overload, so requires the 'using' declaration
+};
+
+template<typename T>
+class MyCollection : public OtherInsertFunctions<MyCollection,T> {
+public:
+    // using declaration, to prevent hiding of base class overloads
+    using OtherInsertFunctions<MyCollection,T>::insert;
+    void insert(T t);
+    // and the rest of the class goes here
+};
+
+Something like that, anyway. But as others have said, C++ programmers aren't "supposed" to object to free functions, because you're "supposed" to always be looking for ways to write generic algorithms (like std::sort) rather than adding member functions to particular classes. Making everything consistently a method is more Java-y.

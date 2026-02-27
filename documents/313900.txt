@@ -1,0 +1,174 @@
+Why does regex "[^<]*<\\?" exhibit exponential time when the text doesn't have a "<"?
+regex
+Using ICU 4.0 regex library, I find that the following regex is exhibiting exponential time:
+actual: "[^<]*<\?"
+C code: "[^<]*<\\?"
+
+Aim: find "<?" where there is no other "<" before it
+When running this regex on plain text with no "<" characters at all it appears to take exponential time. If the text has at least a single "<" then it is quick. I don't understand why. 
+Shouldn't the required match on "<?" prevent this from needing to backtrack? I would have thought that it would try to find the first "<" and then test the rest of the expression. If it can't find a "<" then it would give up because the pattern obviously can't match.
+Is this a bug in the ICU regex or is it expected?
+
+
+The regex engine isn't that smart. It will try to match from every position, and each time seach for <? from the end, and backtrack until the start of the match-attempt. This gives a quadratic time complexity, O(n2).
+
+Unfortunately, it's expected.  From RegularExpressions.info
+
+This is a very important point to understand:
+a regex-directed engine will always return the leftmost match, even if a "better" match could be found later. 
+When applying a regex to a string, the engine will start at the first character of the string. It will try all possible permutations of the regular expression at the first
+  character.
+  Only if all possibilities have been tried and found to fail, will the engine continue with the second character in the text.
+  Again, it will try all possible permutations of the regex, in exactly the same order.
+  The result is that the regex-directed engine will return the leftmost match.
+
+So on ABC it's trying "ABC", failing, trying "BC", failing, then trying "C" and failing.  This wouldn't be so nasty were it not for the fact that the greedy "[^<]" actually succeeds all the way until the end, where it finds no <?  
+
+You will find an explanation at Regular Expression Matching Can Be Simple And Fast.
+As MizardX said, if the match fails at position 0, the engine will try again at position 1, 2, etc. If the text is long, be ready to wait for quite some time...
+The solution is to anchor your expression: "^[^<]*<\?"
+
+This is where possessive quantifiers and atomic groups come into play.  In Java, I would do this:
+String regex = "[^<]*+<\\?";
+
+or this:
+String regex = "(?>[^<]*)<\\?";
+
+Either way, once the [^<]* part has matched all it can, it refuses to backtrack.  If the next part can't match at the next position, the match fails.  Java and PHP have both features and .NET has atomic groups; I don't know about other languages.
+
+Perl re dump
+Sorry for such a long post. The sample outputs have been edited for clarity.
+The Perl regex engine takes shortcuts. So my first run didn't output anything all that helpful.
+perl -Mre=debug -e' "abcdefghijklm" =~ /[^<]*<[?]/; '
+
+Compiling REx "[^<]*<[?]"
+Final program:
+   1: STAR (13)
+   2:   ANYOF[\0-;=-\377{unicode_all}] (0)
+  13: EXACT <<?> (17)
+  17: END (0)
+floating "<?" at 0..2147483647 (checking floating) minlen 2 
+Guessing start of match in sv for REx "[^<]*<[?]" against "abcdefghijklm"
+Did not find floating substr "<?"...
+Match rejected by optimizer
+Freeing REx: "[^<]*<[?]"
+
+So in order to get it to output something useful I have to trick the regex engine into thinking it might succeed.
+perl -Mre=debug -e' "ab<?" =~ /[^<]*(?!<)<[?]/; '
+
+Compiling REx "[^<]*(?!<)<[?]"
+Final program:
+   1: STAR (13)
+   2:   ANYOF[\0-;=-\377{unicode_all}] (0)
+  13: UNLESSM[0] (19)
+  15:   EXACT <<> (17)
+  17:   SUCCEED (0)
+  18: TAIL (19)
+  19: EXACT <<?> (23)
+  23: END (0)
+floating "<?" at 0..2147483647 (checking floating) minlen 2 
+Guessing start of match in sv for REx "[^<]*(?!<)<[?]" against "ab<?"
+Found floating substr "<?" at offset 2...
+Guessed: match at offset 0
+Matching REx "[^<]*(?!<)<[?]" against "ab<?"
+
+# Start at first pos()
+#      |
+#      V
+   0 <> <ab<?>               |  1:STAR(13)
+                                  ANYOF[\0-;=-\377{unicode_all}] can match 2 times out of 2147483647...
+   2 <ab> <<?>               | 13:  UNLESSM[0](19)
+   2 <ab> <<?>               | 15:    EXACT <<>(17)
+   3 <ab<> <?>               | 17:    SUCCEED(0)
+                                      subpattern success...
+                                    failed...
+# try with one fewer [^<]*
+   1 <a> <b<?>               | 13:  UNLESSM[0](19)
+   1 <a> <b<?>               | 15:    EXACT <<>(17)
+                                      failed...
+# try with one fewer [^<]* again
+   1 <a> <b<?>               | 19:  EXACT <<?>(23)
+                                    failed...
+# try with zero [^<]*
+   0 <> <ab<?>               | 13:  UNLESSM[0](19)
+   0 <> <ab<?>               | 15:    EXACT <<>(17)
+                                      failed...
+   0 <> <ab<?>               | 19:  EXACT <<?>(23)
+                                    failed...
+                                  failed...
+
+# Start at second pos()
+#       |
+#       V
+   1 <a> <b<?>               |  1:STAR(13)
+                                  ANYOF[\0-;=-\377{unicode_all}] can match 1 times out of 2147483647...
+   2 <ab> <<?>               | 13:  UNLESSM[0](19)
+   2 <ab> <<?>               | 15:    EXACT <<>(17)
+   3 <ab<> <?>               | 17:    SUCCEED(0)
+                                      subpattern success...
+                                    failed...
+   1 <a> <b<?>               | 13:  UNLESSM[0](19)
+   1 <a> <b<?>               | 15:    EXACT <<>(17)
+                                      failed...
+   1 <a> <b<?>               | 19:  EXACT <<?>(23)
+                                    failed...
+                                  failed...
+
+# Start at third and final pos()
+#        |
+#        V
+   2 <ab> <<?>               |  1:STAR(13)
+                                  ANYOF[\0-;=-\377{unicode_all}] can match 0 times out of 2147483647...
+   2 <ab> <<?>               | 13:  UNLESSM[0](19)
+   2 <ab> <<?>               | 15:    EXACT <<>(17)
+   3 <ab<> <?>               | 17:    SUCCEED(0)
+                                      subpattern success...
+                                    failed...
+                                  failed...
+Match failed
+Freeing REx: "[^<]*(?!<)<[?]"
+
+In case you missed it, it tries to match '[^<]*', every possible way it can, before failing. Just imagine if you tried to run this match against a large file, only to find out that the final two characters weren't '<?'.
+A better idea it to use maximal matching, and the Beginning of line, zero width assertion.
+
+^ is BOL(beginning of line) in the following text.
+perl -Mre=debug -e' "abcdefghijklm<?" =~ /^[^<]*+(?!<)<[?]/; '
+
+Compiling REx "^[^<]*+(?!<)<[?]"
+Final program:
+   1: BOL (2)
+   2: SUSPEND (18)
+   4:   STAR (16)
+   5:     ANYOF[\0-;=-\377{unicode_all}] (0)
+  16:   SUCCEED (0)
+  17: TAIL (18)
+  18: UNLESSM[0] (24)
+  20:   EXACT <<> (22)
+  22:   SUCCEED (0)
+  23: TAIL (24)
+  24: EXACT <<?> (28)
+  28: END (0)
+floating "<?" at 0..2147483647 (checking floating) anchored(BOL) minlen 2 
+Guessing start of match in sv for REx "^[^<]*+(?!<)<[?]" against "abcdefghijklm<?"
+Found floating substr "<?" at offset 13...
+Guessed: match at offset 0
+Matching REx "^[^<]*+(?!<)<[?]" against "abcdefghijklm<?"
+   0 <> <abcdefghij>         |  1:BOL(2)
+   0 <> <abcdefghij>         |  2:SUSPEND(18)
+   0 <> <abcdefghij>         |  4:  STAR(16)
+                                    ANYOF[\0-;=-\377{unicode_all}] can match 13 times out of 2147483647...
+  13 <defghijklm> <<?>       | 16:    SUCCEED(0)
+                                      subpattern success...
+  13 <defghijklm> <<?>       | 18:UNLESSM[0](24)
+  13 <defghijklm> <<?>       | 20:  EXACT <<>(22)
+  14 <defghijklm<> <?>       | 22:  SUCCEED(0)
+                                    subpattern success...
+                                  failed...
+Match failed
+Freeing REx: "^[^<]*+(?!<)<[?]"
+
+You should note that this failed much quicker than the previous example.
+
+I am no expert at how regex engines actually work, but I know that some (all?) are greedy and will try to match as much as possible as early as possible. So suppose you have string s you are trying to match, which has no '<' characters. It will first match the [^<]* part of the regex, essentially matching everything from s[0] to s[n-1] (s is zero-indexed and doesn't have c-string subtleties, so this is the entire string). It will then fail on the next element in the pattern (the '<' character). Next, it will backtrack to matching [^<]* from s[0] to s[n-2], attempt to match '<', and fail again. This will repeat until it matches a string of length 0 at position 0 (note * matches zero or more repetitions and this final case is zero repetitions). So thus it will determine that starting at position 0 cannot result in a successful match, so it will repeat the above, this time starting the range of matched characters at s[1], only to fail again after exhausting all such ranges. It will then start at position 2 and so on, until it tries to match at after the last character. Then it will give up. 
+Edit:
+Your regex will essentially match any part of the string that ends in <? and does not contain another <, for instance in <<? it matches <? and in ba<abc<?def, it matches abc<?. Some of the other suggestions offered will behave differently. In particular, ^[^<]*<\? will not match anything in these two examples. 

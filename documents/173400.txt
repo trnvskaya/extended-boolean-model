@@ -1,0 +1,994 @@
+How to check if PHP array is associative or sequential?
+php arrays
+PHP treats all arrays as associative, so there aren't any built in functions. Can anyone recommend a fairly efficient way to check if an array contains only numeric keys?
+Basically, I want to be able to differentiate between this:
+$sequentialArray = array('apple', 'orange', 'tomato', 'carrot');
+
+and this:
+$assocArray = array('fruit1' => 'apple', 
+                    'fruit2' => 'orange', 
+                    'veg1' => 'tomato', 
+                    'veg2' => 'carrot');
+
+
+
+Unless PHP has a builtin for that, you won't be able to do it in less than O(n) - enumerating over all the keys and checking for integer type. In fact, you also want to make sure there are no holes, so your algorithm might look like:
+for i in 0 to len(your_array):
+    if not defined(your-array[i]):
+        # this is not an array array, it's an associative array :)
+
+But why bother? Just assume the array is of the type you expect. If it isn't, it will just blow up in your face - that's dynamic programming for you! Test your code and all will be well...
+
+One cheap and dirty way would be to check like this:
+isset($myArray[count($myArray) - 1])
+
+...you might get a false positive if your array is like this:
+$myArray = array("1" => "apple", "b" => "banana");
+
+A more thorough way might be to check the keys:
+function arrayIsAssociative($myArray) {
+    foreach (array_keys($myArray) as $ind => $key) {
+        if (!is_numeric($key) || (isset($myArray[$ind + 1]) && $myArray[$ind + 1] != $key + 1)) {
+            return true;
+        }
+    }
+    return false;
+}
+// this will only return true if all the keys are numeric AND sequential, which
+// is what you get when you define an array like this:
+// array("a", "b", "c", "d", "e");
+
+or
+function arrayIsAssociative($myArray) {
+    $l = count($myArray);
+    for ($i = 0; $i < $l, ++$i) {
+        if (!isset($myArray[$i])) return true;
+    }
+    return false;
+}
+// this will return a false positive on an array like this:
+$x = array(1 => "b", 0 => "a", 2 => "c", 4 => "e", 3 => "d");
+
+
+function is_associative($arr) {
+  return (array_merge($arr) !== $arr || count(array_filter($arr, 'is_string', ARRAY_FILTER_USE_KEY)) > 0);
+}
+
+
+You have asked two questions that are not quite equivalent:
+
+Firstly, how to determine whether an array has only numeric keys
+Secondly, how to determine whether an array has sequential numeric keys, starting from 0
+
+Consider which of these behaviours you actually need. (It may be that either will do for your purposes.)
+The first question (simply checking that all keys are numeric) is answered well by Captain kurO.
+For the second question (checking whether the array is zero-indexed and sequential), you can use the following function:
+function isAssoc(array $arr)
+{
+    if (array() === $arr) return false;
+    return array_keys($arr) !== range(0, count($arr) - 1);
+}
+
+var_dump(isAssoc(array('a', 'b', 'c'))); // false
+var_dump(isAssoc(array("0" => 'a', "1" => 'b', "2" => 'c'))); // false
+var_dump(isAssoc(array("1" => 'a', "0" => 'b', "2" => 'c'))); // true
+var_dump(isAssoc(array("a" => 'a', "b" => 'b', "c" => 'c'))); // true
+
+
+If your looking for just non-numeric keys (no matter the order) then you may want to try
+function IsAssociative($array)
+{
+    return preg_match('/[a-z]/i', implode(array_keys($array)));
+}
+
+
+Yet another way to do this.
+function array_isassociative($array)
+{
+    // Create new Array,  Make it the same size as the input array
+    $compareArray = array_pad(array(), count($array), 0);
+
+    // Compare the two array_keys
+    return (count(array_diff_key($array, $compareArray))) ? true : false;
+
+}
+
+
+Surely this is a better alternative.
+<?php
+$arr = array(1,2,3,4);
+$isIndexed = array_values($arr) === $arr;
+
+
+function isAssoc($arr)
+{
+    $a = array_keys($arr);
+    for($i = 0, $t = count($a); $i < $t; $i++)
+    {
+    	if($a[$i] != $i)
+    	{
+    		return false;
+    	}
+    }
+    return true;
+}
+
+
+I just use the key() function. Observe:
+<?php
+var_dump(key(array('hello'=>'world', 'hello'=>'world'))); //string(5) "hello"
+var_dump(key(array('world', 'world')));     			 //int(0)
+var_dump(key(array("0" => 'a', "1" => 'b', "2" => 'c'))); //int(0) who makes string sequetial keys anyway????
+?>
+
+Thus, just by checking for false, you can determine whether an array is associative or not.
+
+Actually the most efficient way is thus:
+function is_assoc($array){
+   $keys = array_keys($array);
+   return $keys !== array_keys($keys);
+}
+
+This works because it compares the keys (which for a sequential array are always 0,1,2 etc) to the keys of the keys (which will always be 0,1,2 etc).
+
+I compare the difference between the keys of the array and the keys of the result of array_values() of the array, which will always be an array with integer indices. If the keys are the same, it's not an associative array.
+function isHash($array) {
+    if (!is_array($array)) return false;
+    $diff = array_diff_assoc($array, array_values($array));
+    return (empty($diff)) ? false : true;
+}
+
+
+function checkAssoc($array){
+    return  ctype_digit( implode('', array_keys($array) ) );
+}
+
+
+I've used both array_keys($obj) !== range(0, count($obj) - 1) and array_values($arr) !== $arr (which are duals of each other, although the second is cheaper than the first) but both fail for very large arrays.
+This is because array_keys and array_values are both very costly operations (since they build a whole new array of size roughly that of the original).
+The following function is more robust than the methods provided above:
+function array_type( $obj ){
+    $last_key = -1;
+    $type = 'index';
+    foreach( $obj as $key => $val ){
+        if( !is_int( $key ) || $key < 0 ){
+            return 'assoc';
+        }
+        if( $key !== $last_key + 1 ){
+            $type = 'sparse';
+        }
+        $last_key = $key;
+    }
+    return $type;
+}
+
+Also note that if you don't care to differentiate sparse arrays from associative arrays you can simply return 'assoc' from both if blocks.
+Finally, while this might seem much less "elegant" than a lot of "solutions" on this page, in practice it is vastly more efficient. Almost any associative array will be detected instantly. Only indexed arrays will get checked exhaustively, and the methods outlined above not only check indexed arrays exhaustively, they duplicate them.
+
+This function can handle:
+
+array with holes in index (e.g. 1,2,4,5,8,10) 
+array with "0x" keys: e.g. key '08' is associative while key '8' is sequential.
+
+the idea is simple: if one of the keys is NOT an integer, it is associative array, otherwise it's sequential.
+function is_asso($a){
+    foreach(array_keys($a) as $key) {if (!is_int($key)) return TRUE;}
+    return FALSE;
+}
+
+
+To merely check whether the array has non-integer keys (not whether the array is sequentially-indexed or zero-indexed):
+function has_string_keys(array $array) {
+  return count(array_filter(array_keys($array), 'is_string')) > 0;
+}
+
+If there is at least one string key, $array will be regarded as an associative array.
+
+Could this be the solution?
+  public static function isArrayAssociative(array $array) {
+      reset($array);
+      return !is_int(key($array));
+  }
+
+The caveat is obviously that the array cursor is reset but I'd say probably the function is used before the array is even traversed or used.
+
+Modification on the most popular answer.
+This takes a little more processing, but is more accurate.  
+<?php
+//$a is a subset of $b
+function isSubset($a, $b)
+{
+    foreach($a =>$v)
+        if(array_search($v, $b) === false)
+            return false;
+
+    return true;
+
+    //less effecient, clearer implementation. (uses === for comparison)
+    //return array_intersect($a, $b) === $a;
+}
+
+function isAssoc($arr)
+{
+    return !isSubset(array_keys($arr), range(0, count($arr) - 1));
+}
+
+var_dump(isAssoc(array('a', 'b', 'c'))); // false
+var_dump(isAssoc(array(1 => 'a', 0 => 'b', 2 => 'c'))); // false
+var_dump(isAssoc(array("0" => 'a', "1" => 'b', "2" => 'c'))); // false 
+//(use === in isSubset to get 'true' for above statement)
+var_dump(isAssoc(array("a" => 'a', "b" => 'b', "c" => 'c'))); // true
+?>
+
+
+Many commenters in this question don't understand how arrays work in PHP. From the array documentation:
+
+A key may be either an integer or a string. If a key is the standard representation of an integer, it will be interpreted as such (i.e. "8" will be interpreted as 8, while "08" will be interpreted as "08"). Floats in key are truncated to integer. The indexed and associative array types are the same type in PHP, which can both contain integer and string indices.
+
+In other words, there is no such thing as an array key of "8" because it will always be (silently) converted to the integer 8. So trying to differentiate between integers and numeric strings is unnecessary.
+If you want the most efficient way to check an array for non-integer keys without making a copy of part of the array (like array_keys() does) or all of it (like foreach does):
+for (reset($my_array); is_int(key($my_array)); next($my_array));
+$onlyIntKeys = is_null(key($my_array));
+
+This works because key() returns NULL when the current array position is invalid and NULL can never be a valid key (if you try to use NULL as an array key it gets silently converted to "").
+
+Another variant not shown yet, as it's simply not accepting numerical keys, but I like Greg's one very much :   
+ /* Returns true if $var associative array */  
+  function is_associative_array( $array ) {  
+    return is_array($array) && !is_numeric(implode('', array_keys($array)));  
+  }
+
+
+Here's the method I use:
+function is_associative ( $a )
+{
+    return in_array(false, array_map('is_numeric', array_keys($a)));
+}
+
+assert( true === is_associative(array(1, 2, 3, 4)) );
+
+assert( false === is_associative(array('foo' => 'bar', 'bar' => 'baz')) );
+
+assert( false === is_associative(array(1, 2, 3, 'foo' => 'bar')) );
+
+Note that this doesn't account for special cases like:
+$a = array( 1, 2, 3, 4 );
+
+unset($a[1]);
+
+assert( true === is_associative($a) );
+
+Sorry, can't help you with that. It's also somewhat performant for decently sized arrays, as it doesn't make needless copies. It is these little things that makes Python and Ruby so much nicer to write in... :P
+
+Best function to detect associative array (hash array)
+<?php
+function is_assoc($arr) { return (array_values($arr) !== $arr); }
+?>
+
+
+Speed-wise:
+function isAssoc($array)
+{
+    return ($array !== array_values($array));
+}
+
+Memory-wise:
+function isAssoc($array)
+{
+    $array = array_keys($array); return ($array !== array_keys($array));
+}
+
+
+Simple and performance friendly solution which only checks the first key.
+function isAssoc($arr = NULL)
+{
+    if ($arr && is_array($arr))
+    {
+        foreach ($arr as $key => $val)
+        {
+            if (is_numeric($key)) { return true; }
+
+            break;
+        }
+    }
+
+    return false;
+}
+
+
+I met this problem once again some days ago and i thought to take advantage of the array_merge special property: 
+
+If the input arrays have the same string keys, then the later value for that key will overwrite the previous one. If, however, the arrays contain numeric keys, the later value will not overwrite the original value, but will be appended. Values in the input array with numeric keys will be renumbered with incrementing keys starting from zero in the result array. 
+   So why not to use: 
+
+function Is_Indexed_Arr($arr){
+    $arr_copy = $arr;
+    if((2*count($arr)) == count(array_merge($arr, $arr_copy))){
+        return 1;
+    }
+    return 0;
+}
+
+
+My solution is to get keys of an array like below and check that if the key is not integer:
+private function is_hash($array) {
+    foreach($array as $key => $value) {
+        return ! is_int($key);
+    }
+    return false;
+}
+
+It is wrong to get array_keys of a hash array like below:
+array_keys(array(
+       "abc" => "gfb",
+       "bdc" => "dbc"
+       )
+);
+
+will output:
+array(
+       0 => "abc",
+       1 => "bdc"
+)
+
+So, it is not a good idea to compare it with a range of numbers as mentioned in top rated answer. It will always say that it is a hash array if you try to compare keys with a range.
+
+<?php
+
+function is_list($array) {
+    return array_keys($array) === range(0, count($array) - 1);
+}
+
+function is_assoc($array) {
+    return count(array_filter(array_keys($array), 'is_string')) == count($array);
+}
+
+?>
+
+Both of these examples, which scored the most points do not work correctly with arrays like $array = array('foo' => 'bar', 1)
+
+In my opinion, an array should be accepted as associative if any of its keys is not integer e.g. float numbers and empty string ''.
+Also non-sequenced integers has to be seen as associative like (0,2,4,6) because these kind of arrays cannot be used with for loops by this way:
+$n =count($arr);
+for($i=0,$i<$n;$i++) 
+
+The second part of the function below does check if the keys are indexed or not.It also works for keys with negative values. For example (-1,0,1,2,3,4,5)
+count() = 7 , max = 5, min=-1
+
+
+
+if( 7 == (5-(-1)+1 ) // true
+    return false; // array not associative
+
+
+/** 
+ * isAssoc Checks if an array is associative
+ * @param $arr reference to the array to be checked
+ * @return bool 
+ */     
+function IsAssoc(&$arr){
+    $keys= array_keys($arr);
+    foreach($keys as $key){
+        if (!is_integer($key))
+            return true;
+    }
+    // if all keys are integer then check if they are indexed
+    if(count($arr) == (max($keys)-min($keys)+1))
+        return false;
+    else
+        return true;
+}
+
+
+This would work too (demo):
+function array_has_numeric_keys_only(array $array)
+{
+    try {
+        SplFixedArray::fromArray($array, true);
+    } catch (InvalidArgumentException $e) {
+        return false;
+    }
+    return true;
+}
+
+Please note that the main point of this answer is to inform you about the existence of SplFixedArray and not to encourage you to use Exceptions for these kinds of tests.
+
+Actually, I found myself in a similar situation trying to take an array and parse it into XML.  XML element names cannot begin with numbers -- and the code snippets I found did not correctly deal with arrays with numeric indexes.
+
+Details on my particular situation are below
+
+The answer provided above by @null ( http:// stackoverflow .com/a/173589/293332 ) was actually pretty darn close.  I was dismayed that it got voted down tho:  Those who do not understand regex lead very frustrating lives.
+Anyway, based upon his answer, here is what I ended up with:
+/** 
+ * Checks if an array is associative by utilizing REGEX against the keys
+ * @param   $arr    <array> Reference to the array to be checked
+ * @return  boolean
+ */     
+private function    isAssociativeArray( &$arr ) {
+    return  (bool)( preg_match( '/\D/', implode( array_keys( $arr ) ) ) );
+}
+
+See the PCRE Escape Sequences and PCRE Syntax pages for further details.
+My Particular Situation
+Here is an example array that I am dealing with:
+
+Case A
+
+return  array(
+    "GetInventorySummary"  => array(
+        "Filters"  => array( 
+            "Filter"  => array(
+                array(
+                    "FilterType"  => "Shape",
+                    "FilterValue"  => "W",
+                ),
+                array(
+                    "FilterType"  => "Dimensions",
+                    "FilterValue"  => "8 x 10",
+                ),
+                array(
+                    "FilterType"  => "Grade",
+                    "FilterValue"  => "A992",
+                ),
+            ),
+        ),
+        "SummaryField"  => "Length",
+    ),
+);
+
+The catch is that the filter key is variable.  For example:
+
+Case B
+
+return  array(
+    "GetInventorySummary"  => array(
+        "Filters"  => array( 
+            "Filter"  => array(
+                "foo"   =>  "bar",
+                "bar"   =>  "foo",
+            ),
+        ),
+        "SummaryField"  => "Length",
+    ),
+);
+
+Why I Need Assoc. Array Checker
+If the array I am transforming is like Case A, what I want returned is:
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<GetInventorySummary>
+    <Filters>
+        <Filter>
+            <FilterType>Shape</FilterType>
+            <FilterValue>W</FilterValue>
+        </Filter>
+        <Filter>
+            <FilterType>Dimensions</FilterType>
+            <FilterValue>8 x 10</FilterValue>
+        </Filter>
+        <Filter>
+            <FilterType>Grade</FilterType>
+             <FilterValue>A992</FilterValue>
+        </Filter>
+    </Filters>
+    <SummaryField>Length</SummaryField>
+</GetInventorySummary>
+
+... However, if the array I am transforming is like Case B, what I want returned is:
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<GetInventorySummary>
+    <Filters>
+        <Filter>
+            <foo>bar</foo>
+            <bar>foo</bar>
+        </Filter>
+    </Filters>
+    <SummaryField>Length</SummaryField>
+</GetInventorySummary>
+
+
+I think the following two functions are the best way to go for checking 'if an array is associative or numeric'. Since 'numeric' could mean only numeric keys or only sequential numeric keys, two functions are listed below that check either condition:
+function is_indexed_array(&$arr) {
+  for (reset($arr); is_int(key($arr)); next($arr));
+  return is_null(key($arr));
+}
+
+function is_sequential_array(&$arr, $base = 0) {
+  for (reset($arr), $base = (int) $base; key($arr) === $base++; next($arr));
+  return is_null(key($arr));
+}
+
+The first function checks if each key is an integer value. The second function checks if each key is an integer value and in addition checks if all keys are sequential starting at $base, which defaults to 0 and thus can be omitted if you do not need to specify another base value. key($my_array) returns null if the read pointer is moved past the end of the array, which is what ends the for loop and makes the statement after the for loop return true if all keys were integer. If not, the loop ends prematurely because a key is of type string, and the statement after the for loop will return false. The latter function in addition adds one to $base after each compare, to be able to check if the next key is of the correct value. The strict compare makes it also check if the key is of type integer. The $base = (int) $base part in the first section of the for loop can be left out when $base is omitted or if you make sure it is only called using an integer. But since I can't be sure for everybody, I left it in. The statement is executed only once, anyway. I think these are the most efficient solutions:
+
+Memory wise: No copying of data or key ranges. Doing an array_values or array_keys may seem shorter (less code) but keep in mind what goes on in the background once you make that call. Yes there are more (visible) statements than in some other solutions, but that is not what counts, is it?
+Time wise: Besides the fact that copying/extracting data and/or keys also takes time, this solution is more efficient than doing a foreach. Again a foreach may seem more efficient to some because it is shorter in notation, but in the background foreach also calls reset, key and next to do it's looping. But in addition it also calls valid to check the end condition, which is avoided here due to the combination with the integer check.
+
+Remember that an array key can only be an integer or a string, and a strictly numeric string such as "1" (but not "01") will be translated into an integer. Which is what makes checking for an integer key the only needed operation besides counting if you want the array to be sequential. Naturally, if is_indexed_array returns false the array can be seen as associative. I say 'seen', because in fact they all are.
+
+As stated by the OP:
+
+PHP treats all arrays as associative
+
+it is not quite sensible (IMHO) to write a function that checks if an array is associative. So first thing first: what is a key in a PHP array?:
+
+The key can either be an integer or a string.
+
+That means there are 3 possible cases:
+
+Case 1. all keys are numeric / integers.
+Case 2. all keys are strings.
+Case 3. some keys are strings, some keys are numeric / integers.
+
+We can check each case with the following functions.
+Case 1: all keys are numeric / integers.
+Note: This function returns true for empty arrays too.
+//! Check whether the input is an array whose keys are all integers.
+/*!
+    \param[in] $InputArray          (array) Input array.
+    \return                         (bool) \b true iff the input is an array whose keys are all integers.
+*/
+function IsArrayAllKeyInt($InputArray)
+{
+    if(!is_array($InputArray))
+    {
+        return false;
+    }
+
+    if(count($InputArray) <= 0)
+    {
+        return true;
+    }
+
+    return array_unique(array_map("is_int", array_keys($InputArray))) === array(true);
+}
+
+Case 2: all keys are strings.
+Note: This function returns true for empty arrays too.
+//! Check whether the input is an array whose keys are all strings.
+/*!
+    \param[in] $InputArray          (array) Input array.
+    \return                         (bool) \b true iff the input is an array whose keys are all strings.
+*/
+function IsArrayAllKeyString($InputArray)
+{
+    if(!is_array($InputArray))
+    {
+        return false;
+    }
+
+    if(count($InputArray) <= 0)
+    {
+        return true;
+    }
+
+    return array_unique(array_map("is_string", array_keys($InputArray))) === array(true);
+}
+
+Case 3. some keys are strings, some keys are numeric / integers.
+Note: This function returns true for empty arrays too.
+//! Check whether the input is an array with at least one key being an integer and at least one key being a string.
+/*!
+    \param[in] $InputArray          (array) Input array.
+    \return                         (bool) \b true iff the input is an array with at least one key being an integer and at least one key being a string.
+*/
+function IsArraySomeKeyIntAndSomeKeyString($InputArray)
+{
+    if(!is_array($InputArray))
+    {
+        return false;
+    }
+
+    if(count($InputArray) <= 0)
+    {
+        return true;
+    }
+
+    return count(array_unique(array_map("is_string", array_keys($InputArray)))) >= 2;
+}
+
+It follows that:
+
+If the value is not an array, all 3 functions return false.
+If the value is an empty array, all 3 functions return true
+(which is by definition, as in "the empty set is a subset of any set A because all its elements belong to A").
+If the value is a non-empty array, exactly 1 function returns true.
+
+
+Now, for an array to be a "genuine" array that we are all accustomed to, meaning:
+
+Its keys are all numeric / integers.
+Its keys are sequential (i.e. increasing by step 1).
+Its keys start from zero.
+
+We can check with the following function.
+Case 3a. keys are numeric / integers, sequential, and zero-based.
+Note: This function returns true for empty arrays too.
+//! Check whether the input is an array whose keys are numeric, sequential, and zero-based.
+/*!
+    \param[in] $InputArray          (array) Input array.
+    \return                         (bool) \b true iff the input is an array whose keys are numeric, sequential, and zero-based.
+*/
+function IsArrayKeyNumericSequentialZeroBased($InputArray)
+{
+    if(!is_array($InputArray))
+    {
+        return false;
+    }
+
+    if(count($InputArray) <= 0)
+    {
+        return true;
+    }
+
+    return array_keys($InputArray) === range(0, count($InputArray) - 1);
+}
+
+Caveats / Pitfalls (or, even more peculiar facts about array keys in PHP)
+Integer keys
+The keys for these arrays are integers:
+array(0 => "b");
+array(13 => "b");
+array(-13 => "b");          // Negative integers are also integers.
+array(0x1A => "b");         // Hexadecimal notation.
+
+String keys
+The keys for these arrays are strings:
+array("fish and chips" => "b");
+array("" => "b");                                   // An empty string is also a string.
+array("stackoverflow_email@example.com" => "b");    // Strings may contain non-alphanumeric characters.
+array("stack\t\"over\"\r\nflow's cool" => "b");     // Strings may contain special characters.
+array('$tÎ±â¬kâÃ¸vârflÃ¶wâ' => "b");                    // Strings may contain all kinds of symbols.
+array("functÑon" => "b");                           // You think this looks fine? Think again! (see http://stackoverflow.com/q/9246051/1402846)
+array("ã¾ë§è½è½¬ÐÅ" => "b");                         // How about Japanese/Korean/Chinese/Russian/Polish?
+array("fi\x0sh" => "b");                            // Strings may contain null characters.
+array(file_get_contents("https://www.google.com/images/nav_logo114.png") => "b");   // Strings may even be binary!
+
+Integer keys that look like strings
+If you think the key in array("13" => "b") is a string, you are wrong. From the doc here:
+
+Strings containing valid integers will be cast to the integer type. E.g. the key "8" will actually be stored under 8. On the other hand "08" will not be cast, as it isn't a valid decimal integer.
+
+For example, the key for these arrays are integers:
+array("13" => "b");
+array("-13" => "b");                        // Negative, ok.
+
+But the key for these arrays are strings:
+array("13." => "b");
+array("+13" => "b");                        // Positive, not ok.
+array("-013" => "b");
+array("0x1A" => "b");                       // Not converted to integers even though it's a valid hexadecimal number.
+array("013" => "b");                        // Not converted to integers even though it's a valid octal number.
+array("18446744073709551616" => "b");       // Not converted to integers as it can't fit into a 64-bit integer.
+
+What's more, according to the doc,
+
+The size of an integer is platform-dependent, although a maximum value of about two billion is the usual value (that's 32 bits signed). 64-bit platforms usually have a maximum value of about 9E18, except for Windows, which is always 32 bit. PHP does not support unsigned integers.
+
+So the key for this array may or may not be an integer - it depends on your platform.
+array("60000000000" => "b");                // Array key could be integer or string, it can fit into a 64-bit (but not 32-bit) integer.
+
+Even worse, PHP tends to be buggy if the integer is near the 231 = 2,147,483,648 boundary (see bug 51430, bug 52899). For example, on my local environment (PHP 5.3.8 on XAMPP 1.7.7 on Windows 7), var_dump(array("2147483647" => "b")) gives
+array(1) {
+    [2147483647]=>
+    string(1) "b"
+}   
+
+but on this live demo on codepad (PHP 5.2.5), the same expression gives
+array(1) {
+    ["2147483647"]=>
+    string(1) "b"
+}
+
+So the key is an integer in one environment but a string in another, even though 2147483647 is a valid signed 32-bit integer.
+
+I think the definition of a scalar array will vary by application.  That is, some applications will require a more strict sense of what qualifies as a scalar array, and some applications will require a more loose sense.
+Below I present 3 methods of varying strictness.
+<?php
+/**
+ * Since PHP stores all arrays as associative internally, there is no proper
+ * definition of a scalar array.
+ * 
+ * As such, developers are likely to have varying definitions of scalar array,
+ * based on their application needs.
+ * 
+ * In this file, I present 3 increasingly strict methods of determining if an
+ * array is scalar.
+ * 
+ * @author David Farrell <DavidPFarrell@gmail.com>
+ */
+
+/**
+ * isArrayWithOnlyIntKeys defines a scalar array as containing
+ * only integer keys.
+ * 
+ * If you are explicitly setting integer keys on an array, you
+ * may need this function to determine scalar-ness.
+ * 
+ * @param array $a
+ * @return boolean
+ */ 
+function isArrayWithOnlyIntKeys(array $a)
+{
+    if (!is_array($a))
+        return false;
+    foreach ($a as $k => $v)
+        if (!is_int($k))
+            return false;
+    return true;
+}
+
+/**
+ * isArrayWithOnlyAscendingIntKeys defines a scalar array as
+ * containing only integer keys in ascending (but not necessarily
+ * sequential) order.
+ * 
+ * If you are performing pushes, pops, and unsets on your array,
+ * you may need this function to determine scalar-ness.
+ * 
+ * @param array $a
+ * @return boolean
+ */ 
+function isArrayWithOnlyAscendingIntKeys(array $a)
+{
+    if (!is_array($a))
+        return false;
+    $prev = null;
+    foreach ($a as $k => $v)
+    {
+        if (!is_int($k) || (null !== $prev && $k <= $prev))
+            return false;
+        $prev = $k;
+    }
+    return true;
+}
+
+/**
+ * isArrayWithOnlyZeroBasedSequentialIntKeys defines a scalar array
+ * as containing only integer keys in sequential, ascending order,
+ * starting from 0.
+ * 
+ * If you are only performing operations on your array that are
+ * guaranteed to either maintain consistent key values, or that
+ * re-base the keys for consistency, then you can use this function.
+ * 
+ * @param array $a
+ * @return boolean
+ */
+function isArrayWithOnlyZeroBasedSequentialIntKeys(array $a)
+{
+    if (!is_array($a))
+        return false;
+    $i = 0;
+    foreach ($a as $k => $v)
+        if ($i++ !== $k)
+            return false;
+    return true;
+}
+
+
+I noticed two popular approaches for this question: one using array_values() and other using key(). To find out which is faster, I wrote a small program:
+
+$arrays = Array(
+  'Array #1' => Array(1, 2, 3, 54, 23, 212, 123, 1, 1),
+  'Array #2' => Array("Stack", 1.5, 20, Array(3.4)),
+  'Array #3' => Array(1 => 4, 2 => 2),
+  'Array #4' => Array(3.0, "2", 3000, "Stack", 5 => "4"),
+  'Array #5' => Array("3" => 4, "2" => 2),
+  'Array #6' => Array("0" => "One", 1.0 => "Two", 2 => "Three"),
+  'Array #7' => Array(3 => "asdf", 4 => "asdf"),
+  'Array #8' => Array("apple" => 1, "orange" => 2),
+);
+
+function is_indexed_array_1(Array &$arr) {
+  return $arr === array_values($arr);
+}
+
+function is_indexed_array_2(Array &$arr) {
+  for (reset($arr), $i = 0; key($arr) === $i++; next($arr))
+    ;
+  return is_null(key($arr));
+}
+
+// Method #1
+$start = microtime(true);
+for ($i = 0; $i < 1000; $i++) {
+  foreach ($arrays as $array) {
+    $dummy = is_indexed_array_1($array);
+  }
+}
+$end = microtime(true);
+echo "Time taken with method #1 = ".round(($end-$start)*1000.0,3)."ms\n";
+
+// Method #2
+$start = microtime(true);
+for ($i = 0; $i < 1000; $i++) {
+  foreach ($arrays as $array) {
+    $dummy = is_indexed_array_2($array);
+  }
+}
+$end = microtime(true);
+echo "Time taken with method #1 = ".round(($end-$start)*1000.0,3)."ms\n";
+
+Output for the program on PHP 5.2 on CentOS is as follows:
+
+Time taken with method #1 = 10.745ms
+  Time taken with method #2 = 18.239ms
+
+Output on PHP 5.3 yielded similar results. Obviously using array_values() is much faster.
+
+I know it's a bit pointless adding an answer to this huge queue, but here's a readable O(n) solution that doesn't require duplicating any values:
+function isNumericArray($array) {
+    $count = count($array);
+    for ($i = 0; $i < $count; $i++) {
+        if (!isset($array[$i])) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+Rather than check the keys to see if they are all numeric, you iterate over the keys that would be there for a numeric array and make sure they exist.
+
+function is_array_assoc($foo) {
+    if (is_array($foo)) {
+        return (count(array_filter(array_keys($foo), 'is_string')) > 0);
+    }
+    return false;
+}
+
+
+My solution:
+function isAssociative(array $array)
+{
+    return array_keys(array_merge($array)) !== range(0, count($array) - 1);
+}
+
+array_merge on a single array will reindex all integer keys, but not other. For example:
+array_merge([1 => 'One', 3 => 'Three', 'two' => 'Two', 6 => 'Six']);
+
+// This will returns [0 => 'One', 1 => 'Three', 'two' => 'Two', 2 => 'Six']
+
+So if a list (a non-associative array) is created ['a', 'b', 'c'] then a value is removed unset($a[1]) then array_merge is called, the list is reindexed starting from 0.
+
+One more fast from source.
+Fit encoding of json_encode (and bson_encode). So has javascript Array compliance.
+function isSequential($value){
+    if(is_array($value) || ($value instanceof \Countable && $value instanceof \ArrayAccess)){
+        for ($i = count($value) - 1; $i >= 0; $i--) {
+            if (!isset($value[$i]) && !array_key_exists($i, $value)) {
+                return false;
+            }
+        }
+        return true;
+    } else {
+        throw new \InvalidArgumentException(
+            sprintf('Data type "%s" is not supported by method %s', gettype($value), __METHOD__)
+        );
+    }
+}
+
+
+By using xarray PHP extension
+You can do this very fast (about 30+ times faster in PHP 5.6): 
+if (array_is_indexed($array)) {  }
+
+Or:
+if (array_is_assoc($array)) {  }
+
+
+echo substr(json_encode(['a'=>1]), 0, 1) == '{' ? 'yes' : 'no';
+
+
+function array_is_assoc(array $a) {
+    $i = 0;
+    foreach ($a as $k => $v) {
+        if ($k !== $i++) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Fast, concise, and memory efficient. No expensive comparisons, function calls or array copying.
+
+answers are already given but there's too much disinformation about performance.
+I wrote this little benchmark script that shows that the foreach method is the fastest.
+Disclaimer: following methods were copy-pasted from the other answers
+<?php
+
+function method_1(Array &$arr) {
+    return $arr === array_values($arr);
+}
+
+function method_2(Array &$arr) {
+    for (reset($arr), $i = 0; key($arr) !== $i++; next($arr));
+    return is_null(key($arr));
+}
+
+function method_3(Array &$arr) {
+    return array_keys($arr) === range(0, count($arr) - 1);
+}
+
+function method_4(Array &$arr) {
+    $idx = 0;
+    foreach( $arr as $key => $val ){
+        if( $key !== $idx )
+            return FALSE;
+        $idx++;
+    }
+    return TRUE;
+}
+
+
+
+
+function benchmark(Array $methods, Array &$target){    
+    foreach($methods as $method){
+        $start = microtime(true);
+        for ($i = 0; $i < 1000; $i++)
+            $dummy = call_user_func($method, $target);
+
+        $end = microtime(true);
+        echo "Time taken with $method = ".round(($end-$start)*1000.0,3)."ms\n";
+    }
+}
+
+
+
+$targets = [
+    'Huge array' => range(0, 30000),
+    'Small array' => range(0, 1000),
+];
+$methods = [
+    'method_1',
+    'method_2',
+    'method_3',
+    'method_4',
+];
+foreach($targets as $targetName => $target){
+    echo "==== Benchmark using $targetName ====\n";
+    benchmark($methods, $target);
+    echo "\n";
+}
+
+results:
+==== Benchmark using Huge array ====
+Time taken with method_1 = 5504.632ms
+Time taken with method_2 = 4509.445ms
+Time taken with method_3 = 8614.883ms
+Time taken with method_4 = 2720.934ms
+
+==== Benchmark using Small array ====
+Time taken with method_1 = 77.159ms
+Time taken with method_2 = 130.03ms
+Time taken with method_3 = 160.866ms
+Time taken with method_4 = 69.946ms
+
+
+Improvement from Mark Amery
+function isAssoc($arr)
+{
+    // Is it set, is an array, not empty and keys are not sequentialy numeric from 0
+    return isset($arr) && is_array($arr) && count($arr)!=0 && array_keys($arr) !== range(0, count($arr) - 1);
+}
+
+This tests if variable exists, if it is an array, if it is not an empty array and if the keys are not sequential from 0.
+To see if the array is associative
+if (isAssoc($array)) ...
+
+To see if it numeric
+if (!isAssoc($array)) ...
+
+
+In simple way you can check is array is associative or not by below steps
+
+convert all keys of array into one array by using array_keys()
+filter out non numeric key from array using array_filter() and
+is_numeric()
+compare number of elements in filtered array and actual array, If number of elements are not equals in both array then it is associative array.
+
+Function for above step is as below.
+ function isAssociative(array $array)
+    {
+        return count(array_filter(array_keys($array), function($v){return is_numeric($v);})) !== count($array));
+    }
+

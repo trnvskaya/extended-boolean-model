@@ -1,0 +1,102 @@
+xsl:for-each loop counter
+xml xslt for-loop
+How do I save the iterations that have occurred in an xsl:for-each? (variables in XSL are immutable)
+My goal is to find the MAX number of children for any node at a particular level.
+For example, I might want to print that there are no more than 2 Response nodes for any Question in this survey:
+<?xml version="1.0" encoding="ISO-8859-1"?>
+<?xml-stylesheet type="text/xsl" href="testing.xsl"?>
+<Survey>
+  <Question>
+    <Response text="Website" />
+    <Response text="Print Ad" />
+  </Question>
+  <Question>
+    <Response text="Yes" />
+  </Question>
+</Survey>
+
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+<xsl:output method="xml" version="1.0" encoding="UTF-8" indent="yes"/>
+<xsl:template match="/">
+  <html>
+  <head>
+  </head>
+  <body>
+    <xsl:for-each select="Survey">
+      The survey has <xsl:value-of select="count(child::Question)"/> questions.  
+      <br />
+      <xsl:variable name="counter">0</xsl:variable>
+      <xsl:for-each select="Question">
+        <!-- TODO: increment the counter ??????? -->
+      </xsl:for-each>
+      No more than <xsl:value-of select="$counter"/> responses were returned for any question.
+    </xsl:for-each>
+  </body>
+  </html>
+</xsl:template>
+</xsl:stylesheet>
+
+
+
+One doesn't "save the iterations that have occurred in an xsl:for-each" because XSLT is a functional language and variables are immutable.
+The following transformation finds the wanted maximum:
+
+<xsl:stylesheet version="1.0"
+ xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+ <xsl:output method="text"/>
+
+    <xsl:template match="/">
+      <xsl:call-template name="maximum">
+        <xsl:with-param name="pNodes" select="*/Question"/>
+      </xsl:call-template>
+    </xsl:template>
+
+    <xsl:template name="maximum">
+      <xsl:param name="pNodes"/>
+
+      <xsl:variable name="vNumNodes" select="count($pNodes)"/>
+
+      <xsl:choose>
+        <xsl:when test="$vNumNodes = 1">
+          <xsl:value-of select="count($pNodes[1]/Response)"/>
+        </xsl:when>
+        <xsl:otherwise>
+          <xsl:variable name="vHalf" 
+               select="floor($vNumNodes div 2)"/>
+
+          <xsl:variable name="vMax1">
+           <xsl:call-template name="maximum">
+            <xsl:with-param name="pNodes"
+                 select="$pNodes[not(position() > $vHalf)]"/>
+           </xsl:call-template>
+          </xsl:variable>
+
+          <xsl:variable name="vMax2">
+           <xsl:call-template name="maximum">
+            <xsl:with-param name="pNodes"
+                 select="$pNodes[position() > $vHalf]"/>
+           </xsl:call-template>
+          </xsl:variable>
+
+          <xsl:value-of select=
+           "$vMax1*($vMax1 >= $vMax2) + $vMax2*($vMax2 > $vMax1)"/>
+        </xsl:otherwise>
+      </xsl:choose>
+    </xsl:template>
+</xsl:stylesheet>
+
+When applied on the provided XML document:
+
+<Survey>
+    <Question>
+        <Response text="Website" />
+        <Response text="Print Ad" />
+    </Question>
+    <Question>
+        <Response text="Yes" />
+    </Question>
+</Survey>
+
+the wanted result is produced:
+2
+Do note the following: The template named "maximum" calls itself recursively and implements the DVC (Divide and Conquer principle) to minimize the recursion stack depth. The list of nodes is split into two, the maximums of the two lists are calculated (recursively) and the bigger of the two is returned.

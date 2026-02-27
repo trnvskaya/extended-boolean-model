@@ -1,0 +1,50 @@
+Python ReportLab use of splitfirst/splitlast
+python reportlab
+I'm trying to use Python with ReportLab 2.2 to create a PDF report.
+According to the user guide,
+
+Special TableStyle Indeces [sic]
+In any style command the first row index may be set to one of the special strings 'splitlast' or 'splitfirst' to indicate that the style should be used only for the last row of a split table, or the first row of a continuation. This allows splitting tables with nicer effects around the split.
+
+I've tried using several style elements, including:
+('TEXTCOLOR', (0, 'splitfirst'), (1, 'splitfirst'), colors.black) 
+('TEXTCOLOR', (0, 'splitfirst'), (1, 0), colors.black) 
+('TEXTCOLOR', (0, 'splitfirst'), (1, -1), colors.black)
+
+and none of these seems to work.  The first generates a TypeError with the message: 
+TypeError: cannot concatenate 'str' and 'int' objects
+
+and the latter two generate TypeErrors with the message:
+TypeError: an integer is required
+
+Is this functionality simply broken or am I doing something wrong?  If the latter, what am I doing wrong?
+
+
+
+[...] In any style command the first row
+  index may be set to one of the special strings [...]
+
+In your first example you're setting the second row index to a special string as well.
+Not sure why the other two don't work... Are you sure this is where the exception is coming from?
+
+Well, it looks as if I will be answering my own question.
+First, the documentation flat out lies where it reads "In any style command the first row index may be set to one of the special strings 'splitlast' or 'splitfirst' to indicate that the style should be used only for the last row of a split table, or the first row of a continuation."  In the current release, the "splitlast" and "splitfirst" row indices break with the aforementioned TypeErrors on the TEXTCOLOR and BACKGROUND commnds.
+My suspicion, based on reading the source code, is that only the tablestyle line commands (GRID, BOX, LINEABOVE, and LINEBELOW) are currently compatible with the 'splitfirst' and 'splitlast' row indices.  I suspect that all cell commands break with the aforementioned TypeErrors.
+However, I was able to do what I wanted by subclassing the Table class and overriding the onSplit method.  Here is my code:
+class XTable(Table):
+    def onSplit(self, T, byRow=1):
+        T.setStyle(TableStyle([
+          ('TEXTCOLOR', (0, 1), (1, 1), colors.black)]))
+
+What this does is apply the text color black to the first and second cell of the second row of each page.  (The first row is a header, repeated by the repeatRows parameter of the Table.)  More precisely, it is doing this to the first and second cell of each frame, but since I am using the SimpleDocTemplate, frames and pages are identical.
+
+This seems to be a bug in the ReportLab Table class.  Another fix for this in addition to DLJessup's own answer is to modify the ReportLab code that's causing the error, in Table._drawBkgrnd(), around line 1301.  For 'splitlast', change:
+y0 = rowpositions[sr]
+
+to: 
+if sr == 'splitlast':
+    y0 = rowpositions[-2] # last value is 0.  Second last is the one we want.
+else:
+   y0 = rowpositions[sr]
+
+This is easily done in your own code without hacking ReportLab by subclassing Table and overwriting this method.  I've not had need to use 'splitfirst'; if I do I'll post the rest of the hack here.

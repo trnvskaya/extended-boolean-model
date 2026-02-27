@@ -1,0 +1,110 @@
+How do you use Ruby/DL? Is this right?
+c ruby interface rspec rubydl
+I am trying to write an interface between RSPEC (ruby flavoured BDD) and a Windows application.  The application itself is written in an obscure language, but it has a C API to provide access.  I've gone with Ruby/DL but am having difficulties getting even the most basic call to a DLL method to work.  Here is what I have so far, in a file called gt4r.rb:
+require 'dl/import'
+
+module Gt4r
+  extend DL::Importable
+  dlload 'c:\\gtdev\\r321\\bin\\gtvapi'
+
+  # GTD initialization/termination functions
+  extern 'int GTD_init(char *[], char *, char *)'
+  extern 'int GTD_initialize(char *, char *, char *)'
+  extern 'int GTD_done(void)'
+  extern 'int GTD_get_error_message(int, char **)'
+end
+
+My reading so far suggests that this is all I need to get going, so I wrote up a RSPEC example:
+require 'gt4r'
+
+@@test_environment = "INCLUDE=C:\\graphtalk\\env\\aiadev\\config\\aiadev.ini"
+@@normal_user = "BMCHARGUE"
+
+describe Gt4r do
+  it 'initializes' do
+      rv = Gt4r.gTD_initialize @@normal_user, @@normal_user, @@test_environment
+      rv.should == 0
+  end
+end
+
+And when run...
+C:\code\GraphTalk>spec -fs -rgt4r gt4r_spec.rb
+
+Gt4r
+- initializes (FAILED - 1)
+
+1)
+'Gt4r initializes' FAILED
+expected: 0,
+     got: 13 (using ==)
+./gt4r_spec.rb:9:
+
+Finished in 0.031 seconds
+
+1 example, 1 failure
+
+The return value (13) is an actual return code, meaning an error, but when I try to add the gTD_get_error_message call to my RSPEC, I can't get the parameters to work.
+Am I heading in the right direction and can anyone point to the next thing I can try?
+Thanks,
+Brett
+
+A follow up to this question, showing the part that fails when I try to get the error message from my target library:
+require 'gt4r'
+
+@@test_environment = "INCLUDE=C:\\graphtalk\\env\\aiadev\\config\\aiadev.ini"
+@@normal_user = "BMCHARGUE"
+
+describe Gt4r do
+  it 'initializes' do
+      rv = Gt4r.gTD_initialize @@normal_user, @@normal_user, @@test_environment
+      Gt4r.gTD_get_error_message rv, @msg
+      @msg.should == ""
+      rv.should == 0
+  end
+end
+
+I expect the error message to be returned in @msg, but when run I get the following:
+Gt4r
+(eval):5: [BUG] Segmentation fault
+ruby 1.8.6 (2008-08-11) [i386-mswin32]
+
+
+This application has requested the Runtime to terminate it in an unusual way.
+Please contact the application's support team for more information.
+
+And this if I use a symbol (:msg) instead:
+C:\code\GraphTalk\gt4r_dl>spec -fs -rgt4r gt4r_spec.rb
+
+Gt4r
+- initializes (ERROR - 1)
+
+1)
+NoMethodError in 'Gt4r initializes'
+undefined method `to_ptr' for :msg:Symbol
+(eval):5:in `call'
+(eval):5:in `gTD_get_error_message'
+./gt4r_spec.rb:9:
+
+Finished in 0.046 seconds
+
+1 example, 1 failure
+
+Clearly I am missing something about passing parameters between ruby and C, but what?
+
+
+The general consensus is you want to avoid DL as much as possible. The (english) documentation is quite sketchy and the interface is difficult to use for anything but trivial examples.
+Ruby native C interface is MUCH easier to program against. Or you could use FFI, which fills a similiar niche to DL, originally comes from the rubinius project and has recently been ported to "normal" ruby. It has a nicer interface and is much less painful to use:
+http://blog.headius.com/2008/10/ffi-for-ruby-now-available.html
+
+
+The return value (13) is an actual
+  return code, meaning an error, but
+  when I try to add  the
+  gTD_get_error_message call to my
+  RSPEC, I can't get the parameters to
+  work.
+
+It might help posting the error instead of the code that worked :) 
+Basically, once you start having to deal with pointers as in (int, char **), things get ugly. 
+
+You need to allocate the data pointer for msg to be written to, since otherise C will have nowhere to write the error messages. Use DL.mallo.

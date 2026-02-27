@@ -1,0 +1,100 @@
+Python's __import__ doesn't work as expected
+python python-import
+When using __import__ with a dotted name, something like: somepackage.somemodule, the module returned isn't somemodule, whatever is returned seems to be mostly empty! what's going on here?
+
+
+From the python docs on __import__:
+
+__import__( name[, globals[, locals[, fromlist[, level]]]])
+
+...
+When the name variable is of the form
+  package.module, normally, the
+  top-level package (the name up till
+  the first dot) is returned, not the
+  module named by name. However, when a
+  non-empty fromlist argument is given,
+  the module named by name is returned.
+  This is done for compatibility with
+  the bytecode generated for the
+  different kinds of import statement;
+  when using "import spam.ham.eggs", the
+  top-level package spam  must be placed
+  in the importing namespace, but when
+  using "from spam.ham import eggs", the
+  spam.ham subpackage must be used to
+  find the eggs variable. As a
+  workaround for this behavior, use
+  getattr() to extract the desired
+  components. For example, you could
+  define the following helper:
+def my_import(name):
+    mod = __import__(name)
+    components = name.split('.')
+    for comp in components[1:]:
+        mod = getattr(mod, comp)
+    return mod
+
+
+To paraphrase:
+When you ask for somepackage.somemodule, __import__ returns somepackage.__init__.py, which is often empty.
+It will return somemodule if you provide fromlist (a list of the variable names inside somemodule you want, which are not actually returned)
+You can also, as I did, use the function they suggest.
+Note: I asked this question fully intending to answer it myself. There was a big bug in my code, and having misdiagnosed it, it took me a long time to figure it out, so I figured I'd help the SO community out and post the gotcha I ran into here.
+
+There is something that works as you want it to: twisted.python.reflect.namedAny:
+>>> from twisted.python.reflect import namedAny
+>>> namedAny("operator.eq")
+<built-in function eq>
+>>> namedAny("pysqlite2.dbapi2.connect")
+<built-in function connect>
+>>> namedAny("os")
+<module 'os' from '/usr/lib/python2.5/os.pyc'>
+
+
+python 2.7 has importlib, dotted paths resolve as expected
+import importlib
+foo = importlib.import_module('a.dotted.path')
+instance = foo.SomeClass()
+
+
+For python 2.6, I wrote this snippet:
+def import_and_get_mod(str, parent_mod=None):
+    """Attempts to import the supplied string as a module.
+    Returns the module that was imported."""
+    mods = str.split('.')
+    child_mod_str = '.'.join(mods[1:])
+    if parent_mod is None:
+        if len(mods) > 1:
+            #First time this function is called; import the module
+            #__import__() will only return the top level module
+            return import_and_get_mod(child_mod_str, __import__(str))
+        else:
+            return __import__(str)
+    else:
+        mod = getattr(parent_mod, mods[0])
+        if len(mods) > 1:
+            #We're not yet at the intended module; drill down
+            return import_and_get_mod(child_mod_str, mod)
+        else:
+            return mod
+
+
+There is a simpler solution, as explained in the documentation:
+If you simply want to import a module (potentially within a package) by name, you can call __import__() and then look it up in sys.modules:
+>>> import sys
+>>> name = 'foo.bar.baz'
+>>> __import__(name)
+<module 'foo' from ...>
+>>> baz = sys.modules[name]
+>>> baz
+<module 'foo.bar.baz' from ...>
+
+
+The way I did is 
+foo = __import__('foo',  globals(), locals(), ["bar"], -1)
+foobar = eval("foo.bar")
+
+then i can access any content from by 
+foobar.functionName()
+

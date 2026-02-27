@@ -1,0 +1,88 @@
+GetExitCodeProcess() returns 128
+winapi dll process
+I have a DLL that's loaded into a 3rd party parent process as an extension. From this DLL I instantiate external processes (my own) by using CreateProcess API. This works great in 99.999% of the cases but sometimes this suddenly fails and stops working permanently (maybe a restart of the parent process would solve this but this is undesirable and I don't want to recommend that until I solve the problem.) The failure is symptomized by external process not being invoked any more even though CreteProcess() doesn't report an error and by GetExitCodeProcess() returning 128. Here's the simplified version of what I'm doing:
+STARTUPINFO si;
+ZeroMemory(&si, sizeof(si));
+si.cb = sizeof(si);
+si.dwFlags = STARTF_USESHOWWINDOW;
+si.wShowWindow = SW_HIDE;
+
+PROCESS_INFORMATION pi;
+ZeroMemory(&pi, sizeof(pi));
+
+if(!CreateProcess(
+    NULL,   // No module name (use command line). 
+    "<my command line>",
+    NULL,   // Process handle not inheritable. 
+    NULL,   // Thread handle not inheritable. 
+    FALSE,  // Set handle inheritance to FALSE. 
+    CREATE_SUSPENDED,  // Create suspended.
+    NULL,   // Use parent's environment block. 
+    NULL,   // Use parent's starting directory. 
+    &si,    // Pointer to STARTUPINFO structure.
+    &pi))   // Pointer to PROCESS_INFORMATION structure.
+{
+    // Handle error.
+}
+else
+{
+    // Do something.
+
+    // Resume the external process thread.
+    DWORD resumeThreadResult = ResumeThread(pi.hThread);
+    // ResumeThread() returns 1 which is OK
+    // (it means that the thread was suspended but then restarted)
+
+    // Wait for the external process to finish.
+    DWORD waitForSingelObjectResult =  WaitForSingleObject(pi.hProcess, INFINITE);
+    // WaitForSingleObject() returns 0 which is OK.
+
+    // Get the exit code of the external process.
+    DWORD exitCode;
+    if(!GetExitCodeProcess(pi.hProcess, &exitCode))
+    {
+        // Handle error.
+    }
+    else
+    {
+        // There is no error but exitCode is 128, a value that
+        // doesn't exist in the external process (and even if it
+        // existed it doesn't matter as it isn't being invoked any more)
+        // Error code 128 is ERROR_WAIT_NO_CHILDREN which would make some
+        // sense *if* GetExitCodeProcess() returned FALSE and then I were to
+        // get ERROR_WAIT_NO_CHILDREN with GetLastError()
+    }
+
+    // PROCESS_INFORMATION handles for process and thread are closed.
+}
+
+External process can be manually invoked from Windows Explorer or command line and it starts just fine on its own. Invoked like that it, before doing any real work, creates a log file and logs some information about it. But invoked like described above this logging information doesn't appear at all so I'm assuming that the main thread of the external process never enters main() (I'm testing that assumption now.)
+There is at least one thing I could do to try to circumvent the problem (not start the thread suspended) but I would first like to understand the root of the failure first. Does anyone has any idea what could cause this and how to fix it?
+
+
+Quoting from the MSDN article on GetExitCodeProcess:
+The following termination statuses can be returned if the process has terminated:
+
+The exit value specified in the
+ExitProcess or TerminateProcess
+function 
+The return value from the
+main or WinMain function of the
+process 
+The exception value for an
+unhandled exception that caused the
+process to terminate
+
+Given the scenario you described, I think the most likely cause ist the third: An unhandled exception. Have a look at the source of the processes you create.
+
+There are 2 issues that i could think of from your code sample
+1.Get yourusage of the first 2 paramaters to the creatprocess command working first. Hard code the paths and invoke notepad.exe and see if that comes up. keep tweaking this until you have notepad running.
+2.Contrary to your comment, If you have passed the currentdirectory parameter for the new process as NULL, it will use the current working directory of the process to start the new process from and not the parent' starting directory. 
+I assume that your external process exe cannot start properly due to dll dependencies that cannot be resolved in the new path. 
+ps : In the debugger watch for @err,hr which will tell you the explanation for the last error code, 
+
+Have a look at Desktop Heap memory.
+Essentially the desktop heap issue comes down to exhausted resources (eg starting too many processes).  When your app runs out of these resources, one of the symptoms is that you won't be able to start a new process, and the call to CreateProcess will fail with code 128.
+Note that the context you run in also has some effect.  For example, running as a service, you will run out of desktop heap much faster than if you're testing your code in a console app.
+This post has a lot of good information about desktop heap
+Microsoft Support also has some useful information.

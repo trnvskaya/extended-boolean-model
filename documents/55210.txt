@@ -1,0 +1,231 @@
+Algorithm to generate anagrams
+algorithm language-agnostic puzzle
+What would be the best strategy to generate anagrams.
+
+An anagram is a type of word play, the result of rearranging the letters
+of a word or phrase to produce a new  word or phrase, using all the original
+letters exactly once; 
+ex.
+
+
+Eleven plus two is anagram of Twelve plus one 
+A decimal point is anagram of I'm a dot in place
+Astronomers is anagram of Moon starers
+
+
+At first it looks straightforwardly simple, just to jumble the letters and generate all possible combinations. But what would be the efficient approach to generate only the words in dictionary.
+I came across this page, Solving anagrams in Ruby. 
+But what are your ideas?
+
+
+Off the top of my head, the solution that makes the most sense would be to pick a letter out of the input string randomly and filter the dictionary based on words that start with that.  Then pick another, filter on the second letter, etc.  In addition, filter out words that can't be made with the remaining text.  Then when you hit the end of a word, insert a space and start it over with the remaining letters.  You might also restrict words based on word type (e.g. you wouldn't have two verbs next to each other, you wouldn't have two articles next to each other, etc).
+
+For each word in the dictionary, sort the letters alphabetically.  So "foobar" becomes "abfoor."
+Then when the input anagram comes in, sort its letters too, then look it up.  It's as fast as a hashtable lookup!
+For multiple words, you could do combinations of the sorted letters, sorting as you go.  Still much faster than generating all combinations.
+(see comments for more optimizations and details)
+
+How I see it: 
+you'd want to build a table that maps unordered sets of letters to lists words i.e. go through the dictionary so you'd wind up with, say
+lettermap[set(a,e,d,f)] = { "deaf", "fade" }
+
+then from your starting word, you find the set of letters:
+ astronomers => (a,e,m,n,o,o,r,r,s,s,t)
+
+then loop through all the partitions of that set ( this might be the most technical part, just generating all the possible partitions), and look up the words for that set of letters.
+edit: hmmm, this is pretty much what Jason Cohen posted.
+edit: furthermore, the comments on the question mention generating "good" anagrams, like the examples :). after you build your list of all possible anagrams, run them through WordNet and find ones that are semantically close to the original phrase :)
+
+
+As Jason suggested, prepare a dictionary making hashtable with key being word sorted alphabetically, and value word itself (you may have multiple values per key). 
+Remove whitespace and sort your query before looking it up. 
+
+After this, you'd need to do some sort of a recursive, exhaustive search. Pseudo code is very roughly:
+function FindWords(solutionList, wordsSoFar, sortedQuery)
+  // base case
+  if sortedQuery is empty
+     solutionList.Add(wordsSoFar)
+     return
+
+  // recursive case
+
+  // InitialStrings("abc") is {"a","ab","abc"}
+  foreach initialStr in InitalStrings(sortedQuery)
+    // Remaining letters after initialStr
+    sortedQueryRec := sortedQuery.Substring(initialStr.Length)
+    words := words matching initialStr in the dictionary
+    // Note that sometimes words list will be empty
+    foreach word in words
+      // Append should return a new list, not change wordSoFar
+      wordsSoFarRec := Append(wordSoFar, word) 
+      FindWords(solutionList, wordSoFarRec, sortedQueryRec)
+
+In the end, you need to iterate through the solutionList, and print the words in each sublist with spaces between them. You might need to print all orderings for these cases (e.g. "I am Sam" and "Sam I am" are both solutions).
+Of course, I didn't test this, and it's a brute force approach.
+
+See this assignment from the University of Washington CSE department.
+Basically, you have a data structure that just has the counts of each letter in a word (an array works for ascii, upgrade to a map if you want unicode support). You can subtract two of these letter sets; if a count is negative, you know one word can't be an anagram of another.
+
+Pre-process:
+Build a trie with each leaf as a known word, keyed in alphabetical order.
+At search time:
+Consider the input string as a multiset.  Find the first sub-word by traversing the index trie as in a depth-first search.  At each branch you can ask, is letter x in the remainder of my input?  If you have a good multiset representation, this should be a constant time query (basically).
+Once you have the first sub-word, you can keep the remainder multiset and treat it as a new input to find the rest of that anagram (if any exists).
+Augment this procedure with memoization for faster look-ups on common remainder multisets.
+This is pretty fast - each trie traversal is guaranteed to give an actual subword, and each traversal takes linear time in the length of the subword (and subwords are usually pretty darn small, by coding standards).  However, if you really want something even faster, you could include all n-grams in your pre-process, where an n-gram is any string of n words in a row.  Of course, if W = #words, then you'll jump from index size O(W) to O(W^n).  Maybe n = 2 is realistic, depending on the size of your dictionary.
+
+I've used the following way of computing anagrams a couple of month ago: 
+
+Compute a "code" for each word in your dictionary: Create a lookup-table from letters in the alphabet to prime numbers, e.g. starting with ['a', 2] and ending with ['z', 101]. As a pre-processing step compute the code for each word in your dictionary by looking up the prime number for each letter it consists of in the lookup-table and multiply them together. For later lookup create a multimap of codes to words.
+Compute the code of your input word as outlined above.
+Compute codeInDictionary % inputCode for each code in the multimap. If the result is 0, you've found an anagram and you can lookup the appropriate word. This also works for 2- or more-word anagrams as well.
+
+Hope that was helpful.
+
+The book Programming Pearls by Jon Bentley covers this kind of stuff quite nicely. A must-read.
+
+A while ago I have written a blog post about how to quickly find two word anagrams. It works really fast: finding all 44 two-word anagrams for a word with a textfile of more than 300,000 words (4 Megabyte) takes only 0.6 seconds in a Ruby program.
+Two Word Anagram Finder Algorithm (in Ruby)
+It is possible to make the application faster when it is allowed to preprocess the wordlist into a large hash mapping from words sorted by letters to a list of words using these letters. This preprocessed data can be serialized and used from then on.
+
+One of the seminal works on programmatic anagrams was by Michael Morton (Mr. Machine Tool), using a tool called Ars Magna.  Here is a light article based on his work.
+
+Most of these answers are horribly inefficient and/or will only give one-word solutions (no spaces).  My solution will handle any number of words and is very efficient.
+What you want is a trie data structure.  Here's a complete Python implementation.  You just need a word list saved in a file named words.txt  You can try the Scrabble dictionary word list here:
+http://www.isc.ro/lists/twl06.zip
+MIN_WORD_SIZE = 4 # min size of a word in the output
+
+class Node(object):
+    def __init__(self, letter='', final=False, depth=0):
+        self.letter = letter
+        self.final = final
+        self.depth = depth
+        self.children = {}
+    def add(self, letters):
+        node = self
+        for index, letter in enumerate(letters):
+            if letter not in node.children:
+                node.children[letter] = Node(letter, index==len(letters)-1, index+1)
+            node = node.children[letter]
+    def anagram(self, letters):
+        tiles = {}
+        for letter in letters:
+            tiles[letter] = tiles.get(letter, 0) + 1
+        min_length = len(letters)
+        return self._anagram(tiles, [], self, min_length)
+    def _anagram(self, tiles, path, root, min_length):
+        if self.final and self.depth >= MIN_WORD_SIZE:
+            word = ''.join(path)
+            length = len(word.replace(' ', ''))
+            if length >= min_length:
+                yield word
+            path.append(' ')
+            for word in root._anagram(tiles, path, root, min_length):
+                yield word
+            path.pop()
+        for letter, node in self.children.iteritems():
+            count = tiles.get(letter, 0)
+            if count == 0:
+                continue
+            tiles[letter] = count - 1
+            path.append(letter)
+            for word in node._anagram(tiles, path, root, min_length):
+                yield word
+            path.pop()
+            tiles[letter] = count
+
+def load_dictionary(path):
+    result = Node()
+    for line in open(path, 'r'):
+        word = line.strip().lower()
+        result.add(word)
+    return result
+
+def main():
+    print 'Loading word list.'
+    words = load_dictionary('words.txt')
+    while True:
+        letters = raw_input('Enter letters: ')
+        letters = letters.lower()
+        letters = letters.replace(' ', '')
+        if not letters:
+            break
+        count = 0
+        for word in words.anagram(letters):
+            print word
+            count += 1
+        print '%d results.' % count
+
+if __name__ == '__main__':
+    main()
+
+When you run the program, the words are loaded into a trie in memory.  After that, just type in the letters you want to search with and it will print the results.  It will only show results that use all of the input letters, nothing shorter.
+It filters short words from the output, otherwise the number of results is huge.  Feel free to tweak the MIN_WORD_SIZE setting.  Keep in mind, just using "astronomers" as input gives 233,549 results if MIN_WORD_SIZE is 1.  Perhaps you can find a shorter word list that only contains more common English words.
+Also, the contraction "I'm" (from one of your examples) won't show up in the results unless you add "im" to the dictionary and set MIN_WORD_SIZE to 2.
+The trick to getting multiple words is to jump back to the root node in the trie whenever you encounter a complete word in the search.  Then you keep traversing the trie until all letters have been used.
+
+If I take a dictionary as a Hash Map as every word is unique and the Key is a binary(or Hex) representation of the word. Then if I have a word I can easily find the meaning of it with O(1) complexity.
+Now, if we have to generate all the valid anagrams, we need to verify if the generated anagram is in the dictionary, if it is present in dictionary, its a valid one else we need to ignore that.
+I will assume that there can be a word of max 100 characters(or more but there is a limit).
+So any word we take it as a sequence  of indexes like a word "hello" can be represented like 
+"1234".
+Now the anagrams of "1234" are "1243", "1242" ..etc 
+The only thing we need to do is to store all such combinations of indexes for a particular number of characters. This is an one time task.
+And  then words can be generated from the combinations by picking the characters from the index.Hence we get the anagrams. 
+To verify if the anagrams are valid or not, just index into the dictionary and validate.
+The only thing need to be handled is the duplicates.That can be done easily. As an when we need to compare with the previous ones that has been searched in dictionary.
+The solution emphasizes on performance. 
+
+So here's the working solution, in Java, that Jason Cohen suggested and it performs somewhat better than the one using trie. Below are some of the main points:
+
+Only load dictionary with the words that are subsets of given set of words
+Dictionary will be a hash of sorted words as key and set of actual words as values (as suggested by Jason)
+Iterate through each word from dictionary key and do a recursive forward lookup to see if any valid anagram is found for that key
+Only do forward lookup because, anagrams for all the words that have already been traversed, should have already been found
+Merge all the words associated to the keys for e.g. if 'enlist' is the word for which anagrams are to be found and one of the set of keys to merge are [ins] and [elt], and the actual words for key [ins] is [sin] and [ins], and for key [elt] is [let], then the final set of merge words would be [sin, let] and [ins, let] which will be part of our final anagrams list
+Also to note that, this logic will only list unique set of words i.e. "eleven plus two" and "two plus eleven" would be same and only one of them would be listed in the output
+
+Below is the main recursive code which finds the set of anagram keys:
+// recursive function to find all the anagrams for charInventory characters
+// starting with the word at dictionaryIndex in dictionary keyList
+private Set<Set<String>> findAnagrams(int dictionaryIndex, char[] charInventory, List<String> keyList) {
+    // terminating condition if no words are found
+    if (dictionaryIndex >= keyList.size() || charInventory.length < minWordSize) {
+        return null;
+    }
+
+    String searchWord = keyList.get(dictionaryIndex);
+    char[] searchWordChars = searchWord.toCharArray();
+    // this is where you find the anagrams for whole word
+    if (AnagramSolverHelper.isEquivalent(searchWordChars, charInventory)) {
+        Set<Set<String>> anagramsSet = new HashSet<Set<String>>();
+        Set<String> anagramSet = new HashSet<String>();
+        anagramSet.add(searchWord);
+        anagramsSet.add(anagramSet);
+
+        return anagramsSet;
+    }
+
+    // this is where you find the anagrams with multiple words
+    if (AnagramSolverHelper.isSubset(searchWordChars, charInventory)) {
+        // update charInventory by removing the characters of the search
+        // word as it is subset of characters for the anagram search word
+        char[] newCharInventory = AnagramSolverHelper.setDifference(charInventory, searchWordChars);
+        if (newCharInventory.length >= minWordSize) {
+            Set<Set<String>> anagramsSet = new HashSet<Set<String>>();
+            for (int index = dictionaryIndex + 1; index < keyList.size(); index++) {
+                Set<Set<String>> searchWordAnagramsKeysSet = findAnagrams(index, newCharInventory, keyList);
+                if (searchWordAnagramsKeysSet != null) {
+                    Set<Set<String>> mergedSets = mergeWordToSets(searchWord, searchWordAnagramsKeysSet);
+                    anagramsSet.addAll(mergedSets);
+                }
+            }
+            return anagramsSet.isEmpty() ? null : anagramsSet;
+        }
+    }
+
+    // no anagrams found for current word
+    return null;
+}
+
+You can fork the repo from here and play with it. There are many optimizations that I might have missed. But the code works and does find all the anagrams.

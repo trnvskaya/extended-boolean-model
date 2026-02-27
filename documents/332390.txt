@@ -1,0 +1,52 @@
+Is it possible to Serialize a LINQ object?
+c# linq linq-to-sql serialization
+I'd like to serialize some LINQ generated objects and store them in a table as a binary field (Never you mind why). I'd like to be able to write some code that looks something like this:
+SerialTestDataContext db = new SerialTestDataContext();
+
+relation_table row = db.relation_tables.First();
+
+MemoryStream memStream = new MemoryStream();
+BinaryFormatter bin = new BinaryFormatter();
+bin.Serialize(memStream, row);
+Console.WriteLine("Serilized successfully");
+
+TestTable tt = new testTable();
+tt.data = new System.Data.Linq.Binary(memStream.ToArray());
+db.testTables.InsertOnSubmit(tt);
+db.SubmitChanges();
+Console.WriteLine("Inserted successfully");
+
+Currently that fails even though I've marked the generated classes as [Serializable] because one of the LINQ inherited classes is not. Is it even possible to do this?
+
+
+Linq classes are partial classes.  You can change the definition to mark the classes as implementing ISerializable and then provide the code...
+public partial class User : ISerializable
+{
+  // implement GetObjectData here
+}
+
+There might still be issues with deserialization, however (I'm not 100% on this).  An alternative is to use xml serialization and implement IXmlSerializable, which has methods for serializing and deserializing, allowing you to control the entire process...
+
+MSDN: Serialization (LINQ to SQL)
+
+With linq-to-sql (from tags), then yes: you can mark the dmbl as serializable, which uses the [DataContract]/[DataMember] approach. You do this by setting the "Serialization Mode" to "Unidirectional" in the designer, or you can do it in the dbml itself:
+<Database ... Serialization="Unidirectional">...
+
+You can then use DataContractSerializer or NetDataContractSerializer to write this (as xml or binary respectively). If you need something portable (i.e. not MS/.NET specific), then protobuf-net will serialize data-contracts using the "protocol buffers" spec.
+
+Following Marc Gravell's advice I wrote the following two blocks of code which worked beautifully:
+relation_table row = db.relation_tables.First();
+
+MemoryStream memStream = new MemoryStream();
+NetDataContractSerializer ndcs = new NetDataContractSerializer();
+ndcs.Serialize(memStream, row);
+
+byte[] stuff = memStream.toArray();
+
+memStream = new MemoryStream(stuff);
+row = ndcs.Deserialize(memStream);
+
+db.relation_tables.Attach(row);
+Console.WriteLine(row.data_table1.somedata + ": " + row.more_data);
+
+The Attach() call fills in the foreign key dependencies for me and associates the item with the data context.

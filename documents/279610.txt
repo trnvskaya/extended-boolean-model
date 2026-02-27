@@ -1,0 +1,79 @@
+Create DB2 History Table Trigger
+sql database db2 history triggers
+I want to create a history table to track field changes across a number of tables in DB2. 
+I know history is usually done with copying an entire table's structure and giving it a suffixed name (e.g. user --> user_history). Then you can use a pretty simple trigger to copy the old record into the history table on an UPDATE.
+However, for my application this would use too much space. It doesn't seem like a good idea (to me at least) to copy an entire record to another table every time a field changes. So I thought I could have a generic 'history' table which would track individual field changes:
+CREATE TABLE history
+(
+    history_id LONG GENERATED ALWAYS AS IDENTITY,
+    record_id INTEGER NOT NULL,
+    table_name VARCHAR(32) NOT NULL,
+    field_name VARCHAR(64) NOT NULL,
+    field_value VARCHAR(1024),
+    change_time TIMESTAMP,
+    PRIMARY KEY (history_id)
+);
+
+OK, so every table that I want to track has a single, auto-generated id field as the primary key, which would be put into the 'record_id' field. And the maximum VARCHAR size in the tables is 1024. Obviously if a non-VARCHAR field changes, it would have to be converted into a VARCHAR before inserting the record into the history table.
+Now, this could be a completely retarded way to do things (hey, let me know why if it is), but I think it it's a good way of tracking changes that need to be pulled up rarely and need to be stored for a significant amount of time.  
+Anyway, I need help with writing the trigger to add records to the history table on an update. Let's for example take a hypothetical user table:
+CREATE TABLE user
+(
+   user_id INTEGER GENERATED ALWAYS AS IDENTITY,
+   username VARCHAR(32) NOT NULL,
+   first_name VARCHAR(64) NOT NULL,
+   last_name VARCHAR(64) NOT NULL,
+   email_address VARCHAR(256) NOT NULL
+   PRIMARY KEY(user_id)
+);
+
+So, can anyone help me with a trigger on an update of the user table to insert the changes into the history table? My guess is that some procedural SQL will need to be used to loop through the fields in the old record, compare them with the fields in the new record and if they don't match, then add a new entry into the history table. 
+It'd be preferable to use the same trigger action SQL for every table, regardless of its fields, if it's possible.
+Thanks!
+
+
+I don't think this is a good idea, as you generate even more overhead per value  with a big table where more than one value changes. But that depends on your application.
+Furthermore you should consider the practical value of such a history table. You have to get a lot of rows together to even get a glimpse of context to the value changed and it requeries you to code another application that does just this complex history logic for an enduser. And for an DB-admin it would be cumbersome to restore values out of the history.
+it may sound a bit harsh, but that is not the intend. An experienced programmer in our shop had a simmilar idea through table journaling. He got it up and running, but it ate diskspace like there's no tomorrow. 
+Just think about what your history table should really accomplish.
+
+Have you considered doing this as a two step process?  Implement a simple trigger that records the original and changed version of the entire row.  Then write a separate program that runs once a day to extract the changed fields as you describe above.
+This makes the trigger simpler, safer, faster and you have more choices for how to implement the post processing step.
+
+We do something similar on our SQL Server database, but the audit tables are for each indvidual table audited (one central table would be huge as our database is many many gigabytes in size)
+One thing you need to do is make sure you also record who made the change. You should also record the old and new value together (makes it easier to put data back if you need to) and the change type (insert, update, delete). You don't mention recording deletes from the table, but we find those the some of the  things we most frequently use the table for.
+We use dynamic SQl to generate the code to create the audit tables (by using the table that stores the system information) and all audit tables have the exact same structure (makes is easier to get data back out).
+When you create the code to store the data in your history table, create the code as well to restore the data if need be. This will save tons of time down the road when something needs to be restored and you are under pressure from senior management to get it done now.
+Now I don't know if you were planning to be able to restore data from your history table, but once you have once, I can guarantee that management will want it used that way.
+
+CREATE TABLE HIST.TB_HISTORY ( 
+    HIST_ID     BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 0, INCREMENT BY 1, NO CACHE) NOT NULL,
+    HIST_COLUMNNAME     VARCHAR(128) NOT NULL,
+    HIST_OLDVALUE       VARCHAR(255),
+    HIST_NEWVALUE       VARCHAR(255),
+    HIST_CHANGEDDATE    TIMESTAMP NOT NULL
+    PRIMARY KEY(HIST_SAFTYNO)
+)
+GO
+
+
+CREATE TRIGGER COMMON.TG_BANKCODE AFTER
+UPDATE OF FRD_BANKCODE ON COMMON.TB_MAINTENANCE
+REFERENCING OLD AS oldcol NEW AS newcol FOR EACH ROW MODE DB2SQL
+WHEN(COALESCE(newcol.FRD_BANKCODE,'#null#') <> COALESCE(oldcol.FRD_BANKCODE,'#null#'))
+BEGIN ATOMIC
+
+    CALL FB_CHECKING.SP_FRAUDHISTORY_ON_DATACHANGED(
+                newcol.FRD_FRAUDID,
+                'FRD_BANKCODE',
+                oldcol.FRD_BANKCODE,
+                newcol.FRD_BANKCODE,
+                newcol.FRD_UPDATEDBY
+    );--
+
+    INSERT INTO FB_CHECKING.TB_FRAUDMAINHISTORY(        
+        HIST_COLUMNNAME, 
+        HIST_OLDVALUE, 
+        HIST_NEWVALUE, 
+        HIST_CHANGEDDATE
+

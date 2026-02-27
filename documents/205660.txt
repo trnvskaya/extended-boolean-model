@@ -1,0 +1,122 @@
+Best pattern for simulating "continue" in Groovy closure
+groovy closures
+It seems that Groovy does not support break and continue from within a closure. What is the best way to simulate this?
+revs.eachLine { line -> 
+    if (line ==~ /-{28}/) {
+            // continue to next line...
+    }
+
+}
+
+
+
+You can only support continue cleanly, not break.  Especially with stuff like eachLine and each.  The inability to support break has to do with how those methods are evaluated, there is no consideration taken for not finishing the loop that can be communicated to the method.   Here's how to support continue --
+Best approach (assuming you don't need the resulting value).
+revs.eachLine { line -> 
+    if (line ==~ /-{28}/) {
+        return // returns from the closure
+    }
+}
+
+If your sample really is that simple, this is good for readability.
+revs.eachLine { line -> 
+    if (!(line ==~ /-{28}/)) {
+        // do what you would normally do
+    }
+}
+
+another option, simulates what a continue would normally do at a bytecode level.
+revs.eachLine { line -> 
+    while (true) {
+        if (line ==~ /-{28}/) {
+            break
+        }
+        // rest of normal code
+        break
+    }
+
+}
+
+One possible way to support break is via exceptions:
+try {
+    revs.eachLine { line -> 
+        if (line ==~ /-{28}/) {
+            throw new Exception("Break")
+        }
+    }
+} catch (Exception e) { } // just drop the exception
+
+You may want to use a custom exception type to avoid masking other real exceptions, especially if you have other processing going on in that class that could throw real exceptions, like NumberFormatExceptions or IOExceptions.
+
+Closures cannot break or continue because they are not loop/iteration constructs. Instead they are tools used to process/interpret/handle iterative logic. You can ignore given iterations by simply returning from the closure without processing as in:
+revs.eachLine { line -> 
+    if (line ==~ /-{28}/) {
+            return
+    }
+
+}
+
+Break support does not happen at the closure level but instead is implied by the semantics of the method call accepted the closure. In short that means instead of calling "each" on something like a collection which is intended to process the entire collection you should call find which will process until a certain condition is met. Most (all?) times you feel the need to break from a closure what you really want to do is find a specific condition during your iteration which makes the find method match not only your logical needs but also your intention. Sadly some of the API lack support for a find method... File for example. It's possible that all the time spent arguing wether the language should include break/continue could have been well spent adding the find method to these neglected areas. Something like firstDirMatching(Closure c) or findLineMatching(Closure c) would go a long way and answer 99+% of the "why can't I break from...?" questions that pop up in the mailing lists. That said, it is trivial to add these methods yourself via MetaClass or Categories.
+class FileSupport {
+   public static String findLineMatching(File f, Closure c) {
+      f.withInputStream {
+         def r = new BufferedReader(new InputStreamReader(it))
+         for(def l = r.readLine(); null!=l; l = r.readLine())
+             if(c.call(l)) return l
+         return null
+      }
+   }
+}
+
+using(FileSupport) { new File("/home/me/some.txt").findLineMatching { line ==~ /-{28}/ }
+
+Other hacks involving exceptions and other magic may work but introduce extra overhead in some situations and convolute the readability in others. The true answer is to look at your code and ask if you are truly iterating or searching instead.
+
+If you pre-create a static Exception object in Java and then throw the (static) exception from inside a closure, the run-time cost is minimal. The real cost is incurred in creating the exception, not in throwing it. According to Martin Odersky (inventor of Scala), many JVMs can actually optimize throw instructions to single jumps.
+This can be used to simulate a break:
+final static BREAK = new Exception();
+//...
+try {
+  ... { throw BREAK; }
+} catch (Exception ex) { /* ignored */ }
+
+
+In this case, you should probably think of the find() method. It stops after the first time the closure passed to it return true.
+
+Use return to continue and any closure to break. 
+Example
+File content:
+1
+2
+----------------------------
+3
+4
+5
+
+Groovy code:
+new FileReader('myfile.txt').any { line ->
+    if (line =~ /-+/)
+        return // continue
+
+    println line
+
+    if (line == "3")
+        true // break
+}
+
+Output:
+1
+2
+3
+
+
+With rx-java you can transform an iterable in to an observable.
+Then you can replace continue with a filter and break with takeWhile
+Here is an example:
+import rx.Observable
+
+Observable.from(1..100000000000000000)
+          .filter { it % 2 != 1} 
+          .takeWhile { it<10 } 
+          .forEach {println it}
+

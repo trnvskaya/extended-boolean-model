@@ -1,0 +1,274 @@
+initialize a const array in a class initializer in C++
+c++ initialization c++03 array-initialize
+I have the following class in C++:
+class a {
+    const int b[2];
+    // other stuff follows
+
+    // and here's the constructor
+    a(void);
+}
+
+The question is, how do I initialize b in the initialization list, given that I can't initialize it inside the body of the function of the constructor, because b is const?
+This doesn't work:
+a::a(void) : 
+    b([2,3])
+{
+     // other initialization stuff
+}
+
+Edit:  The case in point is when I can have different values for b for different instances, but the values are known to be constant for the lifetime of the instance.
+
+
+You can't do that from the initialization list, 
+Have a look at this:
+http://www.cprogramming.com/tutorial/initialization-lists-c++.html
+:)
+
+It is not possible in the current standard. I believe you'll be able to do this in C++0x using initializer lists (see A Brief Look at C++0x, by Bjarne Stroustrup, for more information about initializer lists and other nice C++0x features).
+
+Where I've a constant array, it's always been done as static.  If you can accept that, this code should compile and run.
+#include <stdio.h>
+#include <stdlib.h>
+
+class a {
+        static const int b[2];
+public:
+        a(void) {
+                for(int i = 0; i < 2; i++) {
+                        printf("b[%d] = [%d]\n", i, b[i]);
+                }
+        }
+};
+
+const int a::b[2] = { 4, 2 };
+
+int main(int argc, char **argv)
+{
+        a foo;
+        return 0;
+}
+
+
+ISO standard C++ doesn't let you do this.  If it did, the syntax would probably be:
+a::a(void) :
+b({2,3})
+{
+    // other initialization stuff
+}
+
+Or something along those lines.  From your question it actually sounds like what you want is a constant class (aka static) member that is the array.  C++ does let you do this.  Like so:
+#include <iostream>
+
+class A 
+{
+public:
+    A();
+    static const int a[2];
+};
+
+const int A::a[2] = {0, 1};
+
+A::A()
+{
+}
+
+int main (int argc, char * const argv[]) 
+{
+    std::cout << "A::a => " << A::a[0] << ", " << A::a[1] << "\n";
+    return 0;
+}
+
+The output being:
+A::a => 0, 1
+
+Now of course since this is a static class member it is the same for every instance of class A.  If that is not what you want, ie you want each instance of A to have different element values in the array a then you're making the mistake of trying to make the array const to begin with.  You should just be doing this:
+#include <iostream>
+
+class A 
+{
+public:
+    A();
+    int a[2];
+};
+
+A::A()
+{
+    a[0] = 9; // or some calculation
+    a[1] = 10; // or some calculation
+}
+
+int main (int argc, char * const argv[]) 
+{
+    A v;
+    std::cout << "v.a => " << v.a[0] << ", " << v.a[1] << "\n";
+    return 0;
+}
+
+
+Like the others said, ISO C++ doesn't support that. But you can workaround it. Just use std::vector instead.
+int* a = new int[N];
+// fill a
+
+class C {
+  const std::vector<int> v;
+public:
+  C():v(a, a+N) {}
+};
+
+
+interestingly, in C# you have the keyword const that translates to C++'s static const, as opposed to readonly which can be only set at constructors and initializations, even by non-constants, ex:
+readonly DateTime a = DateTime.Now;
+
+I agree, if you have a const pre-defined array you might as well make it static.
+At that point you can use this interesting syntax:
+//in header file
+class a{
+    static const int SIZE;
+    static const char array[][10];
+};
+//in cpp file:
+const int a::SIZE = 5;
+const char array[SIZE][10] = {"hello", "cruel","world","goodbye", "!"};
+
+however, I did not find a way around the constant '10'. The reason is clear though, it needs it to know how to perform accessing to the array. A possible alternative is to use #define, but I dislike that method and I #undef at the end of the header, with a comment to edit there at CPP as well in case if a change.
+
+std::vector uses the heap.  Geez, what a waste that would be just for the sake of a const sanity-check.  The point of std::vector is dynamic growth at run-time, not any old syntax checking that should be done at compile-time.  If you're not going to grow then create a class to wrap a normal array.
+#include <stdio.h>
+
+
+template <class Type, size_t MaxLength>
+class ConstFixedSizeArrayFiller {
+private:
+    size_t length;
+
+public:
+    ConstFixedSizeArrayFiller() : length(0) {
+    }
+
+    virtual ~ConstFixedSizeArrayFiller() {
+    }
+
+    virtual void Fill(Type *array) = 0;
+
+protected:
+    void add_element(Type *array, const Type & element)
+    {
+        if(length >= MaxLength) {
+            // todo: throw more appropriate out-of-bounds exception
+            throw 0;
+        }
+        array[length] = element;
+        length++;
+    }
+};
+
+
+template <class Type, size_t Length>
+class ConstFixedSizeArray {
+private:
+    Type array[Length];
+
+public:
+    explicit ConstFixedSizeArray(
+        ConstFixedSizeArrayFiller<Type, Length> & filler
+    ) {
+        filler.Fill(array);
+    }
+
+    const Type *Array() const {
+        return array;
+    }
+
+    size_t ArrayLength() const {
+        return Length;
+    }
+};
+
+
+class a {
+private:
+    class b_filler : public ConstFixedSizeArrayFiller<int, 2> {
+    public:
+        virtual ~b_filler() {
+        }
+
+        virtual void Fill(int *array) {
+            add_element(array, 87);
+            add_element(array, 96);
+        }
+    };
+
+    const ConstFixedSizeArray<int, 2> b;
+
+public:
+    a(void) : b(b_filler()) {
+    }
+
+    void print_items() {
+        size_t i;
+        for(i = 0; i < b.ArrayLength(); i++)
+        {
+            printf("%d\n", b.Array()[i]);
+        }
+    }
+};
+
+
+int main()
+{
+    a x;
+    x.print_items();
+    return 0;
+}
+
+ConstFixedSizeArrayFiller and ConstFixedSizeArray are reusable.
+The first allows run-time bounds checking while initializing the array (same as a vector might), which can later become const after this initialization.
+The second allows the array to be allocated inside another object, which could be on the heap or simply the stack if that's where the object is.  There's no waste of time allocating from the heap.  It also performs compile-time const checking on the array.
+b_filler is a tiny private class to provide the initialization values.  The size of the array is checked at compile-time with the template arguments, so there's no chance of going out of bounds.
+I'm sure there are more exotic ways to modify this.  This is an initial stab.  I think you can pretty much make up for any of the compiler's shortcoming with classes.
+
+A solution without using the heap with std::vector is to use boost::array, though you can't initialize array members directly in the constructor.
+#include <boost/array.hpp>
+
+const boost::array<int, 2> aa={ { 2, 3} };
+
+class A {
+    const boost::array<int, 2> b;
+    A():b(aa){};
+};
+
+
+How about emulating a const array via an accessor function?  It's non-static (as you requested), and it doesn't require stl or any other library:
+class a {
+    int privateB[2];
+public:
+    a(int b0,b1) { privateB[0]=b0; privateB[1]=b1; }
+    int b(const int idx) { return privateB[idx]; }
+}
+
+Because a::privateB is private, it is effectively constant outside a::, and you can access it similar to an array, e.g.
+a aobj(2,3);    // initialize "constant array" b[]
+n = aobj.b(1);  // read b[1] (write impossible from here)
+
+If you are willing to use a pair of classes, you could additionally protect privateB from member functions.  This could be done by inheriting a; but I think I prefer John Harrison's comp.lang.c++ post using a const class.
+
+With C++11 the answer to this question has now changed and you can in fact do:
+struct a {
+    const int b[2];
+    // other bits follow
+
+    // and here's the constructor
+    a();
+};
+
+a::a() :
+    b{2,3}
+{
+     // other constructor work
+}
+
+int main() {
+ a a;
+}
+

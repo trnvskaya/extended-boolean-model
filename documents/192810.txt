@@ -1,0 +1,29 @@
+SVN checkout filtered by file extension?
+svn checkout
+I have a home-grown automated build script in the form of a DOS batch file.  In part of that script, I check out (with "svn checkout") a section of our SVN repository that includes a bunch of third-party stuff that's used in our projects.  This batch file performed pretty well for a long time, but now people have checked in lots of fluff (docs, sample code, etc.) into the third-party area and the checkout part of this script has gotten lots slower.  I'd like to mitigate this by checking out only the stuff we need -- mostly dll files in our case.  So, my question is this: what's the best way to check out an SVN repository filtered by file extension?
+I didn't see any obvious way to do this in the svn help.  I have a .NET utility library that wraps svn.exe in some ways, and I was thinking of extending this to retrieve only content that matched my extensions of interest.  But I'd prefer to use an easier or existing method if one exists.
+
+
+You can't check out just a few specific files -- you can only check out a whole folder.  You can rearrange the organization of what you're checking out, or you can just copy a working copy from somewhere else and update.
+
+As I told here, there is only one option build into SVN itself: A new feature in SVN 1.5 called sparse checkout, however you can only select checkout on directory level, so you have to sort the files you do not need in a different directory.
+
+The most simple and a correct way to do this: DON'T DO IT! 
+If there is some crap in third party folder where there suppose to be .dll files that needs to be checkout - remove that crap to a different location! It does not belong here anyway.
+
+This is possible: you can svn checkout an empty directory, and then svn update filename for each file that you do want.
+Your script can do something like:
+
+svn checkout svn://path/to/repos/directory --depth empty
+svn list --recursive svn://path/to/repos/directory
+Pipe that result through a filter that removes the forbidden file extensions, e.g. grep
+Iterate over this new filtered list and svn update --parents each file
+
+That would give your desired result of a working copy without certain files or file extensions.
+Of course, there is also the issue that you mention of âpeople [checking] in lots of fluffâ but thatâs a separate matter.
+
+For a powershell specific implementation of the answer from Michael Hackner, try something like:
+svn ls http://svn-server/src --recursive | Out-File svn.txt
+Get-Content .\svn.txt | where {$_.toLower().EndsWith('special.xml')} | select -First 200 | foreach {New-Object PSObject -Property @{ Path = $_; Munged = $_.Replace('/', '_') } } | foreach { svn export "http://svn-server/src/$($_.Path)" $($_.Munged) }
+
+My particular use case here is finding a bunch of similarly named files (in this case *special.xml) and dumping them all into a single folder, with essentially unique names. I have used an intermediate file to store the entire repo listing, but this could all be inlined as well if that's better for you.

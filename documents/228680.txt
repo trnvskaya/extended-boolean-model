@@ -1,0 +1,175 @@
+How to Load More than 1 CSV File at a Time Via Excel VBA?
+excel vba csv excel-vba file-import
+how does one import CSV files via Excel VBA in a set, in groups or in multiple individual files, rather than one at a time?
+
+
+You could write a simple console application to parse a batch of csv files and save them to excel files.
+Not the easiest solution but it could be an option.
+
+This will get a file into a one dimensional array quickly
+Open "myfile.csv" For Input As 1
+Dim Txt As String
+Txt = Input(LOF(1), 1)
+Close #1
+Dim V As Variant
+V = Split(Txt, ",")
+
+Then V contains all the items in a single column, NB first item is V(0)
+
+I am a bit puzzled in that most versions of Excel will open .csv files with out any problems.
+strPath = "C:\Docs\"
+strFile = Dir(strPath & "*.csv")
+
+Do While strFile <> ""
+    Workbooks.Open Filename:=strPath & strFile
+    ActiveWorkbook.SaveAs Filename:=strPath & Mid(strFile, 1, InStr(strFile, ".") - 1) _
+        & "Conv.xls", FileFormat:=xlNormal
+
+    strFile = Dir
+Loop
+
+
+you can also use workbooks.opentext
+
+The idea I had originally was as follows. Given this data
+Dog Names,Dog Ages,Collar Size
+Woof,3,4
+Bowser,2,5
+Ruffy,4.5,6
+Angel,1,7
+Demon,7,8
+Dog,9,2
+
+create three global arrays, called Dog_Names, Dog_Ages and Collar_Size and populate them with the data in the CSV file.
+This bit of VBScript does that job and displays the results. Remove the comment mark from the wscript.echo in the x subroutine to see it all happen.
+Option Explicit
+
+Dim FSO
+Set FSO = CreateObject( "Scripting.FileSystemObject" )
+
+Dim oStream
+Dim sData
+Dim aData
+
+Set oStream = fso.OpenTextFile("data.csv")
+sData       = oStream.ReadAll
+aData       = Split( sData, vbNewLine )
+
+Dim sLine
+sLine = aData(0)
+
+Dim aContent
+aContent = Split( sLine, "," )
+
+Dim aNames()
+Dim nArrayCount
+nArrayCount = UBound( aContent )
+ReDim aNames( nArrayCount )
+
+Dim i
+
+For i = 0 To nArrayCount
+  aNames(i) = Replace( aContent( i ), " ", "_" )
+  x "dim " & aNames(i) & "()"
+Next
+
+For j = 0 To nArrayCount
+  x "redim " & aNames(j) & "( " & UBound( aData ) - 1 & " )"
+Next
+
+Dim j
+Dim actual
+actual = 0
+
+For i = 1 To UBound( aData )
+  sLine = aData( i )
+  If sLine <> vbnullstring Then
+    actual = actual + 1
+    aContent = Split( sLine, "," )
+    For j = 0 To nArrayCount
+      x aNames(j) & "(" & i - 1 & ")=" & Chr(34) & aContent(j) & Chr(34)
+    Next
+  End If
+Next
+
+For j = 0 To nArrayCount
+  x "redim preserve " & aNames(j) & "(" & actual - 1 & ")"
+Next
+
+For i = 0 To actual - 1
+  For j = 0 To nArrayCount
+    x "wscript.echo aNames(" & j & ")," & aNames(j) & "(" & i & ")"
+  Next
+Next
+
+Sub x( s )
+  'wscript.echo s
+  executeglobal s
+End Sub
+
+The result looks like this
+>cscript "C:\Documents and Settings\Bruce\Desktop\datathing.vbs"
+Dog_Names Woof
+Dog_Ages 3
+Collar_Size 4
+Dog_Names Bowser
+Dog_Ages 2
+Collar_Size 5
+Dog_Names Ruffy
+Dog_Ages 4.5
+Collar_Size 6
+Dog_Names Angel
+Dog_Ages 1
+Collar_Size 7
+Dog_Names Demon
+Dog_Ages 7
+Collar_Size 8
+Dog_Names Dog
+Dog_Ages 9
+Collar_Size 2
+>Exit code: 0    Time: 0.338
+
+
+This is another way that avoids the recalc you get when opening a csv file in Excel.
+Add a blank sheet to your workbook and add the following code the sheet's object
+Function getCsv(fn)
+    Dim d, scrup As Boolean
+    scrup = Application.ScreenUpdating
+    Application.ScreenUpdating = False
+    With Me.QueryTables.Add( _
+            Connection:="TEXT;" & fn, _
+            Destination:=Me.Range("A1") _
+        )
+        .Name = "data"
+        .FieldNames = True
+        .RowNumbers = False
+        .FillAdjacentFormulas = False
+        .PreserveFormatting = True
+        .RefreshStyle = xlOverwriteCells
+        .SavePassword = False
+        .SaveData = True
+        .AdjustColumnWidth = False
+        .TextFilePromptOnRefresh = False
+        .TextFilePlatform = 850
+        .TextFileStartRow = 1
+        .TextFileParseType = xlDelimited
+        .TextFileTextQualifier = xlTextQualifierDoubleQuote
+        .TextFileCommaDelimiter = True
+        .Refresh BackgroundQuery:=False
+    End With
+
+    d = Me.Names(1).RefersToRange.Value
+
+    Me.Names(1).Delete
+    Me.UsedRange.Rows.Delete
+
+    Application.ScreenUpdating = scrup
+    getCsv = d
+End Function
+
+You might also want to hide the sheet, so that no one accidentally uses it.
+Then you can use like this
+dim d
+d = getCsv("C:\temp\some.csv")
+
+One thing that slightly concerns me is that the Name gets incremented each time you use the function (e.g. data_1, data_2, ...), so there might be a stability issue if these names get saved somewhere.

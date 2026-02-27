@@ -1,0 +1,235 @@
+Dynamic Sorting within SQL Stored Procedures
+sql tsql stored-procedures sorting
+This is an issue that I've spent hours researching in the past.  It seems to me to be something that should have been addressed by modern RDBMS solutions but as yet I have not found anything that really addresses what I see to be an incredibly common need in any Web or Windows application with a database back-end.
+I speak of dynamic sorting.  In my fantasy world, it should be as simple as something like:
+ORDER BY @sortCol1, @sortCol2
+
+This is the canonical example given by newbie SQL and Stored Procedure developers all over forums across the Internet.  "Why isn't this possible?" they ask.  Invariably, somebody eventually comes along to lecture them about the compiled nature of stored procedures, of execution plans in general, and all sorts of other reasons why it isn't possible to put a parameter directly into an ORDER BY clause.
+
+I know what some of you are already thinking:  "Let the client do the sorting, then."  Naturally, this offloads the work from your database.  In our case though, our database servers aren't even breaking a sweat 99% of the time and they aren't even multi-core yet or any of the other myriad improvements to system architecture that happen every 6 months.  For this reason alone, having our databases handle sorting wouldn't be a problem.  Additionally, databases are very good at sorting.  They are optimized for it and have had years to get it right, the language for doing it is incredibly flexible, intuitive, and simple and above all any beginner SQL writer knows how to do it and even more importantly they know how to edit it, make changes, do maintenance, etc.  When your databases are far from being taxed and you just want to simplify (and shorten!) development time this seems like an obvious choice.
+Then there's the web issue.  I've played around with JavaScript that will do client-side sorting of HTML tables, but they inevitably aren't flexible enough for my needs and, again, since my databases aren't overly taxed and can do sorting really really easily, I have a hard time justifying the time it would take to re-write or roll-my-own JavaScript sorter.  The same generally goes for server-side sorting, though it is already probably much preferred over JavaScript.  I'm not one that particularly likes the overhead of DataSets, so sue me.
+But this brings back the point that it isn't possible — or rather, not easily.  I've done, with prior systems, an incredibly hack way of getting dynamic sorting.  It wasn't pretty, nor intuitive, simple, or flexible and a beginner SQL writer would be lost within seconds.  Already this is looking to be not so much a "solution" but a "complication."
+
+The following examples are not meant to expose any sort of best practices or good coding style or anything, nor are they indicative of my abilities as a T-SQL programmer.  They are what they are and I fully admit they are confusing, bad form, and just plain hack.
+We pass an integer value as a parameter to a stored procedure (let's call the parameter just "sort") and from that we determine a bunch of other variables.  For example... let's say sort is 1 (or the default):
+DECLARE @sortCol1 AS varchar(20)
+DECLARE @sortCol2 AS varchar(20)
+DECLARE @dir1 AS varchar(20)
+DECLARE @dir2 AS varchar(20)
+DECLARE @col1 AS varchar(20)
+DECLARE @col2 AS varchar(20)
+
+SET @col1 = 'storagedatetime';
+SET @col2 = 'vehicleid';
+
+IF @sort = 1                -- Default sort.
+BEGIN
+    SET @sortCol1 = @col1;
+    SET @dir1 = 'asc';
+    SET @sortCol2 = @col2;
+    SET @dir2 = 'asc';
+END
+ELSE IF @sort = 2           -- Reversed order default sort.
+BEGIN
+    SET @sortCol1 = @col1;
+    SET @dir1 = 'desc';
+    SET @sortCol2 = @col2;
+    SET @dir2 = 'desc';
+END
+
+You can already see how if I declared more @colX variables to define other columns I could really get creative with the columns to sort on based on the value of "sort"... to use it, it usually ends up looking like the following incredibly messy clause:
+ORDER BY
+    CASE @dir1
+        WHEN 'desc' THEN
+            CASE @sortCol1
+                WHEN @col1 THEN [storagedatetime]
+                WHEN @col2 THEN [vehicleid]
+            END
+    END DESC,
+    CASE @dir1
+        WHEN 'asc' THEN
+            CASE @sortCol1
+                WHEN @col1 THEN [storagedatetime]
+                WHEN @col2 THEN [vehicleid]
+            END
+    END,
+    CASE @dir2
+        WHEN 'desc' THEN
+            CASE @sortCol2
+                WHEN @col1 THEN [storagedatetime]
+                WHEN @col2 THEN [vehicleid]
+            END
+    END DESC,
+    CASE @dir2
+        WHEN 'asc' THEN
+            CASE @sortCol2
+                WHEN @col1 THEN [storagedatetime]
+                WHEN @col2 THEN [vehicleid]
+            END
+    END
+
+Obviously this is a very stripped down example.  The real stuff, since we usually have four or five columns to support sorting on, each with possible secondary or even a third column to sort on in addition to that (for example date descending then sorted secondarily by name ascending) and each supporting bi-directional sorting which effectively doubles the number of cases.  Yeah... it gets hairy really quick.
+The idea is that one could "easily" change the sort cases such that vehicleid gets sorted before the storagedatetime... but the pseudo-flexibility, at least in this simple example, really ends there.  Essentially, each case that fails a test (because our sort method doesn't apply to it this time around) renders a NULL value.  And thus you end up with a clause that functions like the following:
+ORDER BY NULL DESC, NULL, [storagedatetime] DESC, blah blah
+
+You get the idea.  It works because SQL Server effectively ignores null values in order by clauses.  This is incredibly hard to maintain, as anyone with any basic working knowledge of SQL can probably see.  If I've lost any of you, don't feel bad.  It took us a long time to get it working and we still get confused trying to edit it or create new ones like it.  Thankfully it doesn't need changing often, otherwise it would quickly become "not worth the trouble."
+Yet it did work.
+
+My question is then:  is there a better way?
+I'm okay with solutions other than Stored Procedure ones, as I realize it may just not be the way to go.  Preferably, I'd like to know if anyone can do it better within the Stored Procedure, but if not, how do you all handle letting the user dynamically sort tables of data (bi-directionally, too) with ASP.NET?
+And thank you for reading (or at least skimming) such a long question!
+PS: Be glad I didn't show my example of a stored procedure that supports dynamic sorting, dynamic filtering/text-searching of columns, pagination via ROWNUMBER() OVER, AND try...catch with transaction rollbacking on errors... "behemoth-sized" doesn't even begin to describe them.
+
+Update:
+
+I would like to avoid dynamic SQL.  Parsing a string together and running an EXEC on it defeats a lot of the purpose of having a stored procedure in the first place.  Sometimes I wonder though if the cons of doing such a thing wouldn't be worth it, at least in these special dynamic sorting cases.  Still, I always feel dirty whenever I do dynamic SQL strings like that — like I'm still living in the Classic ASP world.
+A lot of the reason we want stored procedures in the first place is for security.  I don't get to make the call on security concerns, only suggest solutions.  With SQL Server 2005 we can set permissions (on a per-user basis if need be) at the schema level on individual stored procedures and then deny any queries against the tables directly.  Critiquing the pros and cons of this approach is perhaps for another question, but again it's not my decision.  I'm just the lead code monkey. :)
+
+
+
+How about handling sorting on the stuff displaying the results -- grids, reports, etc. rather than on SQL?
+EDIT:
+To clarify things since this answer got down-voted earlier, I'll elaborate a bit...
+You stated you knew about client-side sorting but wanted to steer clear of it.  That's your call, of course.
+What I want to point out, though, is that by doing it on the client-side, you're able to pull data ONCE and then work with it however you want -- versus doing multiple trips back and forth to the server each time the sort gets changed.
+Your SQL Server isn't getting taxed right now and that's awesome. It shouldn't be. But just because it isn't overloaded yet doesn't mean that it'll stay like that forever.
+If you're using any of the newer ASP.NET stuff for displaying on the web, a lot of that stuff is already baked right in.
+Is it worth adding so much code to each stored procedure just to handle sorting? Again, your call. 
+I'm not the one who will ultimately be in charge of supporting it.  But give some thought to what will be involved as columns are added/removed within the various datasets used by the stored procedures (requiring modifications to the CASE statements) or when suddenly instead of sorting by two columns, the user decides they need three -- requiring you to now update every one of your stored procedures that uses this method.
+For me, it's worth it to get a working client-side solution and apply it to the handful of user-facing displays of data and be done with it.  If a new column is added, it's already handled. If the user wants to sort by multiple columns, they can sort by two or twenty of them.
+
+At some point, doesn't it become worth it to move away from stored procedures and just use parameterized queries to avoid this sort of hackery?
+
+Dynamic SQL is still an option. You just have to decide whether that option is more palatable than what you currently have.
+Here is an article that shows that: http://www.4guysfromrolla.com/webtech/010704-1.shtml. 
+
+Yeah, it's a pain, and the way you're doing it looks similar to what I do:
+order by
+case when @SortExpr = 'CustomerName' and @SortDir = 'ASC' 
+    then CustomerName end asc, 
+case when @SortExpr = 'CustomerName' and @SortDir = 'DESC' 
+    then CustomerName end desc,
+...
+
+This, to me, is still much better than building dynamic SQL from code, which turns into a scalability and maintenance nightmare for DBAs.
+What I do from code is refactor the paging and sorting so I at least don't have a lot of repetition there with populating values for @SortExpr and @SortDir.
+As far as the SQL is concerned, keep the design and formatting the same between different stored procedures, so it's at least neat and recognizable when you go in to make changes.
+
+There may be a third option, since your server has lots of spare cycles - use a helper procedure to do the sorting via a temporary table. Something like
+create procedure uspCallAndSort
+(
+    @sql varchar(2048),        --exec dbo.uspSomeProcedure arg1,'arg2',etc.
+    @sortClause varchar(512)    --comma-delimited field list
+)
+AS
+insert into #tmp EXEC(@sql)
+declare @msql varchar(3000)
+set @msql = 'select * from #tmp order by ' + @sortClause
+EXEC(@msql)
+drop table #tmp
+GO
+
+Caveat: I haven't tested this, but it "should" work in SQL Server 2005 (which will create a temporary table from a result set without specifying the columns in advance.)
+
+I agree, use client side.  But it appears that is not the answer you want to hear.
+So, it is perfect the way it is. I don't know why you would want to change it, or even ask "Is there a better way." Really, it should be called "The Way". Besides, it seems to work and suit the needs of the project just fine and will probably be extensible enough for years to come. Since your databases aren't taxed and sorting is really really easy it should stay that way for years to come.
+I wouldn't sweat it.
+
+My applications do this a lot but they are all dynamically building the SQL. However, when I deal with stored procedures I do this:
+
+Make the stored procedure a function that returns a table of your values - no sort.
+Then in your application code do a select * from dbo.fn_myData() where ... order by ... so you can dynamically specify the sort order there.
+
+Then at least the dynamic part is in your application, but the database is still doing the heavy lifting.
+
+There's a couple of different ways you can hack this in. 
+Prerequisites:
+
+Only one SELECT statement in the
+sp 
+Leave out any sorting (or have
+a default)
+
+Then insert into a temp table:
+create table #temp ( your columns )
+
+insert #temp
+exec foobar
+
+select * from #temp order by whatever
+
+Method #2: set up a linked server back to itself, then select from this using openquery:
+http://www.sommarskog.se/share_data.html#OPENQUERY
+
+This solution might only work in .NET, I don't know.   
+I fetch the data into the C# with the initial sort order in the SQL order by clause, put that data in a DataView, cache it in a Session variable, and use it to build a page.
+When the user clicks on a column heading to sort (or page, or filter), I don't go back to the database.  Instead, I go back to my cached DataView and set its "Sort" property to an expression I build dynamically, just like I would dynamic SQL.    ( I do the filtering the same way, using the "RowFilter" property).
+You can see/feel it working in a demo of my app, BugTracker.NET, at http://ifdefined.com/btnet/bugs.aspx
+
+You should avoid the SQL Server sorting, unless if necessary. Why not sort on app server or client side? Also .NET Generics does exceptional sortin
+
+This approach keeps the sortable columns from being duplicated twice in the order by, and is a little more readable IMO:
+SELECT
+  s.*
+FROM
+  (SELECT
+    CASE @SortCol1
+      WHEN 'Foo' THEN t.Foo
+      WHEN 'Bar' THEN t.Bar
+      ELSE null
+    END as SortCol1,
+    CASE @SortCol2
+      WHEN 'Foo' THEN t.Foo
+      WHEN 'Bar' THEN t.Bar
+      ELSE null
+    END as SortCol2,
+    t.*
+  FROM
+    MyTable t) as s
+ORDER BY
+  CASE WHEN @dir1 = 'ASC'  THEN SortCol1 END ASC,
+  CASE WHEN @dir1 = 'DESC' THEN SortCol1 END DESC,
+  CASE WHEN @dir2 = 'ASC'  THEN SortCol2 END ASC,
+  CASE WHEN @dir2 = 'DESC' THEN SortCol2 END DESC
+
+
+When you are paging sorted results, dynamic SQL is a good option. If you're paranoid about SQL injection you can use the column numbers instead of the column name. I've done this before using negative values for descending. Something like this...
+declare @o int;
+set @o = -1;
+
+declare @sql nvarchar(2000);
+set @sql = N'select * from table order by ' + 
+    cast(abs(@o) as varchar) + case when @o < 0 then ' desc' else ' asc' end + ';'
+
+exec sp_executesql @sql
+
+Then you just need to make sure the number is inside 1 to # of columns. You could even expand this to a list of column numbers and parse that into a table of ints using a function like this. Then you would build the order by clause like so...
+declare @cols varchar(100);
+set @cols = '1 -2 3 6';
+
+declare @order_by varchar(200)
+
+select @order_by = isnull(@order_by + ', ', '') + 
+        cast(abs(number) as varchar) + 
+        case when number < 0 then ' desc' else '' end
+from dbo.iter_intlist_to_tbl(@cols) order by listpos
+
+print @order_by
+
+One drawback is you have to remember the order of each column on the client side. Especially, when you don't display all the columns or you display them in a different order. When the client wants to sort, you map the column names to the column order and generate the list of ints. 
+
+A stored procedure technique (hack?) I've used to avoid dynamic SQL for certain jobs is to have a unique sort column.  I.e.,
+SELECT
+   name_last,
+   name_first,
+   CASE @sortCol WHEN 'name_last' THEN [name_last] ELSE 0 END as mySort
+FROM
+   table
+ORDER BY 
+    mySort
+
+This one is easy to beat into submission -- you can concat fields in your mySort column, reverse the order with math or date functions, etc.
+Preferably though, I use my asp.net gridviews or other objects with build-in sorting to do the sorting for me AFTER retrieving the data fro Sql-Server.  Or even if it's not built-in -- e.g., datatables, etc. in asp.net.
+
+An argument against doing the sorting on the client side is large volume data and pagination.  Once your row count gets beyond what you can easily display you're often sorting as part of a skip/take, which you probably want to run in SQL.
+For Entity Framework, you could use a stored procedure to handle your text search.   If you encounter the same sort issue, the solution I've seen is to use a stored proc for the search, returning only an id key set for the match.  Next, re-query (with the sort) against the db using the ids in a list (contains).  EF handles this pretty well, even when the ID set is pretty large.  Yes, this is two round trips, but it allows you to always keep your sorting in the DB, which can be important in some situations, and prevents you from writing a boatload of logic in the stored procedure.

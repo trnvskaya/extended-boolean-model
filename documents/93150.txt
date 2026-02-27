@@ -1,0 +1,22 @@
+SQL Server post-join rowcount underestimate
+sql-server performance
+The Query Optimizer is estimating that the results of a join will have only one row, when the actual number of rows is 2000. This is causing later joins on the dataset to have an estimated result of one row, when some of them go as high as 30,000.
+With a count of 1, the QO is choosing a loop join/index seek strategy for many of the joins which is much too slow. I worked around the issue by constraining the possible join strategies with a WITH OPTION (HASH JOIN, MERGE JOIN), which improved overall execution time from 60+ minutes to 12 seconds. However, I think the QO is still generating a less than optimal plan because of the bad rowcounts. I don't want to specify the join order and details manually-- there are too many queries affected by this for it to be worthwhile.
+This is in Microsoft SQL Server 2000, a medium query with several table selects joined to the main select.
+I think the QO may be overestimating the cardinality of the many side on the join, expecting the joining columns between the tables to have less rows in common.
+The estimated row counts from scanning the indexes before the join are accurate, it's only the estimated row count after certain joins that's much too low.
+The statistics for all the tables in the DB are up to date and refreshed automatically.
+One of the early bad joins is between a generic 'Person' table for information common to all people and a specialized person table that about 5% of all those people belong to. The clustered PK in both tables (and the join column) is an INT. The database is highly normalized.
+I believe that the root problem is the bad row count estimate after certain joins, so my main questions are:
+
+How can I fix the QO's post join rowcount estimate?
+Is there a way that I can hint that a join will have a lot of rows without specifying the entire join order manually?
+
+
+
+can't you prod the QO with a well-placed query hint?
+
+Although the statistics were up to date, the scan percentage wasn't high enough to provide accurate information. I ran this on each of the base tables that was having a problem to update all the statistics on a table by scanning all the rows, not just a default percentage.
+UPDATE STATISTICS <table> WITH FULLSCAN, ALL
+
+The query still has a lot of loop joins, but the join order is different and it runs in 2-3 seconds.

@@ -1,0 +1,24 @@
+Why use hashing to create pathnames for large collections of files?
+database-design data-structures design-patterns
+I noticed a number of cases where an application or database stored collections of files/blobs using a has to determine the path and filename. I believe the intended outcome is a situation where the path never gets too deep, or the folders ever get too full - too many files (or folders) in a folder making for slower access. 
+EDIT: Examples are often Digital libraries or repositories, though the simplest example I can think of (that can be installed in about 30s) is the Zotero document/citation database. 
+Why do this? 
+EDIT: thanks Mat for the answer - does this technique of using a hash to create a file path have a name? Is it a pattern? I'd like to read more, but have failed to find anything in the ACM Digital Library
+
+
+A hash is faster to check than it is to traverse a B-tree. So if frequent existence checks are made, this method might be useful. Other than that, I don't really understand the situation because hash tables don't preserve ordering or hierarchies. Therefore, storing a directory structure in them doesn't seem feasable if directories need to be traversed individually.
+
+Hash/B:Tree
+A hash has the advantage of being faster to look at when you're only going to use the "=" operator for searchs.
+If you're going to use things like "<" or ">" or anything else than "=", you'll want to use a B:Tree because it will be able to do that kind of searchs.
+Directory structure
+If you have hundreds of thousands of files to store on a filesystem and you put them all in a single directory, you'll get to a point where the directory inode will grow so fat that it will takes minutes to add/remove a file from that directory, and you might even get to the point where the inode won't fit in memory, and you won't be able to add/remove or even touch the directory.
+You can be assured that for hashing method foo, foo("something") will always return the same thing, say, "grbezi". Now, you use part of that hash to store the file, say, in gr/be/something. Next time you need that file, you'll just have to compute the hash  and it will be directly available. Plus, you gain the fact that with a good hash function, the distribution of hashes in the hash space is pretty good, and, for a large number of files, they will be evenly distributed inside the hierarchy, thus splitting the load.
+
+Hashes also gives a unique'ness to the pathname. Very few name clashes.
+
+I think we need a little bit closer look at what you're trying to do.  In general, a hash and a B-Tree abstractly provide two common operations:  "insert item", and "search for item".  A hash performs them, asymptotically, in O(1) time as long as the hash function is well behaved (although in most cases, a very poorly behaved hash against a particular workload can be as bad as O(n).)  A B tree, by comparison, requires O(log n) time for both insertions and searches.  So if those are the only operations you perform, a hash table is the faster choice (and considerably simpler than implementing a B tree if you must write it yourself.)
+The kicker comes in when you want to add operations.  If you want to do anything that requires ordering (which means, say, reading the elements in key order), you have to do other things, the simplest being to copy and sort the keys, and then access the keys using that temporary table.  The problem there is that the time complexity of sorting is O(n log n), so if you have to do it very oten, the hash table no longer has a performance advantage.
+
+Zotero in particular is actually using eight-character alphanumeric unique IDs; they are not a hash of anything related to the underlying file, and they actually correspond to the attachment's key in the Zotero database (also used for accessing the file and its metadata using the Zotero API). The key is guaranteed unique within the local Zotero instance (well, for libraries with under 2821109907457 items), and it is concatenated with a library key to make a globally unique key for the attachment in the larger Zotero world. The keys are used in the file system in large part to get around name clashes and special characters.
+My understanding is that many of the UUIDs you see around the library and repository world are similar in justification-- they're less collision-prone than autoincrementing numeric IDs, making many things a good deal simpler, but they aren't, in contrast to the proper SHA1 hashes used as commit identifiers in git, necessarily a hash.

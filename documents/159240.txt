@@ -1,0 +1,173 @@
+RAII vs. exceptions
+c++ exception raii destructor
+The more we use RAII in C++, the more we find ourselves with destructors that do non-trivial deallocation. Now, deallocation (finalization, however you want to call it) can fail, in which case exceptions are really the only way to let anybody upstairs know of our deallocation problem. But then again, throwing-destructors are a bad idea because of the possibility of exceptions being thrown during stack unwinding. std::uncaught_exception() lets you know when that happens, but not much more, so aside from letting you log a message before termination there's not much you can do, unless you're willing to leave your program in an undefined state, where some stuff is deallocated/finalized and some not.
+One approach is to have no-throw destructors. But in many cases that just hides a real error. Our destructor might, for example, be closing some RAII-managed DB connections as a result of some exception being thrown, and those DB connections might fail to close. This doesn't necessarily mean we're ok with the program terminating at this point. On the other hand, logging and tracing these errors isn't really a solution for every case; otherwise we would have had no need for exceptions to begin with. 
+With no-throw destructors we also find ourselves having to create "reset()" functions that are supposed to be called before destruction - but that just defeats the whole purpose of RAII.
+Another approach is just to let the program terminate, as it's the most predictable thing you can do.
+Some people suggest chaining exceptions, so that more than one error can be handled at a time. But I honestly never actually seen that done in C++ and I've no idea how to implement such a thing.
+So it's either RAII or exceptions. Isn't it? I'm leaning toward no-throw destructors; mainly because it keeps things simple(r). But I really hope there's a better solution, because, as I said, the more we use RAII, the more we find ourselves using dtors that do non-trivial things.
+Appendix
+I'm adding links to interesting on-topic articles and discussions I've found:
+
+Throwing Destructors
+StackOverflow discussion on the problems with SEH
+StackOverflow discussion on throwing-destructors (thanks, Martin York)
+Joel on Exceptions
+SEH Considered Harmful 
+CLR Exception Handling which also touches on exception chaining
+Herb Sutter on std::uncaught_exception and why it's not as useful as you think
+Historical discussion on the matter with interesting participants (long!)
+Stroustrup explaining RAII
+Andrei Alexandrescu's Scope Guard
+
+
+
+You MUST NOT throw an exception out of a destructor.
+If an exception is already propagating then the application will terminate.
+By terminate I mean stop immediately. Stack unwinding stops. No more destructors are called. All bad stuff. See the discussion here.
+http://stackoverflow.com/questions/130117/throwing-exceptions-out-of-a-destructor#130123
+I don't follow (as in disagree with) your logic that this causes the destructor to get more complicated.
+With the correct usage of smart pointers this actually makes the destructor simpler as everything now becomes automatic. Each class tides up its own little piece of the puzzle. No brain surgery or rocket science here. Another Big win for RAII.
+As for the possibility of std::uncaught_exception() I point you at Herb Sutters article about why it does not work
+
+You can tell whether there is currently an exception in flight (e.g. we are between the throw and catch block performing stack unwinding, perhaps copying exception objects, or similar) by checking 
+bool std::uncaught_exception()
+
+If it returns true, throwing at this point will terminate the program, If not, it's safe to throw (or at least as safe as it ever is). This is discussed in Section 15.2 and 15.5.3 of ISO 14882 (C++ standard).
+This doesn't answer the question of what to do when you hit an error while cleaning up an exception, but there really aren't any good answers to that. But it does let you distinguish between normal exit and exceptional exit if you wait to do something different (like log&ignore it) in the latter case, rather than simply panicing.
+
+From the original question:
+
+Now, deallocation (finalization,
+  however you want to call it) can fail,
+  in which case exceptions are really
+  the only way to let anybody upstairs
+  know of our deallocation problem
+
+Failure to cleanup a resource either indicates:
+
+Programmer error, in which case, you should log the failure, followed by notifying the user or terminating the application, depending on application scenario.  For example, freeing an allocation that has already been freed.
+Allocator bug or design flaw.  Consult the documentation.  Chances are the error is probably there to help diagnose programmer errors.  See item 1 above.
+Otherwise unrecoverable adverse condition that can be continued.  
+
+For example, the C++ free store has a no-fail operator delete.  Other APIs (such as Win32) provide error codes, but will only fail due to programmer error or hardware fault, with errors indicating conditions like heap corruption, or double free, etc.  
+As for unrecoverable adverse conditions, take the DB connection.  If closing the connection failed because the connection was dropped -- cool, you're done.  Don't throw!  A dropped connection (should) result in a closed connection, so there's no need to do anything else.  If anything, log a trace message to help diagnose usage issues.  Example:
+class DBCon{
+public:
+  DBCon() { 
+    handle = fooOpenDBConnection();
+  }
+  ~DBCon() {
+    int err = fooCloseDBConnection();
+    if(err){
+      if(err == E_fooConnectionDropped){
+        // do nothing.  must have timed out
+      } else if(fooIsCriticalError(err)){
+        // critical errors aren't recoverable.  log, save 
+        //  restart information, and die
+        std::clog << "critical DB error: " << err << "\n";
+        save_recovery_information();
+        std::terminate();
+      } else {
+        // log, in case we need to gather this info in the future,
+        //  but continue normally.
+        std::clog << "non-critical DB error: " << err << "\n";
+      }
+    }
+    // done!
+  }
+};
+
+None of these conditions justify attempting a second kind of unwind.  Either the program can continue normally (including exception unwind, if unwind is in progress), or it dies here and now.
+Edit-Add
+If you really want to be able to keep some sort of link to those DB connections that can't close -- perhaps they failed to close due to intermittent conditions, and you'd like to retry later -- then you can always defer cleanup:
+vector<DBHandle> to_be_closed_later;  // startup reserves space
+
+DBCon::~DBCon(){
+  int err = fooCloseDBConnection();
+  if(err){
+    ..
+    else if( fooIsRetryableError(err) ){
+      try{
+        to_be_closed.push_back(handle);
+      } catch (const bad_alloc&){
+        std::clog << "could not close connection, err " << err << "\n"
+      }
+    }
+  }
+}
+
+Very not pretty, but it might get the job done for you.
+
+One thing I would ask is, ignoring the question of termination and so on, what do you think an appropriate response is if your program can't close its DB connection, either due to normal destruction or exceptional destruction.
+You seem to rule out "merely logging" and are disinclined to terminate, so what do you think is the best thing to do?
+I think if we had an answer to that question then we would have a better idea of how to proceed.
+No strategy seems particularly obvious to me; apart from anything else, I don't really know what it means for closing a database connection to throw. What is the state of the connection if close() throws?  Is it closed, still open, or indeterminate?  And if it's indeterminate, is there any way for the program to revert to a known state?
+A destructor failing means that there was no way to undo the creation of an object; the only way to return the program to a known (safe) state is to tear down the entire process and start over.
+
+What are the reasons why your destruction might fail?  Why not look to handling those before actually destructing?
+For example, closing a database connection may be because:
+
+Transaction in progress.  (Check std::uncaught_exception() - if true, rollback, else commit - these are the most likely desired actions unless you have a policy that says otherwise, before actually closing the connection.)
+Connection is dropped.  (Detect and ignore.  The server will rollback automatically.)
+Other DB error. (Log it so we can investigate and possibly handle appropriately in the future.  Which may be to detect and ignore.  In the meantime, try rollback and disconnect again and ignore all errors.)
+
+If I understand RAII properly (which I might not), the whole point is its scope.  So it's not like you WANT transactions lasting longer than the object anyway.  It seems reasonable to me, then, that you want to ensure closure as best you can.  RAII doesn't make this unique - even without objects at all (say in C), you still would try to catch all error conditions and deal with them as best as you can (which is sometimes to ignore them).  All RAII does is force you to put all that code in a single place, no matter how many functions are using that resource type.
+
+It reminds me a question from a colleague when I explained him the exception/RAII concepts: "Hey, what exception can I throw if the computer's switched off?"
+Anyway, I agree with Martin York's answer http://stackoverflow.com/questions/159240/raii-vs-exceptions#159259
+What's the deal with Exceptions and Destructors?
+A lot of C++ features depend on non-throwing destructors.
+In fact, the whole concept of RAII and its cooperation with code branching (returns, throws, etc.) is based on the fact deallocation won't fail. In the same way some functions are not supposed to fail (like std::swap) when you want to offer high exception guarantees to your objects.
+Not that it doesn't mean you can't throw exceptions through destructors. Just that the language won't even try to support this behaviour.
+What would happen if it was authorized?
+Just for the fun, I tried to imagine it...
+In the case your destructor fails to free your resource, what will you do? Your object is probably half destructed, what would you do from an "outside" catch with that info? Try again? (if yes, then why not trying again from within the destructor?...)
+That is, if you could access your half-destructed object it anyway: What if your object is on the stack (which is the basic way RAII works)? How can you access an object outside its scope?
+Sending the resource inside the exception?
+Your only hope would be to send the "handle" of the resource inside the exception and hoping code in the catch, well... try again to deallocate it (see above)?
+Now, imagine something funny:
+ void doSomething()
+ {
+    try
+    {
+       MyResource A, B, C, D, E ;
+
+       // do something with A, B, C, D and E
+
+       // Now we quit the scope...
+       // destruction of E, then D, then C, then B and then A
+    }
+    catch(const MyResourceException & e)
+    {
+       // Do something with the exception...
+    }
+ }
+
+Now, let's imagine for some reason the destructor of D fails to deallocate the resource. You coded it to send an exception, that will be caught by the catch. Everything goes well: You can handle the failure the way you want (how you will in a constructive way still eludes me, but then, it is not the problem now).
+But...
+Sending the MULTIPLE resources inside the MULTIPLE exceptions?
+Now, if ~D can fail, then ~C can, too. as well as ~B and ~A.
+With this simple example, you have 4 destructors which failed at the "same moment" (quitting the scope). What you need is not not a catch with one exception, but a catch with an array of exceptions (let's hope the code generated for this does not... er... throw).
+    catch(const std::vector<MyResourceException> & e)
+    {
+       // Do something with the vector of exceptions...
+       // Let's hope if was not caused by an out-of-memory problem
+    }
+
+Let's get retarted (I like this music...): Each exception thrown is a different one (because the cause is different: Remember that in C++, exceptions need not derive from std::exception). Now, you need to simultaneously handle four exceptions. How could you write catch clauses handling the four exceptions by their types, and by the order they were thrown?
+And what if you have multiple exceptions of the same type, thrown by multiple failed deallocation? And what if when allocating the memory of the exception arrays of arrays, your program goes out of memory and, er... throw an out of memory exception?
+Are you sure you want to spend time on this kind of problem instead of spending it figuring why the deallocation failed or how to react to it in another way?
+Apprently, the C++ designers did not see a viable solution, and just cut their losses there.
+
+<
+You're looking at two things:
+
+RAII, which guarantees that resources are cleaned up when scope is exited.
+Completing an operation and finding out whether it succeeded or not.
+
+RAII promises that it will complete the operation (free memory, close the file having attempted to flush it, end a transaction having attempted to commit it). But because it happens automatically, without the programmer having to do anything, it doesn't tell the programmer whether those operations it "attempted" succeeded or not.
+Exceptions are one way to report that something failed, but as you say, there's a limitation of the C++ language that means they aren't suitable to do that from a destructor[*]. Return values are another way, but it's even more obvious that destructors can't use those either.
+So, if you want to know whether your data was written to disk, you can't use RAII for that. It does not "defeat the whole purpose of RAII", since RAII will still try to write it, and it will still release the resources associated with the file handle (DB transaction, whatever). It does limit what RAII can do -- it won't tell you whether the data was written or not, so for that you need a close() function that can return a value and/or throw an exception.
+[*] It's quite a natural limitation too, present in other languages. If you think RAII destructors should throw exceptions to say "something has gone wrong!", then something has to happen when there's already an exception in flight, that is "something else has gone wrong even before that!". Languages that I know that use exceptions don't permit two exceptions in flight at once - the language and syntax simply don't allow for it. If RAII is to do what you want, then exceptions themselves need to be redefined so that it makes sense for one thread to have more than one thing going wrong at a time, and for two exceptions to propagate outward and two handlers to be called, one to handle each.
+Other languages allow the second exception to obscure the first, for example if a finally block throws in Java. C++ pretty much says that the second one must be suppressed, otherwise terminate is called (suppressing both, in a sense). In neither case are the higher stack levels informed of both faults. What is a bit unfortunate is that in C++ you can't reliably tell whether one more exception is one too many (uncaught_exception doesn't tell you that, it tells you something different), so you can't even throw in the case where there isn't already an exception in flight. But even if you could do it in that case, you'd still be stuffed in the case where one more is one too many.

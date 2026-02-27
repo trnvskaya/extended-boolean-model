@@ -1,0 +1,60 @@
+Automate SSH without using public key authentication or expect(1)
+authentication scripting ssh passwords expect
+Is there a way to pass a password to ssh automatically. I would like to automatically ssh to a server without using public key authentication or expect scripts, by somehow getting ssh to read the password from stdin or a file.
+The reason it has to be that way is that I would like to backup my files to a server using rsync/ssh running as a cron job. This server mounts my home directory after it authenticates me, so using public key authentication does not work since ~/.ssh isn't available until after the login is successful. expect(1) is out of the question because I would like to run it as a cron job, and since cron jobs don't run under a terminal the combination of expect/ssh just doesn't work. I do not have root access to that server, and it would be difficult to get the admins to make any changes to the way things work there.
+
+
+Rather than passing your password use a public/private key system.  Add the public key for a machine to the authorized keys list on all the machines you want to connect to. Using this method SSH can validate the keys automatically and no password is required.
+You can find instructions here: http://linuxproblem.org/art_9.html
+Since I just read the question more carefully, you might want to look around for a different SSH client that supports password authentication without user interaction.  I quick google search hinted that they exist (http://www.derkeiler.com/Newsgroups/comp.security.ssh/2004-12/0134.html)
+Related Stackoverflow questions:
+
+http://stackoverflow.com/questions/7260/how-do-i-setup-public-key-authentication
+http://stackoverflow.com/questions/224712/provide-password-using-shell-script
+http://stackoverflow.com/questions/243750/how-can-i-automate-running-commands-remotely-over-ssh
+
+
+You have misunderstood how public key authentication works.  You don't need access to your remote home directory, simply put the local public key in the remote authorized_keys file.  Have a google around, there's plenty of guides.
+
+This discussion talks about what you are trying to do:
+http://cygwin.com/ml/cygwin/2004-02/msg01449.html
+If you can't have the admin create a local directory for you, then this won't work.
+
+SSH requires a "leap of faith" to secure the initial handshake against future tampering.  (You initially trust the key the server gives you)
+One currently avaliable but not well known approach is to use SSH-SRP.  This uses mutual password knowledge to both authenticate you and provide session encryption keys necessary to securely encrypt your ssh session.
+Its MUCH more secure than SSH's initial "trust me" and does not require long term storage of keys.
+
+
+expect is out of the question because I would like to run it as a cron job,
+  and since cron jobs don't run under a terminal the combination of expect/ssh
+  just doesn't work
+
+You can run expect scripts from cron, at least you can with expect libraries like "pexpect" for Python. I just tested this to confirm, running a pexpect scp/ssh script from cron and I was able to successfully scp a file from a Python script running in cron. 
+Example code: 
+#!/usr/bin/python
+
+import pexpect
+
+FILE="/path/to/file"
+REMOTE_FILE=""
+USER="user"
+HOST="example.com"
+PASS="mypass"
+COMMAND="scp -oPubKeyAuthentication=no %s %s@%s:%s" % (FILE, USER, HOST, REMOTE_FILE)
+
+child = pexpect.spawn(COMMAND)
+child.expect('password:')
+child.sendline(PASS)
+child.expect(pexpect.EOF)
+print child.before
+
+
+Don't use expect, pexpect or the like to feed in a password. If you do that, your password has to be somewhere in plaintext, which can actually be less secure than using a passwordless public/private key pair. And it's more work!
+Read this page from "SSH: The Definitive Guide" for a discussion of your options:
+http://www.snailbook.com/faq/no-passphrase.auto.html
+
+Use sshpass.
+For example, when password is in password.txt file:
+sshpass -fpassword.txt ssh username@hostname
+
+(taken from the answer to a similar question)

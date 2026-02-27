@@ -1,0 +1,202 @@
+How to get rid of `deprecated conversion from string constant to âchar*â` warnings in GCC?
+c++ string gcc
+So I'm working on an exceedingly large codebase, and recently upgraded to gcc 4.3, which now triggers this warning:
+
+warning: deprecated conversion from string constant to âchar*â
+
+Obviously, the correct way to fix this is to find every declaration like
+char *s = "constant string";
+
+or function call like:
+void foo(char *s);
+foo("constant string");
+
+and make them const char pointers.  However, that would mean touching 564 files, minimum, which is not a task I wish to perform at this point in time.  The problem right now is that I'm running with -werror, so I need some way to stifle these warnings.  How can I do that?
+
+
+I believe passing -Wno-write-strings to gcc will suppress this warning.
+
+Check out gcc's Diagnostic Pragma support, and the list of -W warning options (changed: new link to warning options).
+For gcc, you can use #pragma warning directives like explained here.
+
+If it's an active code base, you might still want to upgrade the code base. Of course, performing the changes manually isn't feasible but I believe that this problem could be solved once and for all by one single sed command. I haven't tried it, though, so take the following with a grain of salt.
+find . -exec sed -E -i .backup -n \
+    -e 's/char\s*\*\s*(\w+)\s*= "/char const* \1 = "/g' {} \;
+
+This might not find all places (even not considering function calls) but it would alleviate the problem and make it possible to perform the few remaining changes manually.
+
+
+The problem right now is that I'm running with -Werror
+
+This is your real problem, IMO. You can try some automated ways of moving from (char *) to (const char *) but I would put money on them not just working. You will have to have a human involved for at least some of the work.
+For the short term, just ignore the warning (but IMO leave it on, or it'll never get fixed) and just remove the -Werror.
+
+Why don't you use the -Wno-deprecated option to ignore deprecated warning messages?
+
+I had a similar problem, I solved it like this:
+#include <string.h>
+
+extern void foo(char* m);
+
+int main() {
+    // warning: deprecated conversion from string constant to âchar*â
+    //foo("Hello");
+
+    // no more warning
+    char msg[] = "Hello";
+    foo(msg);
+}
+
+Is this an appropriate way of solving this? I do not have access to foo to adapt it to accept const char*, although that would be a better solution (because foo does not change m).
+
+You can also create a writable string from a string constant by calling strdup().
+For instance, this code generates a warning:
+putenv("DEBUG=1");
+
+However, the following code does not (it makes a copy of the string on the heap before passing it to putenv):
+putenv(strdup("DEBUG=1"));
+
+In this case (and perhaps in most others) turning off the warning is a bad idea -- it's there for a reason.  The other alternative (making all strings writable by default) is potentially inefficient.
+Listen to what the compiler is telling you!   
+
+I can't use the compiler switch. So I have turned this:
+char *setf = tigetstr("setf");
+
+to this:
+char *setf = tigetstr((char *)"setf");
+
+
+Test string is const string. So you can solve like this:
+char str[] = "Test string";
+
+or:
+const char* str = "Test string";
+printf(str);
+
+
+see this situation:
+typedef struct tagPyTypeObject
+{
+    PyObject_HEAD;
+    char *name;
+    PrintFun print;
+    AddFun add;
+    HashFun hash;
+} PyTypeObject;
+
+PyTypeObject PyDict_Type=
+{
+    PyObject_HEAD_INIT(&PyType_Type),
+    "dict",
+    dict_print,
+    0,
+    0
+};
+
+watch the name field, in gcc it compile without warning, but in g++ it will, i don't know why.
+
+i don't know if i get killed for that, but you can also use foo((char*)"Hello"); as an example. Simple casting. It's just looking ugly
+
+Why not just use type casting?
+(char*) "test"
+
+
+Here is how to do it inline in a file, so you don't have to modify your Makefile.
+// gets rid of annoying "deprecated conversion from string constant blah blah" warning
+#pragma GCC diagnostic ignored "-Wwrite-strings"
+
+You can then later...
+#pragma GCC diagnostic pop
+
+
+PyTypeObject PyDict_Type=
+{ ...
+
+PyTypeObject PyDict_Type=
+{
+  PyObject_HEAD_INIT(&PyType_Type),
+                     "dict",
+                     dict_print,
+                     0,
+                     0
+}; 
+
+watch the name field, in gcc it compile without warning, but in g++ it will, i don't know why.
+in gcc (Compiling C), -Wno-write-strings is active by default.
+in g++ (Compiling C++) -Wwrite-strings is active by default
+This is why there is a different behaviour.
+For us using macros of Boost_python generates such warnings.
+So we use -Wno-write-strings when compiling C++ since we always use -Werror
+
+just use -w option for g++
+example:
+g++ -w -o simple.o simple.cpp -lpthread
+Remember this doesn't avoid deprecation rather it prevents showing warning message on the terminal.
+Now if you really want to avoid deprecation use const keyword like this:
+const char* s="constant string";  
+
+
+Any functions into which you pass string literals "I am a string literal" should use char const * as the type instead of char*.
+If you're going to fix something, fix it right.
+
+BlackShift's answer is very helpful, and I used it like:
+extern string execute(char* cmd) {
+            FILE* pipe = popen(cmd, "r");
+            if (!pipe) return "ERROR";
+            char buffer[256];
+            std::string result = " ";
+            while(!feof(pipe)) {
+                    if(fgets(buffer, 128, pipe) != NULL)
+                            result += buffer;
+            }
+            pclose(pipe);
+            return result;
+    }
+    int main(){
+            char cmd[]="grep -A1 'xml' out1.txt  | grep read|awk -F'=' 'BEGIN{sum=0}{sum=sum+$NF}END{print sum}'";
+            string result=execute(cmd);
+            int numOfBytes= atoi(result.c_str());   
+            cout<<"Number of bytes = "<<numOfBytes<<endl;
+            return 0;
+    }
+
+
+Do typecasting from constant string to char pointer i.e.
+char *s = (char *) "constant string";
+
+
+Instead of:
+void foo(char *s);
+foo("constant string");
+
+This works:
+void foo(const char s[]);
+foo("constant string");
+
+
+In C++, use the const_cast as like below
+char* str = const_cast<char*>("Test string");
+
+
+Replace
+char *str = "hello";
+
+with
+char *str = (char*)"hello";
+
+or if you are calling in function:
+foo("hello");
+
+replace this with
+foo((char*) "hello");
+
+
+Thanks, all, for the help.  Picking from here and there comes this solution.  This compiles clean.  Have not tested the code yet.  Tomorrow...  maybe...
+const char * timeServer[] = { "pool.ntp.org" }; // 0 - Worldwide 
+#define WHICH_NTP            0 // Which NTP server name to use.
+...
+sendNTPpacket(const_cast<char*>(timeServer[WHICH_NTP])); // send an NTP packet to a server
+...
+void sendNTPpacket(char* address) { code }
+
+I know, there's only 1 item in the timeServer array.  But there could be more.  The rest were commented out for now to save memory.

@@ -1,0 +1,71 @@
+WPF Binding to Grid Column Width
+wpf grid
+I'm attempting to bind a DependancyProperty in one of my usercontrols to the Width property of a Column in a Grid. 
+I have code similar to this:
+<Grid x:Name="MyGridName">
+    <Grid.ColumnDefinitions>
+        <ColumnDefinition x:Name="TitleSection" Width="100" />
+        <ColumnDefinition Width="*" />
+    </Grid.ColumnDefinitions>
+
+    <Grid.RowDefinitions>...</Grid.RowDefinitions>
+
+    <GridSplitter x:Name="MyGridSplitter" Grid.Row="0" Grid.Column="0" ... />
+</Grid>
+
+In a separate Usercontrol I have the followingDependancyProperty defined.
+public static readonly DependencyProperty TitleWidthProperty = DependencyProperty.Register("TitleWidth", typeof(int), typeof(MyUserControl));
+
+public int TitleWidth
+{
+    get { return (int)base.GetValue(TitleWidthProperty); }
+    set { base.SetValue(TitleWidthProperty, value); }
+}
+
+I am creating instances of the Usercontrol in code, hence I have a binding statement similar to this :
+MyUserControl Cntrl = new MyUserControl(/* Construction Params */);
+BindingOperations.SetBinding(Cntrl , MyUserControl.AnotherProperty, new Binding { ElementName = "objZoomSlider", Path = new PropertyPath("Value"), Mode = BindingMode.OneWay });
+BindingOperations.SetBinding(Cntrl , MyUserControl.TitleWidthProperty, new Binding { ElementName = "TitleSection", Path = new PropertyPath("ActualWidth"), Mode = BindingMode.OneWay });
+/* Other operations on Cntrl */
+
+The first binding defined works fantastically, although that is binding to an actual UIElement (in this case a Slider), but the Binding to "TitleSection" (which is the ColumnDefinition defined in the Grid) fails. Putting a breakpoint in the code and doing a watch on "TitleSection" returns the expected object. 
+I am beginning to suspect that a x:Name'd ColumnDefinition can't be bound to. Can anyone suggest how I might be able to bind to the changing width of the first column in my grid?
+EDIT #1 - To answer comments
+The databinding 'fails' in the sense that with a breakpoint set on the setter for the TitleWidth property, and using the GridSplitter control to resize the first column, the breakpoint is never hit. Additionally, code I would expect to be fired when the DependancyProperty TitleWidth changes does not get executed.
+The usercontrol is being created and added to a Stackpanel within the Grid in the Window_Loaded function. I would expect that the Grid has been rendered by the time the Usercontrols are being constructed. Certainly the x:Name'd Element TitleSection is watchable and has a value of 100 when they are being constructed / before the binding is happening.
+EDIT #2 - Possibly something to do with this?
+I've been having a sniff round the MSDN pages for the Grid ColumnDefinition documentation and have come across GridLength() but I can't get my head around how I can use this in a binding expression. I cannot use the associated GridLengthConverter as a converter in the binding code as it does not derive from IValueConverter. 
+I am leaning towards somehow binding to the ActualWidth property of one of the cells in the Grid object. It doesn't seem as clean as binding to the column definition, but at the moment I cannot get that to work.
+
+
+Have you tried setting up the binding in xaml, the following should work for you.
+<ColumnDefinition 
+    x:Name="TitleSection" 
+    Width="{Binding 
+                Path=TitleWidth, 
+                RelativeSource={RelativeSource AncestorType=MyUserControl}}" 
+    />
+
+Otherwise, looking at the binding code you've supplied, it looks the wrong way around to me, the target of the binding should be the grid column and the source should be your dependency property. 
+The equivalent code for the above xaml is
+BindingOperations.SetBinding(TitleSection, ColumnDefinition.WidthProperty,
+    new Binding()
+    {
+        RelativeSource= new RelativeSource(RelativeSourceMode.FindAncestor, typeof(MyUserControl),1),
+        Path = new PropertyPath("TitleWidth"),
+    });
+
+On a related note, using a GridSplitter and binding the Width property are mutally exclusive. As soon as you resize the column using the splitter, your binding will be replaced with the value from the splitter. 
+This is similar to what you would experience by updating any property that is the target of a binding. When you set the targets value directly in code, you are esentially replacing the binding object with the value you supply.
+
+Well I have got a bit of a kludge working, I'll explain how for future generations:
+Essentially I have a 2 column, multi row grid with a splitter right aligned in the first column so it can be resized by the user if the content it contains requires more space. To complicate things I have a user control being loaded programatically into some of the rows which has a columnSpan of 2 for rendering purposes (content 'bleeds' from one cell into the next).
+When the first column is resized I need this to be reflected in the usercontrol. Firstly I tried binding to the ColumnDefinition but it really wasn't playing ball.
+How I fixed/Kludged it
+In a spare cell in the first column I added a <Label> with an x:Name to make it accessible. As it is in a cell it has default properties of 'Stretch' and fills the cell completely. It gets resized as the column is resized using the splitter. Binding to the Label's ActualWidth property means that changes to the size of the column are communicated to the DependancyProperty in my columnSpanned usercontrol correctly.
+Thoughts
+Obviously, despite ColumnDefinition having an ActualWidth property when it changes it doesn't appear to fire the PropertyChanged event internally (or thats my best guess). This may be a bug, or by design, but for me it means I've had to use a less clean solution.
+
+ColumnDefinition.Width is not an integer - it is a GridLength.
+You can't bind the GridLength directly to the Integer, you need a converter.
+This is also the reason, why you can't bind any Control's Width property (double) to a ColumnDefinition's Width property (GridLength) without a converter.

@@ -1,0 +1,206 @@
+How can I wrap a method so that I can kill its execution if it exceeds a specified timeout?
+java multithreading concurrency callable
+I have a method that I would like to call.  However, I'm looking for a clean, simple way to kill it or force it to return if it is taking too long to execute.
+I'm using Java.
+to illustrate:
+logger.info("sequentially executing all batches...");
+for (TestExecutor executor : builder.getExecutors()) {
+logger.info("executing batch...");
+executor.execute();
+}
+
+I figure the TestExecutor class should implement Callable and continue in that direction.
+But all i want to be able to do is stop executor.execute() if it's taking too long.
+Suggestions...?
+EDIT
+Many of the suggestions received assume that the method being executed that takes a long time contains some kind of loop and that a variable could periodically be checked.
+However, this is not the case.  So something that won't necessarily be clean and that will just stop the execution whereever it is is acceptable.
+
+
+I'm assuming the use of multiple threads in the following statements.
+I've done some reading in this area and most authors say that it's a bad idea to kill another thread.  
+If the function that you want to kill can be designed to periodically check a variable or synchronization primitive, and then terminate cleanly if that variable or synchronization primitive is set, that would be pretty clean.  Then some sort of monitor thread can sleep for a number of milliseconds and then set the variable or synchronization primitive.
+
+Really, you can't... The only way to do it is to either use thread.stop, agree on a 'cooperative' method (e.g. occassionally check for Thread.isInterrupted or call a method which throws an InterruptedException, e.g. Thread.sleep()), or somehow invoke the method in another JVM entirely. 
+For certain kinds of tests, calling stop() is okay, but it will probably damage the state of your test suite, so you'll have to relaunch the JVM after each call to stop() if you want to avoid interaction effects.
+For a good description of how to implement the cooperative approach, check out Sun's FAQ on the deprecated Thread methods.
+For an example of this approach in real life, Eclipse RCP's Job API's 'IProgressMonitor' object allows some management service to signal sub-processes (via the 'cancel' method) that they should stop. Of course, that relies on the methods to actually check the isCancelled method regularly, which they often fail to do. 
+A hybrid approach might be to ask the thread nicely with interrupt, then insist a couple of seconds later with stop. Again, you shouldn't use stop in production code, but it might be fine in this case, esp. if you exit the JVM soon after.
+To test this approach, I wrote a simple harness, which takes a runnable and tries to execute it. Feel free to comment/edit.
+public void testStop(Runnable r) {
+	Thread t = new Thread(r);
+	t.start();
+	try {
+		t.join(2000);
+	} catch (InterruptedException e) {
+		throw new RuntimeException(e);
+	}
+
+	if (!t.isAlive()) {
+		System.err.println("Finished on time.");
+		return;
+	}
+
+	try {
+		t.interrupt();
+		t.join(2000);
+		if (!t.isAlive()) {
+			System.err.println("cooperative stop");
+			return;
+		}
+	} catch (InterruptedException e) {
+		throw new RuntimeException(e);
+	}
+	System.err.println("non-cooperative stop");
+	StackTraceElement[] trace = Thread.getAllStackTraces().get(t);
+	if (null != trace) {
+		Throwable temp = new Throwable();
+		temp.setStackTrace(trace);
+		temp.printStackTrace();
+	}
+	t.stop();
+	System.err.println("stopped non-cooperative thread");
+}
+
+To test it, I wrote two competing infinite loops, one cooperative, and one that never checks its thread's interrupted bit.
+public void cooperative() {
+	try {
+		for (;;) {
+			Thread.sleep(500);
+		}
+	} catch (InterruptedException e) {
+		System.err.println("cooperative() interrupted");
+	} finally {
+		System.err.println("cooperative() finally");
+	}
+}
+
+public void noncooperative() {
+	try {
+		for (;;) {
+			Thread.yield();
+		}
+	} finally {
+		System.err.println("noncooperative() finally");
+	}
+}
+
+Finally, I wrote the tests (JUnit 4) to exercise them:
+@Test
+public void testStopCooperative() {
+	testStop(new Runnable() {
+		@Override
+		public void run() {
+			cooperative();
+		}
+	});
+}
+
+@Test
+public void testStopNoncooperative() {
+	testStop(new Runnable() {
+		@Override
+		public void run() {
+			noncooperative();
+		}
+	});
+}
+
+I had never used Thread.stop() before, so I was unaware of its operation. It works by throwing a ThreadDeath object from whereever the target thread is currently running. This extends Error. So, while it doesn't always work cleanly, it will usually leave simple programs with a fairly reasonable program state. For example, any finally blocks are called. If you wanted to be a real jerk, you could catch ThreadDeath (or Error), and keep running, anyway!
+If nothing else, this really makes me wish more code followed the IProgressMonitor approach - adding another parameter to methods that might take a while, and encouraging the implementor of the method to occasionally poll the Monitor object to see if the user wants the system to give up. I'll try to follow this pattern in the future, especially methods that might be interactive. Of course, you don't necessarily know in advance which methods will be used this way, but that is what Profilers are for, I guess.
+As for the 'start another JVM entirely' method, that will take more work. I don't know if anyone has written a delegating class loader, or if one is included in the JVM, but that would be required for this approach.
+
+Java's interruption mechanism is intended for this kind of scenario.  If the method that you wish to abort is executing a loop, just have it check the thread's interrupted status on every iteration.  If it's interrupted, throw an InterruptedException.
+Then, when you want to abort, you just have to invoke interrupt on the appropriate thread.
+Alternatively, you can use the approach Sun suggest as an alternative to the deprecated stop method.  This doesn't involve throwing any exceptions, the method would just return normally.
+
+This question should prove helpful:
+How to abort a thread in a fast and clean way in java?
+
+Nobody answered it directly, so here's the closest thing i can give you in a short amount of psuedo code:
+wrap the method in a runnable/callable.  The method itself is going to have to check for interrupted status if you want it to stop (for example, if this method is a loop, inside the loop check for Thread.currentThread().isInterrupted and if so, stop the loop (don't check on every iteration though, or you'll just slow stuff down.
+in the wrapping method, use thread.join(timeout) to wait the time you want to let the method run.  or, inside a loop there, call join repeatedly with a smaller timeout if you need to do other things while waiting.  if the method doesn't finish, after joining, use the above recommendations for aborting fast/clean.
+so code wise, old code:
+void myMethod()
+{
+    methodTakingAllTheTime();
+}
+
+new code:
+void myMethod()
+{
+    Thread t = new Thread(new Runnable()
+        {
+            public void run()
+            {
+                 methodTakingAllTheTime(); // modify the internals of this method to check for interruption
+            }
+        });
+    t.join(5000); // 5 seconds
+    t.interrupt();
+}
+
+but again, for this to work well, you'll still have to modify methodTakingAllTheTime or that thread will just continue to run after you've called interrupt.
+
+You should take a look at these classes : 
+FutureTask, Callable, Executors
+Here is an example :
+public class TimeoutExample {
+    public static Object myMethod() {
+        // does your thing and taking a long time to execute
+        return someResult;
+    }
+
+    public static void main(final String[] args) {
+        Callable<Object> callable = new Callable<Object>() {
+            public Object call() throws Exception {
+                return myMethod();
+            }
+        };
+        ExecutorService executorService = Executors.newCachedThreadPool();
+
+        Future<Object> task = executorService.submit(callable);
+        try {
+            // ok, wait for 30 seconds max
+            Object result = task.get(30, TimeUnit.SECONDS);
+            System.out.println("Finished with result: " + result);
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
+        } catch (TimeoutException e) {
+            System.out.println("timeout...");
+        } catch (InterruptedException e) {
+            System.out.println("interrupted");
+        }
+    }
+}
+
+
+The correct answer is, I believe, to create a Runnable to execute the sub-program, and run this in a separate Thread.  THe Runnable may be a FutureTask, which you can run with a timeout ("get" method).  If it times out, you'll get a TimeoutException, in which I suggest you
+
+call thread.interrupt() to attempt to end it in a semi-cooperative manner (many library calls seem to be sensitive to this, so it will probably work)
+wait a little (Thread.sleep(300))
+and then, if the thread is still active (thread.isActive()), call thread.stop().  This is a deprecated method, but apparently the only game in town short of running a separate process with all that this entails.
+
+In my application, where I run untrusted, uncooperative code written by my beginner students, I do the above, ensuring that the killed thread never has (write) access to any objects that survive its death.  This includes the object that houses the called method, which is discarded if a timeout occurs.  (I tell my students to avoid timeouts, because their agent will be disqualified.)  I am unsure about memory leaks...
+I distinguish between long runtimes (method terminates) and hard timeouts - the hard timeouts are longer and meant to catch the case when code does not terminate at all, as opposed to being slow.
+From my research, Java does not seem to have a non-deprecated provision for running non-cooperative code, which, in a way, is a gaping hole in the security model.  Either I can run foreign code and control the permissions it has (SecurityManager), or I cannot run foreign code, because it might end up taking up a whole CPU with no non-deprecated means to stop it.
+double x = 2.0;  
+while(true) {x = x*x}; // do not terminate
+System.out.print(x); // prevent optimization
+
+
+I can think of a not so great way to do this. If you can detect when it is taking too much time, you can have the method check for a boolean in every step. Have the program change the value of the boolean tooMuchTime to true if it is taking too much time (I can't help with this). Then use something like this:  
+ Method(){
+ //task1
+if (tooMuchTime == true) return;
+ //task2
+if (tooMuchTime == true) return;
+ //task3
+if (tooMuchTime == true) return;
+//task4
+if (tooMuchTime == true) return;
+//task5
+if (tooMuchTime == true) return;
+//final task
+  }
+

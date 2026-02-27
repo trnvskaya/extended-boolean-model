@@ -1,0 +1,61 @@
+Microsoft ReportViewer: Session Expired Errors
+session reportviewer
+The project is ASP.NET 2.0, I have never been able to reproduce this myself, but I get emails informing me it happens to clients many times a week, often a few times in a row.
+Here is the full error:
+Exception Details: 
+
+Microsoft.Reporting.WebForms.AspNetSessionExpiredException: ASP.NET session has expired
+
+Stack Trace: 
+
+[AspNetSessionExpiredException: ASP.NET session has expired]
+     at Microsoft.Reporting.WebForms.ReportDataOperation..ctor()
+     at Microsoft.Reporting.WebForms.HttpHandler.GetHandler()
+     at Microsoft.Reporting.WebForms.HttpHandler.ProcessRequest(HttpContext context)
+     at System.Web.HttpApplication.CallHandlerExecutionStep.System.Web.HttpApplication.IExecutionStep.Execute()
+     at System.Web.HttpApplication.ExecuteStep(IExecutionStep step, Boolean& completedSynchronously) 
+  Session Objects:75de8e1d65ff40d1ba666d940af5b118: Microsoft.Reporting.WebForms.ReportHierarchy
+  5210064be1fa4d6abf5dd5e56b262974: Microsoft.Reporting.WebForms.ReportHierarchy
+
+
+
+What is the question? The session expired and they cannot continue.
+Check the report process speed. Build in some kind of benchmark or simply ask them to measure the report processing. 
+Easily can be that it is working for you, but not for them (slower network, more data to handle, slower DB server, and so on).
+Edit: Here is another explanaition and maybe a solution for the problem, but I don't recomment to set the worker process number to 1 on a procudtion environment.
+
+We had the same problem. So far, we only found it when the session expired but they used the back button in a browser that does aggressive caching, which is fine. But the ReportViewer tried to to a refresh even though the main page did not. So, we just added some hacky Global.asax error handling:
+protected void Application_Error(object sender, EventArgs e)
+{
+    Exception exc = Server.GetLastError().GetBaseException();
+    if (exc is Microsoft.Reporting.WebForms.AspNetSessionExpiredException)
+    {
+        Server.ClearError();
+        Response.Redirect(FormsAuthentication.LoginUrl + "?ReturnUrl=" + HttpUtility.UrlEncode(Request.Url.PathAndQuery), true);
+    }
+}
+
+
+Session Timeout
+This can be due to your session timeout being too low. Check out the "sessionState" section of your Web.Config, e.g. :-
+<system.web><sessionState mode="InProc" timeout="60" /></system.web>
+
+Which would set a session timeout of 60 minutes.
+Application Pool Recycle
+Another possible cause, and one which we ran into, is that your application pool is being recycled for some reason.
+In out case it was because we were hitting a "Maximum virtual memory" setting, I just upped that and everything has been fine since.
+Have a look in your System Event Log for 1010, 1011, 1074, 1077, 1078, 1079, 1080 and 1117 events from W3SVC and see if your app pool is being recycled and if so, it should state why.
+
+Here was my fix.
+Running IIS on a web farm, and each farm has a web garden count=3 each,
+I simply made a seperate application pool just for sql reports and set that web gardern count=1 just for this reporting pool.
+then, made a virtual directory in IIS and a seperate project for reporting - using that reporting pool
+problem solved.
+
+web gardern count=1 Works for me
+
+I had this problem when developing on my own PC and could not find an answer anywhere on the net.  It turned out that one of my teammates added this to the web.config:
+<httpCookies httpOnlyCookies="false" requireSSL="true" />
+
+So the web.config on the developerâs desktop should not have the tag and the DEV/QAS and Prod web.config files should have it.
+I also understand it is possible for developers to use IIS Express and then they could use SSL locally.  

@@ -1,0 +1,76 @@
+How to fake a validation error in a MonoRail controller unit-test?
+unit-testing validation castle-monorail
+I am running on Castle's trunk, and trying to unit-test a controller-action where validation of my DTO is set up.  The controller inherits from SmartDispatcherController.  The action and DTO look like:
+
+[AccessibleThrough(Verb.Post)]
+public void Register([DataBind(KeyReg, Validate = true)] UserRegisterDto dto)
+{
+    CancelView();
+    if (HasValidationError(dto))
+    {
+    	Flash[KeyReg] = dto;
+    	Errors = GetErrorSummary(dto);
+    	RedirectToAction(KeyIndex);
+    }
+    else
+    {
+    	var user = new User { Email = dto.Email };
+    	// TODO: Need to associate User with an Owning Account
+    	membership.AddUser(user, dto.Password);
+    	RedirectToAction(KeyIndex);
+    }
+}
+
+public class UserRegisterDto
+{
+    [ValidateNonEmpty]
+    [ValidateLength(1, 100)]
+    [ValidateEmail]
+    public string Email { get; set; }
+
+    [ValidateSameAs("Email")]
+    public string EmailConfirm { get; set; }
+
+    [ValidateNonEmpty]
+    public string Password { get; set; }
+
+    [ValidateSameAs("Password")]
+    public string PasswordConfirm { get; set; }
+
+    // TODO: validate is not empty Guid
+    [ValidateNonEmpty]
+    public string OwningAccountIdString { get; set; }
+
+    public Guid OwningAccountId
+    {
+    	get { return new Guid(OwningAccountIdString); }
+    }
+
+    [ValidateLength(0, 40)]
+    public string FirstName { get; set; }
+
+    [ValidateLength(0, 60)]
+    public string LastName { get; set; }
+}
+
+The unit test looks like:
+
+[Fact]
+public void Register_ShouldPreventInValidRequest()
+{
+    PrepareController(home, ThorController.KeyPublic, ThorController.KeyHome, HomeController.KeyRegister);
+
+    var dto = new UserRegisterDto { Email = "ff" };
+    home.Register(dto);
+
+    Assert.True(Response.WasRedirected);
+    Assert.Contains("/public/home/index", Response.RedirectedTo);
+    Assert.NotNull(home.Errors);
+}
+
+("home" is my HomeController instance in the test; home.Errors holds a reference to an ErrorSummary which should be put into the Flash when there's a validation error).
+I am seeing the debugger think that dto has no validation error; it clearly should have several failures, the way the test runs.
+I have read Joey's blog post on this, but it looks like the Castle trunk has moved on since this was written.  Can someone shed some light, please?
+
+
+http://www.candland.net/blog/2008/07/09/WhatsNeededForCastleValidationToWork.aspx would appear to contain an answer.

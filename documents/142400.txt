@@ -1,0 +1,84 @@
+What's the best way to format 24 hour time in XSLT 1.0?
+xml xslt xslt-1.0
+I've had a hard time finding good ways of taking a time format and easily determining if it's valid then producing a resulting element that has some formatting using XSLT 1.0.
+Given the following xml:
+<root>
+    <srcTime>2300</srcTime>
+</root>
+
+It would be great to produce the resulting xml:
+<root>
+    <dstTime>23:00</dstTime>
+</root>
+
+However, if the source xml contains an invalid 24 hour time format, the resulting dstTime element should be blank.
+For example, when the invalid source xml is the following:
+<root>
+    <srcTime>NOON</srcTime>
+</root>
+
+The resulting xml should be:
+<root>
+    <dstTime></dstTime>
+</root>
+
+The question is, what's the best XSLT 1.0 fragment that could be written to produce the desired results? The hope would be to keep it quite simple and not have to parse the every piece of the time (i.e. pattern matching would be sweet if possible).
+
+
+XSLT 1.0 does not have any standard support for date/time manipulation.
+You must write a simple parsing and formatting function. That's not going to be simple, and that's not going to be pretty.
+XSLT is really designed for tree transformations. This sort of text node manipulations are best done outside of XSLT.
+
+Have a look at:
+http://www.exslt.org/ specifically the "dates and times" section.
+I haven't dug deep into it but it looks like it may be what your looking for.
+
+Even the exslt.org time() function won't help you here, because it expects its input to be  in the proper format (xs:dateTime or xs:time).
+This is something that is best fixed outside of XSLT.  I say this as someone who routinely uses XSLT to do things it wasn't really designed for and manages to get things working.  It was really not designed to parse strings.
+The ideal  solution is to fix whatever is producing the XML document so that it formats times using the international standard conveniently established just for that purpose, using the principle that you shouldn't persist or transmit crap data if you can avoid doing so.  
+But if that's not possible, you should either fix the data before passing it to XSLT or fix it after generating the transform's output.
+
+There aren't any regular expressions in XSLT 1.0, so I'm afraid that pattern matching isn't going to be possible.
+I'm not clear if <srcTime>23:00</srcTime> is supposed to be legal or not? If it is, try:
+<dstTime>
+  <xsl:if test="string-length(srcTime) = 4 or
+                string-length(srcTime) = 5">
+    <xsl:variable name="hour" select="substring(srcTime, 1, 2)" />
+    <xsl:if test="$hour >= 0 and 24 > $hour">
+      <xsl:variable name="minute">
+        <xsl:choose>
+          <xsl:when test="string-length(srcTime) = 5 and
+                          substring(srcTime, 3, 1) = ':'">
+            <xsl:value-of select="substring(srcTime, 4, 2)" />
+          </xsl:when>
+          <xsl:when test="string-length(srcTime) = 4">
+            <xsl:value-of select="substring(srcTime, 3, 2)" />
+          </xsl:when>
+        </xsl:choose>
+      </xsl:variable>
+      <xsl:if test="$minute >= 0 and 60 > $minute">
+        <xsl:value-of select="concat($hour, ':', $minute)" />
+      </xsl:if>
+    </xsl:if>
+  </xsl:if>
+</dstTime>
+
+If it isn't, and four digits is the only thing that's legal then:
+<dstTime>
+  <xsl:if test="string-length(srcTime) = 4">
+    <xsl:variable name="hour" select="substring(srcTime, 1, 2)" />
+    <xsl:if test="$hour >= 0 and 24 > $hour">
+      <xsl:variable name="minute" select="substring(srcTime, 3, 2)" />
+      <xsl:if test="$minute >= 0 and 60 > $minute">
+        <xsl:value-of select="concat($hour, ':', $minute)" />
+      </xsl:if>
+    </xsl:if>
+  </xsl:if>
+</dstTime>
+
+
+Depending on the actual xslt processor used you could be able to do desired operations in custom extension function (which you would have to make yourself).
+Xalan has good support for extension functions, you can write them not only in Java but also in JavaScript or other languages supported by Apache BSF.
+Microsoft's XSLT engine supports custom extensions as well, as described in .NET Framework Developer's Guide, Extending XSLT Style Sheets
+
+And to have the list complete, there is also Date/Time processing module part of XSLT Standard Library by Steve Ball.

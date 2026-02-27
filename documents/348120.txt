@@ -1,0 +1,24 @@
+Reusing a connection while polling a database in JDBC?
+java
+Have a use case wherein need to maintain a connection open to a database  open to execute queries periodically. 
+Is it advisable to close connection after executing the query and then reopen it after the period interval (10 minutes). I would guess no since opening a connection to database is expensive.
+Is connection pooling the alternative and keep using the connections?
+
+
+Yes, connection pooling is the alternative. Open the connection each time (as far as your code is concerned) and close it as quickly as you can. The connection pool will handle the physical connection in an appropriately efficient manner (including any keepalives required, occasional "liveness" tests etc).
+I don't know what the current state of the art is, but I used c3p0 very successfully for my last Java project involving JDBC (quite a while ago).
+
+You should use connection pooling.  Write your application code to request a connection from the pool, use the connection, then return the connection back to the pool.  This keeps your code clean.  Then you rely on the pool implementation to determine the most efficient way to manage the connections (for example, keeping them open vs closing them).
+Generally it is "expensive" to open a connection, typically due to the overhead of setting up a TCP/IP connection, authentication, etc.  However, it can also be expensive to keep a connection open "too long", because the database (probably) has reserved resources (like memory) for use by the connection.  So keeping a connection open can tie-up those resources.
+You don't want to pollute your application code managing these types of efficiency trade-offs, so use a connection pool.
+
+Connection pooling would be an option for you. You can then leave your code as it is including opening and closing connections. The connection pool will care about the connections. If you close a connection of a pool it will not be closed but just be made available in the pool again. If you open a connection after you closed one if there is a open connection in the pool the pool will return this. So in an application server you can use the build-in connection pools. For simple java applications most of the JDBC drivers also include a pool driver. 
+
+The answer here really depends on the application.  If there are other connections being used simultaneously for the same database from the same application, then a pool is definitely your answer.  
+If all your application does is query the db, wait 10 minutes, then query again, then simply connect and reconnect.  A connection is considered to be an expensive operation, but all things are relative.  It is not expensive if you do it only once every 10 minutes.  If the application is this simple, don't introduce unnecessary complexity.  
+NOTE:
+OK, complexity is also relative, so if are already using something like Spring and already know how to use its pooling mechanism, then apply it for this case.  If this is not true, keep it simple.
+
+There are many, many tradeoffs in opening and closing connections, keeping them open, making sure that connections that have been  "kept alive" are still "valid" when you start to use them again, invalidating connections that get corrupted, etc.  These kinds of complex tradeoffs make it difficult (but certainly not impossible) to implement the "best" connection management strategy for your specific case.  The "safest" method is to open a connection, use it, and then close it.  But, as you already realize, that is not at all the most efficient method.  If you manage your own connections, then as you do things to make your strategy more efficient, the complexity will rise very quickly (especially in the presence of any less-than-perfect JDBC drivers, of which there are many.)
+There are many connection pooling libraries available out there that can take care of all of this for you in extremely configurable ways (they almost always come pre-configured out-of-the-box for the most typical cases, and until you get up to the point that you're doing high-load activities, you probably don't have to worry about all that configurability - but you will be glad to have it if you scale up!)  As is always the case, the libraries themselves may be of variable quality.
+I have successfully used both C3P0 and Apache DBCP.  If I were choosing again today, I would probably go with DBCP.

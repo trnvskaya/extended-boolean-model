@@ -1,0 +1,93 @@
+StackOverflowException caused by a linq query
+asp.net-mvc linq stack-overflow
+edit #2: Question solved halfways. Look below
+As a follow-up question, does anyone know of a non-intrusive way to solve what i'm trying to do below (namely, linking objects to each other without triggering infinite loops)?
+
+I try to create a asp.net-mvc web application, and get a StackOverFlowException. A controller triggers the following command:
+    public ActionResult ShowCountry(int id)
+    {
+        Country country = _gameService.GetCountry(id);
+        return View(country);
+    }
+
+The GameService handles it like this (WithCountryId is an extension):
+    public Country GetCountry(int id)
+    {
+        return _gameRepository.GetCountries().WithCountryId(id).SingleOrDefault();
+    }
+
+The GameRepository handles it like this:
+    public IQueryable<Country> GetCountries()
+    {
+        var countries =  from c in _db.Countries
+               select new Country
+               {
+                   Id = c.Id,
+                   Name = c.Name,
+                   ShortDescription = c.ShortDescription,
+                   FlagImage = c.FlagImage,
+                   Game = GetGames().Where(g => g.Id == c.GameId).SingleOrDefault(),
+                   SubRegion = GetSubRegions().Where(sr => sr.Id == c.SubRegionId).SingleOrDefault(),
+               };
+        return countries;
+    }
+
+The GetGames() method causes the StackOverflowException:
+    public IQueryable<Game> GetGames()
+    {
+        var games = from g in _db.Games                   
+               select new Game
+               {
+                   Id = g.Id,
+                   Name = g.Name
+
+               };
+        return games;
+
+    }
+
+My Business objects are different from the linq2sql classes, that's why I fill them with a select new.
+An unhandled exception of type 'System.StackOverflowException' occurred in mscorlib.dll
+
+edit #1: I have found the culprit, it's the following method, it triggers the GetCountries() method which in return triggers the GetSubRegions() again, ad nauseam:
+    public IQueryable<SubRegion> GetSubRegions()
+    {
+        return from sr in _db.SubRegions
+               select new SubRegion
+               {
+                   Id = sr.Id,
+                   Name = sr.Name,
+                   ShortDescription = sr.ShortDescription,
+                   Game = GetGames().Where(g => g.Id == sr.GameId).SingleOrDefault(),
+                   Region = GetRegions().Where(r => r.Id == sr.RegionId).SingleOrDefault(),
+                   Countries = new LazyList<Country>(GetCountries().Where(c => c.SubRegion.Id == sr.Id))
+               };
+    }
+
+Might have to think of something else here :) That's what happens when you think in an OO mindset because of too much coffee
+
+
+Hai!  I think your models are recursively calling a method unintentionally, which results in the stack overflow.  Like, for instance, your Subregion object is trying to get Country objects, which in turn have to get Subregions.  
+Anyhow, it always helps to check the stack in a StackOverflow exception.  If you see a property being accessed over and over, its most likely because you're doing something like this:
+public object MyProperty { set { MyProperty = value; }}
+Its easier to spot situations like yours, where method A calls method B which calls method A, because you can see the same methods showing up two or more times in the call stack.
+
+The problem might be this: countries have subregions and subregions have countries. I don't know how you implement the lazy list, but that might keep calling GetCountries and then GetSubRegions and so on. To find that out, I would launch the debugger en set breakpoints on the GetCountries and GetSubRegions method headers.
+I tried similar patterns with LinqToSql, but it's hard to make bidirectional navigation work without affecting the performance to much. That's one of the reasons I'm using NHibernate right now.  
+
+To answer your edited question, namely: "linking objects to each other without triggering infinite loops":
+Assuming you've got some sort of relation where both sides need to know about the other... get hold of all the relevant entities in both sides, then link them together, rather than trying to make the fetch of one side automatically fetch the other. Or just make one side fetch the other, and then fix up the remaining one. So in your case, the options would be:
+Option 1:
+
+Fetch all countries (leaving Subregions blank)
+Fetch all Subregions (leaving Countries blank)
+For each Subregion, look through the list of Countries and add the Subregion to the Country and the Country to the Subregion
+
+Option 2:
+
+Fetch all countries (leaving Subregions blank)
+Fetch all Subregions, setting Subregion.Countries via the countries list fetched above
+For each subregion, go through all its countries and add it to that country
+
+(Or reverse country and subregion)
+They're basically equialent answers, it just changes when you do some of the linking.

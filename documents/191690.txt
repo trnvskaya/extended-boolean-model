@@ -1,0 +1,89 @@
+Strange LINQ Exception (Index out of bounds)
+c# linq linq-to-sql
+I have a table, we'll call Users. This table has a single primary key defined in SQL Server - an autoincrement int ID.
+Sometimes, my LINQ queries against this table fail with an "Index was outside the range" error - even the most simplest of queries. The query itself doesn't use any indexers.
+For example:  
+User = Users.Take(1);
+
+or
+IEnumerable<Users> = Users.ToList();
+
+Both of the queries threw the same error. Using the debugger Visualizer to look at the generated query - I copy and paste the query in SQL and it works fine. I also click "execute" on the visualizer and it works fine. But executing the code by itself throws this error. I don't implement any of the partial methods on the class, so nothing is happening there. If I restart my debugger, the problem goes away, only to rear it's head again randomly a few hours later. More critically, I see this bug in my error logs from the app running in production.  
+I do a ton of LINQ in my app, against a dozen or so different entities in my database, but I only see this problem on queries related to a specific entity in my table. Some googling has suggested that this problem might be related to an incorrect relationship specified between my model and another entity, but I don't have any relationships with this object.  It seems to be working 95% of the time, it's just the other 5% that fail.
+I have completely deleted the object from the designer, and re-added it from a "refreshed" server browser, and that did not fix the problem.
+Any ideas what's going on here?
+Here's the full error message and stack trace:
+
+Index was out of range. Must be non-negative and less than the size of
+  the collection. Parameter name: index at
+  System.Data.Linq.SqlClient.SqlProvider.Execute(Expression query,
+  QueryInfo queryInfo, IObjectReaderFactory factory, Object[]
+  parentArgs, Object[] userArgs, ICompiledSubQuery[] subQueries, Object
+  lastResult) at
+  System.Data.Linq.SqlClient.SqlProvider.ExecuteAll(Expression query,
+  QueryInfo[] queryInfos, IObjectReaderFactory factory, Object[]
+  userArguments, ICompiledSubQuery[] subQueries) at
+  System.Data.Linq.SqlClient.SqlProvider.System.Data.Linq.Provider.IProvider.Execute(Expression
+  query) at
+  System.Data.Linq.Table1.System.Linq.IQueryProvider.Execute[TResult](Expression
+  expression) at
+  System.Linq.Queryable.FirstOrDefault[TSource](IQueryable1 source,
+  Expression`1 predicate) at MyProject.FindUserByType(String typeId)
+
+EDIT: As requested, below is a copy of the table schema.
+CREATE TABLE [dbo].[Container](
+[ID] [int] IDENTITY(1,1) NOT NULL,
+[MarketCode] [varchar](max) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+[Description] [varchar](max) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,
+[Capacity] [int] NOT NULL,
+[Volume] [float] NOT NULL
+ CONSTRAINT [PK_Container] PRIMARY KEY CLUSTERED 
+(
+[ID] ASC
+)WITH (PAD_INDEX  = OFF, STATISTICS_NORECOMPUTE  = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS  = ON, ALLOW_PAGE_LOCKS  = ON) ON [PRIMARY]
+) ON [PRIMARY]
+
+EDIT: The stack trace shows FirstOrDefault, but I duplicated the error using both Take() and ToList().  The stack trace is identical between all of these, simply interchangnig FirstOrDefault/Take/ToList.  The move down the stack to SqlProvider.Execute is in fact identical.  
+
+
+There is another question here that has the same error as you do. Might it be a clue to your problem?
+
+The exception occurs in a System library and your story makes me think the problem isn't in your code. Has the schema changed recently? Is your mapping correct?
+
+I would say that you've got a model -> database mismatch somewhere.  When I get as desperate as you on situations like this, I usually fire up VS.NET, create a new console app, and rebuild the section of the DBML which references the entity of interest in this query, and re-run.  You may find that in this sort of isolation, the query works.  Did you customize any of your entity definitions by filling out partial methods, especially the ones that fire on creation?  
+
+Shot in the dark:
+You are calling MyProject.FindUserByType(String typeId) inside of a loop body, using the loop variable as the parameter.
+Don't use the loop variable directly.
+foreach(string s in myTypeList)
+{
+  //GetUserByType(s);  //Ooo, bad
+  string tempstring = s;
+  GetUserByType(tempstring); 
+}
+
+If this turns out to be the case, I will update this answer to explain why using loop variables directly is a bad practice (after you update the question to show the loop).
+
+This almost certainly won't be everyone's root cause, but I encountered this exact same exception in my project - and found that the root cause was that an exception was being thrown during construction of an entity class. Oddly, the true exception is "lost" and instead manifests as an ArgumentOutOfRange exception originating at the iterator of the Linq statement that retrieves the object/s. 
+If you are receiving this error and you have introduced OnCreated or OnLoaded methods on your POCOs, try stepping through those methods. 
+
+This Problem Occurs due to linq object and Database fields of that Table are not identical.
+
+I had this Issue as well and solved it.
+Now I understand the error was wrong usage of Linq Data Context, but maybe my experience can still help others understand why they get this error.
+Linq Data Context is not meant for running simultaneously. Therefore creating multiple tasks running async is not ideal. Inspect following sample code to understand the issue:
+using(var ctx = new LinqDataContext())
+{
+    List<Task> tasks = new List<Task>();
+    for(int i=0;i<1000;i++)
+    {
+        var task = Task.Run(() => {
+            var customer = ctx.Customers.SingleOrDefault(o => o.Id == i);
+            customer.DoSomething();
+        }
+        tasks.Add(task);
+    }
+    Task.WaitAll(tasks);
+}
+
+In my scenario, I was passing the data context as a parameter in a longer call stack, and calling async methods along the way. So it wasn't as obvious as above example. But maybe this can help someone else anyhow :-)

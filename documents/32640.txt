@@ -1,0 +1,208 @@
+Mocking Asp.net-mvc Controller Context
+asp.net-mvc unit-testing mocking moq rhino-mocks
+So the controller context depends on some asp.net internals. What are some ways to cleanly mock these up for unit tests? Seems like its very easy to clog up tests with tons of setup when I only need, for example, Request.HttpMethod to return "GET".
+I've seen some examples/helpers out on the nets, but some are dated. Figured this would be a good place to keep the latest and greatest.
+I'm using latest version of rhino mocks
+
+
+Using MoQ it looks something like this:
+var request = new Mock<HttpRequestBase>();
+request.Expect(r => r.HttpMethod).Returns("GET");
+var mockHttpContext = new Mock<HttpContextBase>();
+mockHttpContext.Expect(c => c.Request).Returns(request.Object);
+var controllerContext = new ControllerContext(mockHttpContext.Object
+, new RouteData(), new Mock<ControllerBase>().Object);
+
+I think the Rhino Mocks syntax is similar.
+
+I find that long mocking procedure to be too much friction.
+The best way we have found - using ASP.NET MVC on a real project - is to abstract the HttpContext to an IWebContext interface that simply passes through. Then you can mock the IWebContext with no pain.
+Here is an example
+
+Here's a snippet from Jason's link. Its the same as Phil's method but uses rhino. 
+Note: mockHttpContext.Request is stubbed to return mockRequest before mockRequest's internals are stubbed out. I believe this order is required.
+// create a fake web context
+var mockHttpContext = MockRepository.GenerateMock<HttpContextBase>();
+var mockRequest = MockRepository.GenerateMock<HttpRequestBase>();
+mockHttpContext.Stub(x => x.Request).Return(mockRequest);
+
+// tell the mock to return "GET" when HttpMethod is called
+mockRequest.Stub(x => x.HttpMethod).Return("GET");            
+
+var controller = new AccountController();
+
+// assign the fake context
+var context = new ControllerContext(mockHttpContext, 
+                  new RouteData(), 
+                  controller);
+controller.ControllerContext = context;
+
+// act
+...
+
+
+i've finished with this spec
+public abstract class Specification <C> where C: Controller
+{
+    protected C controller;
+
+    HttpContextBase mockHttpContext;
+    HttpRequestBase mockRequest;
+
+    protected Exception ExceptionThrown { get; private set; }
+
+    [SetUp]
+    public void Setup()
+    {
+        mockHttpContext = MockRepository.GenerateMock<HttpContextBase>();
+        mockRequest = MockRepository.GenerateMock<HttpRequestBase>();
+
+        mockHttpContext.Stub(x => x.Request).Return(mockRequest);
+        mockRequest.Stub(x => x.HttpMethod).Return("GET");
+
+
+        EstablishContext();
+        SetHttpContext();
+
+        try
+        {
+            When();
+        }
+        catch (Exception exc)
+        {
+            ExceptionThrown = exc;
+        }
+    }
+
+    protected void SetHttpContext()
+    {
+        var context = new ControllerContext(mockHttpContext, new RouteData(), controller);
+        controller.ControllerContext = context;
+    }
+
+    protected T Mock<T>() where T: class
+    {
+        return MockRepository.GenerateMock<T>();
+    }
+
+    protected abstract void EstablishContext();
+    protected abstract void When();
+
+    [TearDown]
+    public virtual void TearDown()
+    {
+    }
+} 
+
+and the juice is here 
+[TestFixture]
+public class When_invoking_ManageUsersControllers_Update :Specification   <ManageUsersController>
+{
+    private IUserRepository userRepository;
+    FormCollection form;
+
+    ActionResult result;
+    User retUser;
+
+    protected override void EstablishContext()
+    {
+        userRepository = Mock<IUserRepository>();
+        controller = new ManageUsersController(userRepository);
+
+        retUser = new User();
+        userRepository.Expect(x => x.GetById(5)).Return(retUser);
+        userRepository.Expect(x => x.Update(retUser));
+
+        form = new FormCollection();
+        form["IdUser"] = 5.ToString();
+        form["Name"] = 5.ToString();
+        form["Surename"] = 5.ToString();
+        form["Login"] = 5.ToString();
+        form["Password"] = 5.ToString();
+    }
+
+    protected override void When()
+    {
+        result = controller.Edit(5, form);
+    }
+
+    [Test]
+    public void is_retrieved_before_update_original_user()
+    {
+        userRepository.AssertWasCalled(x => x.GetById(5));
+        userRepository.AssertWasCalled(x => x.Update(retUser));
+    }
+}
+
+enjoy
+
+Or you can do this with Typemock Isolator with no need to send in a fake controller at all:
+Isolate.WhenCalled(()=>HttpContext.Request.HttpMethod).WillReturn("Get");
+
+
+The procedure for this seems to have changed slightly in MVC2 (I'm using RC1). Phil Haack's solution doesn't work for me if the action requires a specific method ([HttpPost], [HttpGet]). Spelunking around in Reflector, it looks like the method for verifying these attributes has changed. MVC now checks request.Headers, request.Form, and request.QueryString for a X-HTTP-Method-Override value.
+If you add mocks for these properties, it works:
+var request = new Mock<HttpRequestBase>();
+request.Setup(r => r.HttpMethod).Returns("POST");
+request.Setup(r => r.Headers).Returns(new NameValueCollection());
+request.Setup(r => r.Form).Returns(new NameValueCollection());
+request.Setup(r => r.QueryString).Returns(new NameValueCollection());
+
+var mockHttpContext = new Mock<HttpContextBase>();
+mockHttpContext.Expect(c => c.Request).Returns(request.Object);
+var controllerContext = new ControllerContext(mockHttpContext.Object, new RouteData(), new Mock<ControllerBase>().Object);
+
+
+Here is a sample unit test class using MsTest and Moq which mocks HttpRequest and HttpResponse objects. (.NET 4.0, ASP.NET MVC 3.0 )
+Controller action get value from request and sets http header in response objects. Other http context objects could be mocked up in similar way
+[TestClass]
+public class MyControllerTest
+{
+    protected Mock<HttpContextBase> HttpContextBaseMock;
+    protected Mock<HttpRequestBase> HttpRequestMock;
+    protected Mock<HttpResponseBase> HttpResponseMock;
+
+    [TestInitialize]
+    public void TestInitialize()
+    {
+        HttpContextBaseMock = new Mock<HttpContextBase>();
+        HttpRequestMock = new Mock<HttpRequestBase>();
+        HttpResponseMock = new Mock<HttpResponseBase>();
+        HttpContextBaseMock.SetupGet(x => x.Request).Returns(HttpRequestMock.Object);
+        HttpContextBaseMock.SetupGet(x => x.Response).Returns(HttpResponseMock.Object);
+    }
+
+    protected MyController SetupController()
+    {
+        var routes = new RouteCollection();
+        var controller = new MyController();
+        controller.ControllerContext = new ControllerContext(HttpContextBaseMock.Object, new RouteData(), controller);
+        controller.Url = new UrlHelper(new RequestContext(HttpContextBaseMock.Object, new RouteData()), routes);
+        return controller;
+    }
+
+    [TestMethod]
+    public void IndexTest()
+    {
+        HttpRequestMock.Setup(x => x["x"]).Returns("1");
+        HttpResponseMock.Setup(x => x.AddHeader("name", "value"));
+
+        var controller = SetupController();
+        var result = controller.Index();
+        Assert.AreEqual("1", result.Content);
+
+        HttpRequestMock.VerifyAll();
+        HttpResponseMock.VerifyAll();
+    }
+}
+
+public class MyController : Controller
+{
+    public ContentResult Index()
+    {
+        var x = Request["x"];
+        Response.AddHeader("name", "value");
+        return Content(x);
+    }
+}
+

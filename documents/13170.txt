@@ -1,0 +1,48 @@
+A ThreadStateException occures when trying to restart a thread
+c# .net multithreading exception
+From time to time I get a System.Threading.ThreadStateException when attempting to restart a thread. The code in question is as follows:
+// Make sure the thread is done stopping
+while (this.mThread.ThreadState == ThreadState.Running)
+{ 
+    Thread.Sleep(0);
+}
+// Respawn a thread if the current one is stopped or doesn't exist
+if (this.mThread == null || this.mThread.ThreadState == ThreadState.Stopped)
+{ 
+    this.mThread = new Thread(new ParameterizedThreadStart(Monitor)); }
+// Start the thread
+if (check)
+{ 
+    this.mThread.Start(60000); 
+}
+else
+{   
+    this.mThread.Start(0); 
+}
+
+So two questions - is this the correct way of doing things, and  it is, is there a way to prevent the error from occurring?
+
+
+A ThreadStateException is thrown because you're trying to start a thread that's not in a startable state. The most likely situations would be that it's already running, or that it has fully exited.
+There are potentially a couple things that might be happening. First is, the thread might have transitioned from Running to StopRequested, which isn't fully stopped yet, so your logic doesn't create a new thread, and you're trying to start a thread which has just finished running or is about to finish running (neither of which is a valid state for restarting).
+The other possibility is that the thread was aborted. Threads which are aborted go to the Aborted state, not the Stopped state, and of course are also not valid for restarting.
+Really, the only kind of thread that is still alive that can be "restarted" is one that's suspended. You might want to use this conditional instead:
+if (this.mThread == null || this.mThread.ThreadState != ThreadState.Suspended)
+
+It's possible for a thread to be in more than one state at once therefore the ThreadState property is actually a bitmap of possible states. So testing for equality with just one state will not give you the right result. You would need to do something like:
+if((mThread.ThreadState & ThreadState.Running) != 0)
+
+However, checking thread state is the wrong to do anything. I'm not entirely clear what you're trying to achieve but I will guess that you're waiting for a thread to terminate before restarting it. In that case you should do:
+mThread.Join();
+mThread = new Thread(new ParameterizedThreadStart(Monitor));
+if(check)
+    mThread.Start(60000);
+else
+    mThread.Start(0);
+
+Although if you describe the problem you're trying to solve in more detail I'm almost certain there will be a better solution. Waiting around for a thread to end just to restart it again doesn't seem that efficient to me. Perhaps you just need some kind of inter-thread communication?
+John.
+
+The problem is that you have code that first checks if it should create a new thread object, and another piece of code that determines wether to start the thread object. Due to race conditions and similar things, your code might end up trying to call .Start on an existing thread object. Considering you don't post the details behind the check variable, it's impossible to know what might trigger this behavior.
+You should reorganize your code so that .Start is guaranteed to only be called on new objects. In short, you should put the Start method into the same if-statement as the one that creates a new thread object.
+Personally, I would try to reorganize the entire code so that I didn't need to create another thread, but wrap the code inside the thread object inside a loop so that the thread just keeps on going.

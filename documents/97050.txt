@@ -1,0 +1,95 @@
+std::map insert or std::map find?
+c++ optimization stl stdmap
+Assuming a map where you want to preserve existing entries. 20% of the time, the entry you are inserting is new data.  Is there an advantage to doing std::map::find then std::map::insert using that returned iterator?  Or is it quicker to attempt the insert and then act based on whether or not the iterator indicates the record was or was not inserted?
+
+
+There will be barely any difference in speed between the 2, find will return an iterator, insert does the same and will search the map anyway to determine if the entry already exists.
+So.. its down to personal preference. I always try insert and then update if necessary, but some people don't like handling the pair that is returned.
+
+map[ key ] - let stl sort it out.  That's communicating your intention most effectively.
+Yeah, fair enough.  
+If you do a find and then an insert you're performing 2 x O(log N) when you get a miss as the find only lets you know if you need to insert not where the insert should go (lower_bound might help you there).  Just a straight insert and then examining the result is the way that I'd go.
+
+Any answers about efficiency will depend on the exact implementation of your STL.  The only way to know for sure is to benchmark it both ways.  I'd guess that the difference is unlikely to be significant, so decide based on the style you prefer.
+
+I would think if you do a find then insert, the extra cost would be when you don't find the key and performing the insert after. It's sort of like looking through books in alphabetical order and not finding the book, then looking through the books again to see where to insert it. It boils down to how you will be handling the keys and if they are constantly changing. Now there is some flexibility in that if you don't find it, you can log, exception, do whatever you want...
+
+If you are concerned about efficiency, you may want to check out hash_map<>.  
+Typically map<> is implemented as a binary tree.  Depending on your needs, a hash_map may be more efficient.
+
+The answer to this question also depends on how expensive it is to create the value type you're storing in the map:
+typedef std::map <int, int> MapOfInts;
+typedef std::pair <MapOfInts::iterator, bool> IResult;
+
+void foo (MapOfInts & m, int k, int v) {
+  IResult ir = m.insert (std::make_pair (k, v));
+  if (ir.second) {
+    // insertion took place (ie. new entry)
+  }
+  else if ( replaceEntry ( ir.first->first ) ) {
+    ir.second->second = v;
+  }
+}
+
+For a value type such as an int, the above will more efficient than a find followed by an insert (in the absence of compiler optimizations).  As stated above, this is because the search through the map only takes place once.
+However, the call to insert requires that you already have the new "value" constructed:
+class LargeDataType { /* ... */ };
+typedef std::map <int, LargeDataType> MapOfLargeDataType;
+typedef std::pair <MapOfLargeDataType::iterator, bool> IResult;
+
+void foo (MapOfLargeDataType & m, int k) {
+
+  // This call is more expensive than a find through the map:
+  LargeDataType const & v = VeryExpensiveCall ( /* ... */ );
+
+  IResult ir = m.insert (std::make_pair (k, v));
+  if (ir.second) {
+    // insertion took place (ie. new entry)
+  }
+  else if ( replaceEntry ( ir.first->first ) ) {
+    ir.second->second = v;
+  }
+}
+
+In order to call 'insert' we are paying for the expensive call to construct our value type - and from what you said in the question you won't use this new value 20% of the time.  In the above case, if changing the map value type is not an option then it is more efficient to first perform the 'find' to check if we need to construct the element.
+Alternatively, the value type of the map can be changed to store handles to the data using your favourite smart pointer type.  The call to insert uses a null pointer (very cheap to construct) and only if necessary is the new data type constructed.
+
+The answer is you do neither.  Instead you want to do something suggested by Item 24 of Effective STL by Scott Meyers:
+typedef map<int, int> MapType;    // Your map type may vary, just change the typedef
+
+MapType mymap;
+// Add elements to map here
+int k = 4;   // assume we're searching for keys equal to 4
+int v = 0;   // assume we want the value 0 associated with the key of 4
+
+MapType::iterator lb = mymap.lower_bound(k);
+
+if(lb != mymap.end() && !(mymap.key_comp()(k, lb->first)))
+{
+    // key already exists
+    // update lb->second if you care to
+}
+else
+{
+    // the key does not exist in the map
+    // add it to the map
+    mymap.insert(lb, MapType::value_type(k, v));    // Use lb as a hint to insert,
+                                                    // so it can avoid another lookup
+}
+
+
+I'm lost on the top answer.
+Find returns map.end() if it doesn't find anything which means if you are adding new things then 
+iter = map.find();
+if (iter == map.end()) {
+  map.insert(..) or map[key] = value
+} else {
+  // do nothing. You said you did not want to effect existing stuff.
+}
+
+is twice as slow as
+map.insert
+
+for any element not already in the map since it will have to search twice. Once to see if it's there, again to find the place to put the new thing.
+
+I don't seem to have enough points to leave a comment, but the ticked answer seems to be long winded to me - when you consider that insert returns the iterator anyway, why go searching lower_bound, when you can just use the iterator returned. Strange.

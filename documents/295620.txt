@@ -1,0 +1,128 @@
+How to call a Delphi DLL from VB6
+delphi dll vb6 declare
+Given the following Delphil DLL declaration
+function csd_HandleData(aBuf: PChar; aLen: integer): integer; stdcall;
+
+what would be the VB6 declaration to use it?
+I've tried a variety of declarations, e.g.
+Declare Function csd_HandleData Lib "chsdet.dll" (ByVal aBuf As String, ByVal aLen As Integer)
+Declare Function csd_HandleData Lib "chsdet.dll" (aBuf As Long, ByVal aLen As Integer)
+Declare Function csd_HandleData Lib "chsdet.dll" (aBuf As Byte, ByVal aLen As Integer)
+
+with the relevant code to suit the parameters, but nothing seems to work, i.e. the Delphi debugger says I have a too-largish value in aLen and a null string in aBuf.
+I am working toward using a TypeLib to drive the connection, but was prototyping with Declares.
+
+
+try
+Declare Function csd_HandleData Lib "chsdet.dll" (ByVal aBuf As String, 
+ByVal aLen As Integer) As Integer
+
+Seems you forgot the return value.
+
+I donÂ´t know exactly how Vb works but PChar is a pointer, so try to get the reference instead of the value.
+Declare Function csd_HandleData Lib "chsdet.dll" (**ByReference <--guessing here :D** aBuf As String, ByVal aLen As Integer)
+
+
+I don't know what a PChar is in Delphi, is it just one character? ASCII?? Unicode?
+An Integer is 16 bits in VB6, you'll have to declare aLen as Long, which can hold 32 bits.
+You also have to declare the return type of the function, in this case you'll want to return a Long value too.
+This will probably work:
+Declare Function csd_HandleData Lib "chsdet.dll" (aBuf As Byte, ByVal aLen As Long) As Long
+
+VB integer datatype is 16bit, so you should declare it as long which is equivalent to integer in Delphi and other languages.
+Declare Function csd_HandleData Lib "chsdet.dll" (ByVal aBuf As String, ByVal aLen As long) as long
+
+
+For those interested, here's the final IDL for the typelib for CHSDET. What impressed me (after re-discovering Matt Curland's EditTLB tool) was that I can put structures into a typelib, and VB handles them as if I'd declared them in the source code. 
+I've written to the author of ChsDet and perhaps this will end up as part of the standard distro.
+// Generated .IDL file (by the OLE/COM Object Viewer)
+// 
+// typelib filename: chsdet.tlb
+
+[
+  uuid(316A83D7-8BF4-490E-BDDE-75EBC332C355),
+  version(1.0),
+  helpstring("Charset Detector - as the name says - is a stand alone executable module for automatic charset detection of a given text.\r\n\t\r\nIt can be useful for internationalisation support in multilingual applications such as web-script editors or Unicode editors.\r\n\t\r\nGiven input buffer will be analysed to guess used encoding. The result can be used as control parameter for charset conversation procedure.\r\n\t\r\nCharset Detector can be compiled (and hopefully used) for MS Windows (as dll - dynamic link library) or Linux.\r\n\t\r\nBased on Mozilla's i18n component - http://www.mozilla.org/projects/intl/. \r\n\r\nCharset Detector is open source project and distributed under Lesser GPL.\r\nSee the GNU Lesser General Public License for more details - http://www.opensource.org/licenses/lgpl-license.php\r\n\r\nNikolaj Yakowlew \xFFFFFFA9 2006-2008 \r\nTypeLib by Bruce M. Axtens, 2008.")
+]
+library CHSDET
+{
+    // TLib :     // Forward declare all types defined in this typelib
+
+    [
+      dllname("CHSDET.dll"),
+      version(1.0),
+      helpstring("Functions in CHSDET.DLL")
+    ]
+    module CHSDETFunctions {
+	[entry(0x60000000), helpstring("Returns rAbout record (qv)")]
+	void _stdcall GetAbout([in, out] rAbout* AboutRec);
+	[entry(0x60000001), helpstring("Reset detector. Prepares for new analysis.")]
+	void _stdcall Reset();
+	[entry(0x60000002), helpstring("Analyse given buffer of specified length.
+
+Return value is of eHandleDataErrors, either 
+NS_ERROR_OUT_OF_MEMORY (Unable to create internal objects) or NS_OK.
+
+Function can be called more that one time to continue guessing. Charset Detector remembers last state until Reset called.")]
+	void _stdcall HandleData(
+			[in] BSTR aBuf, 
+			[in] short aLen, 
+			[out, retval] short* retVal);
+	[entry(0x60000003), helpstring("Returns either TRUE (Charset Detector is sure about text encoding.) or FALSE.
+
+NB: If input buffer is smaller then 1K, Charset Detector returns FALSE.")]
+	void _stdcall IsDone([out, retval] short* retVal);
+	[entry(0x60000004), helpstring("Signal data end. If Charset Detector hasn't sure result (IsDone = FALSE) the best guessed encoding will be set as result.")]
+	void _stdcall DataEnd();
+	[entry(0x60000005), helpstring("Returns guessed charset as rCharsetInfo record")]
+	void _stdcall GetDetectedCharset([out, retval] rCharsetInfo* retVal);
+	[entry(0x60000006), helpstring("Returns all supported charsets in form "0x0A Name - CodePage"")]
+	void _stdcall GetKnownCharsets(
+			[in, out] long* sList, 
+			[out, retval] long* retVal);
+	[entry(0x60000007), helpstring("Return eBOMKind value matching byte order mark (if any) of input data.")]
+	void _stdcall GetDetectedBOM([out, retval] eBOMKind* retVal);
+	[entry(0x60000008), helpstring("Remove CodePage from consideration as a possible match")]
+	void _stdcall DisableCharsetCP([in] long CodePage);
+    };
+
+    typedef [uuid(91694067-30AB-44A9-A210-F5602935475F)]
+    struct tagrAbout {
+
+long lMajor;
+
+long lMinor;
+
+long lRelease;
+
+long sAbout;
+    } rAbout;
+
+    typedef [uuid(3C8B7420-D40B-458B-8DE8-9B3D28607396)]
+    enum {
+	BOM_Not_Found = 0,
+	BOM_UCS4_BE = 1,
+	BOM_UCS4_LE = 2,
+	BOM_UCS4_2143 = 3,
+	BOM_UCS4_3412 = 4,
+	BOM_UTF16_BE = 5,
+	BOM_UTF16_LE = 6,
+	BOM_UTF8 = 7
+    } eBOMKind;
+
+    typedef [uuid(9B231DEF-93FB-440D-B06B-D760AECE09D0)]
+    struct tagrCharsetInfo {
+
+long Name;
+
+short CodePage;
+
+long Language;
+    } rCharsetInfo;
+
+    typedef enum {
+	NS_OK = 0,
+	NS_ERROR_OUT_OF_MEMORY = -2147024882
+    } eHandleDataErrors;
+};
+

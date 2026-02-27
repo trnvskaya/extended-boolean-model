@@ -1,0 +1,60 @@
+SQL Job Status
+sql sql-server stored-procedures
+I am actually working on SP in SQL 2005. Using SP i am creating a job and am scheduling it for a particular time. These jobs take atleast 5 to 10 min to complete as the database is very huge. But I am not aware of how to check the status of the Job. I want to know if it has got completed successfully or was there any error in execution. On exception i also return proper error code. But i am not aware of where i can check for this error code.
+
+
+This is what I could find, maybe it solves your problem:
+
+SP to get the current job activiity.
+
+
+ exec msdb.dbo.sp_help_jobactivity  @job_id = (your job_id here)
+
+
+You can execute this SP and place the result in a temp table and get the required result from there.
+Otherwise have a look at these tables:
+
+msdb.dbo.sysjobactivity
+msdb.dbo.sysjobhistory
+
+Run the following to see the association between these tables. 
+
+exec sp_helptext sp_help_jobactivity
+
+
+--Copy in Query analizer and format it properly so you can understand it easyly
+--To execute your task(Job) using Query
+exec msdb.dbo.sp_start_job @job_name ='Job Name',@server_name = server name
+-- After executing query to check weateher it finished or not
+Declare @JobId as varchar(36)
+Select @JobId = job_id from sysjobs where name = 'Your Job Name'
+Declare @JobStatus as int set @JobStatus = -1
+While @JobStatus <= -1
+Begin
+        --Provide TimeDelay according your Job
+    select @JobStatus = isnull(run_status ,-1)
+    from sysjobactivity JA,sysjobhistory JH
+    where JA.job_history_id = JH.instance_id and JA.job_id = @JobId
+End
+select @JobStatus
+null = Running
+1 = Fininshed successfully
+0 = Finished with error
+--Once your Job will fininsh you'll get result
+
+I got a better code from here
+Use msdb
+go
+
+select distinct j.Name as "Job Name", j.description as "Job Description", h.run_date as LastStatusDate, 
+case h.run_status 
+when 0 then 'Failed' 
+when 1 then 'Successful' 
+when 3 then 'Cancelled' 
+--when 4 then 'In Progress' 
+end as JobStatus
+from sysJobHistory h, sysJobs j
+where j.job_id = h.job_id and h.run_date = 
+(select max(hi.run_date) from sysJobHistory hi where h.job_id = hi.job_id)
+order by 1
+

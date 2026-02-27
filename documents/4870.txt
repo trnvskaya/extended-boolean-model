@@ -1,0 +1,48 @@
+Why is this regular expression faster?
+regex ansi
+I'm writing a Telnet client of sorts in C# and part of what I have to parse are ANSI/VT100 escape sequences, specifically, just those used for colour and formatting (detailed here).
+One method I have is one to find all the codes and remove them, so I can render the text without any formatting if needed:
+    
+public static string StripStringFormating(string formattedString)
+{
+    if (rTest.IsMatch(formattedString))
+        return rTest.Replace(formattedString, string.Empty);
+    else
+        return formattedString;
+}
+
+I'm new to regular expressions and I was suggested to use this:
+static Regex rText = new Regex(@"\e\[[\d;]+m", RegexOptions.Compiled);
+However, this failed if the escape code was incomplete due to an error on the server. So then this was suggested, but my friend warned it might be slower (this one also matches another condition (z) that I might come across later):
+static Regex rTest = 
+              new Regex(@"(\e(\[([\d;]*[mz]?))?)?", RegexOptions.Compiled);
+This not only worked, but was in fact faster to and reduced the impact on my text rendering. Can someone explain to a regexp newbie, why? :)
+
+
+Without doing detailed analysis, I'd guess that it's faster because of the question marks. These allow the regular expression to be "lazy," and stop as soon as they have enough to match, rather than checking if the rest of the input matches.
+I'm not entirely happy with this answer though, because this mostly applies to question marks after * or +. If I were more familiar with the input, it might make more sense to me.
+(Also, for the code formatting, you can select all of your code and press Ctrl+K to have it add the four spaces required.)
+
+The reason why #1 is slower is that [\d;]+ is a greedy quantifier. Using +? or *? is going to do lazy quantifing. See MSDN - Quantifiers for more info.
+You may want to try:
+"(\e\[(\d{1,2};)*?[mz]?)?"
+That may be faster for you.
+Do you really want to do run the regexp twice? Without having checked (bad me) I would have thought that this would work well:
+public static string StripStringFormating(string formattedString)
+{    
+    return rTest.Replace(formattedString, string.Empty);
+}
+
+If it does, you should see it run ~twice as fast...
+
+I'm not sure if this will help with what you are working on, but long ago I wrote a regular expression to parse ANSI graphic files.
+(?s)(?:\e\[(?:(\d+);?)*([A-Za-z])(.*?))(?=\e\[|\z)
+
+It will return each code and the text associated with it.
+Input string:
+<ESC>[1;32mThis is bright green.<ESC>[0m This is the default color.
+
+Results:
+[ [1, 32], m, This is bright green.]
+[0, m, This is the default color.]
+

@@ -1,0 +1,55 @@
+Dynamic SQL - Search Query - Variable Number of Keywords
+sql sql-injection dynamic-sql
+We are trying to update our classic asp search engine to protect it from SQL injection.  We have a VB 6 function which builds a query dynamically by concatenating a query together based on the various search parameters.  We have converted this to a stored procedure using dynamic sql for all parameters except for the keywords.
+The problem with keywords is that there are a variable number words supplied by the user and we want to search several columns for each keyword. Since we cannot create a separate parameter for each keyword, how can we build a safe query?
+Example
+@CustomerId AS INT
+@Keywords AS NVARCHAR(MAX)
+@sql = 'SELECT event_name FROM calendar WHERE customer_id = @CustomerId '
+--(loop through each keyword passed in and concatenate)
+@sql = @sql + 'AND (event_name LIKE ''%' + @Keywords + '%'' OR event_details LIKE ''%' + @Keywords + '%'')'
+EXEC sp_executesql @sql N'@CustomerId INT, @CustomerId = @CustomerId
+What is the best way to handle this and maintaining protection from SQL injection? 
+
+
+You may not like to hear this, but it might be better for you to go back to dynamically constructing your SQL query in code before issuing against the database. If you use parameter placeholders in the SQL string you get the protection against SQL injection attacks.
+Example:
+string sql  = "SELECT Name, Title FROM Staff WHERE UserName=@UserId";
+using (SqlCommand cmd = new SqlCommand(sql))
+{
+  cmd.Parameters.Add("@UserId", SqlType.VarChar).Value = "smithj";
+
+You can build the SQL string depending on the set of columns you need to query and then add the parameter values once the string is complete. This is a bit of a pain to do, but I think it is much easier than having really complicated TSQL which unpicks lots of possible permutations of possible inputs.
+
+You have 3 options here. 
+
+Use a function that converts lists tables and join into it. So you will have something like this.
+SELECT * FROM calendar c
+JOIN dbo.fnListToTable(@Keywords) k ON c.keyword = k.keyword  
+Have a fixed set of params, and only allow the maximum of N keywords to be searched on
+CREATE PROC spTest
+   @Keyword1 varchar(100),
+   @Keyword2 varchar(100),
+   .... 
+Write an escaping string function in TSQL and escape your keywords. 
+
+
+
+Unless you need it, you could simply strip out any character that's not in [a-zA-Z ] - most of those things won't be in searches and you should not be able to be injected that way, nor do you have to worry about keywords or anything like that.  If you allow quotes, however, you will need to be more careful.
+Similar to sambo99's #1, you can insert the keywords into a temporary table or table variable and join to it (even using wildcards) without danger of injection:
+
+This isn't really dynamic:
+SELECT DISTINCT event_name
+FROM calendar
+INNER JOIN #keywords
+    ON event_name LIKE '%' + #keywords.keyword + '%'
+    OR event_description LIKE '%' + #keywords.keyword + '%'
+
+
+You can actually generate an SP with a large number of parameters instead of coding it by hand (set the defaults to '' or NULL depending on your preference in coding your searches).  If you found you needed more parameters, it would be simple to increase the number of parameters it generated.
+You can move the search to a full-text index outside the database like Lucene and then use the Lucene results to pull the matching database rows.
+
+
+You can try this:
+SELECT * FROM [tablename] WHERE LIKE % +keyword%
+

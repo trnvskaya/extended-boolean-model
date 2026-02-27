@@ -1,0 +1,77 @@
+How to password protect streaming videos with php
+php authentication login streaming quicktime
+What is the best way to password protect quicktime streaming videos using php/.htaccess. They are being streamed using rtsp, but I can use other formats if necessary.
+I know how to do authentication with php, but I'm not sure how to setup authentication so that will protect the streaming files urls so that a user can't just copy the url and share it.
+Or am I overthinking this and I can just use a normal authentication scheme and place the files in a protected directory?
+
+
+First off, it is very easy to spoof a referer. This information is stored in the user's browser, so a user can simply telnet into your server and provide his own referer which matches your domain.
+A couple things you could try:
+First, more secure, but still spoofable. mod_rewrite provides the ability to check cookies. What you could do is set a cookie when the user visits your website that contains some obscure data. Then, you could modify your RerwriteCond to something like this: 
+RewriteEngine On
+RewriteCond %{HTTP_REFERER} !^$
+RewriteCond %{HTTP_COOKIE} obscurename=obscurevalue [NC]
+RewriteCond %{HTTP_REFERER} !^http://(www\.)?yourdomain.com/.*$ [NC]
+RewriteRule \.(asxÂ¦ASX)$ http://www.yourdomain.com/images/leech.gif [R,L]
+
+Another, better technique would involve working with PHP and mime-types. I'm not sure to what extent this would support streaming content, but I assume it'll work. What you can do is have all your video links point to a .php file (the query string will determine which video has been selected). Then, when a user tries to visit this link, you do something like so:
+<?php
+    // You could also check some sort of session variable
+    // that is set when the user visits another part of your
+    // site
+    if(!isLoggedIn()){
+       header("Location: errorPage.htm");
+       exit;
+    }else{
+       // Get the name of the file specified
+       $file = get_file_name($_GET['fileID']);
+
+       // Specify the proper mime-type for the data you're sending
+       // (this may have to change, depending on your situation)
+       header("Content-type: video/vnd.rn-realvideo");
+
+       // Read the file and output it to the browser
+       readfile($file);
+    }
+?>
+
+From what I read, most servers know which mime-types are streaming mime-types, so the browser should be able to figure out how to handle the streaming file properly.
+
+Try to use Amazon S3 service, it got it's quirks but it makes sense once you get familiar with it. 
+There are hooks in their API to achieve temporally URL's that are active for specified time, so you can freely show url to visitor because it won't work 10 minutes or so later. 
+It's almost trivial thing to do with php (around 15 lines of code), there are a lot of examples on their forums so you dont need to go from scratch and read full documentation on how to achieve this. 
+What kind of authorization you will do before generate and show links it's up to you. 
+You can also have it look like it's served from your domain like video.yourdomain.com instead of standard s3 URL's. 
+Last thing, it's cheap - we payed around 2 US$ for the month of testing and deployment when I uploaded 8 GB and downloaded it 3 times completely and initialized download for around 100 times. The person I was doing this for is so satisfied by price that he wants to move all of his downloadable media to s3. 
+Now, re reading everything I wrote it looks like commercial/spam but I'm so satisfied with service because I coded everything for audio files earlier, and it took days until everything worked just fine and this took couple of hours to implement (mostly getting familiar with service). 
+
+Both nginx and lighttpd web servers have X-Send-File headers you can return from PHP. So you can do your checks in PHP and then conditionally server out the file.
+if (check_user_can_access()){
+    header('X-sendfile: /path/to/file');
+} else {
+    header('HTTP/1.1 403 Fail!');
+}
+
+Lighttpd also has a neat module called mod_secure_download that allows you to programatically generate a URL that will only be valid for a short time period.
+Nginx, and possibly lighttpd, allow you to cap the download speed, so you're not sending out streaming data faster than it can be consumed.
+Either way, you want to use your web server for serving files. Serving them through PHP is possible, but slow. 
+
+You might want to take a look at:
+  mod_xsendfile (for apache)
+It enables you to internally redirect to a file.
+So you could point your download link to checkCredentials.php
+<?php
+if ( isAuthorised($_POST['user'], $_POST['pass']) ) {
+    header("X-Sendfile: $somefile");
+    header("Content-Type: application/octet-stream");
+    header("Content-Disposition: attachment; file=\"$somefile\"");
+    exit(0);
+} else {
+    show403('bad credentials');
+}
+?>
+
+This module is also available for other webservers. If I remember correctly, the idea originally comes from lighttpd, but - as Josh states- is also available for nginx.
+
+In Jacco's solution is it possible to inspect the headers, and find the url for the file and download it without authentication?
+A possible solution I can think of would be to put the files somplace that is inaccessible to anyone but the browser, i.e. using a .htaccess deny all. Would that work?

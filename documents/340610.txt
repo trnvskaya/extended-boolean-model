@@ -1,0 +1,104 @@
+Create empty C# event handlers automatically
+c# events delegates clr
+It is not possible to fire an event in C# that has no handlers attached to it. So before each call it is necessary to check if the event is null.
+if ( MyEvent != null ) {
+  MyEvent( param1, param2 );
+}
+
+I would like to keep my code as clean as possible and get rid of those null checks. I don't think it will affect performance very much, at least not in my case.
+MyEvent( param1, param2 );
+
+Right now I solve this by adding an empty inline handler to each event manually. This is error prone, since I need to remember to do that etc.
+void Initialize() {
+  MyEvent += new MyEvent( (p1,p2) => { } );
+}
+
+Is there a way to generate empty handlers for all events of a given class automatically using reflection and some CLR magic?
+
+
+I saw this on another post and have shamelessly stolen it and used it in much of my code ever since:
+public delegate void MyClickHandler(object sender, string myValue);
+public event MyClickHandler Click = delegate {}; // add empty delegate!
+
+//Let you do this:
+public void DoSomething() {
+    Click(this, "foo");
+}
+
+//Instead of this:
+public void DoSomething() {
+    if (Click != null) // Unnecessary!
+        Click(this, "foo");
+}
+
+* If anyone knows the origin of this technique, please post it in the comments. I really do believe in the source getting due credit.
+(Edit: I got it from this post Hidden Features of C#?)
+
+You can write is as:
+MyEvent += delegate { };
+
+I am not sure what you want to do is correct.
+
+The notation:
+if ( MyEvent != null ) {
+  MyEvent( param1, param2 );
+}
+
+is not thread safe. You should do it this way:
+EventHandler handler = this.MyEvent;
+if ( null != handler ) { handler( param1, param2 ); }
+
+I understand, that this is a bother, so you can do helper method:
+static void RaiseEvent( EventHandler handler, object sender, EventArgs e ) {
+    if ( null != handler ) { handler( sender, e ); }
+}
+
+and then call:
+RaiseEvent( MyEvent, param1, param2 );
+
+If you are using C# 3.0, you can declare helper method as extension method:
+static void Raise( this EventHandler handler, object sender, EventArgs e ) {
+    if ( null != handler ) { handler( sender, e ); }
+}
+
+and then call:
+MyEvent.Raise( param1, param2 );
+
+Also you can create next extension/helper methods for other event handlers. For example:
+static void Raise<TEventArgs>( this EventHandler<TEventArgs> handler,
+    object sender, TEventArgs e ) where TEventArgs : EventArgs
+{
+    if ( null != handler ) { handler( sender, e ); }
+}
+
+
+This is a bad idea in that the code which is consuming the event now has an expectation that the object with the event has been coded with an action by default. If your code is never going to be used anywhere else by anyone else then I guess you can get away with it.
+
+You don't need several extension methods for different event handlers, you just need one:
+public static class EventHandlerExtensions {
+  public static void Raise<T>(this EventHandler<T> handler, object sender, T args) where T : EventArgs {
+    if (handler != null) handler(sender, args);
+  }
+}
+
+
+You can use PostSharp to on build time add this magic. It is the best way.
+
+C# event declarations unfortunately include a number of well-known safety problems and inefficiencies. I designed a number of extension methods on delegates to invoke them safely, and to register/unregister delegates in a thread-safe manner.
+Your old event-raising code:
+if (someDelegate != null) someDelegate(x, y, z);
+
+Your new code:
+someDelegate.Raise(x, y, z);
+
+Your old event registration code:
+event Action fooEvent;
+...
+lock (someDummyObject) fooEvent += newHandler;
+
+Your new code:
+Action fooEvent;
+...
+Events.Add(ref fooEvent, newHandler);
+
+No locking needed, no compiler-inserted dummy objects used to lock the events.

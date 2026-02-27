@@ -1,0 +1,646 @@
+How to get current datetime on Windows command line, in a suitable format for using in a filename?
+windows datetime command-line batch-file
+EDIT: Now that it's 2016 I'd use powershell for this unless there's a really compelling backwards-compatible reason for it, particularly because of the regional settings issue with using date. See @npocmaka's http://stackoverflow.com/a/19799236/8479
+
+What's a Windows command line statement(s) I can use to get the current datetime in a format that I can put into a filename?
+I want to have a .bat file that zips up a directory into an archive with the current date and time as part of the name, for example, Code_2008-10-14_2257.zip. Is there any easy way I can do this, independent of the regional settings of the machine?
+I don't really mind about the date format, ideally it'd be yyyy-mm-dd, but anything simple is fine.
+So far I've got this, which on my machine gives me Tue_10_14_2008_230050_91:
+rem Get the datetime in a format that can go in a filename.
+set _my_datetime=%date%_%time%
+set _my_datetime=%_my_datetime: =_%
+set _my_datetime=%_my_datetime::=%
+set _my_datetime=%_my_datetime:/=_%
+set _my_datetime=%_my_datetime:.=_%
+
+rem Now use the timestamp by in a new ZIP file name.
+"d:\Program Files\7-Zip\7z.exe" a -r Code_%_my_datetime%.zip Code
+
+I can live with this, but it seems a bit clunky. Ideally it'd be briefer and have the format mentioned earlier.
+I'm using Windows Server 2003 and Windows XP Professional. I don't want to install additional utilities to achieve this (although I realise there are some that will do nice date formatting).
+
+
+This is what I've used:
+::Date Variables - replace characters that are not legal as part of filesystem file names (to produce name like "backup_04.15.08.7z")
+SET DT=%date%
+SET DT=%DT:/=.%
+SET DT=%DT:-=.%
+
+
+If you want further ideas for automating backups to 7-zip archives, I have a free/open project you can use or review for ideas: http://wittman.org/ziparcy/
+
+This isn't really briefer but might be a more flexible way (credit):
+FOR /F "TOKENS=1* DELIMS= " %%A IN ('DATE/T') DO SET CDATE=%%B
+FOR /F "TOKENS=1,2 eol=/ DELIMS=/ " %%A IN ('DATE/T') DO SET mm=%%B
+FOR /F "TOKENS=1,2 DELIMS=/ eol=/" %%A IN ('echo %CDATE%') DO SET dd=%%B
+FOR /F "TOKENS=2,3 DELIMS=/ " %%A IN ('echo %CDATE%') DO SET yyyy=%%B
+SET date=%mm%%dd%%yyyy%
+
+
+Another way (credit):
+@For /F "tokens=2,3,4 delims=/ " %%A in ('Date /t') do @( 
+    Set Month=%%A
+    Set Day=%%B
+    Set Year=%%C
+)
+
+@echo DAY = %Day%
+@echo Month = %Month%
+@echo Year = %Year%
+
+Note that both my answers here are still reliant on the order of the day and month as determined by regional settings - not sure how to work around that.
+
+See Windows Batch File (.bat) to get current date in MMDDYYYY format.:
+@echo off
+For /f "tokens=2-4 delims=/ " %%a in ('date /t') do (set mydate=%%c-%%a-%%b)
+For /f "tokens=1-2 delims=/:" %%a in ('time /t') do (set mytime=%%a%%b)
+echo %mydate%_%mytime%
+
+If you prefer the time in 24hr/military format, you can replace the second FOR line with this: 
+For /f "tokens=1-2 delims=/:" %%a in ("%TIME%") do (set mytime=%%a%%b)
+
+
+C:> .\date.bat 
+  2008-10-14_0642
+
+If you want the date independently of the region day/month order, you can use "WMIC os GET LocalDateTime" as a source, since it's in ISO order:
+@echo off
+for /F "usebackq tokens=1,2 delims==" %%i in (`wmic os get LocalDateTime /VALUE 2^>NUL`) do if '.%%i.'=='.LocalDateTime.' set ldt=%%j
+set ldt=%ldt:~0,4%-%ldt:~4,2%-%ldt:~6,2% %ldt:~8,2%:%ldt:~10,2%:%ldt:~12,6%
+echo Local date is [%ldt%]
+
+
+C:>test.cmd
+  Local date is [2012-06-19 10:23:47.048]
+
+EDIT: Added the time as well as the date as originally requested in your question
+EDIT: Added a region-independent variation using WMIC
+
+Unfortunately this is not immune to regional settings, but it does what you want.
+set hour=%time:~0,2%
+if "%time:~0,1%"==" " set hour=0%time:~1,1%
+set _my_datetime=%date:~10,4%-%date:~4,2%-%date:~7,2%_%hour%%time:~3,2%
+
+Amazing the stuff you can find on Wikipedia.
+
+I use this (again not region independent (UK))
+set bklog=%date:~6,4%-%date:~3,2%-%date:~0,2%_%time:~0,2%%time:~3,2%
+
+
+"d:\Program Files\7-Zip\7z.exe" a -r code_%date:~10,4%-%date:~4,2%-%date:~7,2%.zip
+
+
+Regionally independent date time parsing
+The output format of %DATE% and of the dir command is regionally dependent and thus neither robust nor smart. date.exe (part of UnxUtils) delivers any date and time information in any thinkable format. You may also extract the date/time information from any file with date.exe.
+Examples:  (in a cmd-script use %% instead of %)
+date.exe +"%Y-%m-%d"
+2009-12-22  
+date.exe +"%T"
+18:55:03  
+date.exe +"%Y%m%d %H%M%S: Any text"
+20091222 185503: Any text
+date.exe +"Text: %y/%m/%d-any text-%H.%M"
+Text: 09/12/22-any text-18.55
+Command: date.exe +"%m-%d """%H %M %S """"
+07-22 "18:55:03"`
+The date/time information from a reference file:
+date.exe -r c:\file.txt +"The timestamp of file.txt is: %Y-%m-%d %H:%M:%S"
+Using it in a CMD script to get year, month, day, time information:
+for /f "tokens=1,2,3,4,5,6* delims=," %%i in ('C:\Tools\etc\date.exe +"%%y,%%m,%%d,%%H,%%M,%%S"') do set yy=%%i& set mo=%%j& set dd=%%k& set hh=%%l& set mm=%%m& set ss=%%n
+
+Using it in a CMD script to get a timestamp in any required format:
+for /f "tokens=*" %%i in ('C:\Tools\etc\date.exe +"%%y-%%m-%%d %%H:%%M:%%S"') do set timestamp=%%i
+
+Extracting the date/time information from any reference file.
+for /f "tokens=1,2,3,4,5,6* delims=," %%i in ('C:\Tools\etc\date.exe -r file.txt +"%%y,%%m,%%d,%%H,%%M,%%S"') do set yy=%%i& set mo=%%j& set dd=%%k& set hh=%%l& set mm=%%m& set ss=%%n
+
+Adding to a file its date/time information:
+for /f "tokens=*" %%i in ('C:\Tools\etc\date.exe -r file.txt +"%%y-%%m-%%d.%%H%%M%%S"') do ren file.txt file.%%i.txt
+
+date.exe is part of the free GNU tools which need no installation.
+NOTE: Copying date.exe into any directory which is in the search path may cause other scripts to fail that use the Windows built-in date command.
+
+    @echo off
+    :: START USAGE  ==================================================================
+    ::SET THE NICETIME 
+    :: SET NICETIME=BOO
+    :: CALL GetNiceTime.cmd 
+
+    :: ECHO NICETIME IS %NICETIME%
+
+    :: echo nice time is %NICETIME%
+    :: END USAGE  ==================================================================
+
+    echo set hhmmsss
+    :: this is Regional settings dependant so tweak this according your current settings
+    for /f "tokens=1-3 delims=:" %%a in ('echo %time%') do set hhmmsss=%%a%%b%%c 
+    ::DEBUG ECHO hhmmsss IS %hhmmsss%
+    ::DEBUG PAUSE
+    echo %yyyymmdd%
+        :: this is Regional settings dependant so tweak this according your current settings
+    for /f "tokens=1-3 delims=." %%D in ('echo %DATE%') do set  yyyymmdd=%%F%%E%%D
+    ::DEBUG ECHO yyyymmdd IS %yyyymmdd%
+    ::DEBUG PAUSE
+
+
+    set NICETIME=%yyyymmdd%_%hhmmsss%
+    ::DEBUG echo THE NICETIME IS %NICETIME%
+
+    ::DEBUG PAUSE
+
+
+Here's a variant from alt.msdos.batch.nt that works local-independently.
+Put this in a text file, e.g. getDate.cmd
+-----------8<------8<------------ snip -- snip ----------8<-------------
+    :: Works on any NT/2k machine independent of regional date settings
+    @ECHO off
+    SETLOCAL ENABLEEXTENSIONS
+    if "%date%A" LSS "A" (set toks=1-3) else (set toks=2-4)
+    for /f "tokens=2-4 delims=(-)" %%a in ('echo:^|date') do (
+      for /f "tokens=%toks% delims=.-/ " %%i in ('date/t') do (
+        set '%%a'=%%i
+        set '%%b'=%%j
+        set '%%c'=%%k))
+    if %'yy'% LSS 100 set 'yy'=20%'yy'%
+    set Today=%'yy'%-%'mm'%-%'dd'% 
+    ENDLOCAL & SET v_year=%'yy'%& SET v_month=%'mm'%& SET v_day=%'dd'%
+
+    ECHO Today is Year: [%V_Year%] Month: [%V_Month%] Day: [%V_Day%]
+
+    :EOF
+-----------8<------8<------------ snip -- snip ----------8<-------------
+
+To get the code to work sans error msg's to stderr, I had to add the single quotes arount the variable assignments for %%a, %%b and %%c.  My locale (PT) was causing errors at one stage in the looping/parsing where stuff like "set =20" was getting executed. The quotes yield a token (albeit empty) for the left-hand side of the assignment statement.
+The downside is the messy locale variable names: 'yy', 'mm' and 'dd'. But hey, who cares!
+
+Here's a way to get date time in a single line:
+for /f "tokens=2,3,4,5,6 usebackq delims=:/ " %a in ('%date% %time%') do echo %c-%a-%b %d%e
+
+In the US this will output "yyyy-mm-dd hhmm". Different regional settings will result in different %date% outputs, but you can modify the token order.
+If you want a different format, modify the echo statement by rearranging the tokens or using different (or no) separators.
+
+http://sourceforge.net/projects/unxutils/files/
+Look inside the zip file for something called "Date.exe" and rename it "DateFormat.exe"
+(To avoid conflicts.)
+Put it in your windows system32 folder.
+It has a lot of "date output" options.
+For help, use DateFormat.exe --h
+I'm not sure how you would put its output into an env var... using SET.
+
+I changed the answer with the batch file from vMax so it works with the Dutch language too.
+The Dutch - persistent as we are - have a few changes in the %date%, date/t, and date that break the original batch-file.
+It would be nice if some people can check this against other Windows locales as well, and report back the results.
+If the batch-file fails at your location, then please include the output of these two statements on the command prompt:
+echo:^|date
+date/t 
+This is a sample of the output you should get from the batch-file:
+C:\temp>set-date-cmd.bat
+Today is Year: [2011] Month: [01] Day: [03]
+20110103
+
+Here is the revised code with comments on why:
+:: http://stackoverflow.com/questions/203090/how-to-get-current-datetime-on-windows-command-line-in-a-suitable-format-for-usi
+:: Works on any NT/2k machine independent of regional date settings
+::
+:: 20110103 - adapted by jeroen@pluimers.com for Dutch locale
+:: Dutch will get jj as year from echo:^|date, so the '%%c' trick does not work as it will fill 'jj', but we want 'yy'
+:: luckily, all countries seem to have year at the end: http://en.wikipedia.org/wiki/Calendar_date
+::            set '%%c'=%%k
+::            set 'yy'=%%k
+::
+:: In addition, date will display the current date before the input prompt using dashes
+:: in Dutch, but using slashes in English, so there will be two occurances of the outer loop in Dutch
+:: and one occurence in English.
+:: This skips the first iteration:
+::        if "%%a" GEQ "A"
+::
+:: echo:^|date
+:: Huidige datum: ma 03-01-2011
+:: Voer de nieuwe datum in: (dd-mm-jj)
+:: The current date is: Mon 01/03/2011
+:: Enter the new date: (mm-dd-yy)
+::
+:: date/t
+:: ma 03-01-2011
+:: Mon 01/03/2011
+::
+:: The assumption in this batch-file is that echo:^|date will return the date format
+:: using either mm and dd or dd and mm in the first two valid tokens on the second line, and the year as the last token.
+::
+:: The outer loop will get the right tokens, the inner loop assigns the variables depending on the tokens.
+:: That will resolve the order of the tokens.
+::
+@ECHO off
+    set v_day=
+    set v_month=
+    set v_year=
+
+    SETLOCAL ENABLEEXTENSIONS
+    if "%date%A" LSS "A" (set toks=1-3) else (set toks=2-4)
+::DEBUG echo toks=%toks%
+      for /f "tokens=2-4 delims=(-)" %%a in ('echo:^|date') do (
+::DEBUG echo first token=%%a
+        if "%%a" GEQ "A" (
+          for /f "tokens=%toks% delims=.-/ " %%i in ('date/t') do (
+            set '%%a'=%%i
+            set '%%b'=%%j
+            set 'yy'=%%k
+          )
+        )
+      )
+      if %'yy'% LSS 100 set 'yy'=20%'yy'%
+      set Today=%'yy'%-%'mm'%-%'dd'%
+
+    ENDLOCAL & SET v_year=%'yy'%& SET v_month=%'mm'%& SET v_day=%'dd'%
+
+    ECHO Today is Year: [%V_Year%] Month: [%V_Month%] Day: [%V_Day%]
+    set datestring=%V_Year%%V_Month%%V_Day%
+    echo %datestring%
+
+    :EOF
+
+--jeroen
+
+And here is a similar batch-file for the time portion.  
+:: http://stackoverflow.com/questions/203090/how-to-get-current-datetime-on-windows-command-line-in-a-suitable-format-for-usi
+:: Works on any NT/2k machine independent of regional time settings
+::
+:: Gets the time in ISO 8601 24-hour format
+::
+:: Note that %time% gets you fractions of seconds, and time /t doesn't, but gets you AM/PM if your locale supports that.
+:: Since ISO 8601 does not care about AM/PM, we use %time%
+::
+    @ECHO off
+    SETLOCAL ENABLEEXTENSIONS
+    for /f "tokens=1-4 delims=:,.-/ " %%i in ('echo %time%') do (
+      set 'hh'=%%i
+      set 'mm'=%%j
+      set 'ss'=%%k
+      set 'ff'=%%l)
+    ENDLOCAL & SET v_Hour=%'hh'%& SET v_Minute=%'mm'%& SET v_Second=%'ss'%& SET v_Fraction=%'ff'%
+
+    ECHO Now is Hour: [%V_Hour%] Minute: [%V_Minute%] Second: [%v_Second%] Fraction: [%v_Fraction%]
+    set timestring=%V_Hour%%V_Minute%%v_Second%.%v_Fraction%
+    echo %timestring%
+
+    :EOF
+
+--jeroen
+
+I had a similar problem. I have an automatic daily download from an FTP server of an encrypted file. I wanted to decrypt the file using gpg, rename the file to the current date (YYYYMMDD format) and drop the decrypted file into a folder for the correct department.
+I went through several suggestions for renaming the file according to date and was having no luck until I stumbled upon this simple solution.
+for /f "tokens=1-5 delims=/ " %%d in ("%date%") do rename "decrypted.txt" %%g-%%e-%%f.txt
+
+It worked perfectly (i.e., the filename comes out as "2011-06-14.txt").
+(Source)
+
+Please use the following script to get the current day in the command line:
+echo %Date:~0,3%day
+
+
+Regional independent solution generating the ISO date format:
+rem save the existing format definition
+for /f "skip=2 tokens=3" %%a in ('reg query "HKCU\Control Panel\International" /v sShortDate') do set FORMAT=%%a
+rem set ISO specific format definition
+reg add "HKCU\Control Panel\International" /v sShortDate /t REG_SZ /f /d yyyy-MM-dd 1>nul:
+rem query the date in the ISO specific format 
+set ISODATE=%DATE%
+rem restore previous format definition
+reg add "HKCU\Control Panel\International" /v sShortDate /t REG_SZ /f /d %FORMAT% 1>nul:
+
+What could still be optimized:
+Other processes might get confused if using the date format in the short period while it is modified. So parsing the output according to the existing format string could be 'safer' - but will be more complicated
+
+Matthew Johnson's one-liner solution to get the one-liner date and time is eloquent and useful.  It does however need simple modification to work from within a batch file: for /f "tokens=2,3,4,5,6 usebackq delims=:/ " %%a in ('%date% %time%') do echo %%c-%%a-%%b %%d%%e
+
+Two more ways that do not depend on the time settings (both taken from :How get data/time independent from localization:).And both also get the day of the week and none of them requires admin permissions!:
+1.MAKECAB - will work on EVERY windows system (fast but creates a small temp file ) (the foxidrive script):
+@echo off
+pushd "%temp%"
+makecab /D RptFileName=~.rpt /D InfFileName=~.inf /f nul >nul
+for /f "tokens=3-7" %%a in ('find /i "makecab"^<~.rpt') do (
+   set "current-date=%%e-%%b-%%c"
+   set "current-time=%%d"
+   set "weekday=%%a"
+)
+del ~.*
+popd
+echo %weekday% %current-date% %current-time%
+pause
+
+more information about get-date function.
+2 . ROBOCOPY - it's not native command for windows xp and win 2003 but can be downloaded from microsoft site  .But is built-in in everything from Vista and above:
+ @echo off
+setlocal 
+for /f "skip=8 tokens=2,3,4,5,6,7,8 delims=: " %%D in ('robocopy /l * \ \ /ns /nc /ndl /nfl /np /njh /XF * /XD *') do (
+ set "dow=%%D"
+ set "month=%%E"
+ set "day=%%F"
+ set "HH=%%G"
+ set "MM=%%H"
+ set "SS=%%I"
+ set "year=%%J"
+)
+
+echo Day of the week: %dow%
+echo Day of the month : %day%
+echo Month : %month%
+echo hour : %HH%
+echo minutes : %MM%
+echo seconds : %SS%
+echo year : %year%
+endlocal
+
+And three more ways that uses other windows script languages.They will give you more flexibility e.g. you can get week of the year, time in milliseconds and so on.
+3.JSCRIPT/BATCH hybrid (need to be saved as .bat).Jscript is available on every system form NT and above , as a part of windows script host (though can be disabled through the registry it's a rare case):
+@if (@X)==(@Y) @end /* ---Harmless hybrid line that begins a JScript comment
+
+@echo off
+cscript //E:JScript //nologo "%~f0"
+exit /b 0
+*------------------------------------------------------------------------------*/
+
+function GetCurrentDate() {
+        // Today date time which will used to set as default date.
+        var todayDate = new Date();
+        todayDate = todayDate.getFullYear() + "-" +
+                       ("0" + (todayDate.getMonth() + 1)).slice(-2) + "-" +
+                       ("0" + todayDate.getDate()).slice(-2) + " " + ("0" + todayDate.getHours()).slice(-2) + ":" +
+                       ("0" + todayDate.getMinutes()).slice(-2);
+
+        return todayDate;
+    }
+
+WScript.Echo(GetCurrentDate()); 
+
+4.VSCRIPT/BATCH hybrid (Is it possible to embed and execute VBScript within a batch file without using a temporary file?) same case as jscript , but hybridization is not so perfect:
+:sub echo(str) :end sub
+echo off
+'>nul 2>&1|| copy /Y %windir%\System32\doskey.exe %windir%\System32\'.exe >nul
+'& echo current date:
+'& cscript /nologo /E:vbscript "%~f0"
+'& exit /b
+
+'0 = vbGeneralDate - Default. Returns date: mm/dd/yy and time if specified: hh:mm:ss PM/AM.
+'1 = vbLongDate - Returns date: weekday, monthname, year
+'2 = vbShortDate - Returns date: mm/dd/yy
+'3 = vbLongTime - Returns time: hh:mm:ss PM/AM
+'4 = vbShortTime - Return time: hh:mm
+
+WScript.echo  Replace(FormatDateTime(Date,1),", ","-") 
+
+5.POWERSHELL - can be installed on every machine that has .net - download from Microsoft (v1 , v2 , v3 (only for win7 and above)).Installed by default on everything form Win7/Win2008 and above :
+C:\>powershell get-date -format "{dd-MMM-yyyy HH:mm}"
+
+to use it from batch file:
+for /f "delims=" %%# in ('powershell get-date -format "{dd-MMM-yyyy HH:mm}"') do @set _date=%%#
+
+6.Self-compiled jscript.net/batch (never seen a windows machine without .net so I think this is a pretty portable):
+@if (@X)==(@Y) @end /****** silent line that start jscript comment ******
+
+@echo off
+::::::::::::::::::::::::::::::::::::
+:::       compile the script    ::::
+::::::::::::::::::::::::::::::::::::
+setlocal
+if exist "%~n0.exe" goto :skip_compilation
+
+set "frm=%SystemRoot%\Microsoft.NET\Framework\"
+:: searching the latest installed .net framework
+for /f "tokens=* delims=" %%v in ('dir /b /s /a:d /o:-n "%SystemRoot%\Microsoft.NET\Framework\v*"') do (
+    if exist "%%v\jsc.exe" (
+        rem :: the javascript.net compiler
+        set "jsc=%%~dpsnfxv\jsc.exe"
+        goto :break_loop
+    )
+)
+echo jsc.exe not found && exit /b 0
+:break_loop
+
+
+call %jsc% /nologo /out:"%~n0.exe" "%~dpsfnx0"
+::::::::::::::::::::::::::::::::::::
+:::       end of compilation    ::::
+::::::::::::::::::::::::::::::::::::
+:skip_compilation
+
+"%~n0.exe" 
+
+exit /b 0
+
+
+****** end of jscript comment ******/
+import System;
+import System.IO;
+
+var dt=DateTime.Now;
+ Console.WriteLine(dt.ToString("yyyy-MM-dd hh:mm:ss"));
+
+7.Logman This cannot get the year and day of the week.It's comparatively slow , also creates a temp file and is based on the time stamps that logman puts on its log files.Will work everything from XP and above.Probably will be never used by anybody - including me - but is one more way...
+@echo off
+setlocal
+del /q /f %temp%\timestampfile_*
+
+Logman.exe stop ts-CPU 1>nul 2>&1
+Logman.exe delete ts-CPU 1>nul 2>&1
+
+Logman.exe create counter ts-CPU  -sc 2 -v mmddhhmm -max 250 -c "\Processor(_Total)\%% Processor Time" -o %temp%\timestampfile_ >nul
+Logman.exe start ts-CPU 1>nul 2>&1
+
+Logman.exe stop ts-CPU >nul 2>&1
+Logman.exe delete ts-CPU >nul 2>&1
+for /f "tokens=2 delims=_." %%t in  ('dir /b %temp%\timestampfile_*^&del /q/f %temp%\timestampfile_*') do set timestamp=%%t
+
+echo %timestamp%
+echo MM: %timestamp:~0,2%
+echo dd: %timestamp:~2,2%
+echo hh: %timestamp:~4,2%
+echo mm: %timestamp:~6,2%
+
+endlocal
+exit /b 0
+
+8 . one more way with WMIC which also gives week of the year and the day of the week , but not the milliseconds (for milliseconds check foxidrive's answer):
+for /f %%# in ('wMIC Path Win32_LocalTime Get /Format:value') do @for /f %%@ in ("%%#") do @set %%@
+echo %day%
+echo %DayOfWeek%
+echo %hour%
+echo %minute%
+echo %month%
+echo %quarter%
+echo %second%
+echo %weekinmonth%
+echo %year%
+
+9 . Using TYPEPERF with some efforts to be fast and compatible with different language settings and as fast as possible:
+@echo off
+setlocal 
+
+::check if windows is XP and use XP valid counter for UDP performance
+::if defined USERDOMAIN_roamingprofile (set "v=v4") else (set "v=")
+
+for /f "tokens=4 delims=. " %%# in ('ver') do if %%# GTR 5 (set "v=v4") else ("v=")
+set "mon="
+for /f "skip=2 delims=," %%# in ('typeperf "\UDP%v%\*" -si 0 -sc 1') do ( 
+   if not defined mon (
+      for /f "tokens=1-7 delims=.:/ " %%a in (%%#) do (
+        set mon=%%a
+        set date=%%b
+        set year=%%c
+        set hour=%%d
+        set minute=%%e
+        set sec=%%f
+        set ms=%%g
+      )
+   )
+)
+echo %year%.%mon%.%date%
+echo %hour%:%minute%:%sec%.%ms%
+endlocal
+
+10 . MSHTA allows calling JavaScript methods similar to the JScript method demonstrated in #3 above.  Bear in mind that JavaScript's Date object properties involving month values are numbered from 0 to 11, not 1 to 12.  So a value of 9 means October.
+<!-- : batch portion
+
+@echo off
+setlocal
+
+for /f "delims=" %%I in ('mshta "%~f0"') do set "now.%%~I"
+
+rem display all variables beginning with "now."
+set now.
+
+goto :EOF
+
+end batch / begin HTA -->
+<script>
+resizeTo(0,0)
+var fso = new ActiveXObject('Scripting.FileSystemObject').GetStandardStream(1),
+    now = new Date(),
+    props=['getDate','getDay','getFullYear','getHours','getMilliseconds','getMinutes',
+        'getMonth','getSeconds','getTime','getTimezoneOffset','getUTCDate','getUTCDay',
+        'getUTCFullYear','getUTCHours','getUTCMilliseconds','getUTCMinutes','getUTCMonth',
+        'getUTCSeconds','getYear','toDateString','toGMTString','toLocaleDateString',
+        'toLocaleTimeString','toString','toTimeString','toUTCString','valueOf'],
+    output = [];
+
+for (var i in props) {output.push(props[i] + '()=' + now[props[i]]())}
+close(fso.Write(output.join('\n')));
+</script>
+
+
+A function that is based on wmic:
+:Now  -- Gets the current date and time into separate variables
+::    %~1: [out] Year
+::    %~2: [out] Month
+::    %~3: [out] Day
+::    %~4: [out] Hour
+::    %~5: [out] Minute
+::    %~6: [out] Second
+  setlocal
+  for /f %%t in ('wmic os get LocalDateTime ^| findstr /b [0-9]') do set T=%%t
+  endlocal & (
+    if "%~1" neq "" set %~1=%T:~0,4%
+    if "%~2" neq "" set %~2=%T:~4,2%
+    if "%~3" neq "" set %~3=%T:~6,2%
+    if "%~4" neq "" set %~4=%T:~8,2%
+    if "%~5" neq "" set %~5=%T:~10,2%
+    if "%~6" neq "" set %~6=%T:~12,2%
+  )
+goto:eof
+
+Upside: Region independent. Downside: Only admins can run wmic.exe.
+Usage:
+call:Now Y M D H N S
+echo %Y%-%M%-%D% %H%:%N%:%S%
+
+this echos a string like this:
+2014-01-22 12:51:53
+
+Note that function parameters are out-Parameters - that is, you must supply variable names instead of values. 
+All parameters are optional, so call:Now Y M is a valid call if you only want to get year and month.
+
+The first four lines of this code will give you reliable YY DD MM YYYY HH Min Sec variables in XP Pro and higher.
+@echo off
+for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set "dt=%%a"
+set "YY=%dt:~2,2%" & set "YYYY=%dt:~0,4%" & set "MM=%dt:~4,2%" & set "DD=%dt:~6,2%"
+set "HH=%dt:~8,2%" & set "Min=%dt:~10,2%" & set "Sec=%dt:~12,2%"
+
+set "datestamp=%YYYY%%MM%%DD%" & set "timestamp=%HH%%Min%%Sec%" & set "fullstamp=%YYYY%-%MM%-%DD%_%HH%%Min%-%Sec%"
+echo datestamp: "%datestamp%"
+echo timestamp: "%timestamp%"
+echo fullstamp: "%fullstamp%"
+pause
+
+
+Just use this line:
+PowerShell -Command "get-date"
+
+
+Given a known locality, for reference in functional form. The ECHOTIMESTAMP call shows how to get the timestamp into a variable (DTS in this example.)
+@ECHO off
+
+CALL :ECHOTIMESTAMP
+GOTO END
+
+:TIMESTAMP
+SETLOCAL  EnableDelayedExpansion
+    SET DATESTAMP=!DATE:~10,4!-!DATE:~4,2!-!DATE:~7,2!
+    SET TIMESTAMP=!TIME:~0,2!-!TIME:~3,2!-!TIME:~6,2!
+    SET DTS=!DATESTAMP: =0!-!TIMESTAMP: =0!
+ENDLOCAL & SET "%~1=%DTS%"
+GOTO :EOF
+
+:ECHOTIMESTAMP
+SETLOCAL
+    CALL :TIMESTAMP DTS
+    ECHO %DTS%
+ENDLOCAL
+GOTO :EOF
+
+:END
+
+EXIT /b 0
+
+And saved to file, timestamp.bat, here's the output:
+
+
+I know that there are numerous ways mentioned already. But here is my way to break it down to understand how it is done. Hopefully, it is helpful for someone who like step by step method.
+:: Check your local date format
+echo %date%
+
+    :: Output is Mon 08/15/2016
+
+:: get day (start index, number of characters)
+::         (index starts with zero)
+set myday=%DATE:~0,4%
+echo %myday%
+    :: output is Mon 
+
+:: get month
+set mymonth=%DATE:~4,2%
+echo %mymonth%
+    :: output is 08
+
+:: get date 
+set mydate=%DATE:~7,2% 
+echo %mydate%
+    :: output is 15
+
+:: get year
+set myyear=%DATE:~10,4%
+echo %myyear%
+    :: output is 2016
+
+
+with windows 7, for me works this code:
+SET DATE=%date%
+SET YEAR=%DATE:~0,4%
+SET MONTH=%DATE:~5,2%
+SET DAY=%DATE:~8,2%
+ECHO %YEAR%
+ECHO %MONTH%
+ECHO %DAY%
+
+SET DATE_FRM=%YEAR%-%MONTH%-%DAY% 
+ECHO %DATE_FRM%
+

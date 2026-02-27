@@ -1,0 +1,287 @@
+Can I invoke an instance method on a Ruby module without including it?
+ruby module methods
+Background:
+I have a module which declares a number of instance methods
+module UsefulThings
+  def get_file; ...
+  def delete_file; ...
+
+  def format_text(x); ...
+end
+
+And I want to call some of these methods from within a class. How you normally do this in ruby is like this:
+class UsefulWorker
+  include UsefulThings
+
+  def do_work
+    format_text("abc")
+    ...
+  end
+end
+
+Problem
+include UsefulThings brings in all of the methods from UsefulThings. In this case I only want format_text and explicitly do not want get_file and delete_file.
+I can see several possible solutions to this: 
+
+Somehow invoke the method directly on the module without including it anywhere
+
+I don't know how/if this can be done. (Hence this question)
+
+Somehow include Usefulthings and only bring in some of it's methods
+
+I also don't know how/if this can be done
+
+Create a proxy class, include UsefulThings in that, then delegate format_text to that proxy instance
+
+This would work, but anonymous proxy classes are a hack. Yuck.
+
+Split up the module into 2 or more smaller modules
+
+This would also work, and is probably the best solution I can think of, but I'd prefer to avoid it as I'd end up with a proliferation of dozens and dozens of modules - managing this would be burdensome
+
+
+Why are there lots of unrelated functions in a single module? It's ApplicationHelper from a rails app, which our team has de-facto decided on as the dumping ground for anything not specific enough to belong anywhere else. Mostly standalone utility methods that get used everywhere. I could break it up into seperate helpers, but there'd be 30 of them, all with 1 method each... this seems unproductive
+
+
+Firstly, I'd recommend breaking the module up into the useful things you need.  But you can always create a class extending that for your invocation:
+module UsefulThings
+  def a
+    puts "aaay"
+  end
+  def b
+    puts "beee"
+  end
+end
+
+def test
+  ob = Class.new.send(:include, UsefulThings).new
+  ob.a
+end
+
+test
+
+
+If you want to call these methods without including module in another class then you need to define them as module methods:
+module UsefulThings
+  def self.get_file; ...
+  def self.delete_file; ...
+
+  def self.format_text(x); ...
+end
+
+and then you can call them with
+UsefulThings.format_text("xxx")
+
+or
+UsefulThings::format_text("xxx")
+
+But anyway I would recommend that you put just related methods in one module or in one class. If you have problem that you want to include just one method from module then it sounds like a bad code smell and it is not good Ruby style to put unrelated methods together.
+
+Another way to do it if you "own" the module is to use module_function.
+module UsefulThings
+  def a
+    puts "aaay"
+  end
+  module_function :a
+
+  def b
+    puts "beee"
+  end
+end
+
+def test
+  UsefulThings.a
+  UsefulThings.b # Fails!  Not a module method
+end
+
+test
+
+
+If a method on a module is turned into a module function you can simply call it off of Mods as if it had been declared as
+module Mods
+  def self.foo
+     puts "Mods.foo(self)"
+  end
+end
+
+The module_function approach below will avoid breaking any classes which include all of Mods.
+module Mods
+  def foo
+    puts "Mods.foo"
+  end
+end
+
+class Includer
+  include Mods
+end
+
+Includer.new.foo
+
+Mods.module_eval do
+  module_function(:foo)
+  public :foo
+end
+
+Includer.new.foo # this would break without public :foo above
+
+class Thing
+  def bar
+    Mods.foo
+  end
+end
+
+Thing.new.bar
+
+However, I'm curious why a set of unrelated functions are all contained within the same module in the first place?  
+Edited to show that includes still work if public :foo is called after module_function :foo
+
+I think the shortest way to do just throw-away single call (without altering existing modules or creating new ones) would be as follows:
+Class.new.extend(UsefulThings).get_file
+
+
+A. In case you, always want to call them in a "qualified", standalone way (UsefulThings.get_file), then just make them static as others pointed out, 
+module UsefulThings
+  def self.get_file; ...
+  def self.delete_file; ...
+
+  def self.format_text(x); ...
+
+  # Or.. make all of the "static"
+  class << self
+     def write_file; ...
+     def commit_file; ...
+  end
+
+end
+
+B. If you still want to keep the mixin approach in same cases, as well the one-off standalone invocation, you can have a one-liner module that extends itself with the mixin:
+module UsefulThingsMixin
+  def get_file; ...
+  def delete_file; ...
+
+  def format_text(x); ...
+end
+
+module UsefulThings
+  extend UsefulThingsMixin
+end
+
+So both works then: 
+  UsefulThings.get_file()       # one off
+
+   class MyUser
+      include UsefulThingsMixin  
+      def f
+         format_text             # all useful things available directly
+      end
+   end 
+
+IMHO it's cleaner than module_function for every single method - in case want all of them.
+
+To invoke a module instance method without including the module (and without creating intermediary objects):
+class UsefulWorker
+  def do_work
+    UsefulThings.instance_method(:format_text).bind(self).call("abc")
+    ...
+  end
+end
+
+
+As I understand the question, you want to mix some of a module's instance methods into a class.
+Let's begin by considering how Module#include works. Suppose we have a module UsefulThings that contains two instance methods:
+module UsefulThings
+  def add1
+    self + 1
+  end
+  def add3
+    self + 3
+  end
+end
+
+UsefulThings.instance_methods
+  #=> [:add1, :add3]
+
+and Fixnum includes that module:
+class Fixnum
+  def add2
+    puts "cat"
+  end
+  def add3
+    puts "dog"
+  end
+  include UsefulThings
+end
+
+We see that:
+Fixnum.instance_methods.select { |m| m.to_s.start_with? "add" }
+  #=> [:add2, :add3, :add1] 
+1.add1
+2 
+1.add2
+cat
+1.add3
+dog
+
+Were you expecting UsefulThings#add3 to override Fixnum#add3, so that 1.add3 would return 4? Consider this:
+Fixnum.ancestors
+  #=> [Fixnum, UsefulThings, Integer, Numeric, Comparable,
+  #    Object, Kernel, BasicObject] 
+
+When the class includes the module, the module becomes the class' superclass. So, because of how inheritance works, sending add3 to an instance of Fixnum will cause Fixnum#add3 to be invoked, returning dog.
+Now let's add a method :add2 to UsefulThings:
+module UsefulThings
+  def add1
+    self + 1
+  end
+  def add2
+    self + 2
+  end
+  def add3
+    self + 3
+  end
+end
+
+We now wish Fixnum to include only the methods add1 and add3. Is so doing, we expect to get the same results as above.
+Suppose, as above, we execute:
+class Fixnum
+  def add2
+    puts "cat"
+  end
+  def add3
+    puts "dog"
+  end
+  include UsefulThings
+end
+
+What is the result? The unwanted method :add2 is added to Fixnum, :add1 is added and, for reasons I explained above, :add3 is not added. So all we have to do is undef :add2. We can do that with a simple helper method:
+module Helpers
+  def self.include_some(mod, klass, *args)
+    klass.send(:include, mod)
+    (mod.instance_methods - args - klass.instance_methods).each do |m|
+      klass.send(:undef_method, m)
+    end
+  end
+end
+
+which we invoke like this:
+class Fixnum
+  def add2
+    puts "cat"
+  end
+  def add3
+    puts "dog"
+  end
+  Helpers.include_some(UsefulThings, self, :add1, :add3)
+end
+
+Then:
+Fixnum.instance_methods.select { |m| m.to_s.start_with? "add" }
+  #=> [:add2, :add3, :add1] 
+1.add1
+2 
+1.add2
+cat
+1.add3
+dog
+
+which is the result we want.

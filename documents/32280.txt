@@ -1,0 +1,190 @@
+Passing null to a method
+java  assert
+I am in the middle of reading the excellent Clean Code
+One discussion is regarding passing nulls into a method.
+public class MetricsCalculator {
+    public double xProjection(Point p1, Point p2) {
+        return (p2.x - p1.x) * 1.5;
+    }
+}
+...
+calculator.xProjection(null, new Point(12,13));
+
+It represents different ways of handling this:
+public double xProjection(Point p1, Point p2) {
+    if (p1 == null || p2 == null) {
+        throw new IllegalArgumentException("Invalid argument for xProjection");
+    }
+    return (p2.x - p1.x) * 1.5;
+}
+
+public double xProjection(Point p1, Point p2) {
+    assert p1 != null : "p1 should not be null";
+    assert p2 != null : "p2 should not be null";
+    return (p2.x - p1.x) * 1.5;
+}
+
+I prefer the assertions approach, but I don't like the fact that assertions are turned off by default.
+The book finally states:
+
+In most programming languages there is no good way to deal with a null that is passed by a caller accidentally. Because this is the case, the rational approach is to forbid passing null by default.
+
+It doesn't really go into how you would enforce this restriction?
+Do any of you have strong opinions either way.
+
+
+I generally prefer not doing either, since it's just slowing things down. NullPointerExceptions are thrown later on anyway, which will quickly lead the user to discovering they're passing null to the method. I used to check, but 40% of my code ended up being checking code, at which point I decided it was just not worth the nice assertion messages.
+
+
+It doesn't really go into how you would enforce this restriction?
+
+You enforce it by throwing an ArgumentExcexception if they pass in null.
+if (p1 == null || p2 == null) {
+    throw new ArgumentExcexception("Invalid argument for xProjection");
+}
+
+
+I agree or disagree with wvdschel's post, it depends on what he's specifically saying.
+In this case, sure, this method will crash on null so the explicit check here is probably not needed.
+However, if the method simply stores the passed data, and there is some other method that you call later that will deal with it, discovering bad input as early as possible is the key to fixing bugs faster. At that later point, there could be a myriad of ways that bad data happened to be given to your class. It's sort of trying to figure out how the rats came into your house after the fact, trying to find the hole somewhere.
+
+I prefer the use of assertions. 
+I have a rule that I only use assertions in public and protected methods. This is because I believe the calling method should ensure that it is passing valid arguments to private methods.
+
+General rule is if your method doesn't expect null arguments then you should throw System.ArgumentNullException. Throwing proper exception not only protects you from resource corruption and other bad things but serves as a guide for users of your code saving time spent debugging your code.
+Also read an article on Defensive programming
+
+@Chris Karcher I would say absolutely correct. The only thing I would say is check the params separately and have the exeption report the param that was null also as it makes tracking where the null is coming from much easier.
+@wvdschel wow! If writing the code is too much effort for you, you should look into something like PostSharp (or a Java equivalent if one is available) which can post-process your assemblies and insert param checks for you. 
+
+@lassevk:
+
+However, if the method simply stores the passed data, and there is some other method that you call later that will deal with it, discovering bad input as early as possible is the key to fixing bugs faster. At that later point, there could be a myriad of ways that bad data happened to be given to your class. It's sort of trying to figure out how the rats came into your house after the fact, trying to find the hole somewhere.
+
+You're right about that, these checks should only be enforced when data is only stored to be processed or used later, I didn't think of that scenario.
+@Shaun Austin:
+
+wow! If writing the code is too much effort for you, ...
+
+Writing code is not the problem, writing monkey code that bothers me. Writing code that a machine could have written better. That library looks like it does just that, thanks for pointing it out!
+
+Although it is not strictly related you might want to take a look to Spec#.
+I think it is still in development (by Microsoft) but some CTP are available and it looks promising. Basically it allows you to do this:
+  public static int Divide(int x, int y)
+    requires y != 0 otherwise ArgumentException; 
+  {
+  }
+
+or
+  public static int Subtract(int x, int y)
+    requires x > y;
+    ensures result > y;
+  {
+    return x - y;
+  }
+
+It also provides another features like Notnull types. It's build on top of the .NET Framework 2.0 and it's fully compatible. The syntaxt, as you may see, is C#.
+
+Spec# looks very interesting!
+When something like that isn't available, I generally test non-private methods with a run-time null-check, and assertions for internal methods.  Rather than code the null check explicitly in each method, I delegate that to a utilities class with a check null method:
+/**
+ * Checks to see if an object is null, and if so 
+ * generates an IllegalArgumentException with a fitting message.
+ * 
+ * @param o The object to check against null.
+ * @param name The name of the object, used to format the exception message
+ *
+ * @throws IllegalArgumentException if o is null.
+ */
+public static void checkNull(Object o, String name) 
+    throws IllegalArgumentException {
+   if (null == o)
+      throw new IllegalArgumentException(name + " must not be null");
+}
+
+public static void checkNull(Object o) throws IllegalArgumentException {
+   checkNull(o, "object");
+} 
+
+// untested:
+public static void checkNull(Object... os) throws IllegalArgumentException {
+   for(Object o in os) checkNull(o);  
+}
+
+Then checking turns into:
+public void someFun(String val1, String val2) throws IllegalArgumentException {
+   ExceptionUtilities.checkNull(val1, "val1");
+   ExceptionUtilities.checkNull(val2, "val2");
+
+   /** alternatively:
+   ExceptionUtilities.checkNull(val1, val2);
+   **/
+
+   /** ... **/
+}
+
+That can be added with editor macros, or a code-processing script.
+Edit: The verbose check could be added this way as well, but I think it's significantly easier to automate the addition of a single line.
+
+Also not of immediate use, but related to the mention of Spec#... There's a proposal to add "null-safe types" to a future version of Java: "Enhanced null handling - Null-safe types".
+Under the proposal, your method would become
+public class MetricsCalculator {
+    public double xProjection(#Point p1, #Point p2) {
+        return (p2.x - p1.x) * 1.5;
+    }
+}
+
+where #Point is the type of non-null references to objects of type Point.
+
+Thwrowing C# ArgumentException, or Java IllegalArgumentException right at the beginning of the method looks to me as the clearest of solutions. 
+One should always be careful with Runtime Exceptions - exceptions that are not declared on the method signature. Since the compiler doesn't enforce you to catch these it's really easy to forget about them. Make sure you have some kind of a "catch all" exception handling to prevent the software to halt abruptly. That's the most important part of your user experience.
+
+The best way to handle this really would be the use of exceptions. Ultimately, the asserts are going to end up giving a similar experience to the end user but provide no way for the developer calling your code to handle the situation before showing an exception to the end user. Ultimatley, you want to ensure that you test for invalid inputs as early as possible (especially in public facing code) and provide the appropriate exceptions that the calling code can catch.
+
+
+In most programming languages there is no good way to deal with a null that is passed by a caller accidentally. Because this is the case, the rational approach is to forbid passing null by default.
+
+I found JetBrains' @Nullable and @NotNull annotations approach for dealing with this the most ingenious, so far. It's IDE specific, unfortunately, but really clean and powerful, IMO.
+http://www.jetbrains.com/idea/documentation/howto.html 
+Having this (or something similar) as a java standard would be really nice.
+
+Both the use of assertions and the throwing of exceptions are valid approaches here.  Either mechanism can be used to indicate a programming error, not a runtime error, as is the case here.
+
+Assertions have the advantage of performance as they are typically disabled on production systems.  
+Exceptions have the advantage of safety, as the check is always performed.  
+
+The choice really depends on the development practices of the project.  The project as a whole needs to decide on an assertion policy: if the choice is to enable assertions during all development, then I'd say to use assertions to check this kind of invalid parameter - in a production system, a NullPointerException thrown due to a programming error is unlikely to be able to be caught and handled in a meaningful way anyway and so will act just like an assertion.
+Practically though, I know a lot of developers that don't trust that assertions will be enabled when appropriate and so opt for the safety of throwing a NullPointerException.
+Of course if you can't enforce a policy for your code (if you're creating a library, for example, and so are dependent on how other developers run your code), you should opt for the safe approach of throwing NullPointerException for those methods that are part of the library's API.
+
+Slightly off-topic, but one feature of findbugs that I think is very useful is to be able to annotate the parameters of methods to describe which parameters should not be passed a null value.  
+Using static analysis of your code, findbugs can then point out locations where the method is called with a potentially null value.  
+This has two advantages:
+
+The annotation describes your intention for how the method should be called, aiding documentation
+FindBugs can point to potential problem callers of the method, allowing you to track down potential bugs.
+
+Only useful when you have access to the code that calls your methods ... but that is usually the case.
+
+@aku
+
+then you should throw System.ArgumentNullException
+
+I don't see how throwing a .net framework exception is going to help him :)
+Otherwise, in a Java way, assuming the null comes from a programming error (ie. should never go outside the testing phase), then leave the system throw it, or if there are side-effects reaching that point, check for null at the beginning and throw either IllegalArgumentException or NullPointerException.
+If the null could come from an actual exceptional case but you don't want to use a checked exception for that, then you definitely want to go the IllegalArgumentException route at the beginning of the method.
+
+Since off-topic seems to have become the topic, Scala takes an interesting approach to this. All types are assumed to be not null, unless you explicity wrap it in an Option to indicate that it might be null. So:
+//  allocate null
+var name : Option[String]
+name = None
+
+//  allocate a value
+name = Any["Hello"]
+
+//  print the value if we can
+name match {
+  Any[x] => print x
+  _ => print "Nothing at all"
+}
+

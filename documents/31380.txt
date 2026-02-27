@@ -1,0 +1,53 @@
+Is there a reason to use BufferedReader over InputStreamReader when reading all characters?
+java performance http io buffer
+I currently use the following function to do a simple HTTP GET.
+public static String download(String url) throws java.io.IOException {
+    java.io.InputStream s = null;
+    java.io.InputStreamReader r = null;
+    //java.io.BufferedReader b = null;
+    StringBuilder content = new StringBuilder();
+    try {
+        s = (java.io.InputStream)new URL(url).getContent();
+
+        r = new java.io.InputStreamReader(s);
+        //b = new java.io.BufferedReader(r);
+
+        char[] buffer = new char[4*1024];
+        int n = 0;
+        while (n >= 0) {
+            n = r.read(buffer, 0, buffer.length);
+            if (n > 0) {
+                content.append(buffer, 0, n);
+            }
+        }
+    }
+    finally {
+        //if (b != null) b.close();
+        if (r != null) r.close();
+        if (s != null) s.close();
+    }
+    return content.toString();
+}
+
+I see no reason to use the BufferedReader since I am just going to download everything in sequence. Am I right in thinking there is no use for the BufferedReader in this case?
+
+
+You are correct, if you use BufferedReader for reading HTTP content and headers you will want InputStreamReader so you can read byte for byte. 
+BufferedReader in this scenario sometimes does weird things...escpecially when it comes to reading HTTP POST headers, sometimes you will be unable to read the POST data, if you use the InputStreamReader you can read the content length and read that many bytes...
+
+My gut tells me that since you're already performing buffering by using the byte array, it's redundant to use the BufferedReader.
+
+In this case, I would do as you are doing (use a byte array for buffering and not one of the stream buffers).
+There are exceptions, though. One place you see buffers (output this time) is in the servlet API. Data isn't written to the underlying stream until flush() is called, allowing you to buffer output but then dump the buffer if an error occurs and write an error page instead. You might buffer input if you needed to reset the stream for rereading using mark(int) and reset(). For example, maybe you'd inspect the file header before deciding on which content handler to pass the stream to.
+Unrelated, but I think you should rewrite your stream handling. This pattern works best to avoid resource leaks:
+    InputStream stream = new FileInputStream("in");
+    try { //no operations between open stream and try block
+        //work
+    } finally { //do nothing but close this one stream in the finally
+        stream.close();
+    }
+
+If you are opening multiple streams, nest try/finally blocks.
+Another thing your code is doing is making the assumption that the returned content is encoded in your VM's default character set (though that might be adequate, depending on the use case).
+
+Each invocation of one of an InputStreamReader's read() methods may cause one or more bytes to be read from the underlying byte-input stream. To enable the efficient conversion of bytes to characters, more bytes may be read ahead from the underlying stream than are necessary to satisfy the current read operation.

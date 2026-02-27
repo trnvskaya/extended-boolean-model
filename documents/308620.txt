@@ -1,0 +1,72 @@
+LINQ To SQL Weird Join Issue
+c# linq-to-sql inner-join
+I have a simple database with two tables. Users and Configurations. A user has a foreign key to link it to a particular configuration.
+I am having a strange problem where the following query always causes an inner join to the Configuration table regardless of the second parameter value. As far as I can tell, even though the "UserConfiguration =" part of the object initialisation is conditional, LINQ doesn't see that and determines that a relationship is followed in any case.
+If I actually remove that last initialisation, the whole thing works as expected. It doesn't inner join when loadConfiguration == false and it does join when loadConfiguration == true.
+Anyone got any ideas about this? Is this syntax just not going to work? The only thought I have now is to wrap the return in a basic if statement - I just wanted to avoid the duplicated lines.
+public UserAccount GetByUsername(string username, bool loadConfiguration)
+{
+    using (Database database = new Database())
+    {
+        if (loadConfiguration)
+        {
+            DataLoadOptions loadOptions = new DataLoadOptions();
+            loadOptions.LoadWith<User>(c => c.Configuration);
+            database.LoadOptions = loadOptions;
+        }
+
+        return (from c in database.Users
+                where c.Username == username
+                select new UserAccount
+                {
+                    ID = c.ID,
+                    ConfigurationID = c.ConfigurationID,
+                    Username = c.Username,
+                    Password = c.Password.ToArray(),
+                    HashSalt = c.HashSalt,
+                    FirstName = c.FirstName,
+                    LastName = c.LastName,
+                    EmailAddress = c.EmailAddress,
+
+                    UserConfiguration = (loadConfiguration) ? new ApplicationConfiguration
+                    {
+                        ID = c.Configuration.ID,
+                        MonthlyAccountPrice = c.Configuration.MonthlyAccountPrice,
+                        TrialAccountDays = c.Configuration.TrialAccountDays,
+                        VAT = c.Configuration.VAT,
+                        DateCreated = c.Configuration.DateCreated
+
+                    } : null
+
+                }).Single();
+    }
+}
+
+Thanks in advance,
+Martin.
+
+
+I dont think it will work like that.
+I suggest splitting it into 2 distinct queries. 
+There are probably better ways, but it would require more 'plumbling'.
+
+Nope, this will not work. I've run into similar issues many times. The reason for that has to do with expressions at compile time vs. conditions at run-time.
+You could do 2 queries or if you don't mind joining to configuration regardless of loadConfiguration parameter, you could use:
+var q = (from c in database.Users
+                where c.Username == username
+                select c).Single();
+
+and then use Linq-to-Objects on the result.
+
+Replace .Single() with SingleOrDefault() and Linq will switch to a left outer join. I don't know if in your case it will do it, but in some cases it does.
+Edit dint's see the Single was for the entire query and not for the configuration part:
+try this:
+     UserConfiguration = (loadConfiguration && c.Configuration != null) ? new ApplicationConfiguration
+     {
+          ID = c.Configuration.ID,
+          MonthlyAccountPrice = c.Configuration.MonthlyAccountPrice,
+          TrialAccountDays = c.Configuration.TrialAccountDays,
+          VAT = c.Configuration.VAT,
+          DateCreated = c.Configuration.DateCreated
+      } : null
+

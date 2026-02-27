@@ -1,0 +1,299 @@
+AJAX - How to Pass value back to server
+asp.net-ajax asynchronous
+First time working with UpdatePanels in .NET. 
+I have an updatepanel with a trigger pointed to an event on a FormView control. The UpdatePanel holds a ListView with related data from a separate database.
+When the UpdatePanel refreshes, it needs values from the FormView control so that on the server it can use them to query the database.
+For the life if me, I can't figure out how to get those values. The event I'm triggering from has them, but I want the updatepanel to refresh asynchronously. How do I pass values to the load event on the panel?
+Googled this ad nauseum and can't seem to get to an answer here. A link or an explanation would be immensely helpful..
+Jeff
+
+
+Try 
+
+...looking in the Request and
+Response. 
+...setting a breakpoint
+on the Load() method and query Me or
+this in the watch or immediate
+window to see if the values you want
+are maybe just not where you are
+expecting them? 
+...Put a (For Each ctl as Control in Me/This.Controls)
+and inspecting each control that is iterated and see if you are even getting the controls you expect.
+... its not in Sender or EventArgs? 
+
+
+Try NOT using Update panels.... They can often cause more trouble than they are worth. It may be faster and less headache to use regular AJAX to get it done. 
+
+If you are working with an UpdatePanel just make sure that both controls are inside the panel and it will work as desired.
+
+make a javascript function that will collect the pieces of form data, and then sends that data to an ASHX handler. the ASHX handler will do some work, and can reply with a response.
+This is an example I made that calls a database to populate a grid using AJAX calls. There are better libraries for doing AJAX (prototype, ExtJS, etc), but this is the raw deal. (I know this can be refactored to be even cleaner, but you can get the idea well enough)
+Works like this...
+
+User enters text in the search box, 
+User clicks search button, 
+JavaScript gets form data, 
+javascript makes ajax call to ASHX, 
+ASHX receives request,  
+ASHX queries database,
+ASHX parses the response into JSON/Javascript array,  
+ASHX sends response,
+Javascript receives response,  
+javascript Eval()'s response to object,
+javascript iterates object properties and fills grid
+
+The html will look like this... 
+<html xmlns="http://www.w3.org/1999/xhtml" >
+<head runat="server">
+    <title>Untitled Page</title>
+    <script type="text/javascript" src="AjaxHelper.js"></script>
+</head>
+<body>
+    <form id="form1" runat="server">
+    <div>
+        <asp:TextBox ID="txtSearchValue" runat="server"></asp:TextBox>
+        <input id="btnSearch" type="button" value="Search by partial full name" onclick="doSearch()"/>
+
+        <igtbl:ultrawebgrid id="uwgUsers" runat="server" 
+//infragistics grid crap
+            </igtbl:ultrawebgrid>--%>
+    </div>
+    </form>
+</body>
+</html>
+
+The script that fires on click will look like this...
+//this is tied to the button click. It takes care of input cleanup and calling the AJAX method
+function doSearch(){
+    var eleVal; 
+    var eleBtn;
+    eleVal = document.getElementById('txtSearchValue').value;
+    eleBtn = document.getElementById('btnSearch');
+    eleVal = trim(eleVal);
+    if (eleVal.length > 0) {
+        eleBtn.value = 'Searching...';
+        eleBtn.disabled = true;
+        refreshGridData(eleVal);
+    }
+    else {
+        alert("Please enter a value to search with. Unabated searches are not permitted.");
+    }
+}
+
+//This is the function that will go out and get the data and call load the Grid on AJAX call 
+//return.
+function refreshGridData(searchString){
+
+    if (searchString =='undefined'){
+        searchString = "";
+    }
+
+    var xhr; 
+    var gridData;
+    var url;
+
+    url = "DefaultHandler.ashx?partialUserFullName=" + escape(searchString);
+    xhr = GetXMLHttpRequestObject();
+
+    xhr.onreadystatechange = function() {
+        if (xhr.readystate==4) {
+            gridData = eval(xhr.responseText);
+            if (gridData.length > 0) {
+                //clear and fill the grid
+                clearAndPopulateGrid(gridData);
+            }
+            else {
+                //display appropriate message
+            }
+        } //if (xhr.readystate==4) {
+    } //xhr.onreadystatechange = function() {
+
+    xhr.open("GET", url, true);
+    xhr.send(null);
+}
+
+//this does the grid clearing and population, and enables the search button when complete.
+function clearAndPopulateGrid(jsonObject) {
+
+    var grid = igtbl_getGridById('uwgUsers');
+    var eleBtn;
+    eleBtn = document.getElementById('btnSearch');
+
+    //clear the rows
+    for (x = grid.Rows.length; x >= 0; x--) {
+        grid.Rows.remove(x, false);
+    }
+
+    //add the new ones
+    for (x = 0; x < jsonObject.length; x++) {
+        var newRow = igtbl_addNew(grid.Id, 0, false, false);
+        //the cells should not be referenced by index value, so a name lookup should be implemented
+        newRow.getCell(0).setValue(jsonObject[x][1]); 
+        newRow.getCell(1).setValue(jsonObject[x][2]);
+        newRow.getCell(2).setValue(jsonObject[x][3]);
+    }
+
+    grid = null;
+
+    eleBtn.disabled = false;
+    eleBtn.value = "Search by partial full name";
+}
+
+
+// this function will return the XMLHttpRequest Object for the current browser
+function GetXMLHttpRequestObject() {
+
+    var XHR; //the object to return
+    var ua = navigator.userAgent.toLowerCase(); //gets the useragent text
+    try
+    {
+        //determine the browser type
+        if (!window.ActiveXObject)
+        { //Non IE Browsers
+            XHR = new XMLHttpRequest(); 
+        }
+        else 
+        {
+            if (ua.indexOf('msie 5') == -1)
+            { //IE 5.x
+                XHR = new ActiveXObject("Msxml2.XMLHTTP");
+            }
+            else
+            { //IE 6.x and up  
+                XHR = new ActiveXObject("Microsoft.XMLHTTP");   
+            }
+        } //end if (!window.ActiveXObject)
+
+        if (XHR == null)
+        {
+            throw "Unable to instantiate the XMLHTTPRequest object.";
+        }
+    }
+    catch (e)
+    {
+        alert("This browser does not appear to support AJAX functionality. error: " + e.name
+              + " description: " + e.message);
+    }
+    return XHR;
+} //end function GetXMLHttpRequestObject()
+
+function trim(stringToTrim){
+    return stringToTrim.replace(/^\s\s*/, '').replace(/\s\s*$/, '');
+}
+
+And the ashx handler looks like this....
+Imports System.Web
+Imports System.Web.Services
+Imports System.Data
+Imports System.Data.SqlClient
+
+Public Class DefaultHandler
+    Implements System.Web.IHttpHandler
+
+    Private Const CONN_STRING As String = "Data Source=;Initial Catalog=;User ID=;Password=;"
+
+    Sub ProcessRequest(ByVal context As HttpContext) Implements IHttpHandler.ProcessRequest
+
+        context.Response.ContentType = "text/plain"
+        context.Response.Expires = -1
+
+        Dim strPartialUserName As String
+        Dim strReturnValue As String = String.Empty
+
+        If context.Request.QueryString("partialUserFullName") Is Nothing = False Then
+            strPartialUserName = context.Request.QueryString("partialUserFullName").ToString()
+
+            If String.IsNullOrEmpty(strPartialUserName) = False Then
+                strReturnValue = SearchAndReturnJSResult(strPartialUserName)
+            End If
+        End If
+
+        context.Response.Write(strReturnValue)
+
+    End Sub
+
+
+    Private Function SearchAndReturnJSResult(ByVal partialUserName As String) As String
+
+        Dim strReturnValue As New StringBuilder()
+        Dim conn As SqlConnection
+        Dim strSQL As New StringBuilder()
+        Dim objParam As SqlParameter
+        Dim da As SqlDataAdapter
+        Dim ds As New DataSet()
+        Dim dr As DataRow
+
+        'define sql
+        strSQL.Append(" SELECT ")
+        strSQL.Append("     [id] ")
+        strSQL.Append("     ,([first_name] + ' ' + [last_name]) ")
+        strSQL.Append("     ,[email] ")
+        strSQL.Append(" FROM [person] (NOLOCK) ")
+        strSQL.Append(" WHERE [last_name] LIKE @lastName")
+
+        'clean up the partial user name for use in a like search
+        If partialUserName.EndsWith("%", StringComparison.InvariantCultureIgnoreCase) = False Then
+            partialUserName = partialUserName & "%"
+        End If
+
+        If partialUserName.StartsWith("%", StringComparison.InvariantCultureIgnoreCase) = False Then
+            partialUserName = partialUserName.Insert(0, "%")
+        End If
+
+        'create the oledb parameter... parameterized queries perform far better on repeatable
+        'operations
+        objParam = New SqlParameter("@lastName", SqlDbType.VarChar, 100)
+        objParam.Value = partialUserName
+
+        conn = New SqlConnection(CONN_STRING)
+        da = New SqlDataAdapter(strSQL.ToString(), conn)
+        da.SelectCommand.Parameters.Add(objParam)
+
+        Try 'to get a dataset. 
+            da.Fill(ds)
+        Catch sqlex As SqlException
+            'Throw an appropriate exception if you can add details that will help understand the problem.
+            Throw New DataException("Unable to retrieve the results from the user search.", sqlex)
+        Finally
+            If conn.State = ConnectionState.Open Then
+                conn.Close()
+            End If
+            conn.Dispose()
+            da.Dispose()
+        End Try
+
+        'make sure we have a return value
+        If ds Is Nothing OrElse ds.Tables(0) Is Nothing OrElse ds.Tables(0).Rows.Count <= 0 Then
+            Return String.Empty
+        End If
+
+        'This converts the table into JS array. 
+        strReturnValue.Append("[")
+
+        For Each dr In ds.Tables(0).Rows
+            strReturnValue.Append("['" & CStr(dr("username")) & "','" & CStr(dr("userfullname")) & "','" & CStr(dr("useremail")) & "'],")
+        Next
+
+        strReturnValue.Remove(strReturnValue.Length - 1, 1)
+        strReturnValue.Append("]")
+
+        'de-allocate what can be deallocated. Setting to Nothing for smaller types may
+        'incur performance hit because of a forced allocation to nothing before they are deallocated
+        'by garbage collection.
+        ds.Dispose()
+        strSQL.Length = 0
+
+        Return strReturnValue.ToString()
+
+    End Function
+
+
+    ReadOnly Property IsReusable() As Boolean Implements IHttpHandler.IsReusable
+        Get
+            Return False
+        End Get
+    End Property
+
+End Class
+

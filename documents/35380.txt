@@ -1,0 +1,121 @@
+Print Odd-Even numbers using signals
+c signals
+I need to to print natural nos. 1,2,...n such that the parent process prints all odd numbers and the child process prints all even numbers, and all of this needs to be done using POSIX signals. How would I go about accomplishing this?
+The output should be:
+Parent : 1
+Child  : 2
+Parent : 3
+...
+
+
+I think this homework assignment was given to you to make you try a lot of solution and conclude by yourself that signals are not a good synchronisation technique.
+This an invaluable lesson, remember it well and use semaphores from now on! :)
+
+It would probably be more beneficial for you provide what you have so far and explain what doesn't work as expected but here is what I came up with:
+#include <stdio.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <signal.h>
+#include <stdlib.h>
+
+#define READY_SIGNAL SIGUSR1
+
+/* The ready flag is set when READY_SIGNAL is received.
+ * It is needed so that when we wake up from sigsuspend
+ * we know whether or not the signal received was READY_SIGNAL. */
+volatile sig_atomic_t ready;
+void make_ready(int i) { ready = 1; }
+
+int
+main (int argc, char *argv[])
+{
+  pid_t cpid, ppid;  /* pids of the child and parent */
+  /* Signal masks for sigprocmask and sigsuspend */
+  sigset_t block_mask, wait_mask;
+  unsigned long c = 1;   /* The counter */
+  unsigned long n = 100; /* The default max count value */
+  struct sigaction act;
+
+  /* Override the default max count if provided */
+  if (argv[1])
+    n = strtoul(argv[1], NULL, 10);
+
+  /* Prepare signal masks */
+  sigemptyset(&wait_mask);
+  sigemptyset(&block_mask);
+  sigaddset(&block_mask, READY_SIGNAL);
+
+  /* Set the signal mask for the parent to ignore READY_SIGNAL until
+   * we are ready to receive it, the mask will be inherited by the child,
+   * needed to avoid race conditions */
+  sigprocmask(SIG_BLOCK, &block_mask, NULL);
+
+  /* Register the signal handler, will be inherited by the child */
+  act.sa_flags = 0;
+  act.sa_handler = make_ready;
+  sigemptyset(&act.sa_mask);
+  sigaction(READY_SIGNAL, &act, NULL);
+
+  /* Get the parent's process id, needed for the child to send signals
+   * to the parent process, could alternatively use getppid in the child */
+  ppid = getpid();
+
+  /* Call fork, storing the child's process id needed for the parent to
+   * send signals to the child */
+  cpid = fork();
+
+  if (cpid < 0) {
+    perror("Fork failed");
+    exit(EXIT_FAILURE);
+  }
+
+  if (cpid == 0) {
+    /* Child */
+    c = 2;  /* Child's first number will always be 2 */
+    if (c > n) exit(0); /* If c > n we have nothing to do */
+
+    do {
+      /* Suspend until we receive READY_SIGNAL */
+      while (!ready) sigsuspend(&wait_mask);
+
+      /* Print out number, flush for proper output sequencing when output
+         is not a terminal. */
+      printf("Child: %lu\n", c);
+      fflush(stdout);
+
+      ready = 0; /* Reset ready flag */
+      c += 2; /* Increment counter */
+
+      /* Wake up parent process */
+      kill(ppid, READY_SIGNAL);
+    } while (c <= n);  
+  } else {
+    /* Parent */
+    for (;;) {
+      /* Print out number, flush for proper output sequencing when output
+         is not a terminal. */
+      printf("Parent: %lu\n", c);
+      fflush(stdout);
+
+      c += 2; /* Increment counter */
+
+      kill(cpid, READY_SIGNAL); /* Wake up child process */
+
+      if (c > n) break; /* Don't go back to sleep if we are done */
+
+      ready = 0; /* Reset ready flag */
+
+      /* Suspend until we receive READY_SIGNAL */
+      while (!ready) sigsuspend(&wait_mask);
+    };
+
+    wait4(cpid, NULL, 0); /* Don't exist before child finishes */
+  }
+
+  return 0;
+}
+
+This passes these basic tests:
+./print_with_signals 100000|sort -n -k 2 -c && echo "Success"
+
+./print_with_signals 100001|sort -n -k 2 -c && echo "Success"

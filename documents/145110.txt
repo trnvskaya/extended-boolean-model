@@ -1,0 +1,324 @@
+C++ performance vs. Java/C#
+c# java c++ performance bytecode
+My understanding is that C/C++ produces native code to run on a particular machine architecture.  Conversely, languages like Java and C# run on top of a virtual machine which abstracts away the native architecture.  Logically it would seem impossible for Java or C# to match the speed of C++ because of this intermediate step, however I've been told that the latest compilers ("hot spot") can attain this speed or even exceed it.
+Perhaps this is more of a compiler question than a language question, but can anyone explain in plain English how it is possible for one of these virtual machine languages to perform better than a native language?
+
+
+It would only happen if the Java interpreter is producing machine code that is actually better optimized than the machine code your compiler is generating for the C++ code you are writing, to the point where the C++ code is slower than the Java and the interpretation cost.
+However, the odds of that actually happening are pretty low - unless perhaps Java has a very well-written library, and you have your own poorly written C++ library.
+
+Generally, C# and Java can be just as fast or faster because the JIT compiler -- a compiler that compiles your IL the first time it's executed -- can make optimizations that a C++ compiled program cannot because it can query the machine. It can determine if the machine is Intel or AMD; Pentium 4, Core Solo, or Core Duo; or if supports SSE4, etc.
+A C++ program has to be compiled beforehand usually with mixed optimizations so that it runs decently well on all machines, but is not optimized as much as it could be for a single configuration (i.e. processor, instruction set, other hardware).
+Additionally certain language features allow the compiler in C# and Java to make assumptions about your code that allows it to optimize certain parts away that just aren't safe for the C/C++ compiler to do. When you have access to pointers there's a lot of optimizations that just aren't safe.
+Also Java and C# can do heap allocations more efficiently than C++ because the layer of abstraction between the garbage collector and your code allows it to do all of its heap compression at once (a fairly expensive operation).
+Now I can't speak for Java on this next point, but I know that C# for example will actually remove methods and method calls when it knows the body of the method is empty. And it will use this kind of logic throughout your code.
+So as you can see, there are lots of reasons why certain C# or Java implementations will be faster.
+Now this all said, specific optimizations can be made in C++ that will blow away anything that you could do with C#, especially in the graphics realm and anytime you're close to the hardware. Pointers do wonders here.
+So depending on what you're writing I would go with one or the other. But if you're writing something that isn't hardware dependent (driver, video game, etc), I wouldn't worry about the performance of C# (again can't speak about Java). It'll do just fine.
+One the Java side, @Swati points out a good article:
+http://www-128.ibm.com/developerworks/java/library/j-jtp09275.html?ca=dgr-jw22JavaUrbanLegends
+
+The executable code produced from a Java or C# compiler is not interpretted -- it is compiled to native code "just in time" (JIT).  So, the first time code in a Java/C# program is encountered during execution, there is some overhead as the "runtime compiler" (aka JIT compiler) turns the byte code (Java) or IL code (C#) into native machine instructions.  However, the next time that code is encountered while the application is still running, the native code is executed immediately.  This explains how some Java/C# programs appear to be slow initially, but then perform better the longer they run.  A good example is an ASP.Net web site.  The very first time the web site is accessed, it may be a bit slower as the C# code is compiled to native code by the JIT compiler.  Subsequent accesses result in a much faster web site -- server and client side caching aside.
+
+On top of what some others have said, from my understanding .NET and Java are better at memory allocation. E.g. they can compact memory as it gets fragmented while C++ cannot (natively, but it can if you're using a clever garbage collector).
+
+The virtual machine languages are unlikely to outperform compiled languages but they can get close enough that it doesn't matter, for (at least) the following reasons (I'm speaking for Java here since I've never done C#).
+1/ The Java Runtime Environment is usually able to detect pieces of code that are run frequently and perform just-in-time (JIT) compilation of those sections so that, in future, they run at the full compiled speed.
+2/ Vast portions of the Java libraries are compiled so that, when you call a library function, you're executing compiled code, not interpreted. You can see the code (in C) by downloading the OpenJDK.
+3/ Unless you're doing massive calculations, much of the time your program is running, it's waiting for input from a very slow (relatively speaking) human.
+4/ Since a lot of the validation of Java bytecode is done at the time of loading the class, the normal overhead of runtime checks is greatly reduced.
+5/ At the worst case, performance-intensive code can be extracted to a compiled module and called from Java (see JNI) so that it runs at full speed.
+In summary, the Java bytecode will never outperform native machine language, but there are ways to mitigate this. The big advantage of Java (as I see it) is the HUGE standard library and the cross-platform nature.
+
+I'm not sure how often you'll find that Java code will run faster than C++, even with Hotspot, but I'll take a swing at explaining how it could happen.
+Think of compiled Java code as interpreted machine language for the JVM.  When the Hotspot processor notices that certain pieces of the compiled code are going to be used many times, it performs an optimization on the machine code.  Since hand-tuning Assembly is almost always faster than C++ compiled code, it's ok to figure that programmatically-tuned machine code isn't going to be too bad.
+So, for highly repetitious code, I could see where it'd be possible for Hotspot JVM to run the Java faster than C++... until garbage collection comes into play. :)
+
+JIT (Just In Time Compiling) can be incredibly fast because it optimizes for the target platform.
+This means that it can take advantage of any compiler trick your CPU can support, regardless of what CPU the developer wrote the code on.
+The basic concept of the .NET JIT works like this (heavily simplified):
+Calling a method for the first time:
+
+Your program code calls a method Foo()
+The CLR looks at the type that implements Foo() and gets the metadata associated with it
+From the metadata, the CLR knows what memory address the IL (Intermediate byte code) is stored in.
+The CLR allocates a block of memory, and calls the JIT.
+The JIT compiles the IL into native code, places it into the allocated memory, and then changes the function pointer in Foo()'s type metadata to point to this native code.
+The native code is ran.
+
+Calling a method for the second time:
+
+Your program code calls a method Foo()
+The CLR looks at the type that implements Foo() and finds the function pointer in the metadata.
+The native code at this memory location is ran.
+
+As you can see, the 2nd time around, its virtually the same process as C++, except with the advantage of real time optimizations.
+That said, there are still other overhead issues that slow down a managed language, but the JIT helps a lot.
+
+In some cases, managed code can actually be faster than native code. For instance, "mark-and-sweep" garbage collection algorithms allow environments like the JRE or CLR to free large numbers of short-lived (usually) objects in a single pass, where most C/C++ heap objects are freed one-at-a-time.
+From wikipedia:
+
+For many practical purposes, allocation/deallocation-intensive algorithms implemented in garbage collected languages can actually be faster than their equivalents using manual heap allocation. A major reason for this is that the garbage collector allows the runtime system to amortize allocation and deallocation operations in a potentially advantageous fashion.
+
+That said, I've written a lot of C# and a lot of C++, and I've run a lot of benchmarks. In my experience, C++ is a lot faster than C#, in two ways: (1) if you take some code that you've written in C#, port it to C++ the native code tends to be faster. How much faster? Well, it varies a whole lot, but it's not uncommon to see a 100% speed improvement. (2) In some cases, garbage collection can massively slow down a managed application. The .NET CLR does a terrible job with large heaps (say, > 2GB), and can end up spending a lot of time in GC--even in applications that have few--or even no--objects of intermediate life spans.
+Of course, in most cases that I've encounted, managed languages are fast enough, by a long shot, and the maintenance and coding tradeoff for the extra performance of C++ is simply not a good one.
+
+Generally, your program's algorithm will be much more important to the speed of your application than the language.  You can implement a poor algorithm in any language, including C++.  With that in mind, you'll generally be able to write code the runs faster in a language that helps you implement a more efficient algorithm.  
+Higher-level languages do very well at this by providing easier access to many efficient pre-built data structures and encouraging practices that will help you avoid inefficient code.  Of course, they can at times also make it easy to write a bunch of really slow code, too, so you still have to know your platform.
+Also, C++ is catching up with "new" (note the quotes) features like the STL containers, auto pointers, etc -- see the boost library, for example.  And you might occasionally find that the fastest way to accomplish some task requires a technique like pointer arithmetic that's forbidden in a higher-level language -- though they typcially allow you to call out to a library written in a language that can implement it as desired.
+The main thing is to know the language you're using, it's associated API, what it can do, and what it's limitations are.
+
+Some good answers here about the specific question you asked.  I'd like to step back and look at the bigger picture.
+Keep in mind that your user's perception of the speed of the software you write is affected by many other factors than just how well the codegen optimizes.  Here are some examples:
+
+Manual memory management is hard to do correctly (no leaks), and even harder to do effeciently (free memory soon after you're done with it).  Using a GC is, in general, more likely to produce a program that manages memory well.  Are you willing to work very hard, and delay delivering your software, in an attempt to out-do the GC?
+My C# is easier to read & understand than my C++.  I also have more ways to convince myself that my C# code is working correctly.  That means I can optimize my algorithms with less risk of introducing bugs (and users don't like software that crashes, even if it does it quickly!)
+I can create my software faster in C# than in C++.  That frees up time to work on performance, and still deliver my software on time.
+It's easier to write good UI in C# than C++, so I'm more likely to be able to push work to the background while UI stays responsive, or to provide progress or hearbeat UI when the program has to block for a while.  This doesn't make anything faster, but it makes users happier about waiting.
+
+Everything I said about C# is probably true for Java, I just don't have the experience to say for sure.
+
+I like Orion Adrian's answer, but there is another aspect to it.
+The same question was posed decades ago about assembly language vs. "human" languages like FORTRAN. And part of the answer is similar.
+Yes, a C++ program is capable of being faster than C# on any given (non-trivial?) algorithm, but the program in C# will often be as fast or faster than a "naive" implementation in C++, and an optimized version in C++ will take longer to develop, and might still beat the C# version by a very small margin. So, is it really worth it?
+You'll have to answer that question on a one-by-one basis.
+That said, I'm a long time fan of C++, and I think it's an incredibly expressive and powerful language -- sometimes underappreciated. But in many "real life" problems (to me personally, that means "the kind I get paid to solve"), C# will get the job done sooner and safer.
+The biggest penalty you pay? Many .NET and Java programs are memory hogs. I have seen .NET and Java apps take "hundreds" of megabytes of memory, when C++ programs of similar complexity barely scratch the "tens" of MBs.
+
+JIT vs. Static Compiler
+As already said in the previous posts, JIT can compile IL/bytecode into native code at runtime. The cost of that was mentionned, but not to its conclusion:
+JIT has one massive problem is that it can't compile everything: JIT compiling takes time, so the JIT will compile only some parts of the code, whereas a static compiler will produce a full native binary: For some kind of programs, the static compiler will simply easily outperform the JIT.
+Of course, C# (or Java, or VB) is usually faster to produce viable and robust solution than is C++ (if only because C++ has complex semantics, and C++ standard library, while interesting and powerful, is quite poor when compared with the full scope of the standard library from .NET or Java), so usually, the difference between C++ and .NET or Java JIT won't be visible to most users, and for those binaries that are critical, well, you can still call C++ processing from C# or Java (even if this kind of native calls can be quite costly in themselves)...
+C++ metaprograming
+Note that usually, you are comparing C++ runtime code with its equivalent in C# or Java. But C++ has one feature that can outperform Java/C# out of the box, that is template metaprograming: The code processing will be done at compilation time (thus, increasing vastly compilation time), resulting into zero (or almost zero) runtime.
+I have yet so see a real life effect on this (I played only with concepts, but by then, the difference was seconds of execution for JIT, and zero for C++), but this is worth mentioning, alongside the fact template metaprograming is not trivial...
+
+Edit 2011-06-10: In C++, playing with types is done at compile time, meaning producing generic code which calls non-generic code (e.g. a generic parser from string to type T, calling standard library API for types T it recognizes, and making the parser easily extensible by its user) is very easy and very efficient, whereas the equivalent in Java or C# is painful at best to write, and will always be slower and resolved at runtime even when the types are known at compile time, meaning your only hope is for the JIT to inline the whole thing.
+
+...
+
+Edit 2011-09-20: The team behind Blitz++ (Homepage, Wikipedia) went that way, and apparently, their goal is to reach FORTRAN's performance on scientific calculations by moving as much as possible from runtime execution to compilation time, via C++ template metaprogramming. So the "I have yet so see a real life effect on this" part I wrote above apparently does exist in real life.
+
+Native C++ Memory Usage
+C++ has a memory usage different from Java/C#, and thus, has different advantages/flaws.
+No matter the JIT optimization, nothing will go has fast as direct pointer access to memory (let's ignore for a moment processor caches, etc.). So, if you have contiguous data in memory, accessing it through C++ pointers (i.e. C pointers... Let's give Caesar its due) will goes times faster than in Java/C#. And C++ has RAII, which makes a lot of processing a lot easier than in C# or even in Java. C++ does not need using to scope the existence of its objects. And C++ does not have a finally clause. This is not an error.
+:-)
+And despite C# primitive-like structs, C++ "on the stack" objects will cost nothing at allocation and destruction, and will need no GC to work in an independent thread to do the cleaning.
+As for memory fragmentation, memory allocators in 2008 are not the old memory allocators from 1980 that are usually compared with a GC: C++ allocation can't be moved in memory, true, but then, like on a Linux filesystem: Who needs hard disk defragmenting when fragmentation does not happen? Using the right allocator for the right task should be part of the C++ developer toolkit. Now, writing allocators is not easy, and then, most of us have better things to do, and for the most of use, RAII or GC is more than good enough.
+
+Edit 2011-10-04: For examples about efficient allocators: On Windows platforms, since Vista, the Low Fragmentation Heap is enabled by default. For previous versions, the LFH can be activated by calling the WinAPI function HeapSetInformation). On other OSes, alternative allocators are provided (see https://secure.wikimedia.org/wikipedia/en/wiki/Malloc for a list)
+
+Now, the memory model is somewhat becoming more complicated with the rise of multicore and multithreading technology. In this field, I guess .NET has the advantage, and Java, I was told, held the upper ground. It's easy for some "on the bare metal" hacker to praise his "near the machine" code. But now, it is quite more difficult to produce better assembly by hand than letting the compiler to its job. For C++, the compiler became usually better than the hacker since a decade. For C# and Java, this is even easier.
+Still, the new standard C++0x will impose a simple memory model to C++ compilers, which will standardize (and thus simplify) effective multiprocessing/parallel/threading code in C++, and make optimizations easier and safer for compilers. But then, we'll see in some couple of years if its promises are held true.
+C++/CLI vs. C#/VB.NET
+Note: In this section, I am talking about C++/CLI, that is, the C++ hosted by .NET, not the native C++.
+Last week, I had a training on .NET optimization, and discovered that the static compiler is very important anyway. As important than JIT.
+The very same code compiled in C++/CLI (or its ancestor, Managed C++) could be times faster than the same code produced in C# (or VB.NET, whose compiler produces the same IL than C#).
+Because the C++ static compiler was a lot better to produce already optimized code than C#'s.
+For example, function inlining in .NET is limited to functions whose bytecode is less or equal than 32 bytes in length. So, some code in C# will produce a 40 bytes accessor, which won't be ever inlined by the JIT. The same code in C++/CLI will produce a 20 bytes accessor, which will be inlined by the JIT.
+Another example is temporary variables, that are simply compiled away by the C++ compiler while still being mentioned in the IL produced by the C# compiler. C++ static compilation optimization will result in less code, thus authorizes a more aggressive JIT optimization, again.
+The reason for this was speculated to be the fact C++/CLI compiler profited from the vast optimization techniques from C++ native compiler.
+Conclusion
+I love C++.
+But as far as I see it, C# or Java are all in all a better bet. Not because they are faster than C++, but because when you add up their qualities, they end up being more productive, needing less training, and having more complete standard libraries than C++. And as for most of programs, their speed differences (in one way or another) will be negligible...
+Edit (2011-06-06)
+My experience on C#/.NET
+I have now 5 months of almost exclusive professional C# coding (which adds up to my CV already full of C++ and Java, and a touch of C++/CLI).
+I played with WinForms (Ahem...) and WCF (cool!), and WPF (Cool!!!! Both through XAML and raw C#. WPF is so easy I believe Swing just cannot compare to it), and C# 4.0.
+The conclusion is that while it's easier/faster to produce a code that works in C#/Java than in C++, it's a lot harder to produce a strong, safe and robust code in C# (and even harder in Java) than in C++. Reasons abound, but it can be summarized by:
+
+Generics are not as powerful as templates (try to write an efficient generic Parse method (from string to T), or an efficient equivalent of boost::lexical_cast in C# to understand the problem)
+RAII remains unmatched (GC still can leak (yes, I had to handle that problem) and will only handle memory. Even C#'s using is not as easy and powerful because writing a correct Dispose implementations is difficult)
+C# readonly and Java final are nowhere as useful as C++'s const (There's no way you can expose readonly complex data (a Tree of Nodes, for example) in C# without tremendous work, while it's a built-in feature of C++. Immutable data is an interesting solution, but not everything can be made immutable, so it's not even enough, by far).
+
+So, C# remains an pleasant language as long as you want something that works, but a frustrating language the moment you want something that always and safely works.
+Java is even more frustrating, as it has the same problems than C#, and more: Lacking the equivalent of C#'s using keyword, a very skilled colleague of mine spent too much time making sure its resources where correctly freed, whereas the equivalent in C++ would have been easy (using destructors and smart pointers).
+So I guess C#/Java's productivity gain is visible for most code... until the day you need the code to be as perfect as possible. That day, you'll know pain. (you won't believe what's asked from our server and GUI apps...).
+About Server-side Java and C++
+I kept contact with the server teams (I worked 2 years among them, before getting back to the GUI team), at the other side of the building, and I learned something interesting.
+Last years, the trend was to have the Java server apps be destined to replace the old C++ server apps, as Java has a lot of frameworks/tools, and is easy to maintain, deploy, etc. etc..
+...Until the problem of low-latency reared its ugly head the last months. Then, the Java server apps, no matter the optimization attempted by our skilled Java team, simply and cleanly lost the race against the old, not really optimized C++ server.
+Currently, the decision is to keep the Java servers for common use where performance while still important, is not concerned by the low-latency target, and aggressively optimize the already faster C++ server applications for low-latency and ultra-low-latency needs.
+Conclusion
+Nothing is as simple as expected.
+Java, and even more C#, are cool languages, with extensive standard libraries and frameworks, where you can code fast, and have result very soon.
+But when you need raw power, powerful and systematic optimizations, strong compiler support, powerful language features and absolute safety, Java and C# make it difficult to win the last missing but critical percents of quality you need to remain above the competition.
+It's as if you needed less time and less experienced developers in C#/Java than in C++ to produce average quality code, but in the other hand, the moment you needed excellent to perfect quality code, it was suddenly easier and faster to get the results right in C++.
+Of course, this is my own perception, perhaps limited to our specific needs.
+But still, it is what happens today, both in the GUI teams and the server-side teams.
+Of course, I'll update this post if something new happens.
+Edit (2011-06-22)
+
+"We find that in regards to performance, C++ wins out by
+  a large margin. However, it also required the most extensive
+  tuning efforts, many of which were done at a level of sophistication
+  that would not be available to the average programmer.
+[...] The Java version was probably the simplest to implement, but the hardest to analyze for performance. Specifically the effects around garbage collection were complicated and very hard to tune."
+
+Sources:
+
+https://days2011.scala-lang.org/sites/days2011/files/ws3-1-Hundt.pdf
+http://www.computing.co.uk/ctg/news/2076322/-winner-google-language-tests
+
+Edit (2011-09-20)
+
+"The going word at Facebook is that 'reasonably written C++ code just runs fast,' which underscores the enormous effort spent at optimizing PHP and Java code. Paradoxically, C++ code is more difficult to write than in other languages, but efficient code is a lot easier [to write in C++ than in other languages]."
+â Herb Sutter at //build/, quoting Andrei Alexandrescu
+
+Sources:
+
+http://channel9.msdn.com/Events/BUILD/BUILD2011/TOOL-835T
+http://video.ch9.ms/build/2011/slides/TOOL-835T_Sutter.pptx
+
+
+If you're a Java/C# programmer learning C++, you'll be tempted to keep thinking in terms of Java/C# and translate verbatim to C++ syntax. In that case, you only get the earlier mentioned benefits of native code vs. interpreted/JIT. To get the biggest performance gain in C++ vs. Java/C#, you have to learn to think in C++ and design code specifically to exploit the strengths of C++.
+To paraphrase Edsger Dijkstra: [your first language] mutilates the mind beyond recovery.
+To paraphrase Jeff Atwood: you can write [your first language] in any new language.
+
+The compile for specific CPU optimizations are usually overrated.  Just  take a program in C++ and compile with   optimization for pentium PRO  and run on a pentium 4. Then  recompile with optimize for pentium 4. I passed long afternoons doing it with several programs.  General results?? Usually less than 2-3% performance increase. So the theoretical JIT advantages  are almost none. Most differences of performance can only be observed when using scalar data processing features, something that  will eventually need manual fine tunning to achieve maximum performance anyway. Optimizations of that sort are slow and costly to perform making them sometimes unsuitable for JIT anyway.
+On real world and real application C++ is still usually faster than java, mainly  because of  lighter memory footprint that result in better cache performance.
+But to use all of C++ capability you, the developer must work hard. You can achieve superior results, but you must use your brain for that. C++ is a language that decided to present you with more tools, charging the price that you must  learn them to be able to use the language well. 
+
+Here's an interesting benchmark
+http://zi.fi/shootout/
+
+Whenever I talk managed vs. unmanaged performance, I like to point to the series Rico (and Raymond) did comparing C++ and C# versions of a Chinese/English dictionary.  This google search will let you read for yourself, but I like Rico's summary.
+
+So am I ashamed by my crushing defeat?
+  Hardly.  The managed code got a very
+  good result for hardly any effort. To
+  defeat the managed Raymond had to:
+
+Write his own file I/O stuff 
+Write his own string class 
+Write his own allocator 
+Write his own international mapping
+
+Of course he used available lower
+  level libraries to do this, but that's
+  still a lot of work.  Can you call
+  what's left an STL program?  I don't
+  think so, I think he kept the
+  std::vector class which ultimately was
+  never a problem and he kept the find
+  function.  Pretty much everything else
+  is gone.
+So, yup, you can definately beat the
+  CLR.  Raymond can make his program go
+  even faster I think.
+Interestingly, the time to parse the
+  file as reported by both programs
+  internal timers is about the same --
+  30ms for each.  The difference is in
+  the overhead.
+
+For me the bottom line is that it took 6 revisions for the unmanaged version to beat the managed version that was a simple port of the original unmanaged code.  If you need every last bit of performance (and have the time and expertise to get it), you'll have to go unmanaged, but for me, I'll take the order of magnitude advantage I have on the first versions over the 33% I gain if I try 6 times.
+
+Actually, C# does not really run in a virtual machine like Java does. IL is compiled into assembly language, which is entirely native code and runs at the same speed as native code. You can pre-JIT an .NET application which entirely removes the JIT cost and then you are running entirely native code.
+The slowdown with .NET will come not because .NET code is slower, but because it does a lot more behind the scenes to do things like garbage collect, check references, store complete stack frames, etc. This can be quite powerful and helpful when building applications, but also comes at a cost. Note that you could do all these things in a C++ program as well (much of the core .NET functionality is actually .NET code which you can view in ROTOR). However, if you hand wrote the same functionality you would probably end up with a much slower program since the .NET runtime has been optimized and finely tuned.
+That said, one of the strengths of managed code is that it can be fully verifiable, ie. you can verify that the code will never access another processes's memory or do unsage things before you execute it. Microsoft has a research prototype of a fully managed operating system that has suprisingly shown that a 100% managed environment can actually perform significantly faster than any modern operating system by taking advantage of this verification to turn off security features that are no longer needed by managed programs (we are talking like 10x in some cases). SE radio has a great episode talking about this project.
+
+I don't know either...my Java programs are always slow. :-) I've never really noticed C# programs being particularly slow, though.
+
+Actually Sun's HotSpot JVM uses "mixed-mode" execution. It interprets the method's bytecode until it determines (usually through a counter of some sort) that a particular block of code (method, loop, try-catch block, etc.) is going to be executed a lot, then it JIT compiles it. The time required to JIT compile a method often takes longer than if the method were to be interpreted if it is a seldom run method. Performance is usually higher for "mixed-mode" because the JVM does not waste time JITing code that is rarely, if ever, run.
+C# and .NET do not do this. .NET JITs everything which, often times, wastes time.
+
+One of the most significant JIT optimizations is method inlining. Java can even inline virtual methods if it can guarantee runtime correctness. This kind of optimization usually cannot be performed by standard static compilers because it needs whole-program analysis, which is hard because of separate compilation (in contrast, JIT has all the program available to it). Method inlining improves other optimizations, giving larger code blocks to optimize.
+Standard memory allocation in Java/C# is also faster, and deallocation (GC) is not much slower, but only less deterministic.
+
+Here is another intersting benchmark, which you can try yourself on your own computer. 
+It compares ASM, VC++, C#, Silverlight, Java applet, Javascript, Flash (AS3)
+Roozz plugin speed demo
+Please note that the speed of javascript varries a lot depending on what browser is executing it. The same is true for Flash and Silverlight because these plugins run in the same process as the hosting browser. But the Roozz plugin run standard .exe files, which run in their own process, thus the speed is not influenced by the hosting browser. 
+
+Here is answer from Cliff Click: http://www.azulsystems.com/blog/cliff/2009-09-06-java-vs-c-performanceagain
+
+You should define "perform better than..". Well, I know, you asked about speed, but its not everything that counts.
+
+Do virtual machines perform more runtime overhead? Yes!
+Do they eat more working memory? Yes!
+Do they have higher startup costs (runtime initialization and JIT compiler) ? Yes!
+Do they require a huge library installed? Yes!
+
+And so on, its biased, yes ;)
+With C# and Java you pay a price for what you get (faster coding, automatic memory management, big library and so on). But you have not much room to haggle about the details: take the complete package or nothing.
+Even if those languages can optimize some code to execute faster than compiled code, the whole approach is (IMHO) inefficient. Imagine driving every day 5 miles to your workplace, with a truck! Its comfortable, it feels good, you are safe (extreme crumple zone) and after you step on the gas for some time, it will even be as fast as a standard car! Why don't we all have a truck to drive to work? ;)
+In C++ you get what you pay for, not more, not less.
+Quoting Bjarne Stroustrup: "C++ is my favorite garbage collected language because it generates so little garbage"
+link text
+
+For anything needing lots of speed, the JVM just calls a C++ implementation, so it's a question more of how good their libs are than how good the JVM is for most OS related things.
+Garbage collection cuts your memory in half, but using some of the fancier STL and Boost features will have the same effect but with many times the bug potential. 
+If you are just using C++ libraries and lots of its high level features in a large project with many classes you will probably wind up slower than using a JVM. Except much more error prone.
+However, the benefit of C++ is that it allows you to optimize yourself, otherwise you are stuck with what the compiler/jvm does. If you make your own containers, write your own memory management that's aligned, use SIMD, and drop to assembly here and there, you can speed up at least 2x-4x times over what most C++ compilers will do on their own. For some operations, 16x-32x. That's using the same algorithms, if you use better algorithms and parallelize, increases can be dramatic, sometimes thousands of times faster that commonly used methods.
+
+I look at it from a few different points.
+
+Given infinite time and resources, will managed or unmanaged code be faster?  Clearly, the answer is that unmanaged code can always at least tie managed code in this aspect - as in the worst case, you'd just hard-code the managed code solution.
+If you take a program in one language, and directly translate it to another, how much worse will it perform?  Probably a lot, for any two languages.  Most languages require different optimizations and have different gotchas.  Micro-performance is often a lot about knowing these details.
+Given finite time and resources, which of two languages will produce a better result?  This is the most interesting question, as while a managed language may produce slightly slower code (given a program reasonably written for that language), that version will likely be done sooner, allowing for more time spent on optimization.
+
+
+A very short answer: Given a fixed budget you will achieve better performing java application than a C++ application (ROI considerations)  In addition Java platform has more decent profilers, that will help you pinpoint your hotspots more quickly 
+
+Go read about HP Labs' Dynamo, an interpreter for PA-8000 that runs on PA-8000, and often runs programs faster than they do natively.  Then it won't seem at all surprising!
+Don't think of it as an "intermediate step" -- running a program involves lots of other steps already, in any language.
+It often comes down to:
+
+programs have hot-spots, so even if you're slower running 95% of the body of code you have to run, you can still be performance-competitive if you're faster at the hot 5%
+a HLL knows more about your intent than a LLL like C/C++, and so can generate more optimized code (OCaml has even more, and in practice is often even faster)
+a JIT compiler has a lot of information that a static compiler doesn't (like, the actual data you happen to have this time)
+a JIT compiler can do optimizations at run-time that traditional linkers aren't really allowed to do (like reordering branches so the common case is flat, or inlining library calls)
+
+All in all, C/C++ are pretty lousy languages for performance: there's relatively little information about your data types, no information about your data, and no dynamic runtime to allow much in the way of run-time optimization.
+
+You might get short bursts when Java or CLR is faster than C++, but overall the performance is worse for the life of the application:
+see www.codeproject.com/KB/dotnet/RuntimePerformance.aspx for some results for that.
+
+Orion Adrian, let me invert your post to see how unfounded your remarks are, because a lot can be said about C++ as well. And telling that Java/C# compiler optimize away empty functions does really make you sound like you are not my expert in optimization, because a) why should a real program contain empty functions, except for really bad legacy code, b) that is really not black and bleeding edge optimization.
+Apart from that phrase, you ranted blatantly about pointers, but don't objects in Java and C# basically work like C++ pointers? May they not overlap? May they not be null? C (and most C++ implementations) has the restrict keyword, both have value types, C++ has reference-to-value with non-null guarantee. What do Java and C# offer?
+>>>>>>>>>>
+Generally, C and C++ can be just as fast or faster because the AOT compiler -- a compiler that compiles your code  before deployment, once and for all, on your high memory many core build server -- can make optimizations that a C# compiled program cannot because it has a ton of time to do so. The compiler can determine if the machine is Intel or AMD; Pentium 4, Core Solo, or Core Duo; or if supports SSE4, etc, and if your compiler does not support runtime dispatch, you can solve for that yourself by deploying a handful of specialized binaries.
+A C# program is commonly compiled upon running it so that it runs decently well on all machines, but is not optimized as much as it could be for a single configuration (i.e. processor, instruction set, other hardware), and it must spend some time first.  Features like loop fission, loop inversion, automatic vectorization, whole program optimization, template expansion, IPO, and many more, are very hard to be solved all and completely in a way that does not annoy the end user.
+Additionally certain language features allow the compiler in C++ or C to make assumptions about your code that allows it to optimize certain parts away that just aren't safe for the Java/C# compiler to do. When you don't have access to the full type id of generics or a guaranteed program flow there's a lot of optimizations that just aren't safe.
+Also C++ and C do many stack allocations at once with just one register incrementation, which surely is more efficient than Javas and C# allocations as for the layer of abstraction between the garbage collector and your code.
+Now I can't speak for Java on this next point, but I know that C++ compilers for example will  actually remove methods and method calls when it knows the body of the method is empty, it will eliminate common subexpressions, it may try and retry to find optimal register usage, it does not enforce bounds checking, it will autovectorize loops and inner loops and will invert inner to outer, it moves conditionals out of loops, it splits and unsplits loops. It will expand std::vector into native zero overhead arrays as you'd do the C way. It will do inter procedural optimmizations. It will construct return values directly at the caller site. It will fold and propagate expressions. It will reorder data into  a cache friendly manner. It will do jump threading. It lets you write compile time ray tracers with zero runtime overhead.  It will make very expensive graph based optimizations. It will do strength reduction, were it replaces certain codes with syntactically totally unequal but semantically equivalent code (the old "xor foo, foo" is just the simplest, though outdated optimization of such kind). If you kindly ask it, you may omit IEEE floating point standards and enable even more optimizations like floating point operand re-ordering. After it has massaged and massacred your code, it might repeat the whole process, because often, certain optimizations lay the foundation for even certainer optimizations. It might also just retry with shuffled parameters and see how the other variant scores in its internal ranking. And it will use this kind of logic throughout your code.
+So as you can see, there are lots of reasons why certain C++ or C implementations will be faster.
+Now this all said, many optimizations can be made in C++ that will blow away anything that you could do with C#,  especially in the number crunching, realtime and close-to-metal realm, but not exclusively there. You don't even have to touch a single pointer to come a long way.
+So depending on what you're writing I would go with one or the other. But if you're writing something that isn't hardware dependent (driver, video game, etc), I wouldn't worry about the performance of C# (again can't speak about Java). It'll do just fine.
+<<<<<<<<<<
+Generally, certain generalized arguments might sound cool in specific posts, but don't generally sound certainly credible.
+Anyways, to make peace: AOT is great, as is JIT. The only correct answer can be: It depends. And the real smart people know that you can use the best of both worlds anyways.
+
+
+My understanding is that C/C++ produces native code to run on a particular machine architecture. Conversely, languages like Java and C# run on top of a virtual machine which abstracts away the native architecture. Logically it would seem impossible for Java or C# to match the speed of C++ because of this intermediate step, however I've been told that the latest compilers ("hot spot") can attain this speed or even exceed it.
+
+That is illogical. The use of an intermediate representation does not inherently degrade performance. For example, llvm-gcc compiles C and C++ via LLVM IR (which is a virtual infinite-register machine) to native code and it achieves excellent performance (often beating GCC).
+
+Perhaps this is more of a compiler question than a language question, but can anyone explain in plain English how it is possible for one of these virtual machine languages to perform better than a native language?
+
+Here are some examples:
+
+Virtual machines with JIT compilation facilitate run-time code generation (e.g. System.Reflection.Emit on .NET) so you can compile generated code on-the-fly in languages like C# and F# but must resort to writing a comparatively-slow interpreter in C or C++. For example, to implement regular expressions.
+Parts of the virtual machine (e.g. the write barrier and allocator) are often written in hand-coded assembler because C and C++ do not generate fast enough code. If a program stresses these parts of a system then it could conceivably outperform anything that can be written in C or C++.
+Dynamic linking of native code requires conformance to an ABI that can impede performance and obviates whole-program optimization whereas linking is typically deferred on VMs and can benefit from whole-program optimizations (like .NET's reified generics).
+
+I'd also like to address some issues with paercebal's highly-upvoted answer above (because someone keeps deleting my comments on his answer) that presents a counter-productively polarized view:
+
+The code processing will be done at compilation time...
+
+Hence template metaprogramming only works if the program is available at compile time which is often not the case, e.g. it is impossible to write a competitively performant regular expression library in vanilla C++ because it is incapable of run-time code generation (an important aspect of metaprogramming).
+
+...playing with types is done at compile time...the equivalent in Java or C# is painful at best to write, and will always be slower and resolved at runtime even when the types are known at compile time.
+
+In C#, that is only true of reference types and is not true for value types.
+
+No matter the JIT optimization, nothing will go has fast as direct pointer access to memory...if you have contiguous data in memory, accessing it through C++ pointers (i.e. C pointers... Let's give Caesar its due) will goes times faster than in Java/C#.
+
+People have observed Java beating C++ on the SOR test from the SciMark2 benchmark precisely because pointers impede aliasing-related optimizations.
+Also worth noting that .NET does type specialization of generics across dynamically-linked libraries after linking whereas C++ cannot because templates must be resolved before linking. And obviously the big advantage generics have over templates is comprehensible error messages.
+
+I don't think performance need to considered with respect to processing speed of the server these days (after all the muti-core processor are into market). It should be more defined based on the memory usage. And that way java has a slight disadvantage. 
+But still all in all programing language are suited for different purpose. And that is their competitive area, at each section it is different winners.
+And I am sure Java will win in the long run for it continues development and competitiveness it shows in all the new features it produce.
+I found a link here that will support my reason for voting for java

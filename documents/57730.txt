@@ -1,0 +1,73 @@
+Best build process solution to manage build versions
+version-control msbuild build-process cruisecontrol.net
+I run a rather complex project with several independent applications. These use however a couple of shared components. So I have a source tree looking something like the below.
+
+My Project 
+
+Application A
+Shared1
+Shared2 
+Application B 
+Application C
+
+
+All applications have their own MSBuild script that builds the project and all the shared resources it needs. I also run these builds on a CruiseControl controlled continuous integration build server. 
+When the applications are deployed they are deployed on several servers to distribute load. This means that itâs extremely important to keep track of what build/revision is deployed on each of the different servers (we need to have the current version in the DLL version, for example â1.0.0.68â). 
+Itâs equally important to be able to recreate a revision/build that been built to be able to roll back if something didnât work out as intended (o yes, that happends ...). Today weâre using SourceSafe for source control but that possible to change if we could present good reasons for that (SS itâs actually working ok for us so far). 
+Another principle that we try to follow is that itâs only code that been build and tested by the integration server that we deploy further. 
+"CrusieControl Build Labels" solution
+We had several ideas on solving the above. The first was to have the continuous integration server build and locally deploy the project and test it (it does that now). As you probably know a successful build in CruiseControl generates a build label and I guess we somehow could use that to set the DLL version of our executables (so build label 35 would create a DLL like â1.0.0.35â )? The idea was also to use this build label to label the complete source tree. Then we probably could check out by that label and recreate the build later on. 
+The reason for labeling the complete tree is to include not only the actual application code (thatâs in one place in the source tree) but also all the shared items (thatâs in different places in the tree). So a successful build of âApplication Aâ would label to whole tree with label âApplicationA35â for example. 
+There might however be an issue when trying to recreate this build and setting the DLL version before deploying as we then donât have access to the CruiseControl generated build label anymore. If all CrusieControl build labels were unique for all the projects we could use only the number for labeling but thatâs not the case (both application A and B could at the same time be on build 35) so we have to include the application name in the label. Hence SourceSafe label âApplication35â. How can I then recreate build 34 and set 1.0.0.34 to the DLL version numbers once we built build 35?
+"Revision number" solution
+Someone told me that Subversion for example creates a revision number for the entire source tree on every check in â is this the case? Has SourceSafe something similar? If this is correct the idea is then to grab that revision number when getting latest and build on the CruiseControl server. The revision number could then be used to set the DLL version number (to for example â1.0.0.5678â). I guess we could then get this specific revision for the Subversion if needed and that then would include that application and all the shared items to be able to recreate a specific version from the past. Would that work and could this also be achived using SourceSafe?
+Summarize
+So the two main requirements are:
+
+Be able to track build/revision number of the build and deployed DLL.
+Be able to rebuild a past revision/build, set the old build/revision number on the executables of that build (to comply with requirement 1).
+
+So how would you solve this? What would be your preferred approach and how would you solve it (or do you have a totally different idea?)? **Pleased give detailed answers. **
+Bonus question What are the difference between a revision number and a build number and when would one really need both?
+
+
+Your scheme is sound and achievable in VSS (although I would suggest you consider an alternative, VSS is really an outdated product).
+For your "CI" Build - you would do the Versioning take a look at MSBuild Community Tasks Project which has a "Version" tasks.  Typically you will have a "Version.txt" in your source tree and the MSBuild task will increment the "Release" number while the developers control the Major.Minor.Release.Revision numbers (that's how a client of mine wanted it).  You can use revision if you prefer.
+You then would have a "FileUpdate" tasks to edit the AssemblyInfo.cs file with that version, and your EXE's and "DLL's" will have the desired version.
+Finally the VSSLabel task will label all your files appropriately.
+For your "Rebuild" Build - you would modify your "Get" to get files from that Label, obviously not execute the "Version" task (as you are SELECTING a version to build) and then the FileUpdate tasks would use that version number.
+Bonus question:
+These are all "how you want to use them" - I would use build number for, well the build number, that is what I'd increment.  If you are using CI you'll have very many builds - the vast majority with no intention of ever deploying anywhere.
+The major and minor are self evident - but revision I've always used for a "Hotfix" indicator.  I intend to have a "1.3" release - which would in reality be a product with say 1.3.1234.0 version.  While working on 1.4 - I find a bug - and need a hot fix as 1.3.2400.1. Then when 1.4 is ready - it would be say 1.4.3500.0
+
+I need more space than responding as comments directly allows...
+
+Thanks! Good answer! What would be the
+  difference, what would be better
+  solving this using SubVersion for
+  example?Richard Hallgren (15 hours
+  ago)
+
+The problems with VSS have nothing to do with this example (although the "Labeling" feature I believe is implemented inefficiently...)
+Here are a few of the issues with VSS 
+1) Branching is basically impossible
+2) Shared checkout is generally not used (I know of a few people who have had success with it)
+3) performance is very poor - it is exteremly "chatty"
+4) unless you have a very small repository - it is completely unreliable, to the point for most shops it's a ticking timebomb.
+For 4 - the problem is that VSS is implemented by the entire repository being represented as "flat files" in the file system.  When the repository gets over a certain size (I believe 4GB but I'm not confident in that figure) you get a chance for "corruption".  As the size increases the chances of corruption grow until it becomes an almost certainty.
+So take a look at your repository size - and if you are getting into the Gigabytes - I'd strongly recommend you begin planning on replacing VSS.
+Regardless - a google of "VSS Sucks" gives 30K hits...  I think if you did start using an alterantive - you will realize it's well worth the effort.
+
+
+Have CC.net label the successful builds
+have each project in the solution link to a common solutioninfo.cs file which contains assembly and file version attributes (remove from each projects assemblyinfo.cs)
+Before the build have cruise control run an msbuild regex replace (from msbuild community tasks) to update the version information using the cc.net build label (passed in as a parameter to the msbuild task)
+build the solution, run tests, fx cop etc
+Optionally revert the solution info file
+
+The result is that all assemblies in the cc.net published build have the same version numbers which conform to a label in the source code repository
+
+UppercuT can do all of this with a custom packaging task to split the applications up.  And to get the version number of the source, you might think about Subversion.
+It's also insanely easy to get started.
+http://code.google.com/p/uppercut/
+Some good explanations here: UppercuT

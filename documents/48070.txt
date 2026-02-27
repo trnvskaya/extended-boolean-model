@@ -1,0 +1,149 @@
+Moving ViewState out of the page?
+asp.net scalability viewstate
+We are trying to lighten our page load as much as possible. Since ViewState can sometimes swell up to 100k of the page, I'd love to completely eliminate it.
+I'd love to hear some techniques other people have used to move ViewState to a custom provider.
+That said, a few caveats:
+
+We serve on average 2 Million unique visitors per hour.
+Because of this, Database reads have been a serious issue in performance, so I don't want to store ViewState in the database.
+We also are behind a load balancer, so any solution has to work with the user bouncing from machine to machine per postback.
+
+Ideas?
+
+
+I have tested many ways to remove the load of view state from the page and between all hacks and some software out there the only thing that it is truly scalable is the StrangeLoops As10000 appliance. Transparent, no need to change the underlying application.
+
+As previously stated, I have used the database to store the ViewState in the past.  Although this works for us, we don't come close to 2 million unique visitors per hour.
+I think a hardware solution is definitely the way to go, whether using the StrangeLoop products or another product.
+
+Due to the typical organizational bloat, requesting new hardware takes eons, and requesting hardware that would involve a complete rewire of our current setup would probably get some severe resistance from the engineering department.
+I really need to come up with a software solution, because that's the only world I have some control over.
+Yay for Enterprise :(
+
+I've tried to find some of the products I had researched in the past that works just like StrangeLoops (but software based) It looks like they went all out of business, the only thing from my list that still up there is ScaleOut but they are specialized in session state caching. 
+I understand how hard it is to sell hardware solutions to senior management but it is always a good idea to at least get management to accept listening to the hardware's sales rep. I am much rather putting some hardware that will present me with an immediate solution because it allows me (or buy me some time) to get some other real job done. 
+I understand, it really sucks but the alternative is to change your code for optimization and that would maybe cost a lot more than getting an appliance.
+Let me know if you find another software based solution.  
+
+I'm going to see if I can come up with a way to leverage our current State server to contain the viewstate in memory, I should be able to use the user session ID to keep things synched up between machines.
+If I come up with a good solution, I'll remove any IP protected code and put it out for public use.
+
+Oh no, red tape.  Well this is going to be a tall order to fill.  You mentioned here that you use a state server to serve your session state.  How do you have this setup?  Maybe you can do something similar here also? 
+Edit
+Awh @Jonathan, you posted while I was typing this answer up.  I think going that route could be promising.  One thing is that it will definitely be memory intensive.
+@Mike I don't think storing it in the session information will be a good idea, due to the memory intensiveness of viewstate and also how many times you will need to access the viewstate.  SessionState is accessed a lot less often as the viewstate.  I would keep the two separate.
+I think the ultimate solution would be storing the ViewState on the client some how and maybe worth looking at.  With Google Gears, this could be possible now.
+
+How do you handle Session State?  There is a built-in "store the viewstate in the session state" provider.  If you are storing the session state in some fast, out of proc system, that might be the best option for the viewstate.
+edit: to do this add the following code to the your Page classes / global page base class
+    protected override PageStatePersister PageStatePersister {
+        get { return new SessionPageStatePersister(this); }
+    }
+
+Also... this is by no means a perfect (or even good) solution to a large viewstate.  As always, minimize the size of the viewstate as much as possible.  However, the SessionPageStatePersister is relatively intelligent and avoids storing an unbounded number of viewstates per session as well as avoids storing only a single viewstate per session.
+
+Have you considered if you really need all that viewstate? For example, if you populate a datagrid from a database, all the data will be saved in viewstate by default. However, if the grid is just for presenting data, you dont need a form a all, and hence no viewstate. 
+You only need viewstate when there is some interaction with the user through postbacks, and even then the actual form data may be sufficient to recreate the view. You can selectively disable viewstate for controls on the page.
+You have a very special UI if you actually need 100K of viewstate. If you reduce the viewstate to what is absolutely necessary, it might turn out to be the easiest and most scalable to keep the viewstate in the page.
+
+The following works quite well for me:
+string vsid;
+
+protected override object LoadPageStateFromPersistenceMedium()
+{
+  Pair vs = base.LoadPageStateFromPersistenceMedium() as Pair;
+  vsid = vs.First as string;
+  object result = Session[vsid];
+  Session.Remove(vsid);
+  return result;
+}
+
+protected override void SavePageStateToPersistenceMedium(object state)
+{
+  if (vsid == null)
+  {
+    vsid = Guid.NewGuid().ToString();
+  }
+  Session[vsid] = state;
+  base.SavePageStateToPersistenceMedium(new Pair(vsid, null));
+}
+
+
+I might have a simple solution for you in another post.  It's a simple class to include in your app and a few lines of code in the asp.net page itself.  If you combine it with a distributed caching system you could save a lot of dough as viewstate is large and costly. Microsoftâs velocity might be a good product to attach this method too.  If you do use it and save a ton of money though I'd love a little mention for that.  Also if you are unsure of anything let me know and I can talk with you in person.
+Here is the link to my code. link text
+If you are concerned with scaling then using the session token as a unique identifier or storing the state in session is more or less guaranteed to work in a web farm scenario.
+
+Store the viewstate in a session object and use a distributed cache or state service to store session seperate from the we servers such as microsofts velocity.
+
+I know this is a little stale, but I've been working for a couple of days on an opensource "virtual appliance" using squid and ecap to:
+1.) gzip
+2.) handle ssl
+3.) replace viewstate with a token on request / response
+4.) memcache for object caching
+Anyways, it looks pretty promising.  basically it would sit in front of the loadbalancers and should really help client performance.  Doesnt seem to be very hard to set up either.
+
+I blogged on this a while ago - the solution is at http://www.adverseconditionals.com/2008/06/storing-viewstate-in-memcached-ultimate.html
+This lets you change the ViewState provider to one of your choice without having to change each of your Page classes, by using a custom PageAdapter. I stored the ViewState in memcached. In retrospect I think storing it in a database or on disk is better - we filled memcached up very quickly. Its a very low friction solution.
+
+You can always compress ViewState so you get the benefits of ViewState without so much bloat:
+public partial class _Default : System.Web.UI.Page {
+
+  protected override object LoadPageStateFromPersistenceMedium() {
+    string viewState = Request.Form["__VSTATE"];
+    byte[] bytes = Convert.FromBase64String(viewState);
+    bytes = Compressor.Decompress(bytes);
+    LosFormatter formatter = new LosFormatter();
+    return formatter.Deserialize(Convert.ToBase64String(bytes));
+  }
+
+  protected override void SavePageStateToPersistenceMedium(object viewState) {
+    LosFormatter formatter = new LosFormatter();
+    StringWriter writer = new StringWriter();
+    formatter.Serialize(writer, viewState);
+    string viewStateString = writer.ToString();
+    byte[] bytes = Convert.FromBase64String(viewStateString);
+    bytes = Compressor.Compress(bytes);
+    ClientScript.RegisterHiddenField("__VSTATE", Convert.ToBase64String(bytes));
+  }
+
+  // ...
+
+}
+
+using System.IO;
+using System.IO.Compression;
+
+public static class Compressor {
+
+  public static byte[] Compress(byte[] data) {
+    MemoryStream output = new MemoryStream();
+    GZipStream gzip = new GZipStream(output, 
+                      CompressionMode.Compress, true);
+    gzip.Write(data, 0, data.Length);
+    gzip.Close();
+    return output.ToArray();
+  }
+
+  public static byte[] Decompress(byte[] data) {
+    MemoryStream input = new MemoryStream();
+    input.Write(data, 0, data.Length);
+    input.Position = 0;
+    GZipStream gzip = new GZipStream(input, 
+                      CompressionMode.Decompress, true);
+    MemoryStream output = new MemoryStream();
+    byte[] buff = new byte[64];
+    int read = -1;
+    read = gzip.Read(buff, 0, buff.Length);
+    while(read > 0) {
+      output.Write(buff, 0, read);
+      read = gzip.Read(buff, 0, buff.Length);
+    }
+    gzip.Close();
+    return output.ToArray();
+  }
+}
+
+
+No need to buy or sell anything to eliminate viewstate bloating. Just need to extend the HiddenFieldPageStatePersister. The 100-200KB of ViewState will stay on the server and will send only a 62byte token on the page instead.
+Here is a detailed article on how this can be done:
+http://ashishnangla.com/2011/07/21/reducing-size-of-viewstate-in-asp-net-webforms-by-writing-a-custom-viewstate-provider-pagestatepersister-part-12/ 

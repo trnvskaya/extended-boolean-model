@@ -1,0 +1,75 @@
+MSBuild, example that filters entire solution of .cs files
+msbuild
+I want to learn MSBuild, was wondering if someone could get me started with a simple build script to filter out my vs.net 2008 project of all files with the .cs extension.
+
+how do I run the build?
+where do you usually store the build also?
+
+
+
+C:\projects\_Play\SimpleIpService>type \\sysrdswbld1\public\bin\mrb-vs2008.cmd
+@echo off
+
+call "c:\Program Files\Microsoft Visual Studio 9.0\VC\vcvarsall.bat"
+
+echo %0 %*
+echo %0 %* >> %MrB-LOG%
+cd
+if not ""=="%~dp1" pushd %~dp1
+cd
+if exist %~nx1 (
+        echo VS2008 build of '%~nx1'.
+        echo VS2008 build of '%~nx1'. >> %MrB-LOG%
+        set MrB-BUILDLOG=%MrB-BASE%\%MrB-WORK%.%MrB-NICEDATE%.%MrB-NICETIME%.build-errors.log
+        msbuild.exe %~nx1 /t:Rebuild /p:Configuration=Release > %MrB-BUILDLOG%
+        findstr /r /c:"[1-9][0-9]* Error(s)" %MrB-BUILDLOG%
+        if not errorlevel 1 (
+                echo ERROR: sending notification email for build errors in '%~nx1'.
+                echo ERROR: sending notification email for build errors in '%~nx1'. >> %MrB-LOG%
+                call mrb-email "Mr Build isn't happy about build errors in '%~nx1'" %MrB-BUILDLOG%
+        ) else (
+                findstr /r /c:"[1-9][0-9]* Warning(s)" %MrB-BUILDLOG%
+                if not errorlevel 1 (
+                        echo ERROR: sending notification email for build warnings in '%~nx1'.
+                        echo ERROR: sending notification email for build warnings in '%~nx1'. >> %MrB-LOG%
+                        call mrb-email "Mr Build isn't happy about build warnings in '%~nx1'" %MrB-BUILDLOG%
+                ) else (
+                        echo Successful build of '%~nx1'.
+                        echo Successful build of '%~nx1'. >> %MrB-LOG%
+                )
+        )
+) else (
+        echo ERROR '%1' doesn't exist.
+        echo ERROR '%1' doesn't exist. >> %MrB-LOG%
+)
+popd
+
+
+You typically run an MSBuild script from the command line using the following syntax:
+MSBuild <scriptfilename> /t:targetname
+
+You can get more information here: http://msdn.microsoft.com/en-us/library/0k6kkbsd.aspx
+What are you trying to accomplish by parsing out all of the .cs files from the project file? Keep in mind that with VS2005 and later, the project files are MSBuild scripts in their own right, so you can simply call MSBuild on the command line and give it the name of the project file as the  and the appropriate target.
+That being said, if you create a separate script file I typically store them in the root project folder.
+If you want the list of files as a single string property that is semicolon delimited:
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="3.5">
+  <Import Project="Project.csproj" Condition="Exists(Project.csproj')"/>
+
+  <Target Name="Test">
+     <Message Text="@(Compile)"/>
+  </Target>
+</Project>
+
+If you want to be able to dispaly each file individually:
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="3.5">
+  <Import Project="Project.csproj" Condition="Exists(Project.csproj')"/>
+
+  <Target Name="Test">
+     <Message Text="%(Compile.FullPath)"/>
+  </Target>
+</Project>
+
+Walking through each of these samples, the first line (<Project ...>) identifies the fact that this is an MSBuild project file, defines the DefaultTargets (those targets that will run if no target (/t: targetname) is given on the command line) the XML schema (xmlns) used to validate the file and the version of MSBuild to use (ToolsVersion).
+The second line (<Import ...>) tells MSBuild to include the contents of the MSBuild script named "Project.csproj" if it exists.
+Finally, we define a target named "Test" that contains one task. That task is the "Message" task, which prints a message (whatever is contained in "Text") on the screen.
+In the first sample, <Message Text="@(Compile)"/>, we are referencing an ItemGroup named "Compile" as a semicolon delimited list. In the second example, we are referencing the same ItemGroup but looping over each item in that ItemGroup and printing the "FullPath" metadata contents. (The Compile ItemGroup is defined in the .csproj that we imported in line 2.)

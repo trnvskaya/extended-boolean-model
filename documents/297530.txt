@@ -1,0 +1,51 @@
+How should I interact with the geometry of a UIView, disregarding any transforms applied?
+iphone cocoa-touch
+I have a view that I would like the user to rotate around its center, by tapping and holding somewhere and just move their finger round and round.
+I have all the geometry worked out; What I do is store the initial touch angle relative to the center as offsetAngle, then my touchesMoved method looks like this:
+- (void) touchesMoved: (NSSet *)touches withEvent:(UIEvent *)event {
+    self.transform = CGAffineTransformMakeRotation(0);
+    CGPoint location = [[touches anyObject] locationInView: self];    
+    CGPoint actualCenter = [self convertPoint: self.center fromView: self.superview];    
+    CGPoint relativeTouch = [MathHelper translatePoint:location relativeTo: actualCenter];
+    CGPoint zero = CGPointMake(0, 0);
+    float angle = [MathHelper getAngleForPoint:zero andPoint:relativeTouch];
+    self.transform = CGAffineTransformMakeRotation(offsetAngle-angle);
+}
+
+The ugly bit is the first line, where I have to restore the rotation in order to get the correct event positions in the view. If I don't that, then the locations jump all over the place as there's no continuity, since the view is rotating...
+Another issue is when you want to manipulate a view's frame (eg. moving it down), when the view has a transform applied:
+- (IBAction)toggleSettingsView {
+    BOOL state = [settingsSwitch isOn];
+    float height = optionsView.bounds.size.height;
+    CGRect polygonFrame = polygonView.frame; 
+
+    [UIView beginAnimations:@"advancedAnimations" context:nil]; 
+    [UIView setAnimationDuration:0.3]; 
+    if (state) {
+        optionsView.alpha = 1.0; 
+        polygonFrame.origin.y += height; 
+    } else {
+        optionsView.alpha = 0.0; 
+        polygonFrame.origin.y -= height; 
+    }
+    polygonView.frame = polygonFrame;
+    [UIView commitAnimations]; 
+
+}
+
+This distorts the view heavily.
+I must mention that both the CGTransform and the CALayer transform have the same effect.
+This smells like I'm doing something wrong, but I don't know what I should be doing.
+
+
+I would use the coordinate system of the superview, since it is unaffected by the rotation:
+- (void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event
+{
+    CGPoint location = [[touches anyObject] locationInView:self.superview];
+    CGPoint relativeTouch = [MathHelper translatePoint:location relativeTo:self.center];
+    CGPoint zero = CGPointMake(0, 0);
+    float angle = [MathHelper getAngleForPoint:zero andPoint:relativeTouch];
+    self.transform = CGAffineTransformMakeRotation(offsetAngle-angle);
+}
+
+Just save the original transform in an ivar and call it a day.

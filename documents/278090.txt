@@ -1,0 +1,101 @@
+How can I create or read OpenOffice spreadsheets from Perl?
+perl openoffice.org spreadsheet
+What is a good way to create and read an OpenOffice spreadsheet in Perl?
+
+
+OpenOffice supports a number of formats, if you are looking for something that can read/write Excel-compatible spreadsheets check out Spreadsheet::ParseExcel for reading, and Spreadsheet::WriteExcel for writing.  I have used them both, they are pretty mature and work well.
+
+I used OpenOffice::OOCBuilder for creating large color-coded tables. Liked it very much. 
+For simpler tasks, I often use plain CSV format that is readily opened by any spreadsheet program
+However, you might chose the Excel stuff for compatibility with other people.
+
+I think that the open office native document format is based around the OpenDocument specifications, and is bascially a zip compressed XML format. This being true you could probably manipulate it using your perl XML manipulation tools of choice. 
+Alternatively, there's the Open Office OpenDocument Connector suite of modules on the CPAN which offers a high level API to the OpenDocument spec. 
+To my knowledge, the table methods in these modules should allow for both reading and writing data in OO Calc documents.
+
+This is with version 2.4, because the latest version is unstable. It does work with the latest though sometimes. This will allow realtime DDE features in Calc as opposed to manipulating files. This is using Cygwin Perl on XP but should work with others. I just want to say the Excel VBA programming API is 10 times better and 10 times less confusing. That is pretty bad. 
+[code]
+use Win32::OLE;
+
+Win32::OLE->Option(Warn => 3); # Turn on warnings for easier debugging
+
+#Win32::OLE->GetActiveObject
+# Get the currently running process or create a new one
+$objServiceManager = Win32::OLE->GetActiveObject("com.sun.star.ServiceManager") || Win32::OLE->new("com.sun.star.ServiceManager") || die "CreateObject: $!"; 
+
+$Stardesktop = $objServiceManager->createInstance("com.sun.star.frame.Desktop");
+
+# $Stardesktop->terminate();exit; # will kill ALL OpenOffice docs!!!
+# Doc = StarDesktop.loadComponentFromURL(sURL, "_default", 0, aMediaDesc)
+
+$propValue[0] = $objServiceManager->Bridge_GetStruct("com.sun.star.beans.PropertyValue");
+$propValue[0]->{Name} = "Hidden"; # This does not work!
+$propValue[0]->{Value} = 1;
+
+#Open the file and update its links if you have DDE links in your file
+$propValue[1] = $objServiceManager->Bridge_GetStruct("com.sun.star.beans.PropertyValue");
+$propValue[1]->{Name} = "UpdateDocMode";
+$propValue[1]->{Value} = 3; # com.sun.star.document.UpdateDocMode.FULL_UPDATE
+
+$calc = $Stardesktop->loadComponentfromUrl("file:///C:/Documents and Settings/Chloe/Desktop/MyFile.ods", "MyCalc", 0, \@propValue );
+# load a new blank spreadsheet
+$calc = $Stardesktop->loadComponentFromURL( "private:factory/scalc", "_blank", 0, [] );
+
+# How to hide, as loading the document hidden does not work.
+$calc->getCurrentController->getFrame->getContainerWindow()->setVisible(0);
+
+$oSheet = $calc->getSheets->getByIndex(0);
+
+# how to execute an UNO command, such as menu items
+# http://wiki.services.openoffice.org/wiki/Framework/Article/OpenOffice.org_2.x_Commands
+$frame = $calc->getCurrentController->getFrame;
+$dispatchHelper = $objServiceManager->createInstance("com.sun.star.frame.DispatchHelper");
+$dispatchHelper->executeDispatch(
+    $frame, 
+    ".uno:CalculateHard",
+    #".uno:UpdateAll", 
+    #".uno:UpdateAllLinks", 
+    #".uno:DataAreaRefresh",
+    "_self",
+    0,
+    []
+);
+
+
+$row = 5;
+$cellValue = $oSheet->getCellByPosition(0, $row)->getString(); # get a cell value
+
+# sort in decending order
+$range = $oSheet->getCellRangeByName("A1:P$row");
+$fields[0] = $objServiceManager->Bridge_GetStruct("com.sun.star.table.TableSortField");
+$fields[0]->{Field} = 7; # column number
+$fields[0]->{IsAscending} = 0;
+$unoWrap = $objServiceManager->Bridge_GetValueObject;
+$unoWrap->Set ("[]com.sun.star.table.TableSortField", \@fields);
+$sortDx = $range->createSortDescriptor();
+$sortDx->[0]->{Name} = "ContainsHeader";
+$sortDx->[0]->{Value} = 1;
+$sortDx->[3]->{Name} = "SortFields";
+$sortDx->[3]->{Value} = $unoWrap;
+#$sortDx->[3]->{Value} = \@fields; # You would think this would work? It doesn't.
+$range->sort($sortDx);
+
+
+# create a new sheet to paste to
+$calc->getSheets->insertNewByName("NewSheet", 1 );
+$sheet2 = $calc->getSheets->getByIndex(1);
+$calc->CurrentController->Select($sheet2);
+
+# copy row
+$pasteHere = $sheet2->getCellByPosition(0, 0)->CellAddress;
+$copyRange = $oSheet->getCellRangeByName("A1:Q1")->RangeAddress;
+$oSheet->copyRange($pasteHere, $copyRange);
+
+$cellValue = $sheet2->getCellByPosition(16, $row)->getValue()); # get cell value as integer
+$date = $sheet2->getCellByPosition(5, $row)->getString(); # must get dates as strings
+
+$calc->getCurrentController->getFrame->getContainerWindow()->setVisible(1); # set visible
+$calc->close(0); # close program window
+#print Win32::OLE->LastError, "\n";
+
+[/code]

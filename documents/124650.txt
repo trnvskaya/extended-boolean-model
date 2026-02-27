@@ -1,0 +1,50 @@
+Have you integrated Mantis and Subversion?
+svn mantis scmbug
+I do mostly Windows development.  We use Mantis and Subversion for our development but they aren't integrated together, in fact they are on different servers.
+I did a little googling about integrating the two together and came across this post.  It looked interesting.
+I was wondering if anyone is doing this or has done this and what your experience has been.  If you've got a different solution, I'd be interested in knowing that too!
+Thanks!
+
+
+I came across scmbug.  Looks like it will hook up things like Mantis to things like Subversion.
+
+We've used scmbug for quite some time to link SVN to Bugzilla.  Worked very well until we upgraded to Bugzilla 3.2 recently, which broke the integration.  It takes a little while for the scmbug team to catch up when new releases of the SCM tools come out, which is understandable.
+
+We followed the steps in your link - the only difference is that on Windows you have post-commit.bat instead. If you scroll down someone posts a sample. We modified that so it logs the files changed and who changed them - a fairly easy hack to the batch file. We tried including the diffs at one point - but it was obvious pretty quickly that doing that is a bad idea because of the size of some checkins.
+It works really well and I'm really happy - now I have to move all our Sourcesafe stuff across...
+
+I use Mantis with SVN. Pretty much as that link says, though I put the regexp in the post-commit so it doesn't try to update the bug if the commit message is not relevant, that makes non-bug-updating commits respond slightly faster.
+My Mantis install is on a different server too. I use curl to call the php method in Mantis 1.1.6.
+Put this in your post-commit.cmd hook (you'll need to download strawberry perl and grab perl.exe and perl510.dll from it, you don't need the rest)
+c:\tools\perl c:\tools\mantis_urlencode.pl %1 %2  > c:\temp\postcommit_mantis.txt
+if %ERRORLEVEL% NEQ 0 exit /b 0
+
+c:\tools\curl -s -d user=svn -d @c:\temp\postcommit_mantis.txt http://swi-sgi-l-web1.ingrnet.com/mantis/core/checkincurl.php
+
+and put this in mantis_urlencode.pl
+$url = `svnlook log -r $ARGV[1] $ARGV[0]`;
+
+# check the string contains the matching regexp, 
+# quit if it doesn't so we don't waste time contacting the webserver
+# this is the g_source_control_regexp value in mantis.
+
+exit 1 if not $url =~ /\b(?:bug|issue|mantis)\s*[#]{0,1}(\d+)\b/i;
+
+$url = $url . "\n" . `svnlook dirs-changed -r $ARGV[1] $ARGV[0]`;
+
+#urlencode the string
+$url =~ s/([^\w\-\.\@])/$1 eq " "?"+":  sprintf("%%%2.2x",ord($1))/eg;
+
+print "log=$url";
+
+exit 0;
+
+If you want to migrate from VSS, there are a load of scripts, including one I wrote on codeplex.
+It all works well, we use it all the time, and its quick enough not to notice its there. Just type "Fixed Mantis #1234" and it resolves the bug and adds a bugnote to it. The script also adds the directories that were modified to the bugnote too (I tried showing changed files but too many detract from easy understanding)
+
+Here's the Subversion post-commit script we use. It uses PHP to run the Mantis checkin PHP script as suggested in this link in the original post.
+
+I am personally using a private SVN repository on my local development environment using VisualSVN Server and a public Mantis bug tracker. I had to change the checkin.php file a bit to handle calls from a web server (with help of this web page: http://www.mantisbt.org/bugs/view.php?id=8847)
+I have made a short C# console application to handle this instead of a batch file, so it is more configurable and supports remote or local checkin.php files.
+I have posted an article about this on my blog with the source code if you are interested: http://mp4m.org/blog/svn-and-mantis-bug-tracker-integration/
+Hope that helps!

@@ -1,0 +1,56 @@
+Indexing vs. no indexing when inserting records
+database sorting clustered-index
+I have a few questions about whether or not it would be best to not use indexing.
+BACKGROUND:
+My records have a timestamp attribute, and the records will be inserted in order of their timestamps (i.e., inserted chronologically).
+QUESTIONS:
+
+If I DON'T use indexing is it typical for the database to insert the records in the order that they were inserted?  
+If answer to #1 is yes, when I do a "SELECT .. WHERE timestamp > X" type query will the database be efficient at it, or will it have to go through every single record since it isn't indexed?  I would assume if there were no index, the database would not "know" that the records were inserted in sorted order and could not, therefore, make use of sorted property of the database.  
+
+I assume a clustered index would be best for these types of records & their inserts.
+Please let me know what you guys think.
+Thanks,
+jbu
+
+
+In my experience, yes, the database will insert stuff in the chronological order, especially if you never delete anything.  However, it is not guaranteed, and it's a really bad idea to try to rely on behaviour that is not guaranteed.
+Also, the query planner isn't going to know this fact, so any query you do without an index will cause a full table scan.  Whether that's slower than an indexed query will depend a lot on what sort of data you have, and what percentage of it comes after the "X" in your query.
+
+it depends on the database you are using, of course!
+in general, if you have a lot of inserts to do, it is probably better to disable the indices, do the inserts, then recreate the indices
+using the timestamp as the clustered index (i.e. the order in which the rows are stored) will only matter if your most common queries are in time order (as opposed to retrieve-this-row) and if there are no duplicate timestamps
+
+If there are never any deletes from the table, you can assume that the database will simply add new blocks to the end of the table. However, there's no guarantee as to whether those blocks on disk are either contiguous, or even advancing properly (i.e. the table can well be fragmented over time).
+Any SELECT from a table with no indexes will result in a table scan. Indexes are how you "tell" the database about things like "timestamps are in ascending order".
+A clustered index is good for telling the database you want to keep the rows in index order within the table. However, it is typically (depending on your implementation) only valuable on reasonably static data, as that's the only way the DB will ensure that the rows of the table are indeed in index order, as it does that by rebuilding the table.
+
+What database?
+1)
+A table without indexes is called a heap. A heap will store the records in the order they were inserted. As long as you don't insert from multiple threads, you'll be able to predict the order the database will store the records in. As others have pointed out, this does presume you don't do deletions in which case your DBMS may fill up the empty pages with new rows.
+2)
+Without indexes, the DBMS will have to do a complete table scan (which runs in linear time in relation to the number of records). For records where you insert the records with increasing timestamps, a clustered index would be good. As long as you don't insert old timestamps so the DBMS has to rearrange the rows physically due to the clustered index.
+
+I'm jbu, the post creator.
+Thanks for everyone's fast input.
+To address further questions: 
+Yes I have static data - I will not be deleting.  
+I am testing a few different databases : Sybase SQL Anywhere, Oracle Berkeley DB, H2, Firebird, SQLite, and possibly a few others.
+To Steven Lowe: My table will have millions of records (it will grow to 32GB at most).  If I turn off indexing for a while, and then recreate the index, won't that take a really long time - at least a few minutes (I will assume it could take much longer)?  Also, I think you're assuming that there will be a break in the continuous flow of insertions.  I will almost constantly be inserting using batch insert commits, so I don't think my CPU and disk will ever really have a break to do reindexing.
+Again, thanks for input guys.
+Jbu
+
+It is typical, but it's not guaranteed by any specific implementation, AFAIK. For that reason, it wouldn't be wise to depend on it. Nor does the query optimizer depend on it, so it will do a table scan.
+A clustered index on timestamp in your case really has no downside. You could fill 100% of your data pages, and you'd still be no worse off than a heap. Queries, however, could take advantage of it and would be anywhere from marginally (if you're returning, eg., 90% of the table) to ridiculously (if you're returning, eg., 1% of the table) faster.
+
+I believe that according to the sql standard, you can never be sure about the order of selecting rows in a non ordered column. Even if you test a given database and find it currently to be true, that may not be the case with the next revision of the database. My experience seconds Steven Lowe's. If you are inserting a large number of rows into a table disable (or remove) the rows prior to insertion. Recreating the indices after insertion will take less time than the insertions with the indices on.
+Alan
+
+You need to create an index on the timestamp column to be able to search my timestamp.  Just Do It (TM).
+A clustered index only helps you if you're searching by primary key.  You could make the timestamp the primary key to take advantage of that.
+
+A clustered index is the order that the records exist on the disk. There will always be one, regardless of whether you specify one or not, as there must be an order on the disk.
+It is normal for the primary key to also be the clustered index, but this need not be the case.
+If you are doing batch inserts, you are likely to have mulitple records inserted with the same timestamp.  Obviously this can't then be a primary key.
+In order to do a query like  "SELECT .. WHERE timestamp > X" an index on the 'timestamp' field will improve the performance of that query, whether it is clustered or not.
+Whether the index on the 'timestamp' field should be clustered and whether you will also need other indexes will depend on all the queries you will need to perform on the data.

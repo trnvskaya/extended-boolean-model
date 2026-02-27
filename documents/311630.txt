@@ -1,0 +1,108 @@
+How to deal with a Many-To-Many Relation in my API
+nhibernate api many-to-many entity entity-relationship
+I have two entities Foo and Bar with a Many to Many relationship between them.
+Let's say there is no semantic argument for why Foo might be "responsible" for the many to many relationship, but we arbitrarily decide that Foo is responsible for the relation (I.e., in NHibernate we would mark Bar as Inverse)
+That's all well and good from a DB perspective, but my entity APIs reveal a problem.
+    // Responsible for the relation
+    public class Foo
+    {
+        List<Bar> Bars = new List<Bar>();
+
+        public void AddBar(Bar bar)
+        {
+            Bars.Add(bar);
+            bar.AddFoo(this);
+        }
+    }
+
+    public class Bar
+    {
+        List<Foo> Foos = new List<Foo>();
+
+        // This shouldn't exist.
+        public void AddFoo(Foo foo)
+        {
+            Foos.Add(foo);
+            foo.AddBar(this); // Inf Recursion
+        }
+    }
+
+If we've decided that Foo is responsible for this relationship, how do I update the associated collection in Bar without creating a public Bar.AddFoo() method which shouldn't even exist?
+I feel like I should be able to maintain the integrity of my domain model without resorting to having to reload these entities from the DB after an operation such as this.
+UPDATE: Code tweak inspired by commenter. 
+
+
+you could make it static
+public class Foo
+{
+    List<Bar> Bars = new List<Bar>();
+
+    public void AddBar(Bar bar)
+    {
+        Bars.Add(bar);
+        Bar.AddFoo(bar,this);
+    }
+}
+
+public class Bar
+{
+    List<Foo> Foos = new List<Foo>();
+
+    // This shouldn't exist.
+    public static void AddFoo(Bar bar, Foo foo)
+    {
+        bar.Foos.Add(foo);
+        //foo.AddBar(this); inf recurtion
+    }
+}
+
+Not really ideal but it does get the function off the object its self
+
+See Working bi-directional links in the Hibernate documentation.
+
+Many developers program defensively
+  and create link management methods to
+  correctly set both sides, e.g. in
+  Person:
+
+protected Set getEvents() {
+	return events;
+}
+
+protected void setEvents(Set events) {
+	this.events = events;
+}
+
+public void addToEvent(Event event) {
+	this.getEvents().add(event);
+	event.getParticipants().add(this);
+}
+
+public void removeFromEvent(Event event) {
+	this.getEvents().remove(event);
+	event.getParticipants().remove(this);
+}
+
+I personally think Entity object holding the list of related object is being too smart, and you should let the DAL hit the database.
+DALFactory.FooAdapter.getBars(foo);
+
+
+You might be missing a domain concept there. Have you tried creating a third entity: FooBarRelationship?
+
+You said that one side will "own" the relationship.  Make this method public.  The other associations (or add methods) can be made internal to avoid consumers from interacting with it directly.
+public class Foo
+{  
+   private IList<Bar> Bars {get;set;}
+
+   public void AddBar(Bar bar)
+   {
+      Bars.Add(bar);
+      bar.Foos.Add(this);
+   }
+}
+
+public class Bar
+{
+   internal IList<Foo> Foos {get;set;}
+}
+

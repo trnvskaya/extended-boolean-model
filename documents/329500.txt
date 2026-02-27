@@ -1,0 +1,115 @@
+Can you enable [Authorize] for controller but disable it for a single action?
+c# asp.net-mvc authorization
+I would like to use [Authorize] for every action in my admin controller except the Login action. 
+[Authorize (Roles = "Administrator")]
+public class AdminController : Controller
+{
+    // what can I place here to disable authorize?
+    public ActionResult Login()
+    {
+        return View();
+    }
+}
+
+
+
+I don't think you can do this with the standard Authorize attribute, but you could derive your own attribute from AuthorizeAttribute that takes a list of actions to allow and allows access to just those actions.  You can look at the source for the AuthorizeAttribute at www.codeplex.com for ideas on how to do this.  If you did, it might look like:
+[AdminAuthorize (Roles = "Administrator", Exempt = "Login, Logout") ]
+public class AdminController : Controller
+{
+    public ActionResult Login()
+    {
+        return View();
+    }
+
+    public ActionResult Login()
+    {
+        return View();
+    }
+
+    ... other, restricted actions ...
+}
+
+EDIT:  FYI, I eventually ran across a need to do something similar on my own and I went a different direction.  I created a default authorization filter provider and apply a global authorize filter.  The authorization filter provider uses reflection to check if an action or controller has a specific authorize attribute applied and, if so, defers to it.  Otherwise, it applies a default authorization filter.  This is coupled with a PublicAttribute derived from AuthorizeAttribute that allows public access.  Now, I get default secured access, but can grant public access via [Public] applied to an action or controller.  More specific authorization can also be applied as necessary.  See my blog at http://farm-fresh-code.blogspot.com/2011/04/default-authorization-filter-provider.html
+
+You could override the OnAuthorization method of the controller
+    protected override void OnAuthorization(AuthorizationContext filterContext)
+    {
+        if ((string)(filterContext.RouteData.Values["action"]) == "Login")
+        {
+            filterContext.Cancel = true;
+            filterContext.Result = Login();
+        }
+    }
+
+This works but it is a hack.
+Full class code used for testing:
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+using System.Web.Mvc;
+using System.Web.Mvc.Ajax;
+
+namespace MvcApplication2.Controllers
+{
+[HandleError]
+[Authorize]
+public class HomeController : Controller
+{
+    public ActionResult Index()
+    {
+        ViewData["Title"] = "Home Page";
+        ViewData["Message"] = "Welcome to ASP.NET MVC!";
+
+        return View();
+    }
+
+
+    public ActionResult About()
+    {
+        ViewData["Title"] = "About Page";
+
+        return View();
+    }
+
+
+    protected override void OnAuthorization(AuthorizationContext filterContext)
+    {
+        if ((string)(filterContext.RouteData.Values["action"]) == "Index")
+        {
+            filterContext.Cancel = true;
+            filterContext.Result = Index();
+        }
+    }
+}
+}
+
+
+May be it's not actual, but I wrote my custom attribute:
+public class SelectableAuthorizeAttribute : AuthorizeAttribute
+{
+    public SelectableAuthorizeAttribute(params Type[] typesToExclude)
+    {
+        _typesToExlude = typesToExclude;
+    }
+
+    private readonly Type[] _typesToExlude;
+
+    public override void OnAuthorization(AuthorizationContext filterContext)
+    {
+        bool skipAuthorization = _typesToExlude.Any(type => filterContext.ActionDescriptor.ControllerDescriptor.ControllerType == type);
+
+        if (!skipAuthorization)
+        {
+            base.OnAuthorization(filterContext);
+        }
+    }
+}
+
+And then registered it in my global filetrs:
+filters.Add(new SelectableAuthorizeAttribute(typeof(MyController)));
+
+Hope that it will be useful for someone
+
+You can decorate your controller with [Authorize] and then you can just decorate the method that you want to exempt with [AllowAnonymous]

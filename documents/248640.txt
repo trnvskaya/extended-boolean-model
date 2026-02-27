@@ -1,0 +1,38 @@
+Does the concept of shared sessions exist in ASP.NET?
+asp.net wcf silverlight caching duplex
+I am working on a web application (ASP.NET) game that would consist of a single page, and on that page, there would be a game board akin to Monopoly.  I am trying to determine what the best architectural approach would be.  The main requirements I have identified thus far are:
+
+Up to six users share a single game state object.
+The users need to keep (relatively) up to date on the current state of the game, i.e. whose turn it is, what did the active user just roll, how much money does each other user have, etc.
+
+I have thought about keeping the game state in a database, but it seems like overkill to keep updating the database when a game state object (say, in a cache) could be kept up to date.  For example, the flow might go like this:
+
+Receive request for data from a user.
+Look up data in database.  Create object from that data.
+Verify user has permissions to perform request based on the game's state (i.e. make sure it's really their turn or have enough money to buy that property).
+Update the game object.
+Write the game object back to the database.
+Repeat for every single request.
+
+Consider that a single server would be serving several concurrent games.
+
+I have thought about using AJAX to make requests to an an ASP.NET page.
+I have thought about using AJAX requests to a web service using silverlight.
+I have thought about using WCF duplex channels in silverlight.
+
+I can't figure out what the best approach is.  All seem to have their drawbacks.  Does anyone out there have experience with this sort of thing and care to share those experiences?  Feel free to ask your own questions if I am being too ambiguous!  Thanks.
+Update:  Does anyone have any suggestions for how to implement this connection to the server based on the three options I mention above?
+
+
+You could use the ASP.Net Cache or the Application state to store the game object since these are shared between users. The cache would probably be the best place since objects can be removed from it to save memory. 
+If you store the game object in cache using a unique key you can then store the key in each visitors Session and use this to retrieve the shared game object. If the cache has been cleared you will recreate the object from the database. 
+
+While updating a database seems like overkill, it has advantages when it comes time to scale up, as you can have multiple webheads talking to one backend.
+A larger concern is how you communicate the game state to the clients. While a full update of the game state from time to time ensures that any changes are caught and all clients remain in synchronization even if they miss a message, gamestate is often quite large.
+Consider as well that usually you want gamestate messages to trigger animations or other display updates to portray the action (for example, of a piece moves, it shouldn't just appear at the destination in most cases... it should move across the board). 
+Because of that, one solution that combines the best of both worlds is to keep a database that collects all of the actions performed in a table, with sequential IDs. When a client requests an update, it can give all the actions after the last one it knew about, and the client can "act out" the moves. This means even if an request fails, it can simply retry the request and none of the actions will be lost.
+The server can then maintain an internal view of the gamestate as well, from the same data. It can also reject illegal actions and prevent them from entering the game action table (and thus prevent other clients from being incorrectly updated).
+Finally, because the server does have the "one true" gamestate, the clients can periodically check against that (which will allow you to find errors in your client or server code). Because the server database should be considered the primary, you can retransmit the entire gamestate to any client that gets incorrect state, so minor client errors won't (potentially) ruin the experience (except perhaps a pause while the state is downloaded).
+
+Why don't you just create an application level object to store your details. See Application State and Global Variables in ASP.NET for details. You can use the sessionID to act as a key for the data for each player.
+You could also use the Cache to do the same thing using a long time out. This does have the advantage that older data could be flushed from the Cache after a period of time ie 6 hours or whatever.

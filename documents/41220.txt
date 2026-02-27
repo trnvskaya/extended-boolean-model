@@ -1,0 +1,53 @@
+Is there a best .NET algorithm for credit card encryption?
+.net security encryption cryptography
+The .NET System.Security.Cryptography namespace has a rather bewildering collection of algorithms that I could use for encryption of credit card details. Which is the best?
+It clearly needs to be secure for a relatively short string. 
+EDIT: I'm in the UK, where I understand we're OK storing encrypted credit card details so long as the three-digit CVV number is never stored. And thanks all for the great responses.
+
+
+3des is pretty good, store the salt along side, and keep a standard key somewhere not in the database or a config file. That way if you get pwned, they can't decrypt it.
+
+No offense, but the question is a little "misguided". There is no "silver bullet" solution. I would recommend to read up on cryptography in general and then do some threat modeling. Some questions (by no means a comprehensive list) you should ask yourself:
+
+Is the module doing the encryption the one which needs to decrypt it (in this case use symmetric crypto) or will it send data to an other module (on an other machine) which will use it (in which case you should consider public-key crypto)
+What do you want to protect against? Someone accessing the database but not having the sourcecode (in which case you can hardcode the encryption key directly into the source)? Someone sniffing your local network (you should consider transparent solutions like IPSec)? Someone stealing your server (it can happen even in data centers - in which case full disk encryption should be considered)?
+Do you really need to keep the data? Can't you directly pass it to the credit card processor and erase it after you get the confirmation? Can't you store it locally at the client in a cookie or Flash LSO? If you store it at the client, make sure that you encrypt it at the server side before putting it in a cookie. Also, if you are using cookies, make sure that you make them http only.
+Is it enough to compare the equality of the data (ie the data that the client has given me is the same data that I have)? If so, consider storing a hash of it. Because credit card numbers are relatively short and use a reduced set of symbols, a unique salt should be generated for each before hashing.
+
+Later edit: note that standard encryption algorithms from the same category (for example 3DES and AES - both being symmetric block cyphers) are of comparable strength. Most (commercial) systems are not broken because somebody bruteforced their encryption, but because their threat modelling was not detailed enough (or flat out they didn't have any). For example you can encrypt all the data, but if you happen to have a public facing web interface which is vulnerable to SQL injection, it won't help you much.
+
+As per PCI DSS compliance rules, any industry leading encryption standard is enough. So a 3DES with a 256 bit key is good enough (although other standards can be used). Check this out http://pcianswers.com/2006/08/09/methods-of-encrypting-data/
+
+It it doesn't matter.
+Full card numbers should never touch disk. 
+All that matters is the auth code.
+For traces etc you will only use the last 4 digits xxxx xxxx xxxx 1234 and expire date.
+If you are to store card numbers the cryptography choice will be mandated by the acquiring bank.
+Unless you are the acquirer, which case there should be an old unix programmer/db2 guy that you should ask.
+"Can't you store it locally at the client in a cookie"  <-- NEVER
+
+There's also the legal aspect to consider. I don't know the situation elsewhere but in Germany you're simply not allowed to store credit card numbers1). Period. It doesn't matter whether you encrypt them or not and in what format you store them.
+All you may do (and here I'm referring from memory, without any judicial knowledge) is store a strong hash (SHA-256?) of the credit card number, along with the last four digits and the account number. And yes, it's trivial to rebuild the complete number from these information alone. Laws aren't always logical.
+
+1) Except if you're a federally certified credit card institute.
+
+Hint: You should investigate if it's legal to store credit card numbers. In Sweden for example you will have to be certified by PCI (Payment Card Industry), where your internal and external security will be tested (a long with a lot of other things).
+You should think both once or twice before storing credit card information, since the legal costs of doing it wrong might be expensive.
+
+I'd add to the view that you just plain shouldn't store them unless you have a really really good reason to, and storing them in a cookie is a really bad idea - they're just too easy to get hold of (what happens if someone steals a cookie - then it won't matter how encrypted it is).
+If you need to do repeat payments, most CC providers will offer a way to do this by storing some kind of token from the initial payment, without keeping the card number at all (you could just keep the last 4 digits to display to the customer so that they know which card is stored).
+Really, just don't do it!
+Also you should never ever ever ever keep the CCV code.
+
+Don't forget about integrity here. There are forgery attacks against out-of-the-box crypto when the attacker doesn't know the key, but can manipulate the ciphertext.  These can be particularly nasty when:
+
+encrypting short strings,
+with known substrings
+
+That's exactly the case for credit cards.  So using System.Security.Cryptography AES or 3DES in CBC mode without rolling your own checksum can be dangerous.  Read: there's some chance an attacker without the secret key could replace one credit card number with another.
+
+If you are using a 3rd party payment gateway, you don't need to store the numbers.
+There is no point.
+
+Encrypt the credit card with a public key. Give the private key to the payment processor machine only. The payment processor machine then can query the database and do the work, and nobody else, even the machine which added the entry, will be able to decrypt it.
+Something like PHP's openssl_seal, though if you want perhaps with a different algorithm.

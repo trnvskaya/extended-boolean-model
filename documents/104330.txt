@@ -1,0 +1,162 @@
+SQL Query Help: Transforming Dates In A Non-Trivial Way
+sql sql-server date sql-server-2000 dateadd
+I have a table with a "Date" column, and I would like to do a query that does the following:
+If the date is a Monday, Tuesday, Wednesday, or Thursday, the displayed date should be shifted up by 1 day, as in DATEADD(day, 1, [Date])  On the other hand, if it is a Friday, the displayed date should be incremented by 3 days (i.e. so it becomes the following Monday).
+How do I do this in my SELECT statement?  As in,
+SELECT somewayofdoingthis([Date]) FROM myTable
+(This is SQL Server 2000.)
+
+
+you need to create a SQL Function that does this transformation for you.  
+
+Sounds like a CASE expression.  I don't know the proper data manipulations for SQL Server, but basically it would look like this:
+CASE
+  WHEN [Date] is a Friday THEN DATEADD( day, 3, [Date] )
+  ELSE DATEADD( day, 1, [Date] )
+END
+
+If you wanted to check for weekend days you could add additional WHEN clauses before the ELSE.
+
+This is off the top of my head and can be clearly cleaned up  but use it as a starting point:
+select case when DATENAME(dw, [date]) = 'Monday' then DATEADD(dw, 1, [Date])
+                when DATENAME(dw, [date]) = 'Tuesday' then DATEADD(dw, 1, [Date])
+                when DATENAME(dw, [date]) = 'Wednesday' then DATEADD(dw, 1, [Date])
+                when DATENAME(dw, [date]) = 'Thursday' then DATEADD(dw, 1, [Date])
+                when  DATENAME(dw, [date]) = 'Friday' then DATEADD(dw, 3, [Date])
+          end as nextDay
+    ...
+
+
+you could use this:
+select dayname,newdayname =
+    CASE dayname
+    WHEN 'Monday' THEN 'Tuesday'
+    WHEN 'Tuesday' THEN 'Wednesday'
+    WHEN 'Wednesday' THEN 'Thursday'
+    WHEN 'Thursday' THEN 'Friday'
+    WHEN 'Friday' THEN 'Monday'
+    WHEN 'Saturday' THEN 'Monday'
+    WHEN 'Sunday' THEN 'Monday'
+END
+FROM UDO_DAYS
+
+
+results:
+Monday       Tuesday
+Tuesday      Wednesday
+Wednesday    Thursday
+Thursday     Friday
+Friday       Monday
+Saturday     Monday
+Sunday       Monday
+
+table data:
+Monday
+Tuesday
+Wednesday
+Thursday
+Friday
+Saturday
+Sunday
+
+
+Here is how I would do it. I do recommend a function like above if you will be using this in other places.
+CASE
+WHEN
+	DATEPART(dw, [Date]) IN (2,3,4,5)
+THEN
+	DATEADD(d, 1, [Date])
+WHEN
+	DATEPART(dw, [Date]) = 6
+THEN
+	DATEADD(d, 3, [Date])
+ELSE
+	[Date]
+END AS [ConvertedDate]
+
+
+CREATE FUNCTION dbo.GetNextWDay(@Day datetime)
+RETURNS DATETIME
+AS
+BEGIN 
+    DECLARE @ReturnDate DateTime
+
+    set @ReturnDate = dateadd(dd, 1, @Day)
+
+    if (select datename(@ReturnDate))) = 'Saturday'
+        set @ReturnDate = dateadd(dd, 2, @ReturnDate)
+
+    if (select datename(@ReturnDate) = 'Sunday'
+        set @ReturnDate = dateadd(dd, 1, @ReturnDate)
+
+    RETURN @ReturnDate
+END
+
+
+Look up the CASE statement and the DATEPART statement.  You will want to use the dw argument with DATEPART to get back an integer that represents the day of week.
+
+Try
+select case  when datepart(dw,[Date]) between 2 and 5 then DATEADD(dd, 1, [Date])
+when datepart(dw,[Date]) = 6 then DATEADD(dd, 3, [Date]) else [Date] end as [Date]
+
+
+create table #dates (dt datetime)
+insert into #dates (dt) values ('1/1/2001')
+insert into #dates (dt) values ('1/2/2001')
+insert into #dates (dt) values ('1/3/2001')
+insert into #dates (dt) values ('1/4/2001')
+insert into #dates (dt) values ('1/5/2001')
+
+    select
+        dt, day(dt), dateadd(dd,1,dt)
+    from
+        #dates
+    where
+        day(dt) between 1 and 4
+
+    union all
+
+    select
+        dt, day(dt), dateadd(dd,3,dt)
+    from
+        #dates
+    where
+        day(dt) = 5
+
+    drop table #dates
+
+
+I'm assuming that you also want Saturday and Sunday to shift forward to the following Monday. If that is not the case, take the 1 out of (1,2,3,4,5) and remove the last when clause.
+case
+   --Sunday thru Thursday are shifted forward 1 day
+   when datepart(weekday, [Date]) in (1,2,3,4,5) then dateadd(day, 1, [Date]) 
+   --Friday is shifted forward to Monday
+   when datepart(weekday, [Date]) = 6  then dateadd(day, 3, [Date])
+   --Saturday is shifted forward to Monday
+   when datepart(weekday, [Date]) = 7  then dateadd(day, 2, [Date])
+end
+
+You can also do it in one line:
+select dateadd(day, 1 + (datepart(weekday, [Date])/6) * (8-datepart(weekday, [Date])), [Date])
+
+
+This is mostly like Brian's except it didn't compile due to mismatched parens and I changed the IF to not have the select in it.  It is important to note that we use DateNAME here rather than datePART because datePART is dependent on the value set by SET DATEFIRST, which sets the first day of the week.
+CREATE FUNCTION dbo.GetNextWDay(@Day datetime)
+RETURNS DATETIME
+AS
+BEGIN
+    DECLARE @ReturnDate DateTime
+
+    set @ReturnDate = dateadd(dd, 1, @Day)
+    if datename(dw, @ReturnDate) = 'Saturday'
+        set @ReturnDate = dateadd(dd, 2, @ReturnDate)
+    if datename(dw, @ReturnDate) = 'Sunday'
+        set @ReturnDate = dateadd(dd, 1, @ReturnDate)
+    RETURN @ReturnDate
+END
+
+
+How about taking a page from the Data Warehouse guys and make a table. In DW terms, this would be a date dimension. A standard date dimension would have things like various names for a date ("MON", "Monday", "August 22, 1998"), or indicators like end-of-month and start-of-month.  However, you can also have columns that only make sense in your environment.
+For instance, based on the question, yours might have a next-work-day column that would point to the key for the day in question. That way you can customize it further to take into account holidays or other non-working days. 
+The DW folks are adamant about using meaningless keys (that is, don't just use a truncated date as the key, use a generated key), but you can decide that for yourself. 
+The Date Dimension Toolkit has code to generate your own tables in various DBMS and it has CSV data for several years worth of dates.

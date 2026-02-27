@@ -1,0 +1,91 @@
+How do I change read/write mode for a file using Emacs?
+emacs file file-permissions
+If a file is set to read only mode, how do I change it to write mode and vice versa from within Emacs?
+
+
+
+M-x toggle-read-only
+
+On my Windows box, that amounts to Alt-x to bring up the meta prompt and typing "toggle-read-only" to call the correct elisp function.
+If you are using the default keyboard bindings, 
+
+C-x C-q 
+
+(which you read aloud as "Control-X Control-Q") will have the same effect.  Remember, however, given that emacs is essentially infinitely re-configurable, your mileage may vary.
+Following up from the commentary: you should note that the writeable status of the buffer does not change the writeable permission of the file.  If you try to write out to a read only file, you'll see a confirmation message.  However, if you own the file, you can write out your changes without changing the permissions on the file.
+This is very convenient if you'd like to make a quick change to a file without having to go through the multiple steps of add write permission, write out changes, remove write permission.  I tend to forget that last step, leaving potentially critical files open for accidental changes later on.
+
+CTRL + X + CTRL + Q     
+
+Be sure you're not confusing 'file' with 'buffer'.  You can set buffers to read-only and back again with C-x C-q (toggle-read-only).  If you have permission to read, but not write, a file, the buffer you get when you visit the file (C-x C-f or find-file) will be put in read-only mode automatically.  If you want to change the permissions on a file in the file system, perhaps start with dired on the directory that contains the file.  Documentation for dired can be found in info; C-h i (emacs)dired RET.
+
+If only the buffer (and not the file) is read-only, you can use toggle-read-only, which is usually bound to C-x C-q.
+If the file itself is read-only, however, you may find the following function useful:
+(defun set-buffer-file-writable ()
+  "Make the file shown in the current buffer writable.
+Make the buffer writable as well."
+  (interactive)
+  (unix-output "chmod" "+w" (buffer-file-name))
+  (toggle-read-only nil)
+  (message (trim-right '(?\n) (unix-output "ls" "-l" (buffer-file-name)))))
+
+The function depends on unix-output and trim-right:
+(defun unix-output (command &rest args)
+  "Run a unix command and, if it returns 0, return the output as a string.
+Otherwise, signal an error.  The error message is the first line of the output."
+  (let ((output-buffer (generate-new-buffer "*stdout*")))
+    (unwind-protect
+     (let ((return-value (apply 'call-process command nil
+                    output-buffer nil args)))
+       (set-buffer output-buffer)
+       (save-excursion 
+         (unless (= return-value 0)
+           (goto-char (point-min))
+           (end-of-line)
+           (if (= (point-min) (point))
+           (error "Command failed: %s%s" command
+              (with-output-to-string
+                  (dolist (arg args)
+                (princ " ")
+                (princ arg))))
+           (error "%s" (buffer-substring-no-properties (point-min) 
+                                   (point)))))
+         (buffer-substring-no-properties (point-min) (point-max))))
+      (kill-buffer output-buffer))))
+
+(defun trim-right (bag string &optional start end)
+  (setq bag (if (eq bag t) '(?\  ?\n ?\t ?\v ?\r ?\f) bag)
+    start (or start 0)
+    end (or end (length string)))
+  (while (and (> end 0)
+          (member (aref string (1- end)) bag))
+    (decf end))
+  (substring string start end))
+
+Place the functions in your ~/.emacs.el, evaluate them (or restart emacs).  You can then make the file in the current buffer writable with M-x set-buffer-file-writable.
+
+I tried out Vebjorn Ljosa's solution, and it turned out that at least in my Emacs (22.3.1) there isn't such function as 'trim-right', which is used for removing an useless newline at the end of chmod output.
+Removing the call to 'trim-right' helped, but made the status row "bounce" because of the extra newline.
+
+What I found is M-x set-file-modes filename mode
+It worked at my Windows Vista box.
+For example: M-x set-file-modes <RET> ReadOnlyFile.txt <RET> 0666
+
+If you are looking at a directory of files (dired), then you can use Shift + M on a filename and enter the modespec, the same attributes used in the chmod command.
+M modespec <RET>
+See the other useful commands on files in a directory listing at 
+http://www.gnu.org/s/libtool/manual/emacs/Operating-on-Files.html
+
+As mentioned up there by somebody else: M-x toggle-read-only would work.
+However, this is now deprecated and M-x read-only-mode is the current way to do it, that it is set to C-x C-q keybinding.
+
+C-x C-q is useless. Because your also need the permission to save a file.
+I use Spacemacs. It gives me a convenient function to solve this question. The code is following.
+(defun spacemacs/sudo-edit (&optional arg)
+  (interactive "p")
+  (if (or arg (not buffer-file-name))
+      (find-file (concat "/sudo:root@localhost:" (ido-read-file-name "File: ")))
+    (find-alternate-file (concat "/sudo:root@localhost:" buffer-file-name))))
+
+I call spacemacs/sudo-edit to open a file in emacs and input my password, I can change the file without read-only mode.
+You can write a new function like spacemacs/sudo-edit.

@@ -1,0 +1,49 @@
+What does `$hash{$key} |= {}` do in Perl?
+perl initialization hash-reference
+I was wrestling with some Perl that uses hash references.
+In the end it turned out that my problem was the line:
+$myhash{$key} |= {};
+
+That is, "assign $myhash{$key} a reference to an empty hash, unless it already has a value".
+Dereferencing this and trying to use it as a hash reference, however, resulted in interpreter errors about using a string as a hash reference.
+Changing it to:
+if( ! exists $myhash{$key}) {
+  $myhash{$key} = {};
+}
+
+... made things work.
+So I don't have a problem. But I'm curious about what was going on.
+Can anyone explain?
+
+
+Try this:
+my %myhash;
+$myhash{$key} ||= {};
+
+You can't declare a hash element in a my clause, as far as I know. You declare the hash first, then add the element in.
+Edit: I see you've taken out the my. How about trying ||= instead of |=? The former is idiomatic for "lazy" initialisation.
+
+Perl has shorthand assignment operators. The ||= operator is often used to set default values for variables due to Perl's feature of having logical operators return the last value evaluated. The problem is that you used |= which is a bitwise or instead of ||= which is a logical or.
+As of Perl 5.10 it's better to use //= instead. // is the logical defined-or operator and doesn't fail in the corner case where the current value is defined but false.
+
+I think your problem was using "|=" (bitwise-or assignment) instead of "||=" (assign if false).
+Note that your new code is not exactly equivalent.  The difference is that "$myhash{$key} ||= {}" will replace existing-but-false values with a hash reference, but the new one won't.  In practice, this is probably not relevant.
+
+The reason you're seeing an error about using a string as a hash reference is because you're using the wrong operator. |= means "bitwise-or-assign." In other words,
+  $foo |= $bar;
+
+is the same as
+  $foo = $foo | $bar
+
+What's happening in your example is that your new anonymous hash reference is getting stringified, then bitwise-ORed with the value of $myhash{$key}. To confuse matters further, if $myhash{$key} is undefined at the time, the value is the simple stringification of the the hash reference, which looks like HASH(0x80fc284). So if you do a cursory inspection of the structure, it may look like a hash reference, but it's not. Here's some useful output via Data::Dumper:
+   perl -MData::Dumper -le '$hash{foo} |= { }; print Dumper \%hash'
+   $VAR1 = {
+             'foo' => 'HASH(0x80fc284)'
+           };
+
+And here's what you get when you use the correct operator:
+  perl -MData::Dumper -le '$hash{foo} ||= { }; print Dumper \%hash'
+  $VAR1 = {
+            'foo' => {}
+          };
+

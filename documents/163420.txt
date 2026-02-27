@@ -1,0 +1,190 @@
+Printing to a pdf printer programatically
+vb.net pdf
+I am trying to print an existing file to PDF programmatically in Visual Basic 2008.
+Our current relevant assets are:
+Visual Studio 2008 Professional
+Adobe Acrobat Professional 8.0
+I thought about getting a sdk like ITextSharp, but it seem like overkill for what I am trying to do especially since we have the full version of Adobe. 
+Is there a relatively simple bit of code to print to a PDF printer (and of course assign it to print to a specific location) or will it require a the use of another library to print to pdf?
+
+I want to print a previosly created document to a pdf file. In this case it a .snp file that I want to make into a .pdf file, but I think the logic would be the same for any file type.
+
+I just tried the above shell execute, and it will not perform the way I want it to. as it prompts me as to where I want to print and still does not print where I want it to (multiple locations), which is crucial as we create a lot of the same named PDF files (with different data within the PDF and placed in corresponding client folders) 
+
+The current process is:
+
+Go to \\report server\client1 
+create pdf files of all the snp documents in the folder by hand 
+copy the pdf to \\website reports\client1
+then repeat for all 100+ clients takes roughly two hours to complete and verify
+
+I know this can be done better but I have only been here three months and there were other pressing concerns that were a lot more immediate. I also was not expecting something that looks this trivial to be that hard to code.
+
+
+What you want to do is find a good free PDF Printer driver.  These are installed as printers, but instead of printing to a physical device, render the printer commands as a PDF.  Then, you can either ShellExecute as stated above, or use the built in .net PrintDocument, referring the the PDF "printer" by name.  I found a couple free ones, including products from Primo and BullZip (freedom limited to 10 users) pretty quickly.
+It looks like SNP files are Microsoft Access Snapshots.  You will have to look for a command line interface to either Access or the Snapshot Viewer that will let you specify the printer destination.
+I also saw that there is an ActiveX control included in the SnapshotViewer download.  You could try using that in your program to load the snp file, and then tell it where to print it to, if it supports that functionality.
+
+Try using ShellExecute with the Print Verb.
+Here is a blog I found with Google.
+http://www.vbforums.com/showthread.php?t=508684
+
+PDFforge offers PDFCreator. It will create PDFs from any program that is able to print, even existing programs. Note that it's based on GhostScript, so maybe not a good fit to your Acrobat license.
+Have you looked into Adobe Distiller Server ? You can generate PostScript files using any printer driver and have it translated into PDF. (Actually, PDFCreator does a similar thing.)
+
+If you are trying to hand generated the PDF (with and SDK or a PDF printer driver) it's not very easy.  The PDF format reference is available from Adobe.
+The problem is that the file is a mix of ASCII and tables that have binary offsets within the file to reference objects.  It is an interesting format, and very extensible, but it is difficult to write a simple file.
+It's doable if you need to. I looked at the examples in the Adobe PDF reference, hand typed them in and worked them over till I could get them to work as I needed.  If you will be doing this a lot it might be worth it, otherwise look at an SDK.
+
+This is how I do it in VBScript. Might not be very useful for you but might get you started. You need to have a PDF maker (adobe acrobat) as a printer named "Adobe PDF".
+'PDF_WILDCARD = "*.pdf"
+'PrnName = "Adobe PDF"
+Sub PrintToPDF(ReportName As String, TempPath As String, _
+               OutputName As String, OutputDir As String, _
+               Optional RPTOrientation As Integer = 1)
+
+  Dim rpt As Report
+  Dim NewFileName As String, TempFileName As String
+
+  '--- Printer Set Up ---
+  DoCmd.OpenReport ReportName, View:=acViewPreview, WindowMode:=acHidden
+  Set rpt = Reports(ReportName)
+  Set rpt.Printer = Application.Printers(PrnName)
+
+  'Set up orientation
+  If RPTOrientation = 1 Then
+    rpt.Printer.Orientation = acPRORPortrait
+  Else
+    rpt.Printer.Orientation = acPRORLandscape
+  End If
+
+  '--- Print ---
+  'Print (open) and close the actual report without saving changes
+  DoCmd.OpenReport ReportName, View:=acViewNormal, WindowMode:=acHidden
+
+  ' Wait until file is fully created
+  Call waitForFile(TempPath, ReportName & PDF_EXT)
+
+  'DoCmd.Close acReport, ReportName, acSaveNo
+  DoCmd.Close acReport, ReportName
+
+  TempFileName = TempPath & ReportName & PDF_EXT 'default pdf file name
+  NewFileName = OutputDir & OutputName & PDF_EXT 'new file name
+
+  'Trap errors caused by COM interface
+  On Error GoTo Err_File
+  FileCopy TempFileName, NewFileName
+
+  'Delete all PDFs in the TempPath
+  '(which is why you should assign it to a pdf directory)
+  On Error GoTo Err_File
+  Kill TempPath & PDF_WILDCARD
+
+Exit_pdfTest:
+  Set rpt = Nothing
+  Exit Sub
+
+Err_File:    ' Error-handling routine while copying file
+  Select Case Err.Number    ' Evaluate error number.
+      Case 53, 70   ' "Permission denied" and "File Not Found" msgs
+          ' Wait 3 seconds.
+          Debug.Print "Error " & Err.Number & ": " & Err.Description & vbCr & "Please wait a few seconds and click OK", vbInformation, "Copy File Command"
+          Call sleep(2, False)
+          Resume
+      Case Else
+          MsgBox Err.Number & ": " & Err.Description
+          Resume Exit_pdfTest
+  End Select
+
+  Resume
+
+End Sub
+
+
+
+Sub waitForFile(ByVal pathName As String, ByVal tempfile As String)
+    With Application.FileSearch
+        .NewSearch
+        .LookIn = pathName
+        .SearchSubFolders = True
+        .filename = tempfile
+        .MatchTextExactly = True
+        '.FileType = msoFileTypeAllFiles
+    End With
+    Do While True
+       With Application.FileSearch
+           If .Execute() > 0 Then
+               Exit Do
+           End If
+       End With
+    Loop
+End Sub
+
+
+
+Public Sub sleep(seconds As Single, EventEnable As Boolean)
+    On Error GoTo errSleep
+    Dim oldTimer As Single
+
+    oldTimer = Timer
+    Do While (Timer - oldTimer) < seconds
+       If EventEnable Then DoEvents
+    Loop
+
+errSleep:
+       Err.Clear
+End Sub
+
+
+The big takeaway point here is that PDF IS HARD.  If there is anything you can do to avoid creating or editing PDF documents directly, I strongly advise that you do so.  It sounds like what you actually want is a batch SNP to PDF converter.  You can probably do this with an off-the-shelf product, without even opening Visual Studio at all.  Somebody mentioned Adobe Distiller Server -- check your docs for Acrobat, I know it comes with basic Distiller, and you may be able to set up Distiller to run in a similar mode, where it watches Directory A and spits out PDF versions of any files that show up in Directory B.
+An alternative: since you're working with Access snapshots, you might be better off writing a VBA script that iterates through all the SNPs in a directory and prints them to the installed PDF printer.
+ETA: if you need to specify the output of the PDF printer, that might be harder.  I'd suggest having the PDF distiller configured to output to a temp directory, so you can print one, move the result, then print another, and so on.
+
+I encountered a similar problem in a C# ASP.NET app. My solution was to fire a LaTeX compiler at the command line with some generated code. It's not exactly a simple solution but it generates some really beautiful .pdfs.
+
+Best library for Java is iText, but from the last year or so watching the mailing list it is NOT a simple task at all
+
+I had the same challenge. The solution I've made was buying a component called PDFTron. It has an API to send pdf documents to a printer from an unattended service.
+I posted some information in my blog about that. Take a look!
+How to print a PDF file programmatically???
+
+Imports System.Drawing.Printing
+Imports System.Reflection
+Imports System.Runtime.InteropServices
+Public Class Form1
+Private Sub Form1_Load(sender As Object, e As EventArgs) Handles MyBase.Load
+    Dim pkInstalledPrinters As String
+
+    ' Find all printers installed
+    For Each pkInstalledPrinters In _
+        PrinterSettings.InstalledPrinters
+        printList.Items.Add(pkInstalledPrinters)
+    Next pkInstalledPrinters
+
+    ' Set the combo to the first printer in the list
+    If printList.Items.Count > 0 Then
+        printList.SelectedItem = 0
+    End If
+    End Sub
+Private Sub Button1_Click(ByVal sender As System.Object, ByVal e As System.EventArgs) Handles Button1.Click
+    Try
+
+        Dim pathToExecutable As String = "AcroRd32.exe"
+        Dim sReport = " " 'pdf file that you want to print
+        'Dim SPrinter = "HP9F77AW (HP Officejet 7610 series)" 'Name Of printer
+        Dim SPrinter As String
+        SPrinter = printList.SelectedItem
+        'MessageBox.Show(SPrinter)
+        Dim starter As New ProcessStartInfo(pathToExecutable, "/t """ + sReport + """ """ + SPrinter + """")
+        Dim Process As New Process()
+        Process.StartInfo = starter
+        Process.Start()
+        Process.WaitForExit(10000)
+        Process.Kill()
+        Process.Close()
+    Catch ex As Exception
+        MessageBox.Show(ex.Message) 'just in case if something goes wrong then we can suppress the programm and investigate
+    End Try
+End Sub
+End Class
+

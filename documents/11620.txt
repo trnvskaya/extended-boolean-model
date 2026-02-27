@@ -1,0 +1,183 @@
+How do you kill all current connections to a SQL Server 2005 database?
+sql-server sql-server-2005
+I want to rename a database, but keep getting the error that 'couldn't get exclusive lock' on the database, which implies there is some connection(s) still active.
+How can I kill all the connections to the database so that I can rename it?
+
+
+In MS SQL Server Management Studio on the object explorer, right click on the database. In the context menu that follows select 'Tasks -> Take Offline'
+
+See Kill All Active Connections To A Database.
+The reason that the approach that Adam suggested won't work is that during the time that you are looping over the active connections new one can be established, and you'll miss those. The article I linked to uses the following approach which does not have this drawback:
+-- set your current connection to use master otherwise you might get an error
+
+use master
+ALTER DATABASE YourDatabase SET SINGLE_USER WITH ROLLBACK IMMEDIATE 
+
+--do you stuff here 
+
+ALTER DATABASE YourDatabase SET MULTI_USER
+
+
+Script to accomplish this, replace 'DB_NAME' with the database to kill all connections to:
+USE master
+GO
+
+SET NOCOUNT ON
+DECLARE @DBName varchar(50)
+DECLARE @spidstr varchar(8000)
+DECLARE @ConnKilled smallint
+SET @ConnKilled=0
+SET @spidstr = ''
+
+Set @DBName = 'DB_NAME'
+IF db_id(@DBName) < 4
+BEGIN
+PRINT 'Connections to system databases cannot be killed'
+RETURN
+END
+SELECT @spidstr=coalesce(@spidstr,',' )+'kill '+convert(varchar, spid)+ '; '
+FROM master..sysprocesses WHERE dbid=db_id(@DBName)
+
+IF LEN(@spidstr) > 0
+BEGIN
+EXEC(@spidstr)
+SELECT @ConnKilled = COUNT(1)
+FROM master..sysprocesses WHERE dbid=db_id(@DBName)
+END
+
+
+Using SQL Management Studio Express:
+In the Object Explorer tree drill down under Management to "Activity Monitor" (if you cannot find it there then right click on the database server and select "Activity Monitor"). Opening the Activity Monitor, you can view all process info. You should be able to find the locks for the database you're interested in and kill those locks, which will also kill the connection.
+You should be able to rename after that. 
+
+Try this:
+ALTER DATABASE [DATABASE_NAME]
+SET SINGLE_USER
+WITH ROLLBACK IMMEDIATE
+
+
+I've always used:
+
+ALTER DATABASE DB_NAME SET SINGLE_USER WITH ROLLBACK IMMEDIATE 
+GO 
+SP_RENAMEDB 'DB_NAME','DB_NAME_NEW'
+Go 
+ALTER DATABASE DB_NAME_NEW  SET MULTI_USER -- set back to multi user 
+GO 
+
+
+I usually run into that error when I am trying to restore a database I usually just go to the top of the tree in Management Studio and right click and restart the database server (because it's on a development machine, this might not be ideal in production).  This is close all database connections.
+
+Kill it, and kill it with fire:
+USE master
+go
+
+DECLARE @dbname sysname
+SET @dbname = 'yourdbname'
+
+DECLARE @spid int
+SELECT @spid = min(spid) from master.dbo.sysprocesses where dbid = db_id(@dbname)
+WHILE @spid IS NOT NULL
+BEGIN
+EXECUTE ('KILL ' + @spid)
+SELECT @spid = min(spid) from master.dbo.sysprocesses where dbid = db_id(@dbname) AND spid > @spid
+END
+
+
+Here's how to reliably this sort of thing in MS SQL Server Management Studio 2008 (may work for other versions too):
+
+In the Object Explorer Tree, right click the root database server (with the green arrow), then click activity monitor.
+Open the processes tab in the activity monitor, select the 'databases' drop down menu, and filter by the database you want.
+Right click the DB in Object Explorer and start a 'Tasks -> Take Offline' task. Leave this running in the background while you...
+Safely shut down whatever you can.
+Kill all remaining processes from the process tab.
+Bring the DB back online.
+Rename the DB.
+Bring your service back online and point it to the new DB.
+
+
+Right click on the database name, click on Property to get property window, Open the Options tab and change the "Restrict Access" property from Multi User to Single User. When you hit on OK button, it will prompt you to closes all open connection, select "Yes" and you are set to rename the database....
+
+Take offline takes a while and sometimes I experience some problems with that..
+Most solid way in my opinion:
+Detach
+Right click DB -> Tasks -> Detach...
+check "Drop Connections" 
+Ok
+Reattach
+Right click Databases -> Attach..
+Add... -> select your database, and change the Attach As column to your desired database name.
+Ok
+
+Another "kill it with fire" approach is to just restart the MSSQLSERVER service.
+I like to do stuff from the commandline. Pasting this exactly into CMD will do it:
+NET STOP MSSQLSERVER & NET START MSSQLSERVER
+Or open "services.msc" and find "SQL Server (MSSQLSERVER)" and right-click, select "restart".
+This will "for sure, for sure" kill ALL connections to ALL databases running on that instance.
+(I like this better than many approaches that change and change back the configuration on the server/database)
+
+The option working for me in this scenario is as follows: 
+
+Start the "Detach" operation on the database in question. This wil open a window (in SQL 2005) displaying the active connections that prevents actions on the DB. 
+Kill the active connections, cancel the detach-operation. 
+The database should now be available for restoring.
+
+
+Select 'Kill '+ CAST(p.spid AS VARCHAR)KillCommand into #temp
+from master.dbo.sysprocesses p (nolock)
+join master..sysdatabases d (nolock) on p.dbid = d.dbid
+Where d.[name] = 'your db name'
+
+Declare @query nvarchar(max)
+--Select * from #temp
+Select @query =STUFF((                              
+            select '  ' + KillCommand from #temp
+            FOR XML PATH('')),1,1,'') 
+Execute sp_executesql @query 
+Drop table #temp
+
+use the 'master' database and run this query, it will kill all the active connections from your database.
+
+These didn't work for me (SQL2008 Enterprise), I also couldn't see any running processes or users connected to the DB.  Restarting the server (Right click on Sql Server in Management Studio and pick Restart) allowed me to restore the DB.
+
+I'm using SQL Server 2008 R2, my DB was already set for single user and there was a connection that restricted any action on the database. Thus the recommended SQLMenace's solution responded with error. Here is one that worked in my case.
+
+ALTER DATABASE [Test]
+SET OFFLINE WITH ROLLBACK IMMEDIATE
+
+ALTER DATABASE [Test]
+SET ONLINE
+
+
+You can Use SP_Who command and kill all process that use your database and then rename your database.
+
+I use sp_who to get list of all process in database. This is better because you may want to review which process to kill.
+declare @proc table(
+    SPID bigint,
+    Status nvarchar(255),
+    Login nvarchar(255),
+    HostName nvarchar(255),
+    BlkBy nvarchar(255),
+    DBName nvarchar(255),
+    Command nvarchar(MAX),
+    CPUTime bigint,
+    DiskIO bigint,
+    LastBatch nvarchar(255),
+    ProgramName nvarchar(255),
+    SPID2 bigint,
+    REQUESTID bigint
+)
+
+insert into @proc
+exec sp_who2
+
+select  *, KillCommand = concat('kill ', SPID, ';')
+from    @proc
+
+Result
+You can use command in KillCommand column to kill the process you want to.
+SPID    KillCommand
+26      kill 26;
+27      kill 27;
+28      kill 28;
+

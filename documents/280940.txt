@@ -1,0 +1,187 @@
+Calling a C function with a varargs argument dynamically
+c
+I am programming in C against a third party library (in HP/Mercury Loadrunner) that allows a varargs-style variable size argument list for one of it's functions. I want to call this function but I do not know up front how many arguments I will have. 
+There is a function made by one of my predecessors that serves somewhat but the problem here is that this function assumes the worst case scenario (over 3000 arguments) and hand-codes for that.
+To illuminate, here's the (beginning of) the code. The function we call is web_submit_data(). It will HTTP post a set of form data. This implementation came about when dealing with dynamically generated forms with an arbitrary number of fields.
+(Cleaned up a fair bit from the original, which hand coded indexes by hand as well..)
+
+web_submit_data_buffer_gazillion_items( const char *bufferName, const char *bufferValue)
+{
+    const int size = 129;
+    int i = 0;
+    int j = 11;
+
+    web_submit_data(&bufferName[i++ * size], //"some form"
+				&bufferName[i++ * size], //"Action=https://blah.blah/form");
+				&bufferName[i++ * size], //"Method=POST");
+				&bufferName[i++ * size], //"TargetFrame=");
+				&bufferName[i++ * size], //"RecContentType=text/html");
+				&bufferName[i++ * size], //"Referer=https://blah.blah/index.html");
+				&bufferName[i++ * size], //"Snapshot=t1.inf");
+				&bufferName[i++ * size], //"Mode=HTML");
+				ITEMDATA,  // missing in action: indexes 8 through 10
+				&bufferName[j * size],&bufferValue[j++ * size], ENDITEM, 
+				&bufferName[j * size],&bufferValue[j++ * size], ENDITEM, 
+				&bufferName[j * size],&bufferValue[j++ * size], ENDITEM, 
+..
+(repeat the last 3 lines ad nauseum)
+..
+				&bufferName[j * size],&bufferValue[j++ * size], ENDITEM,
+				&bufferName[j * size]);  
+}
+
+Now I have found an external library that might work (http://www.dyncall.org) but I would much rather not a) be completely processor dependant and b) attempt to teach Loadrunner about linking in external sources..
+Edit: 
+The original function used hardcoded indexes instead of using a variable. Can still revert to that if it turns out to be too unpredictable. However, as I am unlikely to run this with a different compiler or hardware / OS I doubt that really is worth it.
+Also: I don't have control over the implementation of web_submit_data(). So just pushing the problem down one level isn't going to cut it..
+Another thing to note: The spec for web_submit_data() uses a constant called LAST to mark the end of the argument list. The original implementation doesn't use it. Presumably the callsite does ..
+
+
+There is no portable way to build up an argument list for a variable argument function in C at run time.  There are a few implementation-dependent tricks out there, the dyncall library you found looks like a good one and probably more portable than most.
+
+Note: the code is already compiler-dependent (though perhaps not processor-dependent), because the invocation of web_submit_data assumes there that the argument subexpressions in a procedure call are evaluated from left-to-right order, but the C language leaves the order of argument evaluation unspecified.
+See for reference: http://en.wikipedia.org/wiki/Evaluation_strategy#Call_by_value 
+So perhaps the non-portable solution is not going to make things significantly worse for you.
+
+Can you restructure your code so that this isn't necessary?  Perhaps you could take the incoming buffer and make it more deterministic:
+struct form_field
+{
+  char[FIELD_NAME_MAX] name;
+  char[FIELD_VALUE_MAX] val;
+};
+
+web_submit_data_buffer_gazillion_items( const char *bufferName, const char *bufferValue)
+{
+    /*
+      loop over bufferName somehow, either with a known size or terminating record,
+      and build an array of form_field records
+    */
+    //loop
+    {
+      // build array of records
+    }
+
+
+    web_submit_data(record_array, array_len);
+
+}
+
+Sorry this couldn't be more fleshed out - my wife called me in for breakfast. :-)
+
+Write it once with the preprocessor and never look back.
+#define WEB_SUBMIT_BUFFER(name, val)         \
+    do {                                     \
+        const int size = 129;                \
+        int i = 0;                           \
+        int j = 11;                          \
+        web_submit_data(&(name)[i++ * size], \
+                        &(name)[i++ * size], \
+        /* etc ad nauseum */                 \
+    } while (0)
+
+Or if the number of arguments is fixed for each specific call, write a script to generate preprocessor defines to hide how heinous that call is.
+#define WEB_SUBMIT_BUFFER_32(name, val)      \
+    do {                                     \
+        const int size = 129;                \
+        int i = 0;                           \
+        int j = 11;                          \
+        web_submit_data(&(name)[i++ * size], \
+                        &(name)[i++ * size], \
+        /* 32 times */                       \
+    } while (0)
+#define WEB_SUBMIT_BUFFER_33(name, val) ...
+#define WEB_SUBMIT_BUFFER_34(name, val) /* etc */
+
+
+Note that the code sample you posted has undefined behavior - the commas that separate function parameters are not sequence points (those commas are not the comma operator), so modifying i and or j multiple times in the function call argument list results in undefined behavior.  
+This is not to mention that the evaluation order of function call arguments is not specified by the standard - so even if you did the modification of i and j using functions to evaluate the arguments (function calls themselves are sequence points), you would be pretty much passing the pointers in an indeterminate order.
+Also, I don't see how web_submit_data() knows how many arguments it's been passed - I don't see a count or a definitive sentinel argument at the end. But I guess your example may be just that - an example that might not have complete, accurate details. On the other hand, it's web_submit_data()'s problem anyway, right? 
+
+Since it's generally not a problem to pass more arguments to a function taking variable arguments than the function expects (see footnote #1), you can do something like the following:
+// you didn't give a clear specification of what you want/need, so this 
+// example may not be quite what you want as I've had to guess at
+// some of the specifications. Hopefully the comments will make clear
+// what I may have assumed.
+//
+// NOTE:  while I have compiled this example, I have not tested it,
+//        so there is a distinct possiblity of bugs (particularly
+//        off-by-one errors). Check me on this stuff, please.
+
+// I made these up so I could compile the example
+#define ITEMDATA ((char const*) NULL)
+#define ENDITEM  ((char const*) 0xffffffff)
+
+void web_submit_data_wrapper( const char*bufferName, 
+                              const char* bufferValue, 
+                              size_t headerCount,       // number of header pointers to pass (8 in your example)
+                              size_t itemStartIndex,    // index where items start in the buffers (11 in your example)
+                              size_t itemCount,         // number of items to pass (unspecified in your example)
+                              size_t dataSize )         // size of each header or item (129 in your example)
+{
+    // kMaxVarArgs would be 3000 or a gazillion in your case
+
+    // size_t const kMaxVarArgs = 20;  // I'd prefer to use this in C++
+    #define kMaxVarArgs (20)
+
+    typedef char const* char_ptr_t;
+    typedef char_ptr_t char_ptr_array_t[kMaxVarArgs];
+
+    char_ptr_array_t varargs = {0};
+
+    size_t idx = 0;
+
+    // build up the array of pararmeters we'll pass to the variable arg list
+
+    // first the headers
+    while (headerCount--) {
+        varargs[idx++] = &bufferName[idx * dataSize];
+    }
+
+    // mark the end of the header data
+    varargs[idx++] = ITEMDATA;
+
+    // now the "items"
+    while (itemCount--) {
+        varargs[idx++] = &bufferName[itemStartIndex * dataSize];
+        varargs[idx++] = &bufferValue[itemStartIndex * dataSize];
+        varargs[idx++] = ENDITEM;
+
+        ++itemStartIndex;
+    }
+
+    // the thing after the last item 
+    // (I'm not sure what this is from your example)
+    varargs[idx] = &bufferName[itemStartIndex * dataSize];
+
+    // now call the target function - the fact that we're passing more arguments
+    //  than necessary should not matter due to the way VA_ARGS are handled 
+    //  but see the Footnote in the SO answer for a disclaimer
+
+    web_submit_data( 
+        varargs[0],
+        varargs[1],
+        varargs[2],
+
+        //... ad nasuem until
+
+        varargs[kMaxVarArgs-1]
+        );
+
+}
+
+
+Footnote #1:  If you think about how the macros in stdargs.h act this becomes clear.  However, I do not claim that this technique would be standards compliant.  In fact, in recent history the stackoverflow answers I've posted where I;ve made this disclaimer have in fact been found to be non-standards compliant (usually by the ever vigilant litb).  So use this technique at your own risk, and verify, verify, verify).
+
+There are two way to pass a variable number of arguments: to a function that accepts "..." or to a function that accepts va_list.
+You can not dynamically define the number of arguments for the "..." interface, but you should be able to do so for the va_list one. Google for va_start, va_end, and va_list.
+
+In CamelBones I use libffi to call objc_msgSend(), which is a varargs function. Works a treat.
+
+Variable length arguments are basically just a pointer to a bunch of packed data that is passed to the required function.  It is the responsibility of the called function to interpret this packed data.
+The architecture safe way to do this is to use the va_list macros (that n-alexander mentioned), otherwise you may run into issues with how various data types are padded in memory.
+The proper way to design varargs functions is to actually have two versions, one that accepts the '...', which in turn extracts the va_list and passes it to a function that takes a va_list.  This way you can dynamically construct the arguments if you need to and can instead call the va_list version of the function.
+Most standard IO functions have varargs versions: vprintf for printf, vsprintf for sprintf... you get the idea.  See if your library implements a function named "vweb_submit_data" or something to that effect.  If they don't, email them and tell them to fix their library.
+3000 lines of the same thing (even if it is preprocessor induced) makes me cringe
+
+I know this is an old thread, but I just ran across it.   The proper way to handle variable length submit form data in LoadRunner is to use a web_custom_request().   You build the name|value pair structure for the variable length of the arguments as a string and pass it in as a part of the function.     
+Record the one call as a web_custom_request() and the structure of the argument string for the name|value pairs will become obvious.   Simply use any C string handling functions you wish to construct the string in question and include it as a part of the argument list for the web_custom_request().

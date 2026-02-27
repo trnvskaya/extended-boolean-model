@@ -1,0 +1,50 @@
+MySQL - how to use index in WHERE x IN (<subquery>)
+mysql indexing subquery
+I'm using this query to get all employees of {clients with name starting with lowercase "a"}:
+SELECT * FROM employees 
+  WHERE client_id IN (SELECT id FROM clients WHERE name LIKE 'a%')
+
+Column employees.client_id is an int, with INDEX client_id (index_id). The subquery should IMHO return a list of id-s, which is then used in the WHERE clause.
+When I EXPLAIN the query, the primary query uses no indexes (type:ALL). But when I EXPLAIN
+ a list taken from the subquery (e.g. SELECT ... WHERE client_id IN (121,184,501)), the EXPLAIN switches to type:range, and this query gets faster by 50%.
+How can I make the query use the index for the data returned by subquery - or, is there a more efficient way of retrieving this data? (Retrieving the id-list to application server, joining it and sending a second query is even more expensive here).
+Thanks in advance.
+
+
+SELECT employees.*
+FROM   employees, clients
+WHERE  employees.client_id = clients.id
+AND    clients.name LIKE 'a%';
+
+Should be more quicker, since the optimiser can choose the most efficient plan.  In writing it your way with a sub-query, you're forcing it to do the steps in a certain order rather than letting it choose the optimal join order.
+As a general rule sub-queries should be avoided since they will typically be less performant than a join query (though there are certain circumstances where they are unavoidable)
+
+Have you tried to do this with a JOIN and not a subselecct ?
+SELECT employees.* FROM employees, clients WHERE employees.client_id = clients.id  AND clients.name LIKE 'a%';
+
+
+It is worth pointing out that joins performing better than subqueries does not hold true for every DBMS there is. It sure does for MySQL though.
+
+select * from X as _x where 
+  exists(select * from Y as _y where _y.someField = _x.someField)
+
+Should do the trick for you ;)
+
+SELECT e.*  
+FROM employees e  
+WHERE EXISTS (   
+  SELECT 1    
+  FROM clients c  
+  WHERE c.id = e.client_id   
+  AND c.name LIKE 'a%'
+)
+
+You can rewrite the query using EXISTS. In MySQL, it definitely gives a performance improvement. For more optimization help, you could refer : MySQL-In-Query-Optimization
+
+For a specific explanation on why
+SELECT * FROM employees WHERE client_id IN (SELECT id FROM clients WHERE name LIKE 'a%')
+
+is slower than
+SELECT * FROM employees WHERE client_id IN (1,2,3,4)
+
+Check out this part of the MySQL manual, particuarly the third dot point: http://dev.mysql.com/doc/refman/5.0/en/subquery-restrictions.html. Also, this bug report.

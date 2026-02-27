@@ -1,0 +1,115 @@
+C# refreshing textbox from BindingSource
+c# textbox bindingsource
+I am having difficulty refreshing windows forms controls that are using a BindingSource object. We have a CAB/MVP/SCSF client that I (actually âweâ since it is a team effort) are developing that will interact with WCF services running on a remote server.  (This is our first attempt at this, so we are in a learning mode).   One of the calls (from the Presenter) to the service returns a DataSet that contains 3 DataTables, named âContractâ, âLoanâ and âTermsâ.  Each table contains just one row.  When the service returns the dataset, we store it in the SmartPart/View in a class member variable, by calling a function in the view called BindData() and passing the dataset in to the view from the presenter class;
+private System.Data.DataSet _ds = null;
+public void BindData(System.Data.DataSet ds)
+{
+    string sErr = "";
+    try
+    {
+        _ds = ds;  // save to private member variable
+
+        // more code goes down here
+    }
+}
+
+We are trying to bind each of the three DataTables to an assortment of Windows Forms TextBoxes, MaskedEditBoxes, and Infragistics UltraComboEditor Dropdown comboboxes We created three BindingSource objects, one for each DataTable using the VS2008 IDE.
+private System.Windows.Forms.BindingSource bindsrcContract;
+private System.Windows.Forms.BindingSource bindsrcLoan;
+private System.Windows.Forms.BindingSource bindsrcTerms;
+
+We are binding the values like this
+if (bindsrcContract.DataSource == null)
+{
+    bindsrcContract.DataSource = _ds;
+    bindsrcContract.DataMember = âcontractâ;
+
+    txtContract.DataBindings.Add(new Binding("Text", bindsrcContract, "contract_id", true));                       
+
+    txtLateFeeAmt.DataBindings.Add(new Binding("Text", bindsrcContract, "fee_code", true));
+
+    txtPrePayPenalty.DataBindings.Add(new Binding("Text", bindsrcContract, "prepay_penalty", true));
+
+    txtLateFeeDays.DataBindings.Add(new Binding("Text", bindsrcContract, "late_days", true));
+}
+
+if (bindsrcLoan.DataSource == null)
+{
+    bindsrcLoan.DataSource = _ds;
+    bindsrcLoan.DataMember = âloanâ;
+
+    mskRecvDate.DataBindings.Add(new Binding("Text", bindsrcLoan, "receive_date", true));
+
+    cmboDocsRcvd.DataBindings.Add(new Binding("Value", bindsrcLoan, "docs", true));     
+}
+
+This works when we do the first read from the service and get a dataset back.  The information is displayed on the form's controls, we can update it using the form, and then âsaveâ it by passing the changed values back to the WCF service.
+Here is our problem.  If we select a different loan key and make the same call to the service and get a new DataSet, again with 3 tables with one row each, the controls (textboxes, masked edit boxes, etc.) are not being updated with the new information.  Note that the smartPart/View is not closed or anything, but remains loaded in between calls to the service.  On the second call we are not rebinding the calls, but simply trying to get the data to refresh from the updated DataSet.
+We have tried everything we can think of, but clearly we are missing something.  This is our first attempt at using the BindingSource control. We have tried
+bindsrcContract.ResetBindings(false);
+
+and 
+bindsrcContract.ResetBindings(true);
+
+and 
+bindsrcContract.RaiseListChangedEvents = true;
+
+and 
+for (int i = 0; i < bindsrcContract.Count; i++)
+{
+    bindsrcContract.ResetItem(i);
+}
+
+As well as resetting the DataMember property again.
+bindsrcContract.DataMember = âContractâ;
+
+Weâve looked at a lot of examples.  Many examples make reference to the BindingNavigator but since the DataTables only have one row, we did not think we needed that. There are a lot of examples for grids, but weâre not using one here.  Can anyone please point out where we are going wrong, or point us to resources that will provide some more information?
+Weâre using VisualStudio 2008, C# and .Net 2.0, XP client, W2K3 server.
+Thanks in advance
+wes
+
+
+Failing all else, you can reassign the DataSource every time you receive a new dataset, doing something like this:
+bindsrcContract.DataSource = typeof(System.Data.DataSet);
+bindsrcContract.DataSource = _ds;
+
+(Also, initializing DataMember first and then DataSource will give you better performance.)
+
+Wes, I'm very glad I could help. I still remember an issue very similar to yours taking me weeks to figure out in the wild...
+Regarding your questions, here's all I know:
+
+If you set the DataSource first, then the DataMember, your data source will be scanned twice, since setting the DataMember subsequently changes the existing (valid) binding. If you do it the other way around, setting DataMember first (with DataSource being null or better, typeof(YourData)), binding only takes place once when you set the DataSource.
+I think you can apply the same solution here. Instead of just
+bindsrcContract.DataSource = _ds;
+
+in your last line, you should write
+bindsrcContract.DataSource = typeof(System.Data.DataSet);
+bindsrcContract.DataSource = _ds;
+
+Sorry to disappoint, but I learned all I know about data binding from MSDN as well as trial-and-error. It was quite painful. Hopefully someone else can chime in with a useful link or two.
+
+
+First thing: This post needs some organizing. Pease remember that answers are not kept in order. The order is determined by the voting.
+So if you have additional questions, just modify your original question (mark with "Edit" to avoid confusion).
+Upvote answers that you find useful.
+Oh and by the way, please use the code-sample button (above the edit-window) when including code-samples. That will give you nice formatting of the code including syntax-highlighting.
+Now to the meat: The underlying problem in both your questions is that the Binding-Manager keeps the links to the original objects.
+When you assign _ds as the DataSource, the Binding-Manager analyzes the DataSet and acts accordingly. If you assign some other DataSet to _ds, the Binding-Manager has no way of knowing this. It still has the reference on the original DataSet-object. So this explains why you have to reset the DataSource-property to the new DataSet.
+It also explains why the removing and adding of the table doesn't lead to your expected result. Again, the Binding-Manager holds the reference to the old table (or the first row in that table). The new table is never bound. Also in this case the reassigning of _ds does not help, because _ds points to the same DataSet-object as before. The Binding-Manager is smart enough to notice that it's the same object and does no rebinding action.
+You either have to modify the contents of your bound objects (which fires a PropertyChanged-Event to which the Binding-Manager subscribes) or you have to trigger a complete rebind by assigning a different object to the DataSource-property.
+This is a simplified description of what actually happens, but I hope it's enough to explain and solve your problem. Unfortunately I have yet to find a comprehensive explanation of WinForms databinding on the web (or elsewhere).
+
+I was having a similar issue today and found this works.
+private void btnCancel_Click(object sender, EventArgs e)
+{
+    this.MyTable.RejectChanges();
+    this.txtMyBoundTextBox.DataBindings[0].ReadValue();
+    this.EditState = EditStates.NotEditting;
+}
+
+
+try combination :
+bindingsource.EndEdit() // writting data to underlying source 
+bindingSource.ResetBindings(false)  // force controls to reread data from bindingSource
+
+use this whenever you write something to controls.

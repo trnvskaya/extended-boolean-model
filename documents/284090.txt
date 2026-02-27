@@ -1,0 +1,152 @@
+How to get a ReadOnlyCollection<T> of the Keys in a Dictionary<T, S>
+c# generics dictionary collections c#-2.0
+My class contains a Dictionary<T, S> dict, and I want to expose a ReadOnlyCollection<T> of the keys. How can I do this without copying the Dictionary<T, S>.KeyCollection dict.Keys to an array and then exposing the array as a ReadOnlyCollection?  
+I want the  ReadOnlyCollection to be a proper wrapper, ie. to reflect changes in the underlying Dictionary, and as I understand it copying the collection to an array will not do this (as well as seeming inefficient - I don't actually want a new collection, just to expose the underlying collection of keys...). Any ideas would be much appreciated!
+Edit: I'm using C# 2.0, so don't have extension methods such as .ToList (easily) available.  
+
+
+If you really want to use ReadOnlyCollection<T>, the issue is that the constructor of ReadOnlyCollection<T> takes an IList<T>, while the KeyCollection of the Dictionary is only a ICollection<T>.
+So if you want to wrap the KeyCollection in a ReadOnlyCollection, you'll have to create an adapter (or wrapper) type, implementing IList<T>, wrapping the KeyCollection. So it would look like:
+var dictionary = ...;
+var readonly_keys = new ReadOnlyCollection<T> (new CollectionListWrapper<T> (dictionary.Keys)
+);
+
+Not very elegant though, especially as the KeyCollection is already a readonly collection, and that you could simply pass it around as an ICollection<T> :)
+
+It's ugly, but this will do it
+Dictionary<int,string> dict = new Dictionary<int, string>();
+...
+ReadOnlyCollection<int> roc = new ReadOnlyCollection<int>((new List<int>((IEnumerable<int>)dict.Keys)));
+
+
+Assuming you are using C# 3.0 and you have:
+Dictionary< T,S > d;
+Then
+ReadOnlyCollection< T > r = new ReadOnlyCollection< T >( d.Keys.ToList()  );
+You will also need to import the System.Linq namespace. 
+
+Unfortunately you cannot to that direcly as far as I know as KeyCollection<T> does not expose anything that would allow you to do this easily.
+You could, however, subclass ReadOnlyCollection<T> so that its constructor receives the dictionary itself and override the appropriate methods so that it exposes the Dictionary's items as if they were its own items.
+
+DrJokepu said that it might be difficult to implement a wrapper for Keys Collection. But, in this particular case, I think the implementation is not so difficult because, as we know, this is a read-only wrapper. 
+This allows us to ignore some methods that, in other case, would be hard to implement.
+Here's a quick implementation of the wrapper for Dictionary.KeyCollection :
+class MyListWrapper<T, TValue> : IList<T>
+{
+    private Dictionary<T, TValue>.KeyCollection keys;
+
+    public MyListWrapper(Dictionary<T, TValue>.KeyCollection keys)
+    {
+        this.keys = keys;
+    }
+
+    #region IList<T> Members
+
+    public int IndexOf(T item)
+    {
+        if (item == null)
+            throw new ArgumentNullException();
+        IEnumerator<T> e = keys.GetEnumerator();
+        int i = 0;
+        while (e.MoveNext())
+        {
+            if (e.Current.Equals(item))
+                return i;
+            i++;
+        }
+        throw new Exception("Item not found!");
+    }
+
+    public void Insert(int index, T item)
+    {
+        throw new NotImplementedException();
+    }
+
+    public void RemoveAt(int index)
+    {
+        throw new NotImplementedException();
+    }
+
+    public T this[int index]
+    {
+        get
+        {
+            IEnumerator<T> e = keys.GetEnumerator();
+            if (index < 0 || index > keys.Count)
+                throw new IndexOutOfRangeException();
+            int i = 0;
+            while (e.MoveNext() && i != index)
+            {
+                i++;
+            }
+            return e.Current;
+        }
+        set
+        {
+            throw new NotImplementedException();
+        }
+    }
+
+    #endregion
+
+    #region ICollection<T> Members
+
+    public void Add(T item)
+    {
+        throw new NotImplementedException();
+    }
+
+    public void Clear()
+    {
+        throw new NotImplementedException();
+    }
+
+    public bool Contains(T item)
+    {
+        return keys.Contains(item);
+    }
+
+    public void CopyTo(T[] array, int arrayIndex)
+    {
+        keys.CopyTo(array, arrayIndex);
+    }
+
+    public int Count
+    {
+        get { return keys.Count; }
+    }
+
+    public bool IsReadOnly
+    {
+        get { return true; }
+    }
+
+    public bool Remove(T item)
+    {
+        throw new NotImplementedException();
+    }
+
+    #endregion
+
+    #region IEnumerable<T> Members
+
+    public IEnumerator<T> GetEnumerator()
+    {
+        return keys.GetEnumerator();
+    }
+
+    #endregion
+
+    #region IEnumerable Members
+
+    System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()
+    {
+        return keys.GetEnumerator();
+    }
+
+    #endregion
+}
+
+This might not be the best implementation for these methods :) but it was just for proving that this might be done.
+
+For the record, in .NET 4.6, the KeyCollection<T> implements IReadOnlyCollection<T>, so if you use that interface, you can still reflect changes to the dictionary, still get O(1) contains, and because the interface is covariant, you can return IReadOnlyCollection<some base type>

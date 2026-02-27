@@ -1,0 +1,124 @@
+Threaded loading (waiting) screen
+.net vb.net multithreading screen loading
+I'm looking for a generic method to implement a wait screen during long operations. I have used threading a few times before, but I have the feeling that I implemented it either very poorly, or with way too much hassle (and copy/pasting - the horror!).
+I want to keep this as generic and simple as possible, so I won't have to implement loads of BackgroundWorkers handling all kinds of crap, making things hard to maintain.
+Here's what I would like to do -- please note this might differ from what's actually possible/best practise/whatever -- using VB.NET, Framework 2.0 (so no anonymous methods):
+  Private Sub HandleBtnClick(sender as Object, e as EventArgs) Handles Button.Click
+      LoadingScreen.Show()
+
+      'Do stuff here, this takes a while!'
+      Dim Result as Object = DoSomethingTakingALongTime(SomeControl.SelectedObject)
+
+      LoadingScreen.Hide()
+
+      ProcessResults(Result)
+  End Sub
+
+The application is now completely single-threaded, so everything runs on the GUI thread. I need to be able to access objects in DoSomethingTakingALongTime() without getting cross-thread exceptions. The GUI thread waits for some method (which takes a long time) to complete, while the LoadingScreen Form should stay responsive (it's animated/has a progressbar/etc.).
+Is this a doable/good approach or am I seeing this way too simplistic? What is the best practise concerning this matter? And most importantly: how could I implement such a system? As I already mentioned, I have very little experience with threading, so be gentle please :-)
+
+
+In your thread, use Application.Run(yourform) to get what you want.
+Note that you need to signal the form to close itself somehow.
+
+I hope you don't find this unhelpful - but I'd question WHY you'd want a threaded wait screen?  The reason for using threading in the first place is so that the UI remains responsive, and long operations are done in the background.
+Otherwise, you might as well just have a ProgressBar on your FormLoading control, and have DoSomethingTakingALongTime to update it periodically.  This wouldn't need threads at all.
+
+Your problem is that your getting a cross thread exception when your trying to pass your Worker thread data to your ui thread. what you need to do is check InvokeRequired and begininvoke before setting the controls on your ui so you don't get the error like so:
+Private Sub work_CrossThreadEvent(ByVal sender As Object, ByVal e As System.EventArgs) Handles work.CrossThreadEvent
+
+       If Me.InvokeRequired Then
+           Me.BeginInvoke(New EventHandler(AddressOf work_CrossThreadEvent), New Object() {sender, e})
+           Return
+       End If
+
+      Me.Text = "Cross Thread"
+
+End Sub
+
+just change the New EventHandler part to the event handler your using.
+Also i think using a background worker isn't a bad method for your worker classes, 
+just create a class for your work and use the background worker to do the threading stuff a bit like this:
+Public MustInherit Class Worker
+
+    Protected WithEvents worker As BackgroundWorker
+
+    Public Sub New()
+
+        worker = New BackgroundWorker()
+        worker.WorkerReportsProgress = True
+        worker.WorkerSupportsCancellation = True
+
+    End Sub
+
+    Public Sub Start()
+
+        If (Not worker.IsBusy AndAlso Not worker.CancellationPending) Then
+            worker.RunWorkerAsync()
+        End If
+
+    End Sub
+
+    Public Sub Cancel()
+        If (worker.IsBusy AndAlso Not worker.CancellationPending) Then
+            worker.CancelAsync()
+        End If
+    End Sub
+
+    Protected MustOverride Sub Work()
+
+    Private Sub OnDoWork(ByVal sender As Object, ByVal e As System.ComponentModel.DoWorkEventArgs) Handles worker.DoWork
+        Work()
+    End Sub
+
+    Public Event WorkCompelted As RunWorkerCompletedEventHandler
+    Private Sub OnRunWorkerCompleted(ByVal sender As Object, ByVal e As RunWorkerCompletedEventArgs) Handles worker.RunWorkerCompleted
+        OnRunWorkerCompleted(e)
+    End Sub
+    Protected Overridable Sub OnRunWorkerCompleted(ByVal e As RunWorkerCompletedEventArgs)
+        RaiseEvent WorkCompelted(Me, e)
+    End Sub
+
+    Public Event ProgressChanged As ProgressChangedEventHandler
+    Private Sub OnProgressChanged(ByVal sender As Object, ByVal e As ProgressChangedEventArgs) Handles worker.ProgressChanged
+        OnProgressChanged(e)
+    End Sub
+    Protected Overridable Sub OnProgressChanged(ByVal e As ProgressChangedEventArgs)
+        RaiseEvent ProgressChanged(Me, e)
+    End Sub
+
+End Class
+
+Public Class ActualWork
+    Inherits Worker
+
+    Public Event CrossThreadEvent As EventHandler
+
+    Protected Overrides Sub Work()
+
+        'do work here'
+        WorkABit()
+        worker.ReportProgress(25)
+
+        WorkABit()
+        worker.ReportProgress(50)
+
+        WorkABit()
+        worker.ReportProgress(75)
+
+        WorkABit()
+        worker.ReportProgress(100)
+
+    End Sub
+
+    Private Sub WorkABit()
+
+        If worker.CancellationPending Then Return
+        Thread.Sleep(1000)
+        RaiseEvent CrossThreadEvent(Me, EventArgs.Empty)
+
+    End Sub
+
+End Class
+
+disclaimer.. bit rusty with vb but you should get the idea.

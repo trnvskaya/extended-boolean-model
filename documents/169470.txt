@@ -1,0 +1,43 @@
+Does the iPhone timeout if a function takes too long to execute?
+iphone cocoa
+I have a function in which I get en external resource from the web using cocoa's Url object. And it works fine on the simulator, but occasionally fails on the device itself  (it's a google query so the resource obviously does exist). Which leads me to believe that there is some internal timeout barrier on the hardware, but haven't read that such a barrier exists or not.
+Anyone else encountered similar issues? Or knows if the timeout is documented or can be changed?
+
+
+I know iPhone OS will kill an app if it uses too much memory, so I wouldn't be surprised if it uses the same policy if an app is unresponsive to events for too long.
+If you were writing a desktop app, the problem would manifest as a spinning rainbow beach ball cursor, and your app would not respond to mouse clicks.  Mac OS X wouldn't terminate your app, but it would offer to Force Quit it if you ctrl-clicked its icon in the Dock.
+The main problem here is that you are tying up the event processing thread.  You have two options:
+
+Use non-blocking I/O, so instead of doing the web request in one call you use an API which fetches the data in the background and then calls a method you specify when it's done.
+Use blocking I/O on a separate thread.  Do the web request just like you are doing now, but in a separate thread, then signal the main thread when you are done.
+
+
+The iPhone OS will terminate your app if it seems it has become unresponsive - basically if your main thread blocks for a few seconds. This is also important when exiting - if you save on exit you have a very small window to complete the save which is compounded by the fact the OS may be doing other things. If you take too long to exit the OS kills your app which to the user appears as if your app is failing to save.
+I would HIGHLY recommend that you test anything time related on hardware and not the simulator. The simulator is great for quick turnaround debugging but is not representative of performance on actual hardware.
+If you have any heavy lifting to do, do it on a seperate thread so the UI stays responsive to the user and OS.
+
+If you are using an NSUrlRequest, make sure that the timeout interval is not reached. Your phone might have a slower internet connection than your simulator.
+From the doc:
++ (id)requestWithURL:(NSURL *)theURL cachePolicy:(NSURLRequestCachePolicy)cachePolicy timeoutInterval:(NSTimeInterval)timeoutInterval
+
+Parameters
+theURL
+The URL for the new request.
+
+cachePolicy
+The cache policy for the new request.
+
+timeoutInterval
+The timeout interval for the new request, in seconds.
+
+Return Value
+The newly created URL request.
+
+
+iPhone imposes a timeout for application launch. So if you perform an extensive processing in applicationDidFinishLaunching: for instance, the application will be terminated and a crash log will be produced. Unfortunately I've found no mention of it in the official documentation.
+After the launch process has completed, I'm not aware of any timeouts that limit function execution time. I've tried it on the device with putting sleep for 30 seconds in the main thread and it works fine.
+
+I noticed this timeout while reading a large file in applicationDidFinishLaunching. My app would terminate during startup. In the console, I saw the log message:
+Sun Mar  1 10:41:03 unknown SpringBoard[22] <Warning>: <myappid>.* failed to launch in time
+
+My solution was to use performSelector: withObject: afterDelay: 0.0 to quickly return from appliationDidFinishLaunching and queue up the file load on the runloop.  This avoids setting up a new Thread and dealing with the complexity of multithreading.

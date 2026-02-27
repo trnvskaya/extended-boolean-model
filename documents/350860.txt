@@ -1,0 +1,166 @@
+How bad is ignoring Oracle DUP_VAL_ON_INDEX exception?
+sql oracle exception plsql
+I have a table where I'm recording if a user has viewed an object at least once, hence:
+ HasViewed
+     ObjectID  number (FK to Object table)
+     UserId    number (FK to Users table)
+
+Both fields are NOT NULL and together form the Primary Key.
+My question is, since I don't care how many times someone has viewed an object (after the first), I have two options for handling inserts.
+
+Do a SELECT count(*) ... and if no records are found, insert a new record.
+Always just insert a record, and if it throws a DUP_VAL_ON_INDEX exceptions (indicating that there already was such a record), just ignore it.
+
+What's the downside of choosing the second option?
+UPDATE:
+I guess the best way to put it is : "Is the overhead caused by the exception worse than the overhead caused by the initial select?"
+
+
+I don't think there is a downside to your second option.  I think it's a perfectly valid use of the named exception, plus it avoids the lookup overhead.
+
+Try this?
+SELECT 1
+FROM TABLE
+WHERE OBJECTID = 'PRON_172.JPG' AND
+      USERID='JCURRAN'
+
+It should return 1, if there is one there, otherwise NULL.
+In your case, it looks safe to ignore, but for performance, one should avoid exceptions on the common path.  A question to ask, "How common will the exceptions be?"
+Few enough to ignore? or so many another method should be used?
+
+Usually, exception handling is slower; however if it would happen only seldom, then you would avoid the overhead of the query.
+I think it mainly depends on the frequency of the exception, but if performance is important, I would suggest some benchmarking with both approaches.
+Generally speaking, treating common events as exception is a bad smell; for this reason you could see also from another point of view.
+If it is an exception, then it should be treated as an exception - and your approach is correct.
+If it is a common event, then you should try to explicitly handle it - and then checking if the record is already inserted.
+
+I would normally just insert and trap the DUP_VAL_ON_INDEX exception, as this is the simplest to code.  This is more efficient than checking for existence before inserting.  I don't consider doing this a "bad smell" (horrible phrase!) because the exception we handle is raised by Oracle - it's not like raising your own exceptions as a flow-control mechanism.
+Thanks to Igor's comment I have now run two different benchamrks on this: (1) where all insert attempts except the first are duplicates, (2) where all inserts are not duplicates.  Reality will lie somewhere between the two cases.
+Note: tests performed on Oracle 10.2.0.3.0.
+Case 1: Mostly duplicates
+It seems that the most efficient approach (by a significant factor) is to check for existence WHILE inserting:
+prompt 1) Check DUP_VAL_ON_INDEX
+begin
+   for i in 1..1000 loop
+      begin
+         insert into hasviewed values(7782,20);
+      exception
+         when dup_val_on_index then
+            null;
+      end;
+   end loop
+   rollback;
+end;
+/
+
+prompt 2) Test if row exists before inserting
+declare
+   dummy integer;
+begin
+   for i in 1..1000 loop
+      select count(*) into dummy
+      from hasviewed
+      where objectid=7782 and userid=20;
+      if dummy = 0 then
+         insert into hasviewed values(7782,20);
+      end if;
+   end loop;
+   rollback;
+end;
+/
+
+prompt 3) Test if row exists while inserting
+begin
+   for i in 1..1000 loop
+      insert into hasviewed
+      select 7782,20 from dual
+      where not exists (select null
+                        from hasviewed
+                        where objectid=7782 and userid=20);
+   end loop;
+   rollback;
+end;
+/
+
+Results (after running once to avoid parsing overheads):
+1) Check DUP_VAL_ON_INDEX
+
+PL/SQL procedure successfully completed.
+
+Elapsed: 00:00:00.54
+2) Test if row exists before inserting
+
+PL/SQL procedure successfully completed.
+
+Elapsed: 00:00:00.59
+3) Test if row exists while inserting
+
+PL/SQL procedure successfully completed.
+
+Elapsed: 00:00:00.20
+
+Case 2: no duplicates
+prompt 1) Check DUP_VAL_ON_INDEX
+begin
+   for i in 1..1000 loop
+      begin
+         insert into hasviewed values(7782,i);
+      exception
+         when dup_val_on_index then
+            null;
+      end;
+   end loop
+   rollback;
+end;
+/
+
+prompt 2) Test if row exists before inserting
+declare
+   dummy integer;
+begin
+   for i in 1..1000 loop
+      select count(*) into dummy
+      from hasviewed
+      where objectid=7782 and userid=i;
+      if dummy = 0 then
+         insert into hasviewed values(7782,i);
+      end if;
+   end loop;
+   rollback;
+end;
+/
+
+prompt 3) Test if row exists while inserting
+begin
+   for i in 1..1000 loop
+      insert into hasviewed
+      select 7782,i from dual
+      where not exists (select null
+                        from hasviewed
+                        where objectid=7782 and userid=i);
+   end loop;
+   rollback;
+end;
+/
+
+Results:
+1) Check DUP_VAL_ON_INDEX
+
+PL/SQL procedure successfully completed.
+
+Elapsed: 00:00:00.15
+2) Test if row exists before inserting
+
+PL/SQL procedure successfully completed.
+
+Elapsed: 00:00:00.76
+3) Test if row exists while inserting
+
+PL/SQL procedure successfully completed.
+
+Elapsed: 00:00:00.71
+
+In this case DUP_VAL_ON_INDEX wins by a mile.  Note the "select before insert" is the slowest in both cases.
+So it appears that you should choose option 1 or 3 according to the relative likelihood of inserts being or not being duplicates.  
+
+IMHO it is best to go with Option 2: Other than what is already been said, you should consider thread safety. If you go with option 1 and If multiple  threads are executing your PL/SQL block then its possible that two or more threads fire select at the same time and at that time there is no record, this will end up leading all threads to insert and you will get unique constraint error.

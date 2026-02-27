@@ -1,0 +1,67 @@
+Can you have a class in a struct?
+c# class struct value-type reference-type
+Is it possible in C# to have a Struct with a member variable which is a Class type?  If so, where does the information get stored, on the Stack, the Heap, or both?
+
+
+Yes, you can.  The pointer to the class member variable is stored on the stack with the rest of the struct's values, and the class instance's data is stored on the heap.
+Structs can also contain class definitions as members (inner classes).
+Here's some really useless code that at least compiles and runs to show that it's possible:
+using System;
+
+namespace ConsoleApplication1
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            MyStr m = new MyStr();
+            m.Foo();
+
+            MyStr.MyStrInner mi = new MyStr.MyStrInner();
+            mi.Bar();
+
+            Console.ReadLine();
+        }
+    }
+
+    public class Myclass
+    {
+        public int a;
+    }
+
+    struct MyStr
+    {
+        Myclass mc;
+
+        public void Foo()
+        {
+            mc = new Myclass();
+            mc.a = 1;
+        }
+
+        public class MyStrInner
+        {
+            string x = "abc";
+
+            public string Bar()
+            {
+                return x;
+            }
+        }
+    }
+}
+
+
+It's probably not a recommended practice to do so: see http://msdn.microsoft.com/en-us/library/ms229017(VS.85).aspx
+
+The class content gets stored on the heap.
+A reference to the class (which is almost the same as a pointer) gets stored with the struct content.  Where the struct content is stored depends on whether it's a local variable, method parameter, or member of a class, and whether it's been boxed or captured by a closure.
+
+If one of the fields of a struct is a class type, that field will either hold the identity of a class object or else a null referece.  If the class object in question is immutable (e.g. string), storing its identity will effectively also store its contents.  If the class object in question is mutable, however, storing the identity will be an effective means of storing the contents if and only if the reference will never fall into the hands of any code which might mutate it once it is stored in the field.
+Generally, one should avoid storing mutable class types within a structure unless one of two situations applies:
+
+What one is interested in is, in fact, the identity of the class object rather than its content.  For example, one might define a `FormerControlBounds` structure which holds fields of type `Control` and `Rectangle`, and represents the `Bounds` that control had at some moment in time, for the purpose of being able to later restore the control to its earlier position.  The purpose of the `Control` field would not be to hold a copy of the control's state, but rather to identify the control whose position should be restored.  Generally the struct should avoid accessing any mutable members of the object to which it holds a reference, except in cases where it is clear that such access is referring to the current mutable state of the object in question (e.g. in a `CaptureControlPosition` or `RestoreControlToCapturedPosition` method, or a `ControlHasMoved` property).
+The field is `private`, the only methods which read it do so for the purpose of examining its properties without exposing the object itself it to outside code, and the only methods which write it will create a new object, perform all of the mutations that are ever going to happen to it, and then store a reference to that object.  One could, for example, design a `struct` which behaved much like an array, but with value semantics, by having the struct hold an array in a private field, and by having every attempt to write the array create a new array with data from the old one, modify the new array, and store the modified array to that field.  Note that even though the array itself would be a mutable type, every array instance that would ever be stored in the field would be effectively immutable, since it would never be accessible by any code that might mutate it.
+
+Note that scenario #1 is pretty common with generic types; for example, it's very common to have a dictionary whose "values" are the identities of mutable objects; enumerating that dictionary will return instances of KeyValuePair whose Value field holds that mutable type.
+Scenario #2 is less common.  There is alas no way to tell the compiler that struct methods other than property setters will modify a struct and their use should thus be forbidden in read-only contexts; one could have a struct that behaved like a List<T>, but with value semantics, and included an Add method, but an attempt to call Add on a read-only struct instance would generate bogus code rather than a compiler error.  Further, mutating methods and property setters on such structs will generally perform rather poorly.  Such structs can be useful are when they exist as an immutable wrapper on an otherwise-mutable class; if such a struct is never boxed, performance will often be better than a class.  If boxed exactly once (e.g. by being cast to an interface type), performance will generally be comparable to a class.  If boxed repeatedly, performance can be much worse than a class.

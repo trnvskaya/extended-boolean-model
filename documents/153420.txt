@@ -1,0 +1,93 @@
+Is it feasible to create a REST client with Flex?
+java flex rest
+I'm starting a project using a Restful architecture implemented in Java (using the new JAX-RS standard)
+We are planning to develop the GUI with a Flex application. I have already found some problems with this implementation using the HTTPService component (the response error codes, headers access...).
+Any of you guys have some experience in a similar project. Is it feasible?
+
+
+There are definite shortcomings of Flex's ability to act as a pure RESTful client.
+The comments below are from this blog:
+
+The problem is HTTPService class has
+  several major limitations:
+
+Only GET and POST methods are supported out of the box (unless you
+  use FDS and set useProxy attribute to
+  true)
+Not able to set request headers and there is no access to response
+  headers. Therefore I am not able to
+  access the response body in the case
+  of an error.
+It HTTPService gets a status code anything other 200, it consider
+  an error. (event 201, ouch!!). The
+  FaultEvent doesnât provide information
+  about the status code any response
+  body. The Flex client will have no
+  idea what went wrong.
+
+
+Matt Raible also gave a nice presentation on REST with Rails, Grails, GWT and Flex that have some good references linked from it.
+Whether it's feasible or not really depends on how much your willing to work around by proxying, etc.
+
+Actually were are already using Flex with a Rest-Style Framework. As mbrevort already mentioned PUT and DELETE methods cannot be directly used. Instead we are doing PUT via a POST and for DELETE we are using a GET on a resource with an URL parameter like ?action=delete.
+This is not 100% Rest style, so I am not sure, if this works with a JSR 311 implementation. You will need some flexbility on the server side to workaround the PUT and DELETE restrictions.
+With regards to error handling, we have implemented an error service. In case of an server side error, the Flex application can query this error service to get the actual error message. This is also much more flexible than just mapping HTTP return codes to static messages.
+However thanks To ECMA scripting of Flex working with XML based REST services is very easy.
+
+Yes, I was able to use POST and access headers with this component:
+http://code.google.com/p/as3httpclient/wiki/Links
+Example
+
+I'm working right now on an application that relies heavily on REST calls between Flex and JavaScript and Java Servlets.  We get around the response error code problem by establishing a convention of a <status id="XXX" name="YYYYYY"> block that gets returned upon error, with error IDs that roughly map to HTTP error codes.
+We get around the cross-site scripting limitations by using a Java Servlet as an HTTP proxy.  Calls to the proxy (which runs on the same server that serves the rest of the content, including the Flex content, sends the request to the other server, then sends the response back to the original caller.
+
+As many have pointed out HTTPService is a bit simplistic and doesn't do all that you want to do. However, HTTPService is just sugar on top of the flash.net.* classes like URLLoader, URLRequest and URLRequestHeader. Using these you can assemble most HTTP requests.
+When it comes to support for other methods than GET and POST the problem mostly lies in that some browsers (for example Safari) don't support these, and Flash Player relies on the browser for all it's networking.
+
+The problem here is that a lot of the web discussions around this issue are a year or more old. I'm working through this same research right now, and this is what I've learned today.
+This IBM Developer Works article from August 2008 by Jorge Rasillo and Mike Burr shows how to do a Flex front-end / RESTful back-end app (examples in PHP and Groovy). Nice article. Anyway, here's the take away:
+
+Their PHP/Groovy code uses and expects PUT and DELETE.
+But the Flex code has to use POST, but sets the HTTP header X-Method-Override to DELETE (you can do the same for PUT I presume).
+Note that this is not the Proxy method discussed above.
+
+
+// Flex doesn't know how to generate an HTTP DELETE.
+// Fortunately, sMash/Zero will interpret an HTTP POST with
+// an X-Method-Override: DELETE header as a DELETE.
+deleteTodoHS.headers['X-Method-Override'] = 'DELETE';
+What's happening here? the IBM web server intercepts and interprets the "POST with DELETE" as a DELETE.
+So, I dug further and found this post and discussion with Don Box (one of the original SOAP guys). Apparently this is a fairly standard behavior since some browsers, etc. do not support PUT and DELETE, and is a work-around that has been around a while. Here's a snippet, but there's much more discussion.
+
+"If I were building a GData client, I honestly wonder why I'd bother using DELETE and PUT methods at all given that X-HTTP-Method-Override is going to work in more cases/deployments."
+
+My take away from this is that if your web side supports this X-Method-Override header, then you can use this approach. The Don Box comments make me think it's fairly well supported, but I've not confirmed that yet.
+Another issue arises around being able to read the HTTP response headers. Again, from a blog post in 2007 by Nathan de Vries, we see this discussed. He followed up that blog post and discussion with his own comment:
+
+"The only change on the web front is that newer versions of the Flash Player (certainly those supplied with the Flex 3 beta) now support the responseHeaders property on instances of HTTPStatusEvent."
+
+I'm hoping that means it is a non-issue now.
+
+REST is more of an ideology than anything. You go to the REST presentations and they have coolaide dispensers.
+For Flex apps, rolling a stack in conjunction to BlazeDS and AMF data marshalling is more convenient and more performant.
+
+The way I've managed this in the past is to utilize a PHP proxy that deals with the remote web service calls and returns RTU JSON to the client .. 
+
+I've been working on an open source replacement for the HTTPService component that fully supports REST. If interested, you can find the beta version (source code and/or compiled Flex shared runtime library) and instructions here:
+http://code.google.com/p/resthttpservice/
+
+May be the new flex 4 is the answer http://labs.adobe.com/technologies/flex4sdk/
+
+RestfulX has solved most/all of the REST problems with Flex.  It has support for Rails/GAE/Merb/CouchDB/AIR/WebKit, and I'm sure it would be a snap to connect it to your Java implementation.
+Dima's integrated the AS3HTTPClient Library into it also.
+Check it out!
+
+The short answer is yes, you can do RESTful with Flex. You just have to work around the limitations of the Flash player (better with latest versions) and the containing browser's HTTP stack limitations.
+We've been doing RESTful client development in Flex for more than a year after solving the basic HTTP request header and lack of PUT and DELETE via the rails-esque ?_method= approach. Tacky perhaps, but it gets the job done.
+I noted some of the headers pain in an old blog post at http://verveguy.blogspot.com/2008/07/truth-about-flex-httpservice.html
+
+The book Flexible Rails may be helpful -- It is an excellent resource on how to use Flex as a RESTful client.  Although it focuses on using Flex with the Rails framework, I believe the concepts apply to any RESTful framework.  I used this book to get up to speed quickly on using Flex with REST.
+
+Flex support for REST is weak at best.  I spent a lot of time building a prototype so I know most of the issues.  As mentioned previously , out of the box there is only support for GET and POST.  At first glance it appears that you can use the proxy config in LiveCycle Data Services or Blaze to get support for PUT and DELETE.  However, its a sham.  The request coming from your Flex app will still be a POST.  The proxy converts it to PUT or DELETE on the server side to trick your server side code.  There are other issues as well.  It's heard to believe that this is the best that Adobe could come up with.  After my evaluation we decided to go in another direction.
+
+I work on a big flex project for Franklin Covey. We use REST services. In order to support this. We created a XMLHttpRequest wrapper. By using external interface with some event handlers. We opensourced the library. You can check it out at https://github.com/FranklinCovey/AS3-XMLHttpRequest

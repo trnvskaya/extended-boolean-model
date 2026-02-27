@@ -1,0 +1,141 @@
+InternalsVisibleTo attribute isn't working
+.net attributes internalsvisibleto
+I am trying to use the InternalsVisibleTo assembly attribute to make my internal classes in a .NET class library visible to my unit test project.  For some reason, I keep getting an error message that says:
+
+'MyClassName' is inaccessible due to its protection level
+
+Both assemblies are signed and I have the correct key listed in the attribute declaration.  Any ideas?
+
+
+You need to use the /out: compiler switch when compiling the friend assembly (the assembly that
+does not contain the InternalsVisibleTo attribute). 
+The compiler needs to know the name of the assembly being compiled in order to determine if the resulting assembly should be considered a friend assembly. 
+
+Are you absolutely sure you have the correct public key specified in the attribute?
+Note that you need to specify the full public key, not just the public key token.  It looks something like:
+[assembly: InternalsVisibleTo("MyFriendAssembly,
+PublicKey=0024000004800000940000000602000000240000525341310004000001000100F73
+F4DDC11F0CA6209BC63EFCBBAC3DACB04B612E04FA07F01D919FB5A1579D20283DC12901C8B66
+A08FB8A9CB6A5E81989007B3AA43CD7442BED6D21F4D33FB590A46420FB75265C889D536A9519
+674440C3C2FB06C5924360243CACD4B641BE574C31A434CE845323395842FAAF106B234C2C140
+6E2F553073FF557D2DB6C5")]
+
+It's 320 or so hex digits.  Not sure why you need to specify the full public key - possibly with just the public key token that is used in other assembly references it would be easier for someone to spoof the friend assembly's identity.
+
+It is worth noteing that if the "friend" (tests) assembly it is written in C++/CLI, rather than C#/VB.Net then you need to use the following:
+#using "AssemblyUnderTest.dll" as_friend
+
+instead of a project reference or the usual #using statement. For some reason, there is no way to do this in the project reference UI.
+Colin
+
+You can use AssemblyHelper tool that will generate InternalsVisibleTo syntax for you.  Here's the link to the latest version. Just note that it only works for strongly-named assemblies.
+
+If your assemblies aren't signed, but you are still getting the same error, check your AssemblyInfo.cs file for either of the following lines:
+[assembly: AssemblyKeyFile("")]
+[assembly: AssemblyKeyName("")]
+
+The properties tab will still show your assembly as unsigned if either (or both) of these lines are present, but the InternalsVisibleTo attribute treats an assembly with these lines as strongly signed.  Simply delete (or comment out) these lines, and it should work fine for you.
+
+Here's a macro I use to quickly generate this attribute.  Its a bit hacky, but it works.  On my machine.  When the latest signed binary is in /bin/debug.   Etc equivocation etc.  Anyhow, you can see how it gets the key, so that'll give you a hint.  Fix/improve as your time permits.
+Sub GetInternalsVisibleToForCurrentProject()
+    Dim temp = "[assembly:  global::System.Runtime.CompilerServices." + _
+               "InternalsVisibleTo(""{0}, publickey={1}"")]"
+    Dim projs As System.Array
+    Dim proj As Project
+    projs = DTE.ActiveSolutionProjects()
+    If projs.Length < 1 Then
+        Return
+    End If
+
+    proj = CType(projs.GetValue(0), EnvDTE.Project)
+    Dim path, dir, filename As String
+    path = proj.FullName
+    dir = System.IO.Path.GetDirectoryName(path)
+    filename = System.IO.Path.GetFileNameWithoutExtension(path)
+    filename = System.IO.Path.ChangeExtension(filename, "dll")
+    dir += "\bin\debug\"
+    filename = System.IO.Path.Combine(dir, filename)
+    If Not System.IO.File.Exists(filename) Then
+        MsgBox("Cannot load file " + filename)
+        Return
+    End If
+    Dim assy As System.Reflection.Assembly
+    assy = System.Reflection.Assembly.Load(filename)
+    Dim pk As Byte() = assy.GetName().GetPublicKey()
+    Dim hex As String = BitConverter.ToString(pk).Replace("-", "")
+    System.Windows.Forms.Clipboard.SetText(String.Format(temp, assy.GetName().Name, hex))
+    MsgBox("InternalsVisibleTo attribute copied to the clipboard.")
+End Sub
+
+
+As a side note, if you want to easily get the public key without having to use sn and figure out its options you can download the handy program here. It not only determines the public key but also creates the "assembly: InternalsVisibleTo..." line ready to be copied to the clipboard and pasted into your code.
+
+I just resolved a similar problem with the InternalsVisibleTo Attribute. Everything seemed right and I couldn't figure out why the internal class I was aiming still wasn't accessible.
+Changing the case of the key from upper to lower case fixed the problem. 
+
+Another possible "gotcha": The name of the friend assembly that you specify in the InternalsVisibleToAttribute must exactly match the name of your friend assembly as shown in the friend's project properties (in the Application tab).
+In my case, I had a project Thingamajig and a companion project ThingamajigAutoTests (names changed to protect the guilty) that both produced unsigned assemblies. I duly added the attribute [assembly: InternalsVisibleTo( "ThingamajigAutoTests" )] to the Thingamajig\AssemblyInfo.cs file, and commented out the AssemblyKeyFile and AssemblyKeyName attributes as noted above. The Thingamajig project built just fine, but its internal members stubbornly refused to show up in the autotest project.
+After much head scratching, I rechecked the ThingamajigAutoTests project properties, and discovered that the assembly name was specified as "ThingamajigAutoTests.dll". Bingo - I added the ".dll" extension to the assembly name in the InternalsVisibleTo attribute, and the pieces fell into place.
+Sometimes it's the littlest things...
+
+In addition to all of the above, when everything seems to be correct, but the friend assembly stubbornly refuses to see any internals, reloading the solution or restarting Visual Studio can solve the problem.
+
+Previous answers with PublicKey worked: (Visual Studio 2015: NEED to be on one line, otherwise it complains that the assembly reference is invalid or cannot referenced. PublicKeyToken didn't worked)
+[assembly: InternalsVisibleTo("NameSpace.MyFriendAssembly, PublicKey=0024000004800000940000000602000000240000525341310004000001000100F73F4DDC11F0CA6209BC63EFCBBAC3DACB04B612E04FA07F01D919FB5A1579D20283DC12901C8B66A08FB8A9CB6A5E81989007B3AA43CD7442BED6D21F4D33FB590A46420FB75265C889D536A9519674440C3C2FB06C5924360243CACD4B641BE574C31A434CE845323395842FAAF106B234C2C1406E2F553073FF557D2DB6C5")]
+
+Thanks to @Joe
+To get the public key of the friend assembly:
+sn -Tp path\to\assembly\MyFriendAssembly.dll
+
+Inside a Developper command prompt (Startup > Programs > Visual Studio 2015 > Visual Studio Tools > Developer Command Prompt for VS2015).
+Thanks to @Ian G.
+Although, the final touch that made it work for me after the above was to sign my friend library project the same way the project of the library to share is signed. Since it was a new Test library, it wasn't signed yet.
+
+You are required to generate an new full public key for the assembly and then specify the attribute to assembly.
+[assembly: InternalsVisibleTo("assemblyname,
+PublicKey="Full Public Key")]
+
+Follow the below MSDN steps to generate new full public key for the assembly from visual studio.
+To add a Get Assembly Public Key item to the Tools menu
+In Visual Studio, click External Tools on the Tools menu.
+In the External Tools dialog box, click Add and enter Get Assembly Public Key in the Title box.
+Fill the Command box by browsing to sn.exe. It is typically installed at the following location: C:\Program Files (x86)\Microsoft SDKs\Windows\v7.0a\Bin\x64\sn.exe.
+In the Arguments box, type the following (case sensitive): -Tp $(TargetPath).
+Select the Use Output window check box.
+Click OK. The new command is added to the Tools menu.
+Whenever you need the Public Key Token of the assembly you are developing, click the Get Assembly Public Key command on the Tools menu, and the public key token appears in the Output window.
+
+In my case using VS.Net 2015, I needed to sign BOTH assemblies (if at least 1 assembly shall be signed or you want to reference on the public key of your assembly).
+My project didn't use signing at all. So I started adding a sign key to my test library and useing the InternalsVisibleTo-Attribute at my project's base library. But VS.Net always explained it couldn't access the friend methods.
+When I started to sign the base library (it can be the same or another sign key - as long as you do sign the base library), VS.Net was immediately able to work as expected.
+
+Applies only if you like to keep unsigned assemblies as unsigned assembly (and don't want to sign it for several reasons):
+There is still another point: if you compile your base library from VS.Net to a local directory, it may work as expected.
+BUT: As soon as you compile your base library to a network drive, security policies apply and the assembly can't be successfully loaded. This again causes VS.NET or the compiler to fail when checking for the PublicKey match.
+FINALLY, it's possible to use unsigned assemblies:
+https://msdn.microsoft.com/en-us/library/bb384966.aspx
+You must ensure that BOTH assemblies are NOT SIGNED
+And the Assembly attribute must be without PublicKey information: 
+<Assembly: InternalsVisibleTo("friend_unsigned_B")>
+
+Another possibility that may be tricky to track down, depending on how your code is written.
+
+You're invoking an internal method defined in X from another assembly Y
+The method signature uses internal types defined in Z
+You then have to add [InternalsVisibleTo] in X AND in Z
+
+For example:
+// In X
+internal static class XType
+{
+    internal static ZType GetZ() { ... }
+}
+
+// In Y:
+object someUntypedValue = XType.GetZ();
+
+// In Z:
+internal class ZType { ... }
+
+If you have it written like above, where you're not referring to ZType directly in Y, after having added Y as a friend of X, you may be mystified why your code still doesn't compile.
+The compilation error could definitely be more helpful in this case.

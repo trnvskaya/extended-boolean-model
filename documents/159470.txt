@@ -1,0 +1,64 @@
+Reset Expander to default collapse behavior
+wpf expander
+I'm using an expander inside a Resizer (a ContentControl with a resize gripper), and it expands/collapses properly when the control initially comes up.  Once I resize it, the Expander won't properly collapse, as documented below.  I ran Snoop on my application, and I don't see any heights set on Expander or its constituents.  
+How would I go about convincing Expander to collapse properly again?  Or modifying Resizer to not make Expander sad would work as well.
+Expander documentation says:
+
+"For an Expander to work correctly, do not specify a Height on the Expander control when the ExpandDirection property is set to Down or Up. Similarly, do not specify a Width on the Expander control when the ExpandDirection property is set to Left or Right. When you set a size on the Expander control in the direction that the expanded content is displayed, the area that is defined by the size parameter is displayed with a border around it. This area displays even when the window is collapsed. To set the size of the expanded window, set size dimensions on the content of the Expander control or the ScrollViewer that encloses the content."
+
+
+
+I resolved the problem by moving the Resizer inside the Expander, but I've run into the Expander issue elsewhere, so would still like an answer if someone has it.
+thanks
+
+I ran into a similar problem using an Expander inside a Grid with a GridSplitter. The expand /collapse behaviour works fine until I move the splitter... Afterwards, the Expander won't collapse, it only hides its contents.
+I'm still looking for a workaround... did you eventually find one ?
+
+I haven't had a chance to mock up this particular issue since then, but I recently discovered that setting Height or Width to Double.NaN resets it to its default free-spirited behavior.
+Ironically, this was from reading the code of the Resizer control I was using in the first place.
+
+Answering this a bit late (2+ years), but, hey, better late than never, right?
+Anyway, I ran into this exact problem and was able to solve it with some code-behind to save and reset column widths.
+I have a 3 columned Grid, with some content in the first column, the GridSplitter in the second column, and the Expander in the third column. It looks like what is happening is that after the GridSplitter is moved the width of the column containing the Expander is altered from Auto to a fixed size. This causes the Expander to no longer collapse as expected.
+So, I added a private variable and two event handlers:
+    private GridLength _columnWidth;
+
+    private void Expander_Expanded (object sender, RoutedEventArgs e)
+    {
+        // restore column fixed size saved in Collapse event
+        Column2.Width = _columnWidth;
+    }
+
+    private void Expander_Collapsed (object sender, RoutedEventArgs e)
+    {
+        // save current column width so we can restore when expander is expanded
+        _columnWidth = Column2.Width;
+
+        // reset column width to auto so the expander will collapse properly
+        Column2.Width = GridLength.Auto;
+    }
+
+When the Expander is collapsed I save Column2's fixed width (which was altered from Auto auto-magically in the background somewhere) then reset the width to Auto.
+Then, when the expander is expanded, I restore the column back to the fixed width so it expands to the same width it was before it was collapsed.
+Here's the XAML for reference:
+<Grid>
+    <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="2*" />
+        <ColumnDefinition Width="Auto" />
+        <ColumnDefinition x:Name="Column2" Width="Auto" />
+    </Grid.ColumnDefinitions>
+    <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
+        <!-- some content goes here -->
+    </ScrollViewer>
+    <GridSplitter HorizontalAlignment="Right" VerticalAlignment="Stretch"
+         Grid.Column="1" ResizeBehavior="PreviousAndNext" Width="5"
+         Background="Black" />
+    <Expander Grid.Column="2" ExpandDirection="Left"
+         IsExpanded="True" Style="{StaticResource LeftExpander}"
+         Expanded="Expander_Expanded" Collapsed="Expander_Collapsed">
+        <Grid>
+            <TextBox TextWrapping="Wrap" Height="Auto" Margin="0 5 5 5" />
+        </Grid>
+    </Expander>
+</Grid>
+

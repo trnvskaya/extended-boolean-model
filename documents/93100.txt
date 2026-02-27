@@ -1,0 +1,89 @@
+Handling the data in an IN clause, with SQL parameters?
+vb.net sql-server-2008 tsql sql-injection language-features
+We all know that prepared statements are one of the best way of fending of SQL injection attacks.  What is the best way of creating a prepared statement with an "IN" clause.  Is there an easy way to do this with an unspecified number of values?  Take the following query for example.
+SELECT ID,Column1,Column2 FROM MyTable WHERE ID IN (1,2,3)
+
+Currently I'm using a loop over my possible values to build up a string such as. 
+SELECT ID,Column1,Column2 FROM MyTable WHERE ID IN (@IDVAL_1,@IDVAL_2,@IDVAL_3)
+
+Is it possible to use just pass an array as the value of the query paramter and use a query as follows?
+SELECT ID,Column1,Column2 FROM MyTable WHERE ID IN (@IDArray)
+
+In case it's important I'm working with SQL Server 2000, in VB.Net
+
+
+If you would like to pass an array, you will need a function in sql that can turn that array into a sub-select.
+These functions are very common, and most home grown systems take advantage of them.
+Most commercial, or rather professional ORM's do ins by doing a bunch of variables, so if you have that working, I think that is the standard method.
+
+In SQL Server 2008, they finally got around to addressing this classic problem by adding a new "table" datatype. Apparently, that lets you pass in an array of values, which can be used in a sub-select to accomplish the same as an IN statement.
+If you're using SQL Server 2008, then you might look into that.
+
+Here you go - first create the following function...
+Create Function [dbo].[SeparateValues]
+(
+    @data VARCHAR(MAX),
+    @delimiter VARCHAR(10) 
+) 
+    RETURNS @tbldata TABLE(col VARCHAR(10))
+As
+Begin
+    DECLARE @pos INT
+    DECLARE @prevpos INT
+
+    SET @pos = 1 
+    SET @prevpos = 0
+
+    WHILE @pos > 0 
+        BEGIN
+
+        SET @pos = CHARINDEX(@delimiter, @data, @prevpos+1)
+
+        if @pos > 0 
+        INSERT INTO @tbldata(col) VALUES(LTRIM(RTRIM(SUBSTRING(@data, @prevpos+1, @pos-@prevpos-1))))
+
+        else
+
+        INSERT INTO @tbldata(col) VALUES(LTRIM(RTRIM(SUBSTRING(@data, @prevpos+1, len(@data)-@prevpos))))
+
+        SET @prevpos = @pos 
+    End
+
+    RETURN
+
+END
+
+then use the following...
+Declare @CommaSeparated varchar(50)
+Set @CommaSeparated = '112,112,122'
+SELECT ID,Column1,Column2 FROM MyTable WHERE ID IN (select col FROM [SeparateValues](@CommaSeparated, ','))
+
+I think sql server 2008 will allow table functions.
+UPDATE
+You'll squeeze some extra performance using the following syntax...
+SELECT ID,Column1,Column2 FROM MyTable
+Cross Apply [SeparateValues](@CommaSeparated, ',') s
+Where MyTable.id = s.col
+
+Because the previous syntax causes SQL Server to run an extra "Sort" command using the "IN" clause. Plus - in my opinion it looks nicer :D!
+
+Here's one technique I use
+ALTER   Procedure GetProductsBySearchString
+@SearchString varchar(1000),
+as
+set nocount on
+declare @sqlstring varchar(6000)
+select @sqlstring = 'set nocount on
+select a.productid, count(a.productid) as SumOf, sum(a.relevence) as CountOf 
+ from productkeywords a 
+ where rtrim(ltrim(a.term)) in (''' + Replace(@SearchString,' ', ''',''') + ''')
+ group by a.productid order by SumOf desc, CountOf desc'
+
+exec(@sqlstring)
+
+
+You could create a temporary table TempTable with a single column VALUE and insert all IDs. Then you could do it with a subselect:
+SELECT ID,Column1,Column2 FROM MyTable WHERE ID IN (SELECT VALUE FROM TempTable)
+
+
+Go with the solution posted by digiguru.  It's a great reusable solution and we use the same technique as well.  New team members love it, as it saves time and keeps our stored procedures consistent.  The solution also works well with SQL Reports, as the parameters passed to stored procedures to create the recordsets pass in varchar(8000).  You just hook it up and go.

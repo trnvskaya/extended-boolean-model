@@ -1,0 +1,111 @@
+How do I find a user's Active Directory display name in a C# web application?
+c# active-directory
+I'm writing a web application which uses windows authentication and I can happily get the user's login name using something like:
+ string login = User.Identity.Name.ToString();
+
+But I don't need their login name I want their DisplayName. I've been banging my head for a couple hours now...
+Can I access my organisation's AD via a web application?
+
+
+See related question: Active Directory: Retrieve User information
+See also: Howto: (Almost) Everything In Active Directory via C# and more specifically section "Enumerate an object's properties".
+If you have a path to connect to a group in a domain, the following snippet may be helpful:
+GetUserProperty("<myaccount>", "DisplayName");
+
+public static string GetUserProperty(string accountName, string propertyName)
+{
+	DirectoryEntry entry = new DirectoryEntry();
+	// "LDAP://CN=<group name>, CN =<Users>, DC=<domain component>, DC=<domain component>,..."
+	entry.Path = "LDAP://...";
+	entry.AuthenticationType = AuthenticationTypes.Secure;
+
+	DirectorySearcher search = new DirectorySearcher(entry);
+	search.Filter = "(SAMAccountName=" + accountName + ")";
+	search.PropertiesToLoad.Add(propertyName);
+
+	SearchResultCollection results = search.FindAll();
+	if (results != null && results.Count > 0)
+	{
+		return results[0].Properties[propertyName][0].ToString();
+	}
+	else
+	{
+	        return "Unknown User";
+	}
+}
+
+
+How about this:
+private static string GetFullName()
+    {
+        try
+        {
+            DirectoryEntry de = new DirectoryEntry("WinNT://" + Environment.UserDomainName + "/" + Environment.UserName);
+            return de.Properties["fullName"].Value.ToString();
+        }
+        catch { return null; }
+    }
+
+
+There is a CodePlex project for Linq to AD, if you're interested.
+It's also covered in the book LINQ Unleashed for C# by Paul Kimmel - he uses the above project as his starting point.
+not affiliated with either source - I just read the book recently
+
+In case anyone cares I managed to crack this one:
+      /// This is some imaginary code to show you how to use it
+
+      Session["USER"] = User.Identity.Name.ToString();
+      Session["LOGIN"] = RemoveDomainPrefix(User.Identity.Name.ToString()); // not a real function :D
+      string ldappath = "LDAP://your_ldap_path";
+      // "LDAP://CN=<group name>, CN =<Users>, DC=<domain component>, DC=<domain component>,..."
+
+
+      Session["cn"] = GetAttribute(ldappath, (string)Session["LOGIN"], "cn");
+      Session["displayName"] = GetAttribute(ldappath, (string)Session["LOGIN"], "displayName");
+      Session["mail"] = GetAttribute(ldappath, (string)Session["LOGIN"], "mail");
+      Session["givenName"] = GetAttribute(ldappath, (string)Session["LOGIN"], "givenName");
+      Session["sn"] = GetAttribute(ldappath, (string)Session["LOGIN"], "sn");
+
+
+/// working code
+
+public static string GetAttribute(string ldappath, string sAMAccountName, string attribute)
+    {
+        string OUT = string.Empty;
+
+        try
+        {
+            DirectoryEntry de = new DirectoryEntry(ldappath);
+            DirectorySearcher ds = new DirectorySearcher(de);
+            ds.Filter = "(&(objectClass=user)(objectCategory=person)(sAMAccountName=" + sAMAccountName + "))";
+
+            SearchResultCollection results = ds.FindAll();
+
+            foreach (SearchResult result in results)
+            {
+                OUT =  GetProperty(result, attribute);
+            }
+        }
+        catch (Exception t)
+        {
+            // System.Diagnostics.Debug.WriteLine(t.Message);
+        }
+
+        return (OUT != null) ? OUT : string.Empty;
+    }
+
+public static string GetProperty(SearchResult searchResult, string PropertyName)
+    {
+        if (searchResult.Properties.Contains(PropertyName))
+        {
+            return searchResult.Properties[PropertyName][0].ToString();
+        }
+        else
+        {
+            return string.Empty;
+        }
+    }
+
+
+Use this:
+string displayName = UserPrincipal.Current.DisplayName;

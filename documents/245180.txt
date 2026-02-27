@@ -1,0 +1,81 @@
+Variable LIMIT Clause in MySQL
+mysql variables limit clause
+I am writing a stored procedure where I have an input parameter called my_size that is an int, I want to be able to use in a limit clause in a select statement. Apparently this is not supported, is there a way to work around this?
+# I want something like:
+SELECT * FROM some_table LIMIT my_size;
+
+# Instead of hardcoding a permanent limit:
+SELECT * FROM some_table LIMIT 100;
+
+
+
+A search turned up this article.  I've pasted the relevant text below.
+
+Here's a forum post showing an example of prepared statements letting
+  you assign a variable value to the limit clause:
+http://forums.mysql.com/read.php?98,126379,133966#msg-133966
+However, I think this bug should get some attention because I can't
+  imagine that prepared statements within a procedure will allow for any
+  procedure-compile-time optimizations.  I have a feeling that prepared
+  statements are compiled and executed at the runtime of the procedure,
+  which probaby has a negative impact on efficiency.  If the limit
+  clause could accept normal procedure variables (say, a procedure
+  argument), then the database could still perform compile-time
+  optimizations on the rest of the query, within the procedure.  This
+  would likely yield faster execution of the procedure.  I'm no expert
+  though.
+
+
+I know this answer has come late, but try SQL_SELECT_LIMIT.
+Example:
+Declare rowCount int;
+Set rowCount = 100;
+Set SQL_SELECT_LIMIT = rowCount;
+Select blah blah
+Set SQL_SELECT_LIMIT = Default;
+
+
+This feature has been added to MySQL 5.5.6.
+Check this link out.
+I've upgraded to MySQL 5.5 just for this feature and works great.
+5.5 also has a lot of performance upgrades in place and I totally recommend it.
+
+STORED PROCEDURE
+DELIMITER $
+create PROCEDURE get_users(page_from INT, page_size INT)
+begin
+SET @_page_from = page_from;
+SET @_page_size = page_size;
+PREPARE stmt FROM "select u.user_id, u.firstname, u.lastname from users u limit ?, ?;";
+EXECUTE stmt USING @_page_from, @_page_size;
+DEALLOCATE PREPARE stmt;
+end$
+DELIMITER ;
+
+USAGE
+call get_users(1, 10);
+
+
+Another way, the same as wrote "Pradeep Sanjaya", but using CONCAT:
+CREATE PROCEDURE `some_func`(startIndex INT, countNum INT)
+READS SQL DATA
+  COMMENT 'example'
+BEGIN
+  SET @asd = CONCAT('SELECT `id` FROM `table` LIMIT ',startIndex,',',countNum);
+  PREPARE zxc FROM @asd;
+  EXECUTE zxc;
+END;
+
+
+For those, who cannot use MySQL 5.5.6+ and don't want to write a stored procedure, there is another variant. We can add where clause on a subselect with ROWNUM.
+SET @limit = 10;
+SELECT * FROM (
+  SELECT instances.*, 
+         @rownum := @rownum + 1 AS rank
+    FROM instances, 
+         (SELECT @rownum := 0) r
+) d WHERE rank < @limit;
+
+
+As of MySQL version 5.5.6, you can specify LIMIT and OFFSET with variables / parameters.
+For reference, see the 5.5 Manual, the 5.6 Manual and @Quassnoi's answer

@@ -1,0 +1,191 @@
+Large File Download - Connection With Server Reset
+asp.net download
+I have an asp.net website that allows the user to download largish files - 30mb to about 60mb.  Sometimes the download works fine but often it fails at some varying point before the download finishes with the message saying that the connection with the server was reset.
+Originally I was simply using Server.TransmitFile but after reading up a bit I am now using the code posted below.  I am also setting the Server.ScriptTimeout value to 3600 in the Page_Init event.
+private void DownloadFile(string fname, bool forceDownload)
+        {
+            string path = MapPath(fname);
+            string name = Path.GetFileName(path);
+            string ext = Path.GetExtension(path);
+            string type = "";
+
+            // set known types based on file extension  
+
+            if (ext != null)
+            {
+                switch (ext.ToLower())
+                {
+                    case ".mp3":
+                        type = "audio/mpeg";
+                        break;
+
+                    case ".htm":
+                    case ".html":
+                        type = "text/HTML";
+                        break;
+
+                    case ".txt":
+                        type = "text/plain";
+                        break;
+
+                    case ".doc":
+                    case ".rtf":
+                        type = "Application/msword";
+                        break;
+                }
+            }
+
+            if (forceDownload)
+            {
+                Response.AppendHeader("content-disposition",
+                    "attachment; filename=" + name.Replace(" ", "_"));
+            }
+
+            if (type != "")
+            {
+                Response.ContentType = type;
+            }
+            else
+            {
+                Response.ContentType = "application/x-msdownload";
+            }
+
+            System.IO.Stream iStream = null;
+
+            // Buffer to read 10K bytes in chunk:
+            byte[] buffer = new Byte[10000];
+
+            // Length of the file:
+            int length;
+
+            // Total bytes to read:
+            long dataToRead;
+
+            try
+            {
+                // Open the file.
+                iStream = new System.IO.FileStream(path, System.IO.FileMode.Open,
+                            System.IO.FileAccess.Read, System.IO.FileShare.Read);
+
+
+                // Total bytes to read:
+                dataToRead = iStream.Length;
+
+                //Response.ContentType = "application/octet-stream";
+                //Response.AddHeader("Content-Disposition", "attachment; filename=" + filename);
+
+                // Read the bytes.
+                while (dataToRead > 0)
+                {
+                    // Verify that the client is connected.
+                    if (Response.IsClientConnected)
+                    {
+                        // Read the data in buffer.
+                        length = iStream.Read(buffer, 0, 10000);
+
+                        // Write the data to the current output stream.
+                        Response.OutputStream.Write(buffer, 0, length);
+
+                        // Flush the data to the HTML output.
+                        Response.Flush();
+
+                        buffer = new Byte[10000];
+                        dataToRead = dataToRead - length;
+                    }
+                    else
+                    {
+                        //prevent infinite loop if user disconnects
+                        dataToRead = -1;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Trap the error, if any.
+                Response.Write("Error : " + ex.Message);
+            }
+            finally
+            {
+                if (iStream != null)
+                {
+                    //Close the file.
+                    iStream.Close();
+                }
+                Response.Close();
+            }
+
+        }
+
+
+
+Will
+<configuration>
+  <system.web>
+    <httpRuntime executionTimeout="3600"/>
+  </system.web>
+</configuration>
+
+help anything?
+The inner loop that writes the data seems a bit convoluted, I would at least change it to:
+int length;
+while(  Response.IsClientConnected && 
+       (length=iStream.Read(buffer,0,buffer.Length))>0 ) 
+{
+  Response.OutputStream.Write(buffer,0,length);
+  Response.Flush();
+}
+
+There is no need to reallocate the buffer each round through the loop, you can simply re-use it after you have written it to the output.
+A further improvement would be to use asyncronous IO but that is for another day.
+
+The final fix for this problem was to make a modification in the web.config file.  I simply had to change sessionState mode="InProc" to sessionState mode="StateServer".  
+
+I had a similar problem when I was using FileUpload Control and I was uploading a file size >4MB . I used to get 'The connection was reset' error page. And this the steps that I followed to fix the problem:
+Go to the web.config file and set a size limit that is appropriate for the types of files that you expect to be uploaded. The default size limit is 4096 kilobytes (KB), or 4 megabytes (MB). You can allow larger files to be uploaded by setting the maxRequestLength  attribute of the httpRuntime  element. To increase the maximum allowable file size for the entire application, set the maxRequestLength  attribute in the Web.config file.
+For example to allow 10MB (10240 KB) file..I used (REPLACE '[' with '<' and ']' with '>')
+ [configuration]
+  [system.web]
+  [httpRuntime maxRequestLength="10240"/]    
+  [/system.web]
+[/configuration]
+
+What ended up working for me is doing a Response.End and also doing a using statement with the file stream.  Here is the code that I have:
+public partial class ssl_Report_StreamReport : BaseReportPage
+{
+    protected void Page_Load(object sender, EventArgs e)
+    {
+        //Get the parameters
+        string reportName = Utils.ParseStringRequest(Request, "reportName") ?? string.Empty;
+        string reportGuid = Session["reportGuid"].ToString();
+        string path = Path.Combine(ReportPath(), Utils.GetSessionReportName(reportName, reportGuid));
+
+        using (var fileStream = File.Open(path, FileMode.Open))
+        {
+            Response.ClearHeaders();
+            Response.Clear();
+            Response.ContentType = "application/octet-stream";
+            Response.AddHeader("Content-Disposition", "attachment; filename=\"" + reportName + "\"");
+            Response.AddHeader("Content-Length", fileStream.Length.ToString(CultureInfo.InvariantCulture));
+            StreamHelper.CopyStream(fileStream, Response.OutputStream);
+            Response.Flush();
+            Response.End();
+        }
+
+        ReportProcessor.ClearReport(Session.SessionID, path);
+    }
+}
+
+
+public static class StreamHelper
+{
+    public static void CopyStream(Stream input, Stream output)
+    {
+        byte[] buffer = new byte[32768];
+        int read;
+        while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            output.Write(buffer, 0, read);
+        }
+    }
+}
+

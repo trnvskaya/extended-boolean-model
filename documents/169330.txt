@@ -1,0 +1,210 @@
+Simple way to programmatically get all stored procedures
+c# sql-server sql-server-2005 stored-procedures
+Is there a way to get stored procedures from a SQL Server 2005 Express database using C#? I would like to export all of this data in the same manner that you can script it our using SQL Server Management Studio, without having to install the GUI.
+I've seen some references to do thing via the PowerShell but in the end a C# console app is what I really want.
+To clarify....
+I'd like to script out the stored procedures. The list via the Select * from sys.procedures is helpful, but in the end I need to script out each of these.
+
+
+This blog post suggests running this against your database:
+select * from sys.procedures
+
+
+You can write C# code to run the following query on your database.
+Select * from sys.procedures
+
+
+Just read the output of SELECT NAME from SYS.PROCEDURES , then call EXEC sp_HelpText SPNAME for each stored procedure, you'll get a record set with one line of text per row.
+
+I think this is what you're really looking for:
+select SPECIFIC_NAME,ROUTINE_DEFINITION from information_schema.routines
+
+There are a ton of other useful columns in there too...
+
+You can use SMO for that. First of all, add references to these assemblies to your project:
+
+Microsoft.SqlServer.ConnectionInfo
+Microsoft.SqlServer.Smo
+Microsoft.SqlServer.SmoEnum
+
+They are located in the GAC (browse to C:\WINDOWS\assembly folder).  
+Use the following code as an example of scripting stored procedures:
+using System;
+using System.Collections.Generic;
+using System.Data;
+using Microsoft.SqlServer.Management.Smo;
+
+class Program
+{
+   static void Main(string[] args)
+   {
+      Server server = new Server(@".\SQLEXPRESS");
+      Database db = server.Databases["Northwind"];
+      List<SqlSmoObject> list = new List<SqlSmoObject>();
+      DataTable dataTable = db.EnumObjects(DatabaseObjectTypes.StoredProcedure);
+      foreach (DataRow row in dataTable.Rows)
+      {
+         string sSchema = (string)row["Schema"];
+         if (sSchema == "sys" || sSchema == "INFORMATION_SCHEMA")
+            continue;
+         StoredProcedure sp = (StoredProcedure)server.GetSmoObject(
+            new Urn((string)row["Urn"]));
+         if (!sp.IsSystemObject)
+            list.Add(sp);
+      }
+      Scripter scripter = new Scripter();
+      scripter.Server = server;
+      scripter.Options.IncludeHeaders = true;
+      scripter.Options.SchemaQualify = true;
+      scripter.Options.ToFileOnly = true;
+      scripter.Options.FileName = @"C:\StoredProcedures.sql";
+      scripter.Script(list.ToArray());
+   }
+}
+
+See also: SQL Server: SMO Scripting Basics.
+
+;WITH ROUTINES AS (
+    -- CANNOT use INFORMATION_SCHEMA.ROUTINES because of 4000 character limit
+    SELECT o.type_desc AS ROUTINE_TYPE
+            ,o.[name] AS ROUTINE_NAME
+            ,m.definition AS ROUTINE_DEFINITION
+    FROM sys.sql_modules AS m
+    INNER JOIN sys.objects AS o
+        ON m.object_id = o.object_id
+)
+SELECT *
+FROM ROUTINES
+
+
+You can use:
+DataTable  dtProcs = sqlConn.GetSchema("Procedures", new string[] { databaseName });
+DataTable  dtProcParams = sqlConn.GetSchema("ProcedureParameters", new string[] { databaseName });
+
+You can also get all sorts of other schema info like tables, indexes etc. if you need them.
+You can get info on GetSchema() here and info on the SQL Server Schema Collections here
+Edit: Sorry, this doesn't help with actually scripting the info, but I guess it's useful info to have.
+
+begin
+--select column_name from INFORMATION_SCHEMA.COLUMNS where TABLE_NAME='Products' 
+--Declare the Table variable 
+DECLARE @GeneratedStoredProcedures TABLE
+(
+		Number INT IDENTITY(1,1), --Auto incrementing Identity column
+		name VARCHAR(300) --The string value
+)
+
+--Decalre a variable to remember the position of the current delimiter
+DECLARE @CurrentDelimiterPositionVar INT 
+declare @sqlCode varchar(max)
+--Decalre a variable to remember the number of rows in the table
+DECLARE @Count INT
+
+--Populate the TABLE variable using some logic
+INSERT INTO @GeneratedStoredProcedures SELECT name FROM sys.procedures where name like 'procGen_%'
+
+--Initialize the looper variable
+SET @CurrentDelimiterPositionVar = 1
+
+--Determine the number of rows in the Table
+SELECT @Count=max(Number) from @GeneratedStoredProcedures
+
+--A variable to hold the currently selected value from the table
+DECLARE @CurrentValue varchar(300);
+
+--Loop through until all row processing is done
+WHILE @CurrentDelimiterPositionVar <= @Count
+BEGIN
+	--Load current value from the Table
+	SELECT @CurrentValue = name FROM @GeneratedStoredProcedures WHERE Number = @CurrentDelimiterPositionVar 
+	--Process the current value
+	--print @CurrentValue
+	set @sqlCode = 'drop procedure ' + @CurrentValue
+	print @sqlCode
+	--exec (@sqlCode)
+
+
+	--Increment loop counter
+	SET @CurrentDelimiterPositionVar = @CurrentDelimiterPositionVar + 1;
+END
+
+end
+
+
+If you open up a can of reflector on sqlmetal.exe (a stand-alone part of LINQ-to-SQL that generates code from a database), you can see the SQL statements it uses to get a list of all stored procedures and functions. The SQL is similar, but not identical, to the one in this answer.
+
+public static void GenerateTableScript()
+    {
+        Server databaseServer = default(Server);//DataBase Server Name
+        databaseServer = new Server("yourDatabase Server Name");
+        string strFileName = @"C:\Images\Your FileName_" + DateTime.Today.ToString("yyyyMMdd") + ".sql"; //20120720`enter code here
+        if (System.IO.File.Exists(strFileName))
+            System.IO.File.Delete(strFileName);
+        List<SqlSmoObject> list = new List<SqlSmoObject>();
+        Scripter scripter = new Scripter(databaseServer);
+        Database dbUltimateSurvey = databaseServer.Databases["YourDataBaseName"];//DataBase Name
+        //Table scripting Writing
+        DataTable dataTable1 = dbUltimateSurvey.EnumObjects(DatabaseObjectTypes.Table);
+        foreach (DataRow drTable in dataTable1.Rows)
+        {
+            //string strTableSchema = (string)drTable["Schema"];
+            //if (strTableSchema == "dbo")
+            //    continue;
+            Table dbTable = (Table)databaseServer.GetSmoObject(new Urn((string)drTable["Urn"]));
+            if (!dbTable.IsSystemObject)
+                if (dbTable.Name.Contains("SASTool_"))
+                    list.Add(dbTable);
+        }
+        scripter.Server = databaseServer;
+        scripter.Options.IncludeHeaders = true;
+        scripter.Options.SchemaQualify = true;
+        scripter.Options.ToFileOnly = true;
+        scripter.Options.FileName = strFileName;
+        scripter.Options.DriAll = true;
+        scripter.Options.AppendToFile = true;
+        scripter.Script(list.ToArray());//Table Script completed
+        //Store Procedures scripting Writing
+        list = new List<SqlSmoObject>();
+        DataTable dataTable = dbUltimateSurvey.EnumObjects(DatabaseObjectTypes.StoredProcedure);
+        foreach (DataRow row in dataTable.Rows)
+        {
+            string sSchema = (string)row["Schema"];
+            if (sSchema == "sys" || sSchema == "INFORMATION_SCHEMA")
+                continue;
+            StoredProcedure sp = (StoredProcedure)databaseServer.GetSmoObject(
+               new Urn((string)row["Urn"]));
+            if (!sp.IsSystemObject)
+                if (sp.Name.Contains("custom_"))
+                    list.Add(sp);
+        }
+        scripter.Server = databaseServer;
+        scripter.Options.IncludeHeaders = true;
+        scripter.Options.SchemaQualify = true;
+        scripter.Options.ToFileOnly = true;
+        scripter.Options.FileName = strFileName;
+        scripter.Options.DriAll = true;
+        scripter.Options.AppendToFile = true;
+        scripter.Script(list.ToArray());   // Stored procedure Script completed
+    }
+
+
+Assuming you have SqlConnection object called sqlCon, simplest way is to call sqlCon.GetSchema("Procedures")
+
+This is a SQL that I have just tested and used in MSSQL
+SELECT NAME from SYS.PROCEDURES 
+order by name
+
+In case that you need to look for a specific name or substring/text
+SELECT NAME from SYS.PROCEDURES 
+where name like '%<TEXT_TO_LOOK_FOR>%'
+order by name
+
+Replace  with exactly that for example:
+SELECT NAME from SYS.PROCEDURES 
+where name like '%CUSTOMER%'
+order by name
+
+And calling 
+EXEC sp_HelpText SPNAME 
+
+for each stored procedure, you'll get a record set with one line of text per row

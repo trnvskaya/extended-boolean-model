@@ -1,0 +1,69 @@
+Oracle load spikes couple hours after startup
+performance oracle
+We use oracle as the back-end database for our product. I have been running series of stress tests on our system and I have started noticing that oracle is much faster right after the database was restarted. Over time (a couple hours or so) the database seems to get slower and slower and I will see the database machine under more stress.
+Running the test right after an oracle restart, i will see a 1 min load average of 5 or so and average CPU around 10-15%. After a few hours, I see the load average at 13 and CPU at 40-70%. (This is red hat linux 2x Quad core xeon, Raid 10 10k rpm sas drives).
+My first thought was wouldn't database transactions get faster because those queries are getting cached?
+I can't seem to figure out the problem. 
+EDIT:
+Turns out this was a problem on the connecting software side due to bad design. Every action on the system created a new insert, delete, and select. With all these unique queries being generated, what was cached was constantly changing. The spike I am talking about is when the query cache filled up.
+
+
+Are you sure the stress test is releasing the sessions that it uses?  The accumulation of sessions, then subsequent time out of those sessions could produce this kind of behavior.
+Moved this query from the comments to the body of my answer per request...
+select
+  username,
+  osuser,
+  lockwait,
+  status,
+  sql_text
+from
+  v$session,
+  v$sqltext
+where
+  username is not null
+and
+  username not in ('SYSMAN','DBSNMP')
+and
+  hash_value = sql_hash_value
+order by
+  username,
+  hash_value,
+  piece;
+
+
+What version of oracle are you running? Do you have statspack or AWR setup? if you do, check those to show you what the database is doing over time.
+
+It could be a problem with the database SGA swapping to disk. Check the size of the SGA and the PGA, compared to the RAM size.
+You need to provide more information about the version of Oracle and Red Hat (for example, 
+I have experienced performance problems with Oracle 9i and Red Hat Enterprise Linux 3.x, with RAM sizes of 4 Gbytes or greater, that have disappeared when upgrading to Red Hat 4.x and Oracle 10g)
+
+I've noticed that with Oracle 10g, Oracle schedules a job to automatically compute statistics each day. You might want to look at your active sessions when the database is busy and see if a background session is busy calculating statistics on your tables.
+
+So after you do the reboot and the performance improves again, do you drop the data or do you keep it? You need to run statspack/AWR/ADDM/OEM to get more information about what's happening.
+As you haven't posted any detailed diagnostic info I take it you need to start learning the ABCs first. See Oracle 10.2 Performance Tuning Guide
+
+Add to the list of information needed the following:
+Are you using archive logs?
+How many redo log groups do you have? How many redo logs are in each group?
+How big are the redo logs?
+How are you restarting Oracle? Are you just doing a shutdown immediate followed by a startup? Are you rebooting the server?
+If your log files are too small you might be getting into a state where you're waiting for the redo logs to be written to the archive logs before being able to continue, you can help remedy this by increasing the size of the redo logs.
+Shutting down and restarting oracle would result in the redo logs all being written to the archive logs and being fresh and ready to go after you start back up.  Then as they fill with redo information you hit a bottleneck when it comes time to archive them.
+An AWR report would really be the most useful thing if you're running Oracle 10g.  If you're running 9i then statspack equvalent.
+Running a AWR Report
+Login to sqlplus 
+sqlplus <sys or system user>/<password>@<SID>
+
+Create a 'before' statistics snapshot 
+SQL> execute dbms_workload_repository.create_snapshot
+
+Run your specific performance/load tests
+Create an 'after' statistics snapshot 
+SQL> execute dbms_workload_repository.create_snapshot
+
+Create a workload repository report
+SQL> start awrrpt
+
+Using the AWR report you should be able to determine where your bottleneck is.
+
+A perfect example for a RAC Analyst like me who has downed RAC multiple times but never knew what made it down. Now, I am using the suggested method. Really, Oracle has many hidden functionality or I am less trained hheee or i need to explore more on these

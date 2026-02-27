@@ -1,0 +1,75 @@
+Setting Focus with ASP.NET AJAX Control Toolkit
+asp.net
+I'm using the AutoComplete control from the ASP.NET AJAX Control Toolkit and I'm experiencing an issue where the AutoComplete does not populate when I set the focus to the assigned textbox.  
+I've tried setting the focus in the Page_Load, Page_PreRender, and Page_Init events and the focus is set properly but the AutoComplete does not work.  If I don't set the focus, everything works fine but I'd like to set it so the users don't have that extra click.  
+Is there a special place I need to set the focus or something else I need to do to make this work?  Thanks.
+
+
+We had exactly the same problem.  What we had to do is write a script at the bottom of the page that quickly blurs then refocuses to the textbox.  You can have a look at the (terribly hacky) solution here: http://www.drive.com.au 
+The textbox id is  MainSearchBox_SearchTextBox.  Have a look at about line 586 & you can see where I'm wiring up all the events (I'm actually using prototype for this bit.
+Basically on the focus event of the textbox I set a global var called textBoxHasFocus to true and on the blur event I set it to false.  The on the load event of the page I call this script:
+if (textBoxHasFocus) {
+    $get("MainSearchBox_SearchTextBox").blur();
+    $get("MainSearchBox_SearchTextBox").focus();
+}
+
+This resets the textbox.  It's really dodgy, but it's the only solution I could find
+
+How are you setting focus? I haven't tried the specific scenario you've suggested, but here's how I set focus to my controls:
+Public Sub SetFocus(ByVal ctrl As Control)
+    Dim sb As New System.Text.StringBuilder
+    Dim p As Control
+    p = ctrl.Parent
+    While (Not (p.GetType() Is GetType(System.Web.UI.HtmlControls.HtmlForm)))
+        p = p.Parent
+    End While
+    With sb
+        .Append("<script language='JavaScript'>")
+        .Append("function SetFocus()")
+        .Append("{")
+        .Append("document.")
+        .Append(p.ClientID)
+        .Append("['")
+        .Append(ctrl.UniqueID)
+        .Append("'].focus();")
+        .Append("}")
+        .Append("window.onload = SetFocus;")
+        .Append("")
+        .Append("</script")
+        .Append(">")
+    End With
+    ctrl.Page.RegisterClientScriptBlock("SetFocus", sb.ToString())
+End Sub
+
+So, I'm not sure what method you're using, but if it's different than mine, give that a shot and see if you still have a problem or not.
+
+What I normally do is register a clientside script to run the below setFocusTimeout method from my codebehind method. When this runs, it waits some small amount of time and then calls the method that actually sets focus (setFocus). It's terribly hackish, but it seems you have to go a route like this to stop AJAX from stealing your focus. 
+function setFocusTimeout(controlID) {
+    focusControlID = controlID;
+    setTimeout("setFocus(focusControlID)", 100);
+}
+
+function setFocus() {
+    document.getElementById(focusControlID).focus();
+}
+
+
+I found the answers from Glenn Slaven and from Kris/Alex to get me closer to a solution to my particular problem with setting focus on an ASP.NET TextBox control that had an AutoCompleteExtender attached.  The document.getElementById(focusControlID).focus() kept throwing a javascript error that implied document.getElementById was returning a null object.  The focusControlID variable was returning the correct runtime ClientID value for the TextBox control. But for whatever reason, the document.getElementById function didn't like it.
+My solution was to throw jQuery into the mix, as I was already using it to paint the background of any control that had focus, plus forcing the Enter key to tab through the form instead of firing a postback. 
+My setFocus function ended up looking like this:
+function setFocus(focusControlID) {
+    $('#' + focusControlID).blur();
+    $('#' + focusControlID).focus();
+}
+
+This got rid of the javascript runtime error, put focus on the desired TextBox control, and placed the cursor within the control as well.  Without first blurring then focusing, the control would be highlighted as if it had focus, but the cursor would not be sitting in the control yet.  The user would still have to click inside the control to begin editing, which would be an UX annoyance.
+I also had to increase the timeout from 100 to 300.  Your mileage my vary...
+I agree with everyone that this is a hack.  But from the end-user's perspective, they don't see this code.  The hack for them is if they have to manually click inside the control instead of just being automatically placed inside the control already and typing the first few letters to trigger the auto lookup functionality. So, hats off to all who provided their hacks.
+I hope this is helpful to someone else.
+
+this is waste , its simple 
+this is what you need to do 
+controlId.focus();  in C#
+controlID.focus()   in VB 
+place this in page load or button_click section 
+eg. panel1.focus();   if panel1 has model popup extender attached to it, then we put this code in page load section 

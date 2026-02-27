@@ -1,0 +1,138 @@
+Problem dealloc'ing memory used by UIImageViews with fairly large image in an UIScrollView
+iphone objective-c cocoa-touch memory-management
+I have a large UIScrollView into which I'm placing 3-4 rather large (320x1500 pixels or so) UIImageView image tiles.  I'm adding these UIImageViews to the scroll view inside of my NIB files.  I have one outlet on my controller, and that is to the UIScrollView.  I'm using a property (nonatomic, retain) for this, and sythesizing it.
+My question is this:  When I observe this in Memory Monitor, I can see that the memory used goes up quite a bit when the view with all these images is loaded (as expected).  But when I leave the view, it and its controller are dealloc'd, but do not seem to give up anywhere near the memory they had taken up.  When I cut one of these views (there are several in my app) down to just 1-3 images that were 320x460 and left everything else the same, it recaptures the memory just fine.
+Is there some issue with using images this large?  Am I doing something wrong in this code (pasted below)?
+This is a snippet from the viewController that is causing problems.
+- (CGFloat)findHeight 
+{
+    UIImageView *imageView = nil;
+    NSArray *subviews = [self.scrollView subviews];
+
+    CGFloat maxYLoc = 0;
+    for (imageView in subviews)
+    {
+            if ([imageView isKindOfClass:[UIImageView class]])
+            {
+                    CGRect frame = imageView.frame;
+
+                    if ((frame.origin.y + frame.size.height) > maxYLoc) {
+                            maxYLoc  = frame.origin.y;
+                            maxYLoc += frame.size.height;
+                    }
+            }
+    }
+    return maxYLoc;
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    [self.scrollView setContentSize:CGSizeMake(320, [self findHeight])];
+
+    [self.scrollView setCanCancelContentTouches:NO];
+    self.scrollView.indicatorStyle = UIScrollViewIndicatorStyleWhite;
+    self.scrollView.clipsToBounds = YES;                
+    self.scrollView.scrollEnabled = YES;
+
+    self.scrollView.pagingEnabled = NO;
+}
+
+- (void)dealloc {
+    NSLog(@"DAY Controller Dealloc'd");
+    self.scrollView = nil;
+    [super dealloc];
+}
+
+UPDATE:  I've noticed another weird phenomenon.  If I don't use the scroll on the view, it seems to be hanging on to the memory.  But if I scroll around a bunch and ensure that all of the UIImageViews became visible at one point, it will free up and regain most of the memory it lost.
+UPDATE2: The reason I'm asking this is my app is actually crashing due to low memory.  I wouldn't mind if it were just caching and using up extra memory, but it doesn't seem to ever release it - even in didReceiveMmoryWarning conditions
+
+
+- (void)dealloc {
+    NSLog(@"DAY Controller Dealloc'd");
+    [self.scrollView release];
+    [super dealloc];
+}
+
+give that a shot, your @property() definition is requesting it to be retained, but you weren't explicitly releasing the object
+
+It could be the system caching references to your images in memory, assuming you have just drug in the images from the media browser in IB the code underneath is probably using the UIImage imageNamed: method...
+You could try loading all the images with imageWithContentsOfFile: , or imageWithData: and see if it behaves the same (dragging in unfilled UIImageViews in IB and setting contents in viewDidLoad:).
+Read the UIImage class reference if you'd like a little more detail, it also describes which methods are cached.
+If it's the cache it's probably OK though as the system would free it if needed (did you also try hitting the Simulate Memory Warning in the simulator?)
+
+From what I learned on its memory management behavior is that views won't get dealloc unless low in memory. Try an official demo like SQLBooks: 1. Run with Leaks Monitor 2. Run through every views it has. 3. Go back to the root view. 4. You will notice the memory usage level is still the same. As Kendall said it may be cached? 
+I think you shouldn't pay attention on this memory usage pattern -- because when the new images are pointed to the UIScrollView, the old image objects will be released and memory will be freed for new images anyway.
+
+I've solved the mystery - and I'm pretty sure this is a bug on Apple's side.
+As Kendall suggested (thanks!), the problem lies in how InterfaceBuilder loads images from the NIB file.  When you initFromNib, all UIImageViews will init with a UIImage using the imageNamed: method of UIImage.  This call uses caching for the image.  Normally, this is what you want.  However, with very large images and additionally ones that scroll far off of the visible area, it does not seem to be obeying memory warnings and dumping this cache.  This is what I believe to be a bug on Apple's side (please comment if you agree/disagree - I'd like to submit this if others agree).  As I said above, the memory used by these images does seem to be released if a user scrolls around enough to make it all visible.
+The workaround that I've found (also Kendall's suggestion) is to leave the image name blank in the NIB file.  So you lay out your UIImageView elements as normal, but don't select an image.  Then in your viewDidLoad code, you go in and load an image using imageWithContentsOfFile: instead.  This method does NOT cache the image, and therefore does not cause any memory issues with retaining large images.
+Of course, imageNamed: is a lot easier to use, because it defaults to anything in the bundle, rather than having to find the path.  However, you can get the path to the bundle with the following:
+NSString *fullpath = [[[NSBundle mainBundle] bundlePath];
+
+Putting that all together, here's what that looks like in code:
+NSString *fullpath = [[[NSBundle mainBundle] bundlePath] stringByAppendingString:[NSString stringWithFormat:@"/%@-%d.png", self.nibName, imageView.tag]];
+UIImage *loadImage = [UIImage imageWithContentsOfFile:fullpath];
+imageView.image = loadImage;
+
+So adding that to my code above, the full function looks like this:  
+- (CGFloat)findHeight 
+{
+    UIImageView *imageView = nil;
+    NSArray *subviews = [self.scrollView subviews];
+
+    CGFloat maxYLoc = 0;
+    for (imageView in subviews)
+    {
+        if ([imageView isKindOfClass:[UIImageView class]])
+        {
+            CGRect frame = imageView.frame;
+
+            if ((frame.origin.y + frame.size.height) > maxYLoc) {
+                maxYLoc  = frame.origin.y;
+                maxYLoc += frame.size.height;
+            }
+
+            NSString *fullpath = [[[NSBundle mainBundle] bundlePath] stringByAppendingString:[NSString stringWithFormat:@"/%@-%d.png", self.nibName, imageView.tag]];
+            NSLog(fullpath);
+
+
+            UIImage *loadImage = [UIImage imageWithContentsOfFile:fullpath];
+            imageView.image = loadImage;
+        }
+    }
+    return maxYLoc;
+}
+
+
+There is a known problem - a memory leak in imageName. I found a really useful solution for it  - creating image cash in application delegate, this way optimizing the performance and memory usage in my application.
+See this blog post
+
+Separate from your imageNamed caching issues, the answer to your question
+
+I have a large UIScrollView into which
+  I'm placing 3-4 rather large (320x1500
+  pixels or so) UIImageView image tiles.
+  [...] Is there some issue with using
+  images this large?
+
+Is in the header of the UIImage docs:
+You should avoid creating UIImage objects that are greater than 1024 x 1024 in size.
+Besides the large amount of memory such an image would consume, you may run into 
+problems when using the image as a texture in OpenGL ES or when drawing the image 
+to a view or layer.
+
+Also, Apple claims to have fixed the imageNamed cache-flushing problem in 3.0 and beyond, although I've not tested this extensively, myself.
+
+Completing the answer of Bdebeez. 
+One nice idea is to override the imageNamed: calling the imageWithContentsOfFile:. 
+Here is the idea of the code:
+@implementation UIImage(imageNamed_Hack)
+
++ (UIImage *)imageNamed:(NSString *)name {
+
+    return [UIImage imageWithContentsOfFile:[NSString stringWithFormat:@"%@/%@", [[NSBundle mainBundle] bundlePath], name ] ];
+}
+
+@end
+
+Note: With this override you will not have any cache loading UIImages, if you need this, you will have to implement your own cache.

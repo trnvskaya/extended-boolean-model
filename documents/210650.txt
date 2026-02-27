@@ -1,0 +1,331 @@
+Validate image from file in C#
+c# .net image file-io
+I'm loading an image from a file, and I want to know how to validate the image before it is fully read from the file.
+string filePath = "image.jpg";
+Image newImage = Image.FromFile(filePath);
+
+The problem occurs when image.jpg isn't really a jpg.  For example, if I create an empty text file and rename it to image.jpg, an OutOfMemory Exception  will be thrown when image.jpg is loaded.
+I'm looking for a function that will validate an image given a stream or a file path of the image.
+Example function prototype
+bool IsValidImage(string fileName);
+bool IsValidImage(Stream imageStream);
+
+
+
+I would create a method like:
+Image openImage(string filename);
+
+in which I handle the exception. If the returned value is Null, there is an invalid file name / type.
+
+JPEG's don't have a formal header definition, but they do have a small amount of metadata you can use.
+
+Offset 0 (Two Bytes): JPEG SOI marker (FFD8 hex)
+Offset 2 (Two Bytes): Image width in pixels
+Offset 4 (Two Bytes): Image height in pixels
+Offset 6 (Byte): Number of components (1 = grayscale, 3 = RGB)
+
+There are a couple other things after that, but those aren't important.
+You can open the file using a binary stream, and read this initial data, and make sure that OffSet 0 is 0, and OffSet 6 is either 1,2 or 3.
+That would at least give you slightly more precision.
+Or you can just trap the exception and move on, but I thought you wanted a challenge :)
+
+You could read the first few bytes of the Stream and compare them to the magic header bytes for JPEG.
+
+Using Windows Forms:
+bool IsValidImage(string filename)
+{
+    try
+    {
+        using(Image newImage = Image.FromFile(filename))
+        {}
+    }
+    catch (OutOfMemoryException ex)
+    {
+        //The file does not have a valid image format.
+        //-or- GDI+ does not support the pixel format of the file
+
+        return false;
+    }
+    return true;
+}
+
+Otherwise if you're using WPF you can do the following:
+bool IsValidImage(string filename)
+{
+    try
+    {
+        using(BitmapImage newImage = new BitmapImage(filename))
+        {}
+    }
+    catch(NotSupportedException)
+    {
+        // System.NotSupportedException:
+        // No imaging component suitable to complete this operation was found.
+        return false;
+    }
+    return true;
+}
+
+You must release the image created. Otherwise when you call this function large number of times, this would throw OutOfMemoryException because the system ran out of resources, and not because the image is corrupt yielding an incorrect result, and if you delete images after this step, you'd potentially be deleting good ones.
+
+You can do a rough typing by sniffing the header. 
+This means that each file format you implement will need to have a identifiable header... 
+JPEG: First 4 bytes are FF D8 FF E0 (actually just the first two bytes would do it for non jfif jpeg, more info here).
+GIF: First 6 bytes are either "GIF87a" or "GIF89a" (more info here)
+PNG: First 8 bytes are: 89 50 4E 47 0D 0A 1A 0A (more info here)
+TIFF: First 4 bytes are: II42 or MM42 (more info here)
+etc... you can find header/format information for just about any graphics format you care about and add to the things it handles as needed. What this won't do, is tell you if the file is a valid version of that type, but it will give you a hint about "image not image?". It could still be a corrupt or incomplete image, and thus crash when opening, so a try catch around the .FromFile call is still needed. 
+
+Well, I went ahead and coded a set of functions to solve the problem.  It checks the header first, then attempts to load the image in a try/catch block. It only checks for GIF, BMP, JPG, and PNG files.  You can easily add more types by adding a header to imageHeaders.
+static bool IsValidImage(string filePath)
+{
+    return File.Exists(filePath) && IsValidImage(new FileStream(filePath, FileMode.Open, FileAccess.Read));
+}
+
+static bool IsValidImage(Stream imageStream)
+{
+    if(imageStream.Length > 0)
+    {
+        byte[] header = new byte[4]; // Change size if needed.
+        string[] imageHeaders = new[]{
+                "\xFF\xD8", // JPEG
+                "BM",       // BMP
+                "GIF",      // GIF
+                Encoding.ASCII.GetString(new byte[]{137, 80, 78, 71})}; // PNG
+
+        imageStream.Read(header, 0, header.Length);
+
+        bool isImageHeader = imageHeaders.Count(str => Encoding.ASCII.GetString(header).StartsWith(str)) > 0;
+        if (isImageHeader == true)
+        {
+            try
+            {
+                Image.FromStream(imageStream).Dispose();
+                imageStream.Close();
+                return true;
+            }
+
+            catch
+            {
+
+            }
+        }
+    }
+
+    imageStream.Close();
+    return false;
+}
+
+
+in case yo need that data read for other operations and/or for other filetypes (PSD for example), later on, then using the Image.FromStream function is not necessarily a good ideea.
+
+A method that supports Tiff and Jpeg also
+private bool IsValidImage(string filename)
+{
+    Stream imageStream = null;
+    try
+    {
+        imageStream = new FileStream(filename, FileMode.Open);
+
+        if (imageStream.Length > 0)
+        {
+            byte[] header = new byte[30]; // Change size if needed.
+            string[] imageHeaders = new[]
+            {
+                "BM",       // BMP
+                "GIF",      // GIF
+                Encoding.ASCII.GetString(new byte[]{137, 80, 78, 71}),// PNG
+                "MM\x00\x2a", // TIFF
+                "II\x2a\x00" // TIFF
+            };
+
+            imageStream.Read(header, 0, header.Length);
+
+            bool isImageHeader = imageHeaders.Count(str => Encoding.ASCII.GetString(header).StartsWith(str)) > 0;
+            if (imageStream != null)
+            {
+                imageStream.Close();
+                imageStream.Dispose();
+                imageStream = null;
+            }
+
+            if (isImageHeader == false)
+            {
+                //Verify if is jpeg
+                using (BinaryReader br = new BinaryReader(File.Open(filename, FileMode.Open)))
+                {
+                    UInt16 soi = br.ReadUInt16();  // Start of Image (SOI) marker (FFD8)
+                    UInt16 jfif = br.ReadUInt16(); // JFIF marker
+
+                    return soi == 0xd8ff && (jfif == 0xe0ff || jfif == 57855);
+                }
+            }
+
+            return isImageHeader;
+        }
+
+        return false;
+    }
+    catch { return false; }
+    finally
+    {
+        if (imageStream != null)
+        {
+            imageStream.Close();
+            imageStream.Dispose();
+        }
+    }
+}
+
+
+This should do the trick - you don't have to read raw bytes out of the header:
+using(Image test = Image.FromFile(filePath))
+{
+    bool isJpeg = (test.RawFormat.Equals(ImageFormat.Jpeg));
+}
+
+Of course, you should trap the OutOfMemoryException too, which will save you if the file isn't an image at all.
+And, ImageFormat has pre-set items for all the other major image types that GDI+ supports.
+Note, you must use .Equals() and not == on ImageFormat objects (it is not an enumeration) because the operator == isn't overloaded to call the Equals method.
+
+I took Semicolon's answer and converted to VB:
+Private Function IsValidImage(imageStream As System.IO.Stream) As Boolean
+
+            If (imageStream.Length = 0) Then
+                isvalidimage = False
+                Exit Function
+            End If
+
+            Dim pngByte() As Byte = New Byte() {137, 80, 78, 71}
+            Dim pngHeader As String = System.Text.Encoding.ASCII.GetString(pngByte)
+
+            Dim jpgByte() As Byte = New Byte() {255, 216}
+            Dim jpgHeader As String = System.Text.Encoding.ASCII.GetString(jpgByte)
+
+            Dim bmpHeader As String = "BM"
+            Dim gifHeader As String = "GIF"
+
+            Dim header(3) As Byte
+
+            Dim imageHeaders As String() = New String() {jpgHeader, bmpHeader, gifHeader, pngHeader}
+            imageStream.Read(header, 0, header.Length)
+
+            Dim isImageHeader As Boolean = imageHeaders.Count(Function(str) System.Text.Encoding.ASCII.GetString(header).StartsWith(str)) > 0
+
+            If (isImageHeader) Then
+                Try
+                    System.Drawing.Image.FromStream(imageStream).Dispose()
+                    imageStream.Close()
+                    IsValidImage = True
+                    Exit Function
+                Catch ex As Exception
+                    System.Diagnostics.Debug.WriteLine("Not an image")
+                End Try
+            Else
+                System.Diagnostics.Debug.WriteLine("Not an image")
+            End If
+
+            imageStream.Close()
+            IsValidImage = False
+        End Function
+
+
+here is my image check. I cannot rely on file extensions and have to check the format on my own.
+I am loading BitmapImages in WPF from byte arrays and don't know the format upfront. WPF detects the format fine but does not tell you the image format of BitmapImage objects (at least I am not aware of a property for this). And I don't want load the image again with System.Drawing only to detect the format. This solution is fast and works fine for me.
+public enum ImageFormat
+{
+    bmp,
+    jpeg,
+    gif,
+    tiff,
+    png,
+    unknown
+}
+
+public static ImageFormat GetImageFormat(byte[] bytes)
+{
+    // see http://www.mikekunz.com/image_file_header.html  
+    var bmp    = Encoding.ASCII.GetBytes("BM");     // BMP
+    var gif    = Encoding.ASCII.GetBytes("GIF");    // GIF
+    var png    = new byte[] { 137, 80, 78, 71 };    // PNG
+    var tiff   = new byte[] { 73, 73, 42 };         // TIFF
+    var tiff2  = new byte[] { 77, 77, 42 };         // TIFF
+    var jpeg   = new byte[] { 255, 216, 255, 224 }; // jpeg
+    var jpeg2  = new byte[] { 255, 216, 255, 225 }; // jpeg canon
+
+    if (bmp.SequenceEqual(bytes.Take(bmp.Length)))
+        return ImageFormat.bmp;
+
+    if (gif.SequenceEqual(bytes.Take(gif.Length)))
+        return ImageFormat.gif;
+
+    if (png.SequenceEqual(bytes.Take(png.Length)))
+        return ImageFormat.png;
+
+    if (tiff.SequenceEqual(bytes.Take(tiff.Length)))
+        return ImageFormat.tiff;
+
+    if (tiff2.SequenceEqual(bytes.Take(tiff2.Length)))
+        return ImageFormat.tiff;
+
+    if (jpeg.SequenceEqual(bytes.Take(jpeg.Length)))
+        return ImageFormat.jpeg;
+
+    if (jpeg2.SequenceEqual(bytes.Take(jpeg2.Length)))
+        return ImageFormat.jpeg;
+
+    return ImageFormat.unknown;
+}
+
+
+Noticed couple of problems with all functions above.
+First of all - Image.FromFile opens given image and afterwards will cause open file error whoever wants to open given image file for any reason. Even application itself - so I've switched using Image.FromStream.
+After you switch api - exception type changes from OutOfMemoryException to ArgumentException for some unclear for me reason. (Probably .net framework bug?)
+Also if .net will add more image file format supports than currently we will check by function - it makes sense first try to load image if only if then fails - only after that to report error.
+So my code looks now like this:
+try {
+    using (FileStream stream = new FileStream(path, FileMode.Open, FileAccess.Read))
+    {
+        Image im = Image.FromStream(stream);
+        // Do something with image if needed.
+    }
+}
+catch (ArgumentException)
+{
+    if( !IsValidImageFormat(path) )
+        return SetLastError("File '" + fileName + "' is not a valid image");
+
+    throw;
+}
+
+Where:
+/// <summary>
+/// Check if we have valid Image file format.
+/// </summary>
+/// <param name="path"></param>
+/// <returns>true if it's image file</returns>
+public static bool IsValidImageFormat( String path )
+{
+    using ( FileStream fs = File.OpenRead(path) )
+    {
+        byte[] header = new byte[10];
+        fs.Read(header, 0, 10);
+
+        foreach ( var pattern in new byte[][] {
+                    Encoding.ASCII.GetBytes("BM"),
+                    Encoding.ASCII.GetBytes("GIF"),
+                    new byte[] { 137, 80, 78, 71 },     // PNG
+                    new byte[] { 73, 73, 42 },          // TIFF
+                    new byte[] { 77, 77, 42 },          // TIFF
+                    new byte[] { 255, 216, 255, 224 },  // jpeg
+                    new byte[] { 255, 216, 255, 225 }   // jpeg canon
+            } )
+        {
+            if (pattern.SequenceEqual(header.Take(pattern.Length)))
+                return true;
+        }
+    }
+
+    return false;
+} //IsValidImageFormat
+

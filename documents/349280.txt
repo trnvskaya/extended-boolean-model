@@ -1,0 +1,47 @@
+.net architecture: Creating a IRepository<T> generically
+.net generics architecture repository-pattern
+I am using a generic repository interface which allows me to add, find, update and delete objects of different types. I have then implemented two concrete repositories and can switch them around without changing the application. Everything is wonderfully disconnected. But I have hit a snag. The code inside my repository methods just feels wrong and I cannot figure out how to do it better. Here is a snippet of my code:
+public class OracleRepository<T> : IRepository<T> where T : new()
+{
+    public IQueryable<T> GetAll()
+    {
+        if (typeof(T) == typeof(Object1))
+        {
+            return (IQueryable<T>)DataAccess.GetAllObject1().AsQueryable();
+
+        }
+
+        if (typeof(T) == typeof(Object2))
+        {
+            return (IQueryable<T>)DataAccess.GetAllObject2().AsQueryable();
+        }
+
+        throw new NotImplementedException();
+    }
+}
+
+The problem is that my DataAccess (creates objects from a datareader) is not generic and has specific methods for each type of object that it supports. 
+Can I rewrite the above so that I avoid the list of if-then-elseif using generics or otherwise?
+
+
+One common pattern is to use a dictionary from type to a function of the relevant type. For instance:
+private static readonly IDictionary<Type, Func<object>> Fetchers =
+    new Dictionary<Type, Func<object>>();
+    {
+        (typeof(Object1), () => DataAccess.GetAllObject1().AsQueryable()),
+        (typeof(Object2), () => DataAccess.GetAllObject2().AsQueryable()),
+        // etc
+    };
+
+public IQueryable<T> GetAll()
+{
+    Func<object> func = Fetchers[typeof(T)];
+    if (func == null)
+    {
+        throw new NotImplementedException();
+    }
+    return (IQueryable<T>) func();
+}
+
+The cast is there because you can't really express the type relationship in the dictionary, but at least it's slightly easier to add new types etc.
+You may be able to move the call to AsQueryable() to GetAll() depending on what GetAllObject1() etc return.

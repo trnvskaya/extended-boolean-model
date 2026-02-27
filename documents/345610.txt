@@ -1,0 +1,112 @@
+Remove all but the last 500,000 bytes from a file with the STL
+c++ logging stl
+Our logging class, when initialised, truncates the log file to 500,000 bytes. From then on, log statements are appended to the file.
+We do this to keep disk usage low, we're a commodity end-user product.
+Obviously keeping the first 500,000 bytes is not useful, so we keep the last 500,000 bytes.
+Our solution has some serious performance problem. What is an efficient way to do this?
+
+
+I don't think it is anything computer related, but how you guys have written your logging class. It sounds strange to me that you read the last 500k into a string, why would you do that?
+Just append to the logfile.
+  fstream myfile;
+  myfile.open("test.txt",ios::app);
+
+
+Widefinder 2 has a lot of talk about efficient IO available (or, more accurately, the links under the "Notes" column have a lot of information about efficient IO available).
+Answering your question:
+
+(Title) Remove first 500,000 bytes from a file with the [standard library]
+
+The standard library is somewhat limited when it comes to filesystem operations.  If you're not limited to the standard library you can end a file prematurely very easily (that is, say "everything after this point is no longer part of this file"), but it's very hard to start a file late ("everything before this point is no longer part of this file").
+It would be efficient to simply seek 500,000 bytes into the file and then start a buffered copy to a new file.  But once you've done that, the standard libary doesn't have a ready-made "rename this file" function.  Native OS functions can rename files efficiently, as can Boost.Filesystem or STLSoft.
+
+(Actual question) Our logging class, on initialisation, seeks to 500,000 bytes before the end of the file, copies the rest to a std::string and then writes that back to the file.
+
+In this case you're dropping the last bit of the file, and it's very easy to do outside the standard library.  Simply use the filesystem operations to set the file size to 500,000 bytes (e.g., ftruncate, SetEndOfFile).  Anything after that will be ignored.
+
+So you want the end of the file- you are copying that to some sort of buffer to do what with it?  What do you mean 'writes that back' to the file.  Do you mean that it overwrites the file, truncating on init to 500k bytes of the original+ what it adds?
+Suggestions:
+
+Rethink what you are doing.  If this works and is what is desired, what is wrong with it?  Why change?  is there a performance problem?  Are you starting to wonder where all your log entries went?  It helps most for this type of question to provide more of the problem than to post the existing behavior.  No one can fully comment on this unless they know the complete problem- because it is subjective.
+If it were me and I were tasked at reworking your logging mechanism i'd build in a mechanism to cut off the log files to either: length of time or size.
+
+
+I would probably:
+
+create a new file.
+seek in the old file.
+do a buffered read/write from old file to new file.
+rename the new file over the old one.
+
+To do the first three steps (error-checking omitted, for example I can't remember what seekg does if the file is less than 500k big):
+#include <fstream>
+
+std::ifstream ifs("logfile");
+ifs.seekg(-500*1000, std::ios_base::end);
+std::ofstream ofs("logfile.new");
+ofs << ifs.rdbuf();
+
+Then I think you have to do something non-standard to rename the file.
+Obviously you need 500k disk space free for this to work, though, so if the reason you're truncating the log file is because it has just filled the disk, this is no good.
+I'm not sure why the seek is slow, so I may be missing something. I would not expect seek time to depend on the size of the file. What may depend on the file, is that I'm not sure whether these functions handle 2GB+ files on 32-bit systems.
+If the copy itself is slow, then depending on platform you might be able to speed it up by using a bigger buffer, since this reduces the number of system calls and perhaps more importantly the number of times the disk head has to seek between the read point and the write point. To do this:
+const int bufsize = 64*1024; // or whatever
+std::vector<char> buf(bufsize);
+...
+ifs.rdbuf()->pubsetbuf(&buf[0], bufsize);
+
+Test it with different values and see. You could also try increasing the buffer for the ofstream, I'm not sure whether that will make a difference.
+Note that using my approach on a "live" logging file is hairy. For example, if a log entry is appended between the copy and the rename, then you lose it forever, and any open handles on the file you're trying to replace could cause problems (it'll fail on Windows, and on linux it will replace the file, but the old one will still occupy space and still be written to until the handle is closed). 
+If the truncation is done from the same thread which is doing all the logging, then there's no problem and you can keep it simple. Otherwise you'll need to use a lock, or a different approach.
+Whether this is entirely robust depends on platform and filesystem: move-and-replace may or may not be an atomic operation, but usually isn't, so you may have to rename the old file out of the way, then rename the new file, then delete the old one, and have an error-recovery which on startup detects if there's a renamed old file and, if so, puts it back and restarts the truncate. The STL can't help you deal with platform differences, but there is boost::filesystem.
+Sorry there are so many caveats here, but a lot depends on platform. If you're on a PC, then I'm mystified why copying a measly half meg of data takes any time at all.
+
+
+"I would probably create a new file, seek in the old file, do a buffered read/write from old file to new file, rename the new file over the old one."
+
+I think you'd be better off simply:
+#include <fstream>
+std::ifstream ifs("logfile");  //One call to start it all. . .
+ifs.seekg(-512000, std::ios_base::end);  // One call to find it. . .
+char tmpBuffer[512000];
+ifs.read(tmpBuffer, 512000);  //One call to read it all. . .
+ifs.close();
+std::ofstream ofs("logfile", ios::trunc);
+ofs.write(tmpBuffer, 512000); //And to the FS bind it.
+
+This avoids the file rename stuff by simply copying the last 512K to a buffer, opening your logfile in truncate mode (clears the contents of the logfile), and spitting that same 512K back into the beginning of the file.
+Note that the above code hasn't been tested, but I think the idea should be sound.
+You could load the 512K into a buffer in memory, close the input stream, then open the output stream; in this way, you wouldn't need two files since you'd input, close, open, output the 512 bytes, then go.  You avoid the rename / file relocation magic this way.
+If you don't have an aversion to mixing C with C++ to some extent, you could also perhaps:
+(Note: pseudocode; I don't remember the mmap call off the top of my head)
+int myfd = open("mylog", O_RDONLY); // Grab a file descriptor
+(char *) myptr = mmap(mylog, myfd, filesize - 512000) // mmap the last 512K
+std::string mystr(myptr, 512000) // pull 512K from our mmap'd buffer and load it directly into the std::string
+munmap(mylog, 512000); //Unmap the file
+close(myfd); // Close the file descriptor
+
+Depending on many things, mmap could be faster than seeking.  Googling 'fseek vs mmap' yields some interesting reading about it, if you're curious.
+HTH
+
+If you can generate a logfile of several GB between reinitializations, it seems that truncating the file only at initialization will not really help.
+I think that I would try to come up with a specialized text file format in order to always replace contents in place, with a pointer to the "current" line wrapping around.  You would need a constant line width to allocate the disk space just once, and put the pointer at either the first or last line of this file.
+This way, the file would never grow or shrink, and you would always have the last N entries.
+Illustration with N=6 ("|" indicates space padding until there):
+#myapp logfile, lines = 6, width = 80, pointer = 4                              |
+[2008-12-01 15:23] foo bakes a cake                                             |
+[2008-12-01 16:15] foo has completed baking a cake                              |
+[2008-12-01 16:16] foo eats the cake                                            |
+[2008-12-01 16:17] foo tells bar: I have made you a cake, but I have eaten it   |
+[2008-12-01 13:53] bar would like some cake                                     |
+[2008-12-01 14:42] bar tells foo: sudo bake me a cake                           |
+
+An alternative solution would be to have the logging class detect when the log file size exceeded 500k, and open a new log file, and close the old one.   
+Then the logging class would look at the old files, and delete the oldest one
+The logger would have two configuration parameters.
+
+500k for the threshold of when to start a new log
+the  number of old logs to keep around.
+
+That way, the logging file management would be a self-maintaining thing.
+
+If you happen to use windows, don't bother copying parts around. Simply tell Windows you don't need the first bytes anymore by calling FSCTL_SET_SPARSE and FSCTL_SET_ZERO_DATA

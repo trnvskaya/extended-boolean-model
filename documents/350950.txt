@@ -1,0 +1,74 @@
+Multi column primary keys?
+database-design
+For example I have 2 tables, Users and UserRelations, and it is a one to many relationship.
+For the UserRelations table, I can have an identity column and make it the primary key: 
+[RelationID] [int] IDENTITY(1,1) NOT NULL,
+[UserID] [int] NOT NULL,
+[TargetID] [int] NOT NULL,
+
+Or I can design the table like:
+[UserID] [int] NOT NULL,
+[TargetID] [int] NOT NULL,
+
+and make UserID + TargetID the primary key.
+My question is what are the implications of going with each design, which is better for performance?
+
+
+Assuming you're doing a many-to-many relation between Users and Targets using the UserRelations table, the first one is incorrect. You want the UserID+TargetID to be unique, or else you can end up with multiple redundant entries joining the same User and Target.
+
+The appropriate method to associate users -> Targets is the second option that you have, as that is the method that actually enforces the referential integrity of the lookup table.
+Without either a primary key, or unique across the UserId and TargetId columns, it would be possible to have duplicate entries, which most likely would cause unexpected results.
+
+If you use the former design, with the superfluous identity column, there's no constraint against inserting two rows with identical UserID and TargetID.  You'd have to create a UNIQUE constraint over the other two columns, which creates a compound index anyway.
+On the other hand, some frameworks (e.g. Rails) insist that every table has a surrogate key named id so the "correct" design may not work.  It depends on what code you're writing to use this table design.
+
+Primary key is a combination of index with uniqueness constraint. Adding RelationID column will not help you to maintain uniqueness (as pairs of the same UserID+TargetID still may be inserted - they just will get different RelationIDs) nor will help with data access (as index on UserID is needed if you will JOIN between Users and UserRelations). So second one seems to be better solution. 
+
+You "should" always try to establish a "meaningful" or "natural" primary Key or unique index on every table, to help assist in maintaining the integrity of the data.   When this means a multi-column (or "composite" key) then there are indeed performance implications - especially when using this same multiple column key as foreign Keys in other dependant tables, or in indices used for search predicates in queries, etc. etc.  
+When these performance implications become significant, (maybe even before they do,  you should switch to using a non-meaningful, "surrogate" key (generally an integer), for all of these other purposes (FKs, Joins, Indices, Query search predicates, Application code entity Identifers, etc.) 
+but always keep the meaningful key or unique index in place, to maintain the tables data integrity 
+
+As I understand it (and really, in practice it makes sense), the primary key identifies some unique data... at least in a normalized table.  You should use a composite primary key (a primary key with multiple columns within it) if you have data in the table that needs to be more explicitly identified by the key.
+For example, in a table that stores current as well as past appointments where a customer can appear in the table more than once you might set up a table like this:
+AppointmentDate, CustomerID, AppointmentReason
+Where the AppointmentDate and CustomerID are composite primary keys and identifies the unique information of AppointmentReason.
+We use both AppointmentDate and CustomerID as a primary composite key because multiple customers can have an appointment on the same day at the same time.  If we just used an an AppointmentDate as the primary key, we might run into an issue with the uniqueness constraint on the primary key.
+For your situation, it would help to have more information about what kind of data will be included, but I may make the UserID and TargetID a composite primary key along with the TargetID being a foreign key to the UserRelations table if it appears in your User table.  I woudl do this because if you have one primary key called RelationID, you'll end up with a repeating User column which may adversely affect performance and won't make your tables normalized at all.
+
+Just to stir the pot, you probably need a third column here: "relationship". Any time I've every had an user:user relationship table, I've run into have two users with multiple relationships and needing to keep them separate:
+David Jeff Mentor
+David Jeff Sponsor
+
+At some point the mentorship may end but you still need the sponsor link. While now there may only be one relationship type, that will probably change in the future. So your primary key becomes UserId, TargetId, RelationshipType.
+
+This is almost a religious issue. For each person who says use a non-intelligent surrogate key, somebody else points outs that surrogate keys can be considered superfluous, etc, etc. So do whatever feels most comfortable for you and your team.
+If you do decide to use a surrogate key, you should also put a unique constraint on the natural (in this case multi-column) key, to keep the integrity of your data.
+I usually go for an additional surrogate key, as there are a number of desirable (not necessarily required) primary key characteristics that natural keys sometimes lack:
+
+Unique values: The primary key must uniquely identify each row in a table.
+Non-intelligent: The primary key should preferably have no embedded semantic meaning. In other words, it should not describe characteristics of the entity. A customer ID of 12345 is typically preferred over RoadWarrior.
+No change over time: The value of a primary key should not normally change. Changing a primary key value means youâre changing the identity of an entity, which doesnât normally make sense. I prefer non-intelligent keys because they are less likely to change.
+Single-attribute: A primary key should have the minimum number of attributes possible. Single-attribute primary keys are desirable, because theyâre easier for applications to work with, and they simplify the implementation of foreign keys.
+Numeric: Itâs often easier to manage unique values when they are numeric. Most database systems have internal routines that enable auto-incrementing primary key attributes. 
+
+From a performance point of view, I suspect there is little difference in most cases. But as with any performance issue, you should measure where you have concerns.
+
+Specifically to your question: You will want a unique key on the natural multiple columns in any case. Whether you make it primary is up to you.
+Adding a surrogate key is a style issue, and often required by some frameworks. If you add it, make it primary in most cases, just because that's what the frameworks expect. Functionally, as long as both are unique, it makes no difference otherwise.
+
+I have obtained good results as far as performance goes by using compound primary keys for tables that describe relationships.  There are two effects of declaring a primary key:  
+You get constraints that require each of the participating columns to be non-null, and require uniqueness of the participating columns, taken together.  
+You get an index that provides rapid access to the individual row, given the primary key.  Most DBMSes make this index for you.
+How useful this index is depends on the query optimizer, the order of the columns in your primary key declaration, and the pattern of use of your data.  Sometimes, it can be useful to supplement the automatic index by indexes you create yourself, on columns other than the first one in a compound primary key.
+The constraints you get by declaring a compound primary key are generally more useful than the ones you get by creating a surrogate key and declaring that the primary key.
+Again, all of the above pertains to tables that describe relationships between or among entities.  Tables that describe entities should have a simple primary key.  Preferably a natural key, but in cases where the given data does not provide a reliable key, a surrogate key can be necessary.
+
+I'm going to thrwow my two cents in here because I believe there is a gestalt in the combined other answers that is not being presented clearly.
+
+Confusion arises because the terminology devised by Date, Codd, et al to describe the Conceptual Model (ie entities, attributes, relations, keys) has since been co-opted by vendors to describe properties of the physical implementation of that model (tables, columns, records, indices). It is vital to understanding that the two domains be kept separate and identifiable as we discuss the issue.
+First Normal Form states that every relation has a primary key in the Conceptual Model. An artificial key that exists solely in the Physical Model does not qualify; but note that some so-called artifical keys are NOT in the Physical Model, but actually in the Conceptual Model. (An example of this is SSN/SIN in the US and Canada, as uniqueness cannot be guaranteed in the Conceptual Model without it.) More on this below, but to avoid confusion I will henceforth refer to a primary key from the Conceptual Model as the Natural Key. (Multiple candidates would be candidate Natural Keys.)
+The Primary Key Constraint in current RDBMS implementations serves several purposes. One is to impose a uniqueness constraint on physical records to allow update-in-place of all fields not part of this (physical) Primary Key constraint; when it is possible for a field of a Natural Key to change over time it is thus imperative that no such field be part of the Primary Key Constraint in the Physical Model. 
+Another use of the Primary Key Constraint is to enable foreign key lookups from related tables,
+which end is most efficiently addressed by the narrowest possible Primary Key Constraint. For this purpose Natural Keys make poor choices of Primary Key Constraint because they are usually too wide (being human reaabale) for optimal index size and height.
+From this I infer a corollary: that the most efficient translation to the Physical Model of a Natural Key from the Conceptual Model is usually a Uniqueness Constraint combined with a distinct and disjoint artificial Primary Key Constraint. Note that in cases (such as SSN/SIN) where the Natural Key is required to have an artificial component, it is desired to have an additional artificial Primary Key Constraint that resides wholly in the Physical Model; this because it is necessary to allow for the externally-visible artifical number to be changed and/or re-assigned. (How many knew that US SSN's are re-used some months after death?)
+

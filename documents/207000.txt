@@ -1,0 +1,138 @@
+Python: Difference between class and instance attributes
+python attributes
+Is there any meaningful distinction between:
+class A(object):
+    foo = 5   # some default value
+
+vs.
+class B(object):
+    def __init__(self, foo=5):
+        self.foo = foo
+
+If you're creating a lot of instances, is there any difference in performance or space requirements for the two styles? When you read the code, do you consider the meaning of the two styles to be significantly different?
+
+
+Beyond performance considerations, there is a significant semantic difference.  In the class attribute case, there is just one object referred to.  In the instance-attribute-set-at-instantiation, there can be multiple objects referred to.  For instance
+>>> class A: foo = []
+>>> a, b = A(), A()
+>>> a.foo.append(5)
+>>> b.foo
+[5]
+>>> class A:
+...  def __init__(self): self.foo = []
+>>> a, b = A(), A()
+>>> a.foo.append(5)
+>>> b.foo    
+[]
+
+
+Just an elaboration on what Alex Coventry said, another Alex (Martelli) addressed a similar question on the comp.lang.python newsgroup years back.  He examines the semantic difference of what a person intended vs. what he got (by using instance variables).
+http://groups.google.com/group/comp.lang.python/msg/5914d297aff35fae?hl=en
+
+The difference is that the attribute on the class is shared by all instances. The attribute on an instance is unique to that instance.
+If coming from C++, attributes on the class are more like static member variables.
+
+Since people in the comments here and in two other questions marked as dups all appear to be confused about this in the same way, I think it's worth adding an additional answer on top of Alex Coventry's.
+The fact that Alex is assigning a value of a mutable type, like a list, has nothing to do with whether things are shared or not. We can see this with the id function or the is operator:
+>>> class A: foo = object()
+>>> a, b = A(), A()
+>>> a.foo is b.foo
+True
+>>> class A:
+...     def __init__(self): self.foo = object()
+>>> a, b = A(), A()
+>>> a.foo is b.foo
+False
+
+(If you're wondering why I used object() instead of, say, 5, that's to avoid running into two whole other issues which I don't want to get into here; for two different reasons, entirely separately-created 5s can end up being the same instance of the number 5. But entirely separately-created object()s cannot.)
+
+So, why is it that a.foo.append(5) in Alex's example affects b.foo, but a.foo = 5 in my example doesn't? Well, try a.foo = 5 in Alex's example, and notice that it doesn't affect b.foo there either. 
+a.foo = 5 is just making a.foo into a name for 5. That doesn't affect b.foo, or any other name for the old value that a.foo used to refer to.* It's a little tricky that we're creating an instance attribute that hides a class attribute,** but once you get that, nothing complicated is happening here.
+
+Hopefully it's now obvious why Alex used a list: the fact that you can mutate a list means it's easier to show that two variables name the same list, and also means it's more important in real-life code to know whether you have two lists or two names for the same list.
+
+* The confusion for people coming from a language like C++ is that in Python, values aren't stored in variables. Values live off in value-land, on their own, variables are just names for values, and assignment just creates a new name for a value. If it helps, think of each Python variable as a shared_ptr<T> instead of a T.
+** Some people take advantage of this by using a class attribute as a "default value" for an instance attribute that instances may or may not set. This can be useful in some cases, but it can also be confusing, so be careful with it.
+
+Here is a very good post, and summary it as below.
+class Bar(object):
+    ## No need for dot syntax
+    class_var = 1
+
+    def __init__(self, i_var):
+        self.i_var = i_var
+
+## Need dot syntax as we've left scope of class namespace
+Bar.class_var
+## 1
+foo = MyClass(2)
+
+## Finds i_var in foo's instance namespace
+foo.i_var
+## 2
+
+## Doesn't find class_var in instance namespaceâ¦
+## So look's in class namespace (Bar.__dict__)
+foo.class_var
+## 1
+
+And in visual form
+
+Class attribute assignment
+
+If a class attribute is set by accessing the class, it will override the value for all instances
+foo = Bar(2)
+foo.class_var
+## 1
+Bar.class_var = 2
+foo.class_var
+## 2
+
+If a class variable is set by accessing an instance, it will override the value only for that instance. This essentially overrides the class variable and turns it into an instance variable available, intuitively, only for that instance.
+foo = Bar(2)
+foo.class_var
+## 1
+foo.class_var = 2
+foo.class_var
+## 2
+Bar.class_var
+## 1
+
+
+When would you use class attribute?
+
+Storing constants. As class attributes can be accessed as attributes of the class itself, itâs often nice to use them for storing Class-wide, Class-specific constants
+class Circle(object):
+     pi = 3.14159
+
+     def __init__(self, radius):
+          self.radius = radius   
+    def area(self):
+         return Circle.pi * self.radius * self.radius
+
+Circle.pi
+## 3.14159
+c = Circle(10)
+c.pi
+## 3.14159
+c.area()
+## 314.159
+
+Defining default values. As a trivial example, we might create a bounded list (i.e., a list that can only hold a certain number of elements or fewer) and choose to have a default cap of 10 items
+class MyClass(object):
+    limit = 10
+
+    def __init__(self):
+        self.data = []
+    def item(self, i):
+        return self.data[i]
+
+    def add(self, e):
+        if len(self.data) >= self.limit:
+            raise Exception("Too many elements")
+        self.data.append(e)
+
+ MyClass.limit
+ ## 10
+
+

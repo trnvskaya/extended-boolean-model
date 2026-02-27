@@ -1,0 +1,56 @@
+Windows Forms Error: "A strongly-named assembly is required"
+.net visual-studio winforms visual-studio-2005 assemblies
+I have a Windows forms project (VS 2005, .net 2.0). The solution has references to 9 projects. Everything works and compiles fine on one of my computers. When I move it to a second computer, 8 out of the 9 project compile with no problem. When I try to compile the 9th project (the main project for the application - produces the .exe file to execute the application), I get the following error: 
+'Error 3: A strongly-named assembly is required. (Exception from HRESULT: 0x80131044)'
+
+The file location for the error is is listed as "C:\PATH-TO-APP\LC". 
+I have checked in the project properties and all of the projects are set to build in Debug mode, none of them are supposed to be signed. In the project that is failing, the only assembly that it references that is not in any of the other projects is Microsoft.VisualBasic (a .net 2.0 assembly). So I am at a loss to find what ids causing this error (the file referenced above in the error message - "LC" - does not exist. 
+Anyone know how I can force the project to accept all unsigned assemblies, or to determine which assembly is the culprit?
+The only meaningful difference between the dev environments between the dev environment where this worked and the current one is that the first was XP and this is Vista64. However, a colleague of mine who is using XP is getting the same error.
+Third-party assemblies being used:
+
+ComponentFactory.Krypton.Toolkit
+ComponentFactory.Krypton.Navigator
+VistaDB.NET20
+
+All of these are referenced in other projects in the solution which build with no problems, so it doesn't look like these are the problem.
+So far I have tried deleting the suo file, Rebuild All, unloading and reloading projects from the solution, removing and readding referenced assemblies. Nothing has worked. 
+
+
+Check the references section of each project in the solutions explorer... Look for references to third party vendor assemblys Like Infragistics, or Data Dynamics, etc. that might not be installed on the machine where you are experiencing the issue
+
+ok, not sure if this will help, but if you have access to ildasm, examine the three third party assemblies and check the following:  (I found the following googling on your error msg) Its from another guys post, so ignore the names, but the key is that inside the manifest the line should read ".publickeytoken"  not ".publickey"
+Link to this thread is at:
+http://social.msdn.microsoft.com/Forums/en-US/clr/thread/56e13ab1-4c03-4571-92f1-759081bcc78b/ 
+Public Key or Token: ab 1a 81 37 f9 79 0c 88 
+
+Loooks ok, right? That sequence really is the public key token of Reflex.dll.
+The problem can be seen if we use the ildasm gui and click on "manifest":
+.assembly extern Reflex
+{
+.publickey = (2F 5A 20 3A 86 D3 5F 71 ) // /Z :.._q
+.ver 1:0:0:0
+}
+
+Notice the .publickey line.
+It should say .publickeytoken!!!
+The problem is that the Cecil module, when creating the modified assembly, puts the public key token in the public key field (or forgets to turn on some flag that says that thiss is a token, not a complete public key. I'm unaware of the details).
+So this amounts to a probable bug in Cecil...I should have used Gael's thing instead.... :) 
+anyway, now I know that the ONLY problem with the original script (before I moved to Cecil) was that it was putting a reference to a non-strongly-named assembly (Reflex) inside a strongly-named assembly (FXCOP). 
+So I fixed that now and re-ran my original script and...viola! It works!!
+
+It could be that you have to specify your target platform explicitly and set it to x86. There might be an issue with the 64bit build. 
+Another thing: Do you run VS as Administrator? There are issues with VS2005 when it is not running with elevation on Vista, maybe this strange compile error is one of them.
+Regards, divo
+
+I just got it to build by doing the following:
+There had been a licenses file in the Properties of the project in question. After deleting the file (it was no longer needed) the project was able to build successfully. So it looks like that was the culprit.
+
+I had been using many third-party libraries (MS Ent Lib) and decided to move a few of the dll's to an 'unused' folder. This gave me the error in question. I believe one of the libraries I referenced actually references another library that needs to sit alongside it (even though the dll does not need to be referenced in your project).
+After moving the libraries back everything compiled without this error.
+
+I has removed the license file from My Project Folder, and re-build again, it was build successfully.
+
+Yet another possible cause:
+(for desperate troubleshooters)
+In Solution Explorer window, if you walk down your references list and check each in Properties window, seeing property Strong Name = False points to potential problem.

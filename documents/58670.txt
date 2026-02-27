@@ -1,0 +1,67 @@
+Windows CDROM Eject
+windows winapi
+Does anyone know a method to programmatically close the CD tray on Windows 2000 or higher?
+Open CD tray exists, but I can't seem to make it close especially under W2k. 
+I am especially looking for a method to do this from a batch file, if possible, but API calls would be OK.
+
+
+Nircmd is a very handy freeware command line utility with various options, including opening and closing the CD tray.
+
+Here is an easy way using the Win32 API:
+
+[DllImport("winmm.dll", EntryPoint = "mciSendStringA", CharSet = CharSet.Ansi)]
+        protected static extern int mciSendString(string lpstrCommand,StringBuilder lpstrReturnString,int uReturnLength,IntPtr hwndCallback);
+
+ public void OpenCloseCD(bool Open)
+ {
+    if (Open)
+    {
+        mciSendString("set cdaudio door open", null, 0, IntPtr.Zero);
+    }
+    else
+    {
+        mciSendString("set cdaudio door closed", null, 0, IntPtr.Zero);
+    }
+}
+
+
+
+I kind of like to use DeviceIOControl as it gives me the possibility to eject any kind of removable drive (such as USB and flash-disks as well as CD trays). Da codez to properly eject a disk using DeviceIOControl is (just add proper error-handling):
+bool ejectDisk(TCHAR driveLetter)
+{
+  TCHAR tmp[10];
+  _stprintf(tmp, _T("\\\\.\\%c:"), driveLetter);
+  HANDLE handle = CreateFile(tmp, GENERIC_READ, FILE_SHARE_WRITE, 0, OPEN_EXISTING, 0, 0);
+  DWORD bytes = 0;
+  DeviceIoControl(handle, FSCTL_LOCK_VOLUME, 0, 0, 0, 0, &bytes, 0);
+  DeviceIoControl(handle, FSCTL_DISMOUNT_VOLUME, 0, 0, 0, 0, &bytes, 0);
+  DeviceIoControl(handle, IOCTL_STORAGE_EJECT_MEDIA, 0, 0, 0, 0, &bytes, 0);
+  CloseHandle(handle);
+  return true;
+}
+
+
+I noticed that Andreas Magnusson's answer didn't quite work exactly the same as Explorer's Eject button did.  Specifically, the drive wasn't grayed out in Explorer using Andreas' code, but was if you used the Eject command.  So I did some investigating.
+I ran API Monitor while running the Eject command from Explorer (Windows 7 SP1 64-bit).  I also found a good MSKB article 165721 titled How To Ejecting Removable Media in Windows NT/Windows 2000/Windows XP.  The most interesting part of the MSKB article is quoted below:
+
+
+Call CreateFile with GENERIC_READ|GENERIC_WRITE, FILE_SHARE_READ|FILE_SHARE_WRITE, and OPEN_EXISTING. The lpFileName parameter should be \.\X: (where X is the real drive letter). All other parameters can be zero.
+Lock the volume by issuing the FSCTL_LOCK_VOLUME IOCTL via DeviceIoControl. If any other application or the system is using the volume, this IOCTL fails. Once this function returns successfully, the application is guaranteed that the volume is not used by anything else in the system.
+Dismount the volume by issuing the FSCTL_DISMOUNT_VOLUME IOCTL. This causes the file system to remove all knowledge of the volume and to discard any internal information that it keeps regarding the volume.
+Make sure the media can be removed by issuing the IOCTL_STORAGE_MEDIA_REMOVAL IOCTL. Set the PreventMediaRemoval member of the PREVENT_MEDIA_REMOVAL structure to FALSE before calling this IOCTL. This stops the device from preventing the removal of the media.
+Eject the media with the IOCTL_STORAGE_EJECT_MEDIA IOCTL. If the device doesn't allow automatic ejection, then IOCTL_STORAGE_EJECT_MEDIA can be skipped and the user can be instructed to remove the media.
+Close the volume handle obtained in the first step or issue the FSCTL_UNLOCK_VOLUME IOCTL. This allows the drive to be used by other
+  processes.
+
+
+Andreas's answer, the MSKB article, and my API sniffing of Explorer can be summarized as follows:
+
+CreateFile called to open the volume.  (All methods).
+DeviceIoControl called with FSCTL_LOCK_VOLUME.  (All methods).
+DeviceIoControl called with FSCTL_DISMOUNT_VOLUME.  (Andreas's and MSKB methods only.  Explorer does not call this for some reason.  This IOCTL seems to be what affects whether the drive is grayed out in Explorer or not.  I am not sure why Explorer doesn't call this).
+DeviceIoControl called with IOCTL_STORAGE_MEDIA_REMOVAL and PREVENT_MEDIA_REMOVAL member set to FALSE (MSKB and Explorer methods.  This step is missing from Andreas's answer).
+DeviceIoControl called with IOCTL_STORAGE_EJECT_MEDIA (Andreas and MSKB article) or IOCTL_DISK_EJECT_MEDIA (Explorer; note this IOCTL was obsoleted and replaced with the STORAGE IOCTL.  Not sure why Explorer still uses the old one).
+
+To conclude, I decided to follow the procedure outlined in the MSKB article, as it seemed to be the most thorough and complete procedure, backed up with an MSKB article.
+
+To close the drive tray do as described here but instead of using DeviceIoControl with IOCTL_STORAGE_EJECT_MEDIA you need to call DeviceIoControl with IOCTL_STORAGE_LOAD_MEDIA.

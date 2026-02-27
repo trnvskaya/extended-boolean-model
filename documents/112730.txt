@@ -1,0 +1,80 @@
+How do I join two tables in a third n..n (hasAndBelongsToMany) relationship in CakePHP?
+cakephp has-and-belongs-to-many model-driven
+I have a n...n structure for two tables, makes and models. So far no problem.
+In a third table (products) like:
+id
+make_id
+model_id
+...
+
+My problem is creating a view for products of one specifi make inside my ProductsController containing just that's make models:
+I thought this could work:
+var $uses = array('Make', 'Model');
+
+$this->Make->id = 5; // My Make
+
+$this->Make->find(); // Returns only the make I want with it's Models (HABTM)
+$this->Model->find('list'); // Returns ALL models
+$this->Make->Model->find('list'); // Returns ALL models
+
+So, If I want to use the list to pass to my view to create radio buttons I will have to do a foreach() in my make array to find all models titles and create a new array and send to the view via $this->set().
+$makeArray = $this->Make->find();
+foreach ($makeArray['Model'] as $model) {
+    $modelList[] = $model['title'];
+}
+$this->set('models', $models)
+
+Is there any easier way to get that list without stressing the make Array. It will be a commom task to develops such scenarios in my application(s).
+Thanks in advance for any hint!
+
+
+Here's my hint:  Try getting your query written in regular SQL before trying to reconstruct using the Cake library.  In essence you're doing a lot of extra work that the DB can do for you.
+Your approach (just for show - not good SQL):
+SELECT * FROM makes, models, products WHERE make_id = 5
+
+You're not taking into consideration the relationships (unless Cake auto-magically understands the relationships of the tables)
+You're probably looking for something that joins these things together:
+SELECT models.title FROM models 
+INNER JOIN products 
+  ON products.model_id = models.model_id 
+  AND products.make_id = 5
+
+Hopefully this is a nudge in the right direction?
+
+All your different Make->find() and Model->find() calls are completely independent of each other. Even Make->Model->find() is the same as Model->find(), Cake does not in any way remember or take into account what you have already found in other models. What you're looking for is something like:
+$this->Product->find('all', array('conditions' => array('make_id' => 5)));
+
+
+Check out the Set::extract() method for getting a list of model titles from the results of $this->Make->find()
+
+Judging from your comment, what you're asking for is how to get results from a certain model, where the condition is in a HABTM related model. I.e. something you'd usually do with a JOIN statement in raw SQL.
+Currently that's one of the few weak points of Cake. There are different strategies to deal with that.
+
+Have the related model B return all ids of possible candidates for Model A, then do a second query on Model A. I.e.:
+$this->ModelB->find('first', array('conditions' => array('field' => $condition)));
+array(
+    ['ModelB'] => array( ... ),
+    ['ModelA'] => array(
+        [0] => array(
+            'id' => 1
+        )
+)
+
+Now you have an array of all ids of ModelA that belong to ModelB that matches your conditions, which you can easily extract using Set::extract(). Basically the equivalent of SELECT model_a.id FROM model_b JOIN model_a WHERE model_b.field = xxx. Next you look for ModelA:
+ $this->ModelA->find('all', array('conditions' => array('id' => $model_a_ids)));
+
+That will produce SELECT model_a.* FROM model_a WHERE id IN (1, 2, 3), which is a roundabout way of doing the JOIN statement. If you need conditions on more than one related model, repeat until you have all the ids for ModelA, SQL will use the intersection of all ids (WHERE id IN (1, 2, 3) AND id IN (3, 4, 5)).
+If you only need one condition on ModelB but want to retrieve ModelA, just search for ModelB. Cake will automatically retrieve related ModelAs for you (see above). You might need to Set::extract() them again, but that might already be sufficient.
+You can use the above method and combine it with the Containable behaviour to get more control over the results.
+If all else fails or the above methods simply produce too much overhead, you can still write your own raw SQL with $this->Model->query(). If you stick to the Cake SQL standards (naming tables correctly with FROM model_as AS ModelA) Cake will still post-process your results correctly.
+
+Hope this sends you in the right direction.
+
+The solution can be achieved with the use of the with operation in habtm array on the model.
+Using with you can define the "middle" table like: 
+$habtm = " ...
+  'with' => 'MakeModel',
+   ... ";
+
+And internally, in the Model or Controller, you can issue conditions to the find method.
+See: http://www.cricava.com/blogs/index.php?blog=6&title=modelizing_habtm_join_tables_in_cakephp_&more=1&c=1&tb=1&pb=1

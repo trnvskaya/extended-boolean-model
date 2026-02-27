@@ -1,0 +1,45 @@
+Question about skipping IDs in an identity column in MSSQL
+sql-server sql-server-2005 identity
+Say I have an MSSQL table with two columns:  an int ID column that's the identity column and some other datetime or whatever column.  Say the table has 10 records with IDs 1-10.  Now I delete the record with ID = 5.
+Are there any scenarios where another record will "fill-in" that missing ID?  I.e. when would a record be inserted and given an ID of 5?
+
+
+No, unless you specifically enable identity inserts (typically done when copying tables with identity columns) and insert a row manually with the id of 5.  SQLServer keeps track of the last identity inserted into each table with identity columns and increments the last inserted value to obtain the next value on insert.
+
+Only if you manually turn off identity IDs by using SET IDENTITY_INSERT command and then do a insert with ID=5 
+Otherwise MS-SQL will always increment to a higher number and missing slots are never re-used.
+
+One scenario not already mentioned where another record will "fill-in" missing IDENTITY values is when the IDENTITY is reseeded. Example (SQL Server 2008):
+CREATE TABLE Test 
+(
+   ID INTEGER IDENTITY(1, 1) NOT NULL, 
+   data_col INTEGER NOT NULL
+);
+
+INSERT INTO Test (data_col) 
+   VALUES (1), (2), (3), (4);
+
+DELETE
+  FROM Test 
+ WHERE ID BETWEEN 2 AND 3;
+
+DBCC CHECKIDENT ('Test', RESEED, 1)
+
+INSERT INTO Test (data_col) 
+   VALUES (5), (6), (7), (8);
+
+SELECT T1.ID, T1.data_col 
+  FROM Test AS T1
+ ORDER 
+    BY data_col;
+
+The results are:
+ID  data_col
+1   1
+4   4
+2   5
+3   6
+4   7
+5   8
+
+This shows that, not only are the 'holes' filled in with new auto-generated values, values that were auto-generated before the reseed are resued and can even duplicate existing IDENTITY values.

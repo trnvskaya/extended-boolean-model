@@ -1,0 +1,1364 @@
+Apply stroke to a textblock in WPF
+.net wpf xaml
+How do you apply stroke (outline around text) to a textblock in xaml in WPF?
+
+
+In Blend you could convert the TextBlock to a Path, and then use the normal Stroke properties.  But I'm assuming you wanted something that you could make dynamic...
+Otherwise I would think it would have to be some sort of bitmap effect or special brush.
+
+<TextBlock> has no decorative attributes itself. I would put it on a <Canvas> with a <Rectangle> and apply the stroke there.
+
+you should wrap the TextBlock with a Border.. something like this:
+    <Border BorderBrush="Purple" BorderThickness="2">
+        <TextBlock>My fancy TextBlock</TextBlock>
+    </Border>
+
+in the off chance you are asking how to put a stroke around the actual letters (and not the whole TextBlock) you may want to look at using a BitmapEffect of Glow and setting the parameters on the Glow to be the stroke color you want, etc. Otherwise you may have to create something custom.
+
+Found It.  Not so easy to do apparently, there is no built in Stroke text in WPF (kind of a big missing feature if you ask me).  First create the custom class:
+using System;
+using System.Windows.Media;
+using System.Globalization;
+using System.Windows;
+using System.Windows.Markup;
+
+namespace CustomXaml
+{
+
+public class OutlinedText : FrameworkElement, IAddChild
+{
+    #region Private Fields
+
+    private Geometry _textGeometry;
+
+    #endregion
+
+    #region Private Methods
+
+    /// <summary>
+    /// Invoked when a dependency property has changed. Generate a new FormattedText object to display.
+    /// </summary>
+    /// <param name="d">OutlineText object whose property was updated.</param>
+    /// <param name="e">Event arguments for the dependency property.</param>
+    private static void OnOutlineTextInvalidated(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        ((OutlinedText)d).CreateText();
+    }
+
+    #endregion
+
+
+    #region FrameworkElement Overrides
+
+    /// <summary>
+    /// OnRender override draws the geometry of the text and optional highlight.
+    /// </summary>
+    /// <param name="drawingContext">Drawing context of the OutlineText control.</param>
+    protected override void OnRender(DrawingContext drawingContext)
+    {
+        CreateText();
+        // Draw the outline based on the properties that are set.
+        drawingContext.DrawGeometry(Fill, new Pen(Stroke, StrokeThickness), _textGeometry);
+
+    }
+
+    /// <summary>
+    /// Create the outline geometry based on the formatted text.
+    /// </summary>
+    public void CreateText()
+    {
+        FontStyle fontStyle = FontStyles.Normal;
+        FontWeight fontWeight = FontWeights.Medium;
+
+        if (Bold == true) fontWeight = FontWeights.Bold;
+        if (Italic == true) fontStyle = FontStyles.Italic;
+
+        // Create the formatted text based on the properties set.
+        FormattedText formattedText = new FormattedText(
+            Text,
+            CultureInfo.GetCultureInfo("en-us"),                
+            FlowDirection.LeftToRight,
+            new Typeface(Font, fontStyle, fontWeight, FontStretches.Normal),                
+            FontSize,
+            Brushes.Black // This brush does not matter since we use the geometry of the text. 
+            );
+
+        // Build the geometry object that represents the text.
+        _textGeometry = formattedText.BuildGeometry(new Point(0, 0));
+
+
+
+
+        //set the size of the custome control based on the size of the text
+        this.MinWidth = formattedText.Width;
+        this.MinHeight = formattedText.Height;
+
+    }
+
+    #endregion
+
+    #region DependencyProperties
+
+    /// <summary>
+    /// Specifies whether the font should display Bold font weight.
+    /// </summary>
+    public bool Bold
+    {
+        get
+        {
+            return (bool)GetValue(BoldProperty);
+        }
+
+        set
+        {
+            SetValue(BoldProperty, value);
+        }
+    }
+
+    /// <summary>
+    /// Identifies the Bold dependency property.
+    /// </summary>
+    public static readonly DependencyProperty BoldProperty = DependencyProperty.Register(
+        "Bold",
+        typeof(bool),
+        typeof(OutlinedText),
+        new FrameworkPropertyMetadata(
+            false,
+            FrameworkPropertyMetadataOptions.AffectsRender,
+            new PropertyChangedCallback(OnOutlineTextInvalidated),
+            null
+            )
+        );
+
+    /// <summary>
+    /// Specifies the brush to use for the fill of the formatted text.
+    /// </summary>
+    public Brush Fill
+    {
+        get
+        {
+            return (Brush)GetValue(FillProperty);
+        }
+
+        set
+        {
+            SetValue(FillProperty, value);
+        }
+    }
+
+    /// <summary>
+    /// Identifies the Fill dependency property.
+    /// </summary>
+    public static readonly DependencyProperty FillProperty = DependencyProperty.Register(
+        "Fill",
+        typeof(Brush),
+        typeof(OutlinedText),
+        new FrameworkPropertyMetadata(
+            new SolidColorBrush(Colors.LightSteelBlue),
+            FrameworkPropertyMetadataOptions.AffectsRender,
+            new PropertyChangedCallback(OnOutlineTextInvalidated),
+            null
+            )
+        );
+
+    /// <summary>
+    /// The font to use for the displayed formatted text.
+    /// </summary>
+    public FontFamily Font
+    {
+        get
+        {
+            return (FontFamily)GetValue(FontProperty);
+        }
+
+        set
+        {
+            SetValue(FontProperty, value);
+        }
+    }
+
+    /// <summary>
+    /// Identifies the Font dependency property.
+    /// </summary>
+    public static readonly DependencyProperty FontProperty = DependencyProperty.Register(
+        "Font",
+        typeof(FontFamily),
+        typeof(OutlinedText),
+        new FrameworkPropertyMetadata(
+            new FontFamily("Arial"),
+            FrameworkPropertyMetadataOptions.AffectsRender,
+            new PropertyChangedCallback(OnOutlineTextInvalidated),
+            null
+            )
+        );
+
+    /// <summary>
+    /// The current font size.
+    /// </summary>
+    public double FontSize
+    {
+        get
+        {
+            return (double)GetValue(FontSizeProperty);
+        }
+
+        set
+        {
+            SetValue(FontSizeProperty, value);
+        }
+    }
+
+    /// <summary>
+    /// Identifies the FontSize dependency property.
+    /// </summary>
+    public static readonly DependencyProperty FontSizeProperty = DependencyProperty.Register(
+        "FontSize",
+        typeof(double),
+        typeof(OutlinedText),
+        new FrameworkPropertyMetadata(
+             (double)48.0,
+             FrameworkPropertyMetadataOptions.AffectsRender,
+             new PropertyChangedCallback(OnOutlineTextInvalidated),
+             null
+             )
+        );
+
+
+    /// <summary>
+    /// Specifies whether the font should display Italic font style.
+    /// </summary>
+    public bool Italic
+    {
+        get
+        {
+            return (bool)GetValue(ItalicProperty);
+        }
+
+        set
+        {
+            SetValue(ItalicProperty, value);
+        }
+    }
+
+    /// <summary>
+    /// Identifies the Italic dependency property.
+    /// </summary>
+    public static readonly DependencyProperty ItalicProperty = DependencyProperty.Register(
+        "Italic",
+        typeof(bool),
+        typeof(OutlinedText),
+        new FrameworkPropertyMetadata(
+             false,
+             FrameworkPropertyMetadataOptions.AffectsRender,
+             new PropertyChangedCallback(OnOutlineTextInvalidated),
+             null
+             )
+        );
+
+    /// <summary>
+    /// Specifies the brush to use for the stroke and optional hightlight of the formatted text.
+    /// </summary>
+    public Brush Stroke
+    {
+        get
+        {
+            return (Brush)GetValue(StrokeProperty);
+        }
+
+        set
+        {
+            SetValue(StrokeProperty, value);
+        }
+    }
+
+    /// <summary>
+    /// Identifies the Stroke dependency property.
+    /// </summary>
+    public static readonly DependencyProperty StrokeProperty = DependencyProperty.Register(
+        "Stroke",
+        typeof(Brush),
+        typeof(OutlinedText),
+        new FrameworkPropertyMetadata(
+             new SolidColorBrush(Colors.Teal),
+             FrameworkPropertyMetadataOptions.AffectsRender,
+             new PropertyChangedCallback(OnOutlineTextInvalidated),
+             null
+             )
+        );
+
+    /// <summary>
+    ///     The stroke thickness of the font.
+    /// </summary>
+    public ushort StrokeThickness
+    {
+        get
+        {
+            return (ushort)GetValue(StrokeThicknessProperty);
+        }
+
+        set
+        {
+            SetValue(StrokeThicknessProperty, value);
+        }
+    }
+
+    /// <summary>
+    /// Identifies the StrokeThickness dependency property.
+    /// </summary>
+    public static readonly DependencyProperty StrokeThicknessProperty = DependencyProperty.Register(
+        "StrokeThickness",
+        typeof(ushort),
+        typeof(OutlinedText),
+        new FrameworkPropertyMetadata(
+             (ushort)0,
+             FrameworkPropertyMetadataOptions.AffectsRender,
+             new PropertyChangedCallback(OnOutlineTextInvalidated),
+             null
+             )
+        );
+
+    /// <summary>
+    /// Specifies the text string to display.
+    /// </summary>
+    public string Text
+    {
+        get
+        {
+            return (string)GetValue(TextProperty);
+        }
+
+        set
+        {
+            SetValue(TextProperty, value);
+        }
+    }
+
+    /// <summary>
+    /// Identifies the Text dependency property.
+    /// </summary>
+    public static readonly DependencyProperty TextProperty = DependencyProperty.Register(
+        "Text",
+        typeof(string),
+        typeof(OutlinedText),
+        new FrameworkPropertyMetadata(
+             "",
+             FrameworkPropertyMetadataOptions.AffectsRender,
+             new PropertyChangedCallback(OnOutlineTextInvalidated),
+             null
+             )
+        );
+
+    public void AddChild(Object value)
+    {
+
+    }
+
+    public void AddText(string value)
+    {
+        Text = value;
+    }
+
+    #endregion
+}
+}
+
+The you can reference it in your xaml.
+<Page xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:customControls="clr-namespace:CustomXaml;assembly=CustomXaml">
+    <Grid>
+        <customControls:OutlinedText x:Name="TextContent" Fill="#ffffffff" FontSize="28"     
+Bold="True" Stroke="Black" StrokeThickness="1" Text="Back" Margin="10,0,10,0" 
+HorizontalAlignment="Center" VerticalAlignment="Center" Height="Auto" Width="Auto" />
+    </Grid>
+</Page>
+
+
+"How to: Create Outlined Text" on MSDN has all the information you need:
+http://msdn.microsoft.com/en-us/library/ms752098.aspx
+
+Could just use a Label instead.  It has more properties that you can play with.  Example:
+  <Style x:Key="LeftBorderLabel" TargetType="{x:Type Label}">
+            <Setter Property="Margin"  Value="0" />
+            <Setter Property="BorderThickness" Value="1,0,0,0" />
+            <Setter Property="BorderBrush" Value="Blue" />
+  </Style>
+
+
+This helped me out tremendously!  Just in case anyone needs it in the future, here's the VB version (made StrokeThickness a double and added an Underline property):
+Imports System
+Imports System.Windows.Media
+Imports System.Globalization
+Imports System.Windows
+Imports System.Windows.Markup
+
+Namespace CustomXaml
+
+    Public Class OutlinedText
+        Inherits FrameworkElement
+        Implements IAddChild
+
+        Private _textGeometry As Geometry
+
+        Private Shared Sub OnOutlineTextInvalidated(d As DependencyObject, e As DependencyPropertyChangedEventArgs)
+            DirectCast(d, OutlinedText).CreateText()
+        End Sub
+
+        Protected Overrides Sub OnRender(drawingContext As System.Windows.Media.DrawingContext)
+            CreateText()
+            drawingContext.DrawGeometry(Fill, New Pen(Stroke, StrokeThickness), _textGeometry)
+        End Sub
+
+        Public Sub CreateText()
+            Dim fontStyle = FontStyles.Normal
+            Dim fontWeight = FontWeights.Medium
+            Dim fontDecoration = New TextDecorationCollection()
+
+            If Bold Then fontWeight = FontWeights.Bold
+            If Italic Then fontStyle = FontStyles.Italic
+            If Underline Then fontDecoration.Add(TextDecorations.Underline)
+
+            Dim formattedText = New FormattedText( _
+                                Text, _
+                                CultureInfo.GetCultureInfo("en-us"), _
+                                FlowDirection.LeftToRight, _
+                                New Typeface(Font, fontStyle, fontWeight, FontStretches.Normal), _
+                                FontSize, _
+                                Brushes.Black _
+                                )
+            formattedText.SetTextDecorations(fontDecoration)
+
+            _textGeometry = formattedText.BuildGeometry(New Point(0, 0))
+
+            Me.MinWidth = formattedText.Width
+            Me.MinHeight = formattedText.Height
+        End Sub
+
+        Public Property Bold As Boolean
+            Get
+                Return CType(GetValue(BoldProperty), Boolean)
+            End Get
+            Set(value As Boolean)
+                SetValue(BoldProperty, value)
+            End Set
+        End Property
+
+        Public Shared ReadOnly BoldProperty As DependencyProperty = DependencyProperty.Register( _
+            "Bold", _
+            GetType(Boolean), _
+            GetType(OutlinedText), _
+            New FrameworkPropertyMetadata( _
+                False, _
+                FrameworkPropertyMetadataOptions.AffectsRender, _
+                New PropertyChangedCallback(AddressOf OnOutlineTextInvalidated), _
+                Nothing _
+            ) _
+        )
+
+        Public Property Underline As Boolean
+            Get
+                Return CType(GetValue(UnderlineProperty), Boolean)
+            End Get
+            Set(value As Boolean)
+                SetValue(UnderlineProperty, value)
+            End Set
+        End Property
+
+        Public Shared ReadOnly UnderlineProperty As DependencyProperty = DependencyProperty.Register( _
+            "Underline", _
+            GetType(Boolean), _
+            GetType(OutlinedText), _
+            New FrameworkPropertyMetadata( _
+                False, _
+                FrameworkPropertyMetadataOptions.AffectsRender, _
+                New PropertyChangedCallback(AddressOf OnOutlineTextInvalidated), _
+                Nothing _
+            ) _
+        )
+
+        Public Property Fill As Brush
+            Get
+                Return CType(GetValue(FillProperty), Brush)
+            End Get
+            Set(value As Brush)
+                SetValue(FillProperty, value)
+            End Set
+        End Property
+
+        Public Shared ReadOnly FillProperty As DependencyProperty = DependencyProperty.Register( _
+            "Fill", _
+            GetType(Brush), _
+            GetType(OutlinedText), _
+            New FrameworkPropertyMetadata( _
+                New SolidColorBrush(Colors.LightSteelBlue), _
+                FrameworkPropertyMetadataOptions.AffectsRender, _
+                New PropertyChangedCallback(AddressOf OnOutlineTextInvalidated), _
+                Nothing _
+            ) _
+        )
+
+        Public Property Font As FontFamily
+            Get
+                Return CType(GetValue(FontProperty), FontFamily)
+            End Get
+            Set(value As FontFamily)
+                SetValue(FontProperty, value)
+            End Set
+        End Property
+
+        Public Shared ReadOnly FontProperty As DependencyProperty = DependencyProperty.Register( _
+            "Font", _
+            GetType(FontFamily), _
+            GetType(OutlinedText), _
+            New FrameworkPropertyMetadata( _
+                New FontFamily("Arial"), _
+                FrameworkPropertyMetadataOptions.AffectsRender, _
+                New PropertyChangedCallback(AddressOf OnOutlineTextInvalidated), _
+                Nothing _
+            ) _
+        )
+
+        Public Property FontSize As Double
+            Get
+                Return CType(GetValue(FontSizeProperty), Double)
+            End Get
+            Set(value As Double)
+                SetValue(FontSizeProperty, value)
+            End Set
+        End Property
+
+        Public Shared ReadOnly FontSizeProperty As DependencyProperty = DependencyProperty.Register( _
+            "FontSize", _
+            GetType(Double), _
+            GetType(OutlinedText), _
+            New FrameworkPropertyMetadata( _
+                CDbl(48.0), _
+                FrameworkPropertyMetadataOptions.AffectsRender, _
+                New PropertyChangedCallback(AddressOf OnOutlineTextInvalidated), _
+                Nothing _
+            ) _
+        )
+
+        Public Property Italic As Boolean
+            Get
+                Return CType(GetValue(ItalicProperty), Boolean)
+            End Get
+            Set(value As Boolean)
+                SetValue(ItalicProperty, value)
+            End Set
+        End Property
+
+        Public Shared ReadOnly ItalicProperty As DependencyProperty = DependencyProperty.Register( _
+            "Italic", _
+            GetType(Boolean), _
+            GetType(OutlinedText), _
+            New FrameworkPropertyMetadata( _
+                False, _
+                FrameworkPropertyMetadataOptions.AffectsRender, _
+                New PropertyChangedCallback(AddressOf OnOutlineTextInvalidated), _
+                Nothing _
+            ) _
+        )
+
+        Public Property Stroke As Brush
+            Get
+                Return CType(GetValue(StrokeProperty), Brush)
+            End Get
+            Set(value As Brush)
+                SetValue(StrokeProperty, value)
+            End Set
+        End Property
+
+        Public Shared ReadOnly StrokeProperty As DependencyProperty = DependencyProperty.Register( _
+            "Stroke", _
+            GetType(Brush), _
+            GetType(OutlinedText), _
+            New FrameworkPropertyMetadata( _
+                New SolidColorBrush(Colors.Teal), _
+                FrameworkPropertyMetadataOptions.AffectsRender, _
+                New PropertyChangedCallback(AddressOf OnOutlineTextInvalidated), _
+                Nothing _
+            ) _
+        )
+
+        Public Property StrokeThickness As Double
+            Get
+                Return CType(GetValue(StrokeThicknessProperty), Double)
+            End Get
+            Set(value As Double)
+                SetValue(StrokeThicknessProperty, value)
+            End Set
+        End Property
+
+        Public Shared ReadOnly StrokeThicknessProperty As DependencyProperty = DependencyProperty.Register( _
+            "StrokeThickness", _
+            GetType(Double), _
+            GetType(OutlinedText), _
+            New FrameworkPropertyMetadata( _
+                CDbl(0), _
+                FrameworkPropertyMetadataOptions.AffectsRender, _
+                New PropertyChangedCallback(AddressOf OnOutlineTextInvalidated), _
+                Nothing _
+            ) _
+        )
+
+        Public Property Text As String
+            Get
+                Return CType(GetValue(TextProperty), String)
+            End Get
+            Set(value As String)
+                SetValue(TextProperty, value)
+            End Set
+        End Property
+
+        Public Shared ReadOnly TextProperty As DependencyProperty = DependencyProperty.Register( _
+            "Text", _
+            GetType(String), _
+            GetType(OutlinedText), _
+            New FrameworkPropertyMetadata( _
+                "", _
+                FrameworkPropertyMetadataOptions.AffectsRender, _
+                New PropertyChangedCallback(AddressOf OnOutlineTextInvalidated), _
+                Nothing _
+            ) _
+        )
+
+        Public Sub AddChild(value As Object) Implements System.Windows.Markup.IAddChild.AddChild
+
+        End Sub
+
+        Public Sub AddText(text As String) Implements System.Windows.Markup.IAddChild.AddText
+            Me.Text = text
+        End Sub
+    End Class
+End Namespace
+
+
+Below is my more idiomatically WPF, full-featured take on this. It supports pretty much everything you'd expect, including:
+
+all font related properties including stretch and style
+text alignment (left, right, center, justify)
+text wrapping
+text trimming
+text decorations (underline, strike through etcetera)
+
+Here's a simple example of what can be achieved with it:
+<local:OutlinedTextBlock FontFamily="Verdana" FontSize="20pt" FontWeight="ExtraBold" TextWrapping="Wrap" StrokeThickness="1" Stroke="{StaticResource TextStroke}" Fill="{StaticResource TextFill}">
+    Neque porro quisquam est qui dolorem ipsum quia dolor sit amet, consectetur, adipisci velit
+</local:OutlinedTextBlock>
+
+Which results in:
+
+Here's the code for the control:
+using System;
+using System.ComponentModel;
+using System.Globalization;
+using System.Windows;
+using System.Windows.Documents;
+using System.Windows.Markup;
+using System.Windows.Media;
+
+[ContentProperty("Text")]
+public class OutlinedTextBlock : FrameworkElement
+{
+    public static readonly DependencyProperty FillProperty = DependencyProperty.Register(
+        "Fill",
+        typeof(Brush),
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(Brushes.Black, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty StrokeProperty = DependencyProperty.Register(
+        "Stroke",
+        typeof(Brush),
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(Brushes.Black, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty StrokeThicknessProperty = DependencyProperty.Register(
+        "StrokeThickness",
+        typeof(double),
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(1d, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty FontFamilyProperty = TextElement.FontFamilyProperty.AddOwner(
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty FontSizeProperty = TextElement.FontSizeProperty.AddOwner(
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty FontStretchProperty = TextElement.FontStretchProperty.AddOwner(
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty FontStyleProperty = TextElement.FontStyleProperty.AddOwner(
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty FontWeightProperty = TextElement.FontWeightProperty.AddOwner(
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty TextProperty = DependencyProperty.Register(
+        "Text",
+        typeof(string),
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(OnFormattedTextInvalidated));
+
+    public static readonly DependencyProperty TextAlignmentProperty = DependencyProperty.Register(
+        "TextAlignment",
+        typeof(TextAlignment),
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty TextDecorationsProperty = DependencyProperty.Register(
+        "TextDecorations",
+        typeof(TextDecorationCollection),
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty TextTrimmingProperty = DependencyProperty.Register(
+        "TextTrimming",
+        typeof(TextTrimming),
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty TextWrappingProperty = DependencyProperty.Register(
+        "TextWrapping",
+        typeof(TextWrapping),
+        typeof(OutlinedTextBlock),
+        new FrameworkPropertyMetadata(TextWrapping.NoWrap, OnFormattedTextUpdated));
+
+    private FormattedText formattedText;
+    private Geometry textGeometry;
+
+    public OutlinedTextBlock()
+    {
+        this.TextDecorations = new TextDecorationCollection();
+    }
+
+    public Brush Fill
+    {
+        get { return (Brush)GetValue(FillProperty); }
+        set { SetValue(FillProperty, value); }
+    }
+
+    public FontFamily FontFamily
+    {
+        get { return (FontFamily)GetValue(FontFamilyProperty); }
+        set { SetValue(FontFamilyProperty, value); }
+    }
+
+    [TypeConverter(typeof(FontSizeConverter))]
+    public double FontSize
+    {
+        get { return (double)GetValue(FontSizeProperty); }
+        set { SetValue(FontSizeProperty, value); }
+    }
+
+    public FontStretch FontStretch
+    {
+        get { return (FontStretch)GetValue(FontStretchProperty); }
+        set { SetValue(FontStretchProperty, value); }
+    }
+
+    public FontStyle FontStyle
+    {
+        get { return (FontStyle)GetValue(FontStyleProperty); }
+        set { SetValue(FontStyleProperty, value); }
+    }
+
+    public FontWeight FontWeight
+    {
+        get { return (FontWeight)GetValue(FontWeightProperty); }
+        set { SetValue(FontWeightProperty, value); }
+    }
+
+    public Brush Stroke
+    {
+        get { return (Brush)GetValue(StrokeProperty); }
+        set { SetValue(StrokeProperty, value); }
+    }
+
+    public double StrokeThickness
+    {
+        get { return (double)GetValue(StrokeThicknessProperty); }
+        set { SetValue(StrokeThicknessProperty, value); }
+    }
+
+    public string Text
+    {
+        get { return (string)GetValue(TextProperty); }
+        set { SetValue(TextProperty, value); }
+    }
+
+    public TextAlignment TextAlignment
+    {
+        get { return (TextAlignment)GetValue(TextAlignmentProperty); }
+        set { SetValue(TextAlignmentProperty, value); }
+    }
+
+    public TextDecorationCollection TextDecorations
+    {
+        get { return (TextDecorationCollection)this.GetValue(TextDecorationsProperty); }
+        set { this.SetValue(TextDecorationsProperty, value); }
+    }
+
+    public TextTrimming TextTrimming
+    {
+        get { return (TextTrimming)GetValue(TextTrimmingProperty); }
+        set { SetValue(TextTrimmingProperty, value); }
+    }
+
+    public TextWrapping TextWrapping
+    {
+        get { return (TextWrapping)GetValue(TextWrappingProperty); }
+        set { SetValue(TextWrappingProperty, value); }
+    }
+
+    protected override void OnRender(DrawingContext drawingContext)
+    {
+        this.EnsureGeometry();
+
+        drawingContext.DrawGeometry(this.Fill, new Pen(this.Stroke, this.StrokeThickness), this.textGeometry);
+    }
+
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        this.EnsureFormattedText();
+
+        // constrain the formatted text according to the available size
+        // the Math.Min call is important - without this constraint (which seems arbitrary, but is the maximum allowable text width), things blow up when availableSize is infinite in both directions
+        // the Math.Max call is to ensure we don't hit zero, which will cause MaxTextHeight to throw
+        this.formattedText.MaxTextWidth = Math.Min(3579139, availableSize.Width);
+        this.formattedText.MaxTextHeight = Math.Max(0.0001d, availableSize.Height);
+
+        // return the desired size
+        return new Size(this.formattedText.Width, this.formattedText.Height);
+    }
+
+    protected override Size ArrangeOverride(Size finalSize)
+    {
+        this.EnsureFormattedText();
+
+        // update the formatted text with the final size
+        this.formattedText.MaxTextWidth = finalSize.Width;
+        this.formattedText.MaxTextHeight = finalSize.Height;
+
+        // need to re-generate the geometry now that the dimensions have changed
+        this.textGeometry = null;
+
+        return finalSize;
+    }
+
+    private static void OnFormattedTextInvalidated(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs e)
+    {
+        var outlinedTextBlock = (OutlinedTextBlock)dependencyObject;
+        outlinedTextBlock.formattedText = null;
+        outlinedTextBlock.textGeometry = null;
+
+        outlinedTextBlock.InvalidateMeasure();
+        outlinedTextBlock.InvalidateVisual();
+    }
+
+    private static void OnFormattedTextUpdated(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs e)
+    {
+        var outlinedTextBlock = (OutlinedTextBlock)dependencyObject;
+        outlinedTextBlock.UpdateFormattedText();
+        outlinedTextBlock.textGeometry = null;
+
+        outlinedTextBlock.InvalidateMeasure();
+        outlinedTextBlock.InvalidateVisual();
+    }
+
+    private void EnsureFormattedText()
+    {
+        if (this.formattedText != null || this.Text == null)
+        {
+            return;
+        }
+
+        this.formattedText = new FormattedText(
+            this.Text,
+            CultureInfo.CurrentUICulture,
+            this.FlowDirection,
+            new Typeface(this.FontFamily, this.FontStyle, this.FontWeight, FontStretches.Normal),
+            this.FontSize,
+            Brushes.Black);
+
+        this.UpdateFormattedText();
+    }
+
+    private void UpdateFormattedText()
+    {
+        if (this.formattedText == null)
+        {
+            return;
+        }
+
+        this.formattedText.MaxLineCount = this.TextWrapping == TextWrapping.NoWrap ? 1 : int.MaxValue;
+        this.formattedText.TextAlignment = this.TextAlignment;
+        this.formattedText.Trimming = this.TextTrimming;
+
+        this.formattedText.SetFontSize(this.FontSize);
+        this.formattedText.SetFontStyle(this.FontStyle);
+        this.formattedText.SetFontWeight(this.FontWeight);
+        this.formattedText.SetFontFamily(this.FontFamily);
+        this.formattedText.SetFontStretch(this.FontStretch);
+        this.formattedText.SetTextDecorations(this.TextDecorations);
+    }
+
+    private void EnsureGeometry()
+    {
+        if (this.textGeometry != null)
+        {
+            return;
+        }
+
+        this.EnsureFormattedText();
+        this.textGeometry = this.formattedText.BuildGeometry(new Point(0, 0));
+    }
+}
+
+
+Slight modification to Kent Boogaart's code which, while awesome, is missing a small detail. This is probably a little inaccurate in that it will only measure the fill and not the stroke but adding a couple of lines to OnRender() Viewbox will be able to get a handle on what to do with it (although, as with TextBox, not in preview).
+protected override void OnRender(DrawingContext drawingContext)
+{
+    this.EnsureGeometry();
+
+    this.Width = this.formattedText.Width;
+    this.Height = this.formattedText.Height;
+
+    drawingContext.DrawGeometry(this.Fill, new Pen(this.Stroke, this.StrokeThickness), this.textGeometry);
+}
+
+I'm using this with two layers of text so the stroke appears to only be around the outside as follows. This will obviously not work straight away as it refers to specific images and fonts.
+<Viewbox Stretch="UniformToFill" Margin="0" Grid.Column="1">
+    <bd:OutlinedText x:Name="LevelTitleStroke" Text="Level" FontSize="80pt" FontFamily="/fonts/papercuts-2.ttf#Paper Cuts 2" Grid.Row="1" TextAlignment="Center" IsHitTestVisible="False" StrokeThickness="15">
+        <bd:OutlinedText.Stroke>
+            <ImageBrush ImageSource="/WpfApplication1;component/GrungeMaps/03DarkBlue.jpg" Stretch="None" />
+        </bd:OutlinedText.Stroke>
+    </bd:OutlinedText>
+</Viewbox>
+<Viewbox Stretch="UniformToFill" Margin="0" Grid.Column="1">
+    <bd:OutlinedText x:Name="LevelTitleFill" Text="Level" FontSize="80pt" FontFamily="/fonts/papercuts-2.ttf#Paper Cuts 2" Grid.Row="1" TextAlignment="Center" IsHitTestVisible="False">
+        <bd:OutlinedText.Fill>
+            <ImageBrush ImageSource="/WpfApplication1;component/GrungeMaps/03Red.jpg" Stretch="None" />
+        </bd:OutlinedText.Fill>
+    </bd:OutlinedText>
+</Viewbox>
+
+
+I was using Kent's solution in my custom control. It resulted in a null exception when using templatebinding against the text property.
+I had to modify the MeasureOverride function like so:
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        this.EnsureFormattedText();
+
+        if (this.formattedText == null)
+        {
+            this.formattedText = new FormattedText(
+                                (this.Text == null) ? "" : this.Text,
+                                CultureInfo.CurrentUICulture,
+                                this.FlowDirection,
+                                new Typeface(this.FontFamily, this.FontStyle, this.FontWeight, FontStretches.Normal),
+                                this.FontSize,
+                                Brushes.Black);
+        }
+
+        // constrain the formatted text according to the available size
+        // the Math.Min call is important - without this constraint (which seems arbitrary, but is the maximum allowable text width), things blow up when availableSize is infinite in both directions
+        this.formattedText.MaxTextWidth = Math.Min(3579139, availableSize.Width);
+        this.formattedText.MaxTextHeight = availableSize.Height;
+
+        // return the desired size
+        return new Size(this.formattedText.Width, this.formattedText.Height);
+    }
+
+It should be noted that I did not thoroughly test this.
+
+I was trying to achieve something similar to this as well.  The classes mentioned here were great, but weren't exactly what I was looking for, because it only really looked right if the text was large enough.  The text I was trying to display was around 10 - 11 font size, and the stroke was so large the letters sort of blended together.  
+Just to clarify, this text was supposed to be overlaid on a user-defined picture, which could have varying colors, and I wanted to ensure this text would show up.
+I don't know if this is best practice or not, but this at least achieved the look I wanted (based on this article):
+<Style x:Key="OutlinedTextBlockOuter" TargetType="TextBlock">
+    <Setter Property="Foreground" Value="Black" />
+    <Setter Property="FontSize" Value="10"/>
+    <Setter Property="Effect">
+        <Setter.Value>
+            <BlurEffect Radius="3.0"/>
+        </Setter.Value>
+    </Setter>
+</Style>
+<Style x:Key="OutlinedTextBlockInner" TargetType="TextBlock">
+    <Setter Property="Foreground" Value="White" />
+    <Setter Property="FontSize" Value="10"/>
+</Style>
+
+Then for the actual TextBlocks, I combined two Outer styled TextBlocks because one was too light, and one Inner styled TextBlock:
+<Grid Margin="5">
+    <TextBlock Style="{StaticResource OutlinedTextBlockOuter}" Text="This is outlined text using BlurEffect"/>
+    <TextBlock Style="{StaticResource OutlinedTextBlockOuter}" Text="This is outlined text using BlurEffect"/>
+    <TextBlock Style="{StaticResource OutlinedTextBlockInner}" Text="This is outlined text using BlurEffect"/>
+</Grid>
+
+Alternatively, you could use the DropShadowEffect, which looked okay with using only two textboxes (although adding more DropShadowEffects with varying directions and lowered opacity may look even better):
+<Grid Margin="5">
+    <TextBlock  Text="This is my outlined text using the DropShadowEffect" FontSize="10" Foreground="White">
+        <TextBlock.Effect>
+            <DropShadowEffect ShadowDepth="1" BlurRadius="2" Opacity="0.75" Direction="315"/>
+        </TextBlock.Effect>
+    </TextBlock>
+    <TextBlock  Text="This is my outlined text using the DropShadowEffect" FontSize="10" Foreground="White">
+        <TextBlock.Effect>
+            <DropShadowEffect ShadowDepth="1" BlurRadius="2" Opacity="0.75" Direction="135"/>
+        </TextBlock.Effect>
+    </TextBlock>
+</Grid>
+
+
+If applied for anyone, here a simple solution using ONLY XAML, Not sureif it better or worse regarding Performance, but for sure it look better then any other solution above (in my case).
+I Warp it in ContentControl Style (and Template), following this Old School example :)
+http://oldschooldotnet.blogspot.co.il/2009/02/fancy-fonts-in-xaml-silverlight-and-wpf.html
+<Style x:Key="OutlinedText" TargetType="{x:Type ContentControl}">
+    <!-- Some Style Setters -->
+    <Setter Property="Content" Value="Outlined Text"/>
+    <Setter Property="Padding" Value="0"/>
+    <!-- Border Brush Must be equal '0' because TextBlock that emulate the stroke will using the BorderBrush as to define 'Stroke' color-->
+    <Setter Property="BorderThickness" Value="0"/>
+    <!-- Border Brush define 'Stroke' Color-->
+    <Setter Property="BorderBrush" Value="White"/>
+    <Setter Property="Foreground" Value="Black"/>
+    <Setter Property="FontSize" Value="24"/>
+    <Setter Property="FontFamily" Value="Seoge UI Bold"/>
+    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+    <Setter Property="VerticalContentAlignment" Value="Center"/>
+    <Setter Property="Template">
+        <Setter.Value>
+            <ControlTemplate TargetType="{x:Type ContentControl}">
+                <Canvas Width="{Binding ActualWidth, ElementName=FillText}" Height="{Binding ActualHeight, ElementName=FillText}">
+                    <Canvas.Resources>
+                        <!-- Style to ease the duplication of Text Blocks that emulate the stroke: Binding to one element (or to template) is the first part of the Trick -->
+                        <Style x:Key="OutlinedTextStrokeTextBlock_Style" TargetType="{x:Type TextBlock}">
+                            <Setter Property="Text" Value="{Binding Text, ElementName=FillText}"/>
+                            <Setter Property="FontSize" Value="{Binding FontSize, ElementName=FillText}"/>
+                            <Setter Property="FontFamily" Value="{Binding FontFamily, ElementName=FillText}"/>
+                            <Setter Property="FontStyle" Value="{Binding FontStyle, ElementName=FillText}"/>
+                            <Setter Property="FontWeight" Value="{Binding FontWeight, ElementName=FillText}"/>
+                            <Setter Property="Padding" Value="{Binding TextAlignment, ElementName=Padding}"/>
+                            <Setter Property="TextAlignment" Value="{Binding TextAlignment, ElementName=FillText}"/>
+                            <Setter Property="VerticalAlignment" Value="{Binding VerticalAlignment, ElementName=FillText}"/>
+                        </Style>
+                    </Canvas.Resources>
+                    <!-- Offseting the Text block will create the outline, the margin is the Stroke Width-->
+                    <TextBlock Foreground="{TemplateBinding BorderBrush}" Margin="-1,0,0,0" Style="{DynamicResource OutlinedTextStrokeTextBlock_Style}"/>
+                    <TextBlock Foreground="{TemplateBinding BorderBrush}" Margin="0,-1,0,0" Style="{DynamicResource OutlinedTextStrokeTextBlock_Style}"/>
+                    <TextBlock Foreground="{TemplateBinding BorderBrush}" Margin="0,0,-1,0" Style="{DynamicResource OutlinedTextStrokeTextBlock_Style}"/>
+                    <TextBlock Foreground="{TemplateBinding BorderBrush}" Margin="0,0,0,-1" Style="{DynamicResource OutlinedTextStrokeTextBlock_Style}"/>
+                    <!-- Base TextBlock Will be the Fill -->
+                    <TextBlock x:Name="FillText" Text="{TemplateBinding Content}" FontSize="{TemplateBinding FontSize}" FontFamily="{TemplateBinding FontFamily}"
+                               FontStyle="{TemplateBinding FontStyle}" FontWeight="{TemplateBinding FontWeight}" Padding="0" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" 
+                               TextAlignment="{TemplateBinding HorizontalContentAlignment}"
+                               Style="{DynamicResource TbMediaOverlay_Style}"/>
+                </Canvas>
+            </ControlTemplate>
+        </Setter.Value>
+    </Setter>
+</Style>
+
+
+I had to add this to MeasureOverride so it would show single lines of text while using layout rounding. It worked fine when the text was wrapping though.
+// return the desired size
+return new Size(Math.Ceiling(_FormattedText.Width), Math.Ceiling(_FormattedText.Height));
+
+
+I modified the most voted answer with several fixes, including:
+
+Fix so texts with a single line would show when using
+UseLayoutRounding.
+Outlines would show outside the text instead of in the middle of the 
+border.  
+The pen is created only once instead of on each render.
+Fix so it won't crash when the text is set to null.
+Fix so outline uses proper round caps.
+using System;
+using System.ComponentModel;
+using System.Globalization;
+using System.Windows;
+using System.Windows.Documents;
+using System.Windows.Markup;
+using System.Windows.Media;
+
+[ContentProperty("Text")]
+public class OutlinedTextBlock : FrameworkElement
+{
+    private void UpdatePen() {
+        _Pen = new Pen(Stroke, StrokeThickness) {
+            DashCap = PenLineCap.Round,
+            EndLineCap = PenLineCap.Round,
+            LineJoin = PenLineJoin.Round,
+            StartLineCap = PenLineCap.Round
+        };
+
+        InvalidateVisual();
+    }
+
+    public static readonly DependencyProperty FillProperty = DependencyProperty.Register(
+      "Fill",
+      typeof(Brush),
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(Brushes.Black, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty StrokeProperty = DependencyProperty.Register(
+      "Stroke",
+      typeof(Brush),
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(Brushes.Black, FrameworkPropertyMetadataOptions.AffectsRender, StrokePropertyChangedCallback));
+
+    private static void StrokePropertyChangedCallback(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs dependencyPropertyChangedEventArgs) {
+        (dependencyObject as OutlinedTextBlock)?.UpdatePen();
+    }
+
+    public static readonly DependencyProperty StrokeThicknessProperty = DependencyProperty.Register(
+      "StrokeThickness",
+      typeof(double),
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(1d, FrameworkPropertyMetadataOptions.AffectsRender, StrokePropertyChangedCallback));
+
+    public static readonly DependencyProperty FontFamilyProperty = TextElement.FontFamilyProperty.AddOwner(
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty FontSizeProperty = TextElement.FontSizeProperty.AddOwner(
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty FontStretchProperty = TextElement.FontStretchProperty.AddOwner(
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty FontStyleProperty = TextElement.FontStyleProperty.AddOwner(
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty FontWeightProperty = TextElement.FontWeightProperty.AddOwner(
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty TextProperty = DependencyProperty.Register(
+      "Text",
+      typeof(string),
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(OnFormattedTextInvalidated));
+
+    public static readonly DependencyProperty TextAlignmentProperty = DependencyProperty.Register(
+      "TextAlignment",
+      typeof(TextAlignment),
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty TextDecorationsProperty = DependencyProperty.Register(
+      "TextDecorations",
+      typeof(TextDecorationCollection),
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty TextTrimmingProperty = DependencyProperty.Register(
+      "TextTrimming",
+      typeof(TextTrimming),
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(OnFormattedTextUpdated));
+
+    public static readonly DependencyProperty TextWrappingProperty = DependencyProperty.Register(
+      "TextWrapping",
+      typeof(TextWrapping),
+      typeof(OutlinedTextBlock),
+      new FrameworkPropertyMetadata(TextWrapping.NoWrap, OnFormattedTextUpdated));
+
+    private FormattedText _FormattedText;
+    private Geometry _TextGeometry;
+    private Pen _Pen;
+
+    public Brush Fill
+    {
+        get { return (Brush)GetValue(FillProperty); }
+        set { SetValue(FillProperty, value); }
+    }
+
+    public FontFamily FontFamily
+    {
+        get { return (FontFamily)GetValue(FontFamilyProperty); }
+        set { SetValue(FontFamilyProperty, value); }
+    }
+
+    [TypeConverter(typeof(FontSizeConverter))]
+    public double FontSize
+    {
+        get { return (double)GetValue(FontSizeProperty); }
+        set { SetValue(FontSizeProperty, value); }
+    }
+
+    public FontStretch FontStretch
+    {
+        get { return (FontStretch)GetValue(FontStretchProperty); }
+        set { SetValue(FontStretchProperty, value); }
+    }
+
+    public FontStyle FontStyle
+    {
+        get { return (FontStyle)GetValue(FontStyleProperty); }
+        set { SetValue(FontStyleProperty, value); }
+    }
+
+    public FontWeight FontWeight
+    {
+        get { return (FontWeight)GetValue(FontWeightProperty); }
+        set { SetValue(FontWeightProperty, value); }
+    }
+
+    public Brush Stroke
+    {
+        get { return (Brush)GetValue(StrokeProperty); }
+        set { SetValue(StrokeProperty, value); }
+    }
+
+    public double StrokeThickness
+    {
+        get { return (double)GetValue(StrokeThicknessProperty); }
+        set { SetValue(StrokeThicknessProperty, value); }
+    }
+
+    public string Text
+    {
+        get { return (string)GetValue(TextProperty); }
+        set { SetValue(TextProperty, value); }
+    }
+
+    public TextAlignment TextAlignment
+    {
+        get { return (TextAlignment)GetValue(TextAlignmentProperty); }
+        set { SetValue(TextAlignmentProperty, value); }
+    }
+
+    public TextDecorationCollection TextDecorations
+    {
+        get { return (TextDecorationCollection)GetValue(TextDecorationsProperty); }
+        set { SetValue(TextDecorationsProperty, value); }
+    }
+
+    public TextTrimming TextTrimming
+    {
+        get { return (TextTrimming)GetValue(TextTrimmingProperty); }
+        set { SetValue(TextTrimmingProperty, value); }
+    }
+
+    public TextWrapping TextWrapping
+    {
+        get { return (TextWrapping)GetValue(TextWrappingProperty); }
+        set { SetValue(TextWrappingProperty, value); }
+    }
+
+    public OutlinedTextBlock() {
+        UpdatePen();
+        TextDecorations = new TextDecorationCollection();
+    }
+
+    protected override void OnRender(DrawingContext drawingContext) {
+        EnsureGeometry();
+
+        drawingContext.DrawGeometry(null, _Pen, _TextGeometry);
+        drawingContext.DrawGeometry(Fill, null, _TextGeometry);
+    }
+
+    protected override Size MeasureOverride(Size availableSize) {
+        EnsureFormattedText();
+
+        // constrain the formatted text according to the available size
+
+        double w = availableSize.Width;
+        double h = availableSize.Height;
+
+        // the Math.Min call is important - without this constraint (which seems arbitrary, but is the maximum allowable text width), things blow up when availableSize is infinite in both directions
+        // the Math.Max call is to ensure we don't hit zero, which will cause MaxTextHeight to throw
+        _FormattedText.MaxTextWidth = Math.Min(3579139, w);
+        _FormattedText.MaxTextHeight = Math.Max(0.0001d, h);
+
+        // return the desired size
+        return new Size(Math.Ceiling(_FormattedText.Width), Math.Ceiling(_FormattedText.Height));
+    }
+
+    protected override Size ArrangeOverride(Size finalSize) {
+        EnsureFormattedText();
+
+        // update the formatted text with the final size
+        _FormattedText.MaxTextWidth = finalSize.Width;
+        _FormattedText.MaxTextHeight = Math.Max(0.0001d, finalSize.Height);
+
+        // need to re-generate the geometry now that the dimensions have changed
+        _TextGeometry = null;
+
+        return finalSize;
+    }
+
+    private static void OnFormattedTextInvalidated(DependencyObject dependencyObject,
+      DependencyPropertyChangedEventArgs e) {
+        var outlinedTextBlock = (OutlinedTextBlock)dependencyObject;
+        outlinedTextBlock._FormattedText = null;
+        outlinedTextBlock._TextGeometry = null;
+
+        outlinedTextBlock.InvalidateMeasure();
+        outlinedTextBlock.InvalidateVisual();
+    }
+
+    private static void OnFormattedTextUpdated(DependencyObject dependencyObject, DependencyPropertyChangedEventArgs e) {
+        var outlinedTextBlock = (OutlinedTextBlock)dependencyObject;
+        outlinedTextBlock.UpdateFormattedText();
+        outlinedTextBlock._TextGeometry = null;
+
+        outlinedTextBlock.InvalidateMeasure();
+        outlinedTextBlock.InvalidateVisual();
+    }
+
+    private void EnsureFormattedText() {
+        if (_FormattedText != null) {
+            return;
+        }
+
+        _FormattedText = new FormattedText(
+          Text ?? "",
+          CultureInfo.CurrentUICulture,
+          FlowDirection,
+          new Typeface(FontFamily, FontStyle, FontWeight, FontStretch),
+          FontSize,
+          Brushes.Black);
+
+        UpdateFormattedText();
+    }
+
+    private void UpdateFormattedText() {
+        if (_FormattedText == null) {
+            return;
+        }
+
+        _FormattedText.MaxLineCount = TextWrapping == TextWrapping.NoWrap ? 1 : int.MaxValue;
+        _FormattedText.TextAlignment = TextAlignment;
+        _FormattedText.Trimming = TextTrimming;
+
+        _FormattedText.SetFontSize(FontSize);
+        _FormattedText.SetFontStyle(FontStyle);
+        _FormattedText.SetFontWeight(FontWeight);
+        _FormattedText.SetFontFamily(FontFamily);
+        _FormattedText.SetFontStretch(FontStretch);
+        _FormattedText.SetTextDecorations(TextDecorations);
+    }
+
+    private void EnsureGeometry() {
+        if (_TextGeometry != null) {
+            return;
+        }
+
+        EnsureFormattedText();
+        _TextGeometry = _FormattedText.BuildGeometry(new Point(0, 0));
+    }
+}
+
+

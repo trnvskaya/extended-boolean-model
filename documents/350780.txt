@@ -1,0 +1,27 @@
+SQL query to calculate visit duration from log table
+sql mysql duration
+I have a MySQL table LOGIN_LOG with fields ID, PLAYER, TIMESTAMP and ACTION. ACTION can be either 'login' or 'logout'. Only around 20% of the logins have an accompanying logout row. For those that do, I want to calculate the average duration.
+I'm thinking of something like
+select avg(LL2.TIMESTAMP - LL1.TIMESTAMP)
+from LOGIN_LOG LL1
+inner join LOGIN_LOG LL2 on LL1.PLAYER = LL2.PLAYER and LL2.TIMESTAMP > LL1.TIMESTAMP
+left join LOGIN_LOG LL3 on LL3.PLAYER = LL1.PLAYER
+  and LL3.TIMESTAMP between LL1.TIMESTAMP + 1 and LL2.TIMESTAMP - 1
+  and LL3.ACTION = 'login'
+where LL1.ACTION = 'login' and LL2.ACTION = 'logout' and isnull(LL3.ID)
+
+is this the best way to do it, or is there one more efficient?
+
+
+Do you have a SessionManager type object that can timeout sessions? Because a timeout could be logged there, and you could get the last activity time from that and the timeout period.
+Or you log all activity on the website/service, and thus you can query website/service visit duration directly, and see what activities they performed. For a website, Apache log analysers can probably generate the required stats.
+
+I agree with JeeBee, but another advantage to a SessionManager type object is that you can handle the sessionEnd event and write a logout row with the active time in it. This way you would likely go from 20% accompanying logout rows to 100% accompanying logout rows. Querying for the activity time would then be trivial and consistent for all sessions.
+
+Given the data you have, there probably isn't anything much faster you can do because you have to look at a LOGIN and a LOGOUT record, and ensure there is no other LOGIN (or LOGOUT?) record for the same user between the two.
+Alternatively, find a way to ensure that a disconnect records a logout, so that the data is complete (instead of 20% complete).  However, the query probably still has to ensure that the criteria are all met, so it won't help the query all that much.
+If you can get the data into a format where the LOGIN and corresponding LOGOUT times are both in the same record, then you can simplify the query immensely.  I'm not clear if the SessionManager does that for you.
+
+If only 20% of your users actually log out, this search will not give you a very accurate time of each session. A better way to gauge how long an average user session is would be to take the average time between actions, or avg. time per page. This, then, can multiplied by the average number of pages/actions per visit to give a more accurate time.
+Additionally, you can determine avg. time for each page, and then get your session end time = session time to that point + avg time spent on their last page. This will give you a much more fine-grained(and accurate) measure of time spent per session.
+Regarding the given SQL, it seems to be more complicated than you really need. This sort of statistical operation can often be better handled/more maintainable in code external to the database where you can have the full power of whichever language you choose, and not just the rather convoluted abilities of SQL for statistical calculations

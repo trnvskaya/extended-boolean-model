@@ -1,0 +1,206 @@
+How to spawn a process and capture its STDOUT in .NET?
+c# .net process spawning
+I need to spawn a child process that is a console application, and capture its output.
+I wrote up the following code for a method:
+string retMessage = String.Empty;
+ProcessStartInfo startInfo = new ProcessStartInfo();
+Process p = new Process();
+
+startInfo.CreateNoWindow = true;
+startInfo.RedirectStandardOutput = true;
+startInfo.RedirectStandardInput = true;
+
+startInfo.UseShellExecute = false;
+startInfo.Arguments = command;
+startInfo.FileName = exec;
+
+p.StartInfo = startInfo;
+p.Start();
+
+p.OutputDataReceived += new DataReceivedEventHandler
+(
+    delegate(object sender, DataReceivedEventArgs e)
+    {
+        using (StreamReader output = p.StandardOutput)
+        {
+            retMessage = output.ReadToEnd();
+        }
+    }
+);
+
+p.WaitForExit();
+
+return retMessage;
+
+However, this does not return anything. I don't believe the OutputDataReceived event is being called back, or the WaitForExit() command may be blocking the thread so it will never callback.
+Any advice?
+EDIT: Looks like I was trying too hard with the callback. Doing:
+return p.StandardOutput.ReadToEnd(); 
+
+Appears to work fine.
+
+
+You need to call p.Start() to actually run the process after you set the StartInfo.  As it is, your function is probably hanging on the WaitForExit() call because the process was never actually started.
+
+Here's code that I've verified to work. I use it for spawning MSBuild and listening to its output:
+process.StartInfo.UseShellExecute = false;
+process.StartInfo.RedirectStandardOutput = true;
+process.OutputDataReceived += (sender, args) => Console.WriteLine("received output: {0}", args.Data);
+process.Start();
+process.BeginOutputReadLine();
+
+
+It looks like two of your lines are out of order.  You start the process before setting up an event handler to capture the output.  It's possible the process is just finishing before the event handler is added.
+Switch the lines like so.
+p.OutputDataReceived += ...
+p.Start();
+
+
+I just tried this very thing and the following worked for me:
+StringBuilder outputBuilder;
+ProcessStartInfo processStartInfo;
+Process process;
+
+outputBuilder = new StringBuilder();
+
+processStartInfo = new ProcessStartInfo();
+processStartInfo.CreateNoWindow = true;
+processStartInfo.RedirectStandardOutput = true;
+processStartInfo.RedirectStandardInput = true;
+processStartInfo.UseShellExecute = false;
+processStartInfo.Arguments = "<insert command line arguments here>";
+processStartInfo.FileName = "<insert tool path here>";
+
+process = new Process();
+process.StartInfo = processStartInfo;
+// enable raising events because Process does not raise events by default
+process.EnableRaisingEvents = true;
+// attach the event handler for OutputDataReceived before starting the process
+process.OutputDataReceived += new DataReceivedEventHandler
+(
+    delegate(object sender, DataReceivedEventArgs e)
+    {
+        // append the new data to the data already read-in
+        outputBuilder.Append(e.Data);
+    }
+);
+// start the process
+// then begin asynchronously reading the output
+// then wait for the process to exit
+// then cancel asynchronously reading the output
+process.Start();
+process.BeginOutputReadLine();
+process.WaitForExit();
+process.CancelOutputRead();
+
+// use the output
+string output = outputBuilder.ToString();
+
+
+Here's a method that I use to run a process and gets its output and errors :
+public static string ShellExecute(this string path, string command, TextWriter writer, params string[] arguments)
+    {
+        using (var process = Process.Start(new ProcessStartInfo { WorkingDirectory = path, FileName = command, Arguments = string.Join(" ", arguments), UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true }))
+        {
+            using (process.StandardOutput)
+            {
+                writer.WriteLine(process.StandardOutput.ReadToEnd());
+            }
+            using (process.StandardError)
+            {
+                writer.WriteLine(process.StandardError.ReadToEnd());
+            }
+        }
+
+        return path;
+    }
+
+For example :
+@"E:\Temp\MyWorkingDirectory".ShellExecute(@"C:\Program Files\Microsoft SDKs\Windows\v6.0A\Bin\svcutil.exe", Console.Out);
+
+
+Here's some full and simple code to do this. This worked fine when I used it.
+var processStartInfo = new ProcessStartInfo
+{
+    FileName = @"C:\SomeProgram",
+    Arguments = "Arguments",
+    RedirectStandardOutput = true,
+    UseShellExecute = false
+};
+var process = Process.Start(processStartInfo);
+var output = process.StandardOutput.ReadToEnd();
+process.WaitForExit();
+
+Note that this only captures standard output; it doesn't capture standard error. If you want both, use this technique for each stream.
+
+Redirecting the stream is asynchronous and will potentially continue after the process has terminated. It is mentioned by Umar to cancel after process termination process.CancelOutputRead(). However that has data loss potential.
+This is working reliably for me:
+process.WaitForExit(...);
+...
+while (process.StandardOutput.EndOfStream == false)
+{
+    Thread.Sleep(100);
+}
+
+I didn't try this approach but I like the suggestion from Sly:
+if (process.WaitForExit(timeout))
+{
+    process.WaitForExit();
+}
+
+
+I needed to capture both stdout and stderr and have it timeout if the process didn't exit when expected. I came up with this:
+Process process = new Process();
+StringBuilder outputStringBuilder = new StringBuilder();
+
+try
+{
+process.StartInfo.FileName = exeFileName;
+process.StartInfo.WorkingDirectory = args.ExeDirectory;
+process.StartInfo.Arguments = args;
+process.StartInfo.RedirectStandardError = true;
+process.StartInfo.RedirectStandardOutput = true;
+process.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+process.StartInfo.CreateNoWindow = true;
+process.StartInfo.UseShellExecute = false;
+process.EnableRaisingEvents = false;
+process.OutputDataReceived += (sender, eventArgs) => outputStringBuilder.AppendLine(eventArgs.Data);
+process.ErrorDataReceived += (sender, eventArgs) => outputStringBuilder.AppendLine(eventArgs.Data);
+process.Start();
+process.BeginOutputReadLine();
+process.BeginErrorReadLine();
+var processExited = process.WaitForExit(PROCESS_TIMEOUT);
+
+if (processExited == false) // we timed out...
+{
+    process.Kill();
+    throw new Exception("ERROR: Process took too long to finish");
+}
+else if (process.ExitCode != 0)
+{
+    var output = outputStringBuilder.ToString();
+    var prefixMessage = "";
+
+    throw new Exception("Process exited with non-zero exit code of: " + process.ExitCode + Environment.NewLine + 
+    "Output from process: " + outputStringBuilder.ToString());
+}
+}
+finally
+{                
+process.Close();
+}
+
+I am piping the stdout and stderr into the same string, but you could keep it separate if needed. It uses events, so it should handle them as they come (I believe). I have run this successfully, and will be volume testing it soon.
+
+The answer from Judah did not work for me (or is not complete) as the application was exiting after the first BeginOutputReadLine();
+This works for me as a complete snippet, reading the constant output of a ping:
+        var process = new Process();
+        process.StartInfo.FileName = "ping";
+        process.StartInfo.Arguments = "google.com -t";
+        process.StartInfo.RedirectStandardOutput = true;
+        process.StartInfo.UseShellExecute = false;
+        process.OutputDataReceived += (sender, a) => Console.WriteLine(a.Data);
+        process.Start();
+        process.BeginOutputReadLine();
+        process.WaitForExit();
+

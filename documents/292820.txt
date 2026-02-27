@@ -1,0 +1,88 @@
+How to correctly unregister an event handler
+c# .net events delegates
+In a code review, I stumbled over this (simplified) code fragment to unregister an event handler:
+ Fire -= new MyDelegate(OnFire);
+
+I thought that this does not unregister the event handler because it creates a new delegate which had never been registered before. But searching MSDN I found several code samples which use this idiom.
+So I started an experiment:
+internal class Program
+{
+    public delegate void MyDelegate(string msg);
+    public static event MyDelegate Fire;
+
+    private static void Main(string[] args)
+    {
+        Fire += new MyDelegate(OnFire);
+        Fire += new MyDelegate(OnFire);
+        Fire("Hello 1");
+        Fire -= new MyDelegate(OnFire);
+        Fire("Hello 2");
+        Fire -= new MyDelegate(OnFire);
+        Fire("Hello 3");
+    }
+
+    private static void OnFire(string msg)
+    {
+        Console.WriteLine("OnFire: {0}", msg);
+    }
+
+}
+
+To my surprise, the following happened:
+
+Fire("Hello 1"); produced two messages, as expected.
+Fire("Hello 2"); produced one message!
+This convinced me that unregistering new delegates works!
+Fire("Hello 3"); threw a NullReferenceException.
+ Debugging the code showed that Fire is null after unregistering the event.
+
+I know that for event handlers and delegate, the compiler generates a lot of code behind the scene. But I still don't understand why my reasoning is wrong.
+What am I missing?
+Additional question: from the fact that Fire is null when there are no events registered, I conclude that everywhere an event is fired, a check against null is required.
+
+
+The C# compiler's default implementation of adding an event handler calls Delegate.Combine, while removing an event handler calls Delegate.Remove:
+Fire = (MyDelegate) Delegate.Remove(Fire, new MyDelegate(Program.OnFire));
+
+The Framework's implementation of Delegate.Remove doesn't look at the MyDelegate object itself, but at the method the delegate refers to (Program.OnFire). Thus, it's perfectly safe to create a new MyDelegate object when unsubscribing an existing event handler. Because of this, the C# compiler allows you to use a shorthand syntax (that generates exactly the same code behind the scenes) when adding/removing event handlers: you can omit the new MyDelegate part:
+Fire += OnFire;
+Fire -= OnFire;
+
+When the last delegate is removed from the event handler, Delegate.Remove returns null. As you have found out, it's essential to check the event against null before raising it:
+MyDelegate handler = Fire;
+if (handler != null)
+    handler("Hello 3");
+
+It's assigned to a temporary local variable to defend against a possible race condition with unsubscribing event handlers on other threads. (See my blog post for details on the thread safety of assigning the event handler to a local variable.) Another way to defend against this problem is to create an empty delegate that is always subscribed; while this uses a little more memory, the event handler can never be null (and the code can be simpler):
+public static event MyDelegate Fire = delegate { };
+
+
+You should always check whether a delegate has no targets (its value is null) before firing it.
+As said before, one way of doing this is to subscribe with a do-nothing anonymous method which won't be removed.
+public event MyDelegate Fire = delegate {};
+
+However, this is just a hack to avoid NullReferenceExceptions.
+Just simply cheking whether a delegate is null before invoking is not threadsafe as an other thread can deregister after the null-check and making it null when invoking.
+There is an other solution is to copy the delegate into a temporary variable:
+public event MyDelegate Fire;
+public void FireEvent(string msg)
+{
+    MyDelegate temp = Fire;
+    if (temp != null)
+        temp(msg);
+}
+
+Unfortunately, the JIT compiler may optimize the code, eliminate the temporary variable, and use the original delegate. (as per Juval Lowy - Programming .NET Components)
+So to avoid this problem, you could use method which accepts a delegate as parameter:
+[MethodImpl(MethodImplOptions.NoInlining)]
+public void FireEvent(MyDelegate fire, string msg)
+{
+    if (fire != null)
+        fire(msg);
+}
+
+Note that without the MethodImpl(NoInlining) attribute the JIT compiler could inline the method making it worthless.
+Since delegates are immutable this implementation is threadsafe.
+You could use this method as:
+FireEvent(Fire,"Hello 3");
+

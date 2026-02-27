@@ -1,0 +1,228 @@
+How do I create 7-Zip archives with .NET?
+c# .net compression 7zip
+How can I create 7-Zip archives from my C# console application? I need to be able to extract the archives using the regular, widely available 7-Zip program.
+
+Here are my results with the examples provided as answers to this question
+
+"Shelling out" to 7z.exe - this is the simplest and most effective approach, and I can confirm that it works nicely. As workmad3 mentions, I just need to guarantee that 7z.exe is installed on all target machines, which is something I can guarantee.
+7Zip in memory compression - this refers to compressing cookies "in-memory" before sending to the client; this method seems somewhat promising. The wrapper methods (wrapping the LZMA SDK) return type byte[]. When I write the byte[] array to a file, I can't extract it using 7-Zip (File.7z is not supported archive).
+7zSharp Wrapper (found on CodePlex) - this wraps the 7z exe/LZMA SDK. I referenced the project from my app, and it successfully created some archive files, but I was unable to extract the files using the regular 7-Zip program (File.7z is not supported archive).
+7Zip SDK aka LZMA SDK - I guess I'm not smart enough to figure out how to use this (which is why I posted here)... Any working code examples that demonstrate creating a 7zip archive that is able to be extracted by the regular 7zip program?
+CodeProject C# (.NET) Interface for 7-Zip Archive DLLs - only supports extracting from 7zip archives... I need to create them!
+SharpZipLib - According to their FAQ, SharpZipLib doesn't support 7zip.
+
+
+
+EggCafe 7Zip cookie example This is an example (zipping cookie) with the DLL of 7Zip.
+CodePlex Warper
+This is an open source project that warp zipping function of 7z.
+7Zip SDK The official SDK for 7zip (C, C++, C#, Java) <---My suggestion
+.Net zipping library by SharpDevelop.net
+CodeProject example with 7zip
+SharpZipLib Many zipping
+
+If you can guarantee the 7-zip app will be installed (and in the path) on all target machines, you can offload by calling the command line app 7z. Not the most elegant solution but it is the least work. 
+
+I used the sdk. 
+eg:
+using SevenZip.Compression.LZMA;
+private static void CompressFileLZMA(string inFile, string outFile)
+{
+   SevenZip.Compression.LZMA.Encoder coder = new SevenZip.Compression.LZMA.Encoder();
+
+   using (FileStream input = new FileStream(inFile, FileMode.Open))
+   {
+      using (FileStream output = new FileStream(outFile, FileMode.Create))
+      {
+          coder.Code(input, output, -1, -1, null);
+          output.Flush();
+      }
+   }
+}
+
+
+SevenZipSharp is another solution. Creates 7-zip archives...
+
+Here's a complete working example using the SevenZip SDK in C#.   
+It will write, and read, standard 7zip files as created by the Windows 7zip application.  
+PS. The previous example was never going to decompress because it never wrote the required property information to the start of the file.
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using SevenZip.Compression.LZMA;
+using System.IO;
+using SevenZip;
+
+namespace VHD_Director
+{
+    class My7Zip
+    {
+        public static void CompressFileLZMA(string inFile, string outFile)
+        {
+            Int32 dictionary = 1 << 23;
+            Int32 posStateBits = 2;
+            Int32 litContextBits = 3; // for normal files
+            // UInt32 litContextBits = 0; // for 32-bit data
+            Int32 litPosBits = 0;
+            // UInt32 litPosBits = 2; // for 32-bit data
+            Int32 algorithm = 2;
+            Int32 numFastBytes = 128;
+
+            string mf = "bt4";
+            bool eos = true;
+            bool stdInMode = false;
+
+
+            CoderPropID[] propIDs =  {
+                CoderPropID.DictionarySize,
+                CoderPropID.PosStateBits,
+                CoderPropID.LitContextBits,
+                CoderPropID.LitPosBits,
+                CoderPropID.Algorithm,
+                CoderPropID.NumFastBytes,
+                CoderPropID.MatchFinder,
+                CoderPropID.EndMarker
+            };
+
+            object[] properties = {
+                (Int32)(dictionary),
+                (Int32)(posStateBits),
+                (Int32)(litContextBits),
+                (Int32)(litPosBits),
+                (Int32)(algorithm),
+                (Int32)(numFastBytes),
+                mf,
+                eos
+            };
+
+            using (FileStream inStream = new FileStream(inFile, FileMode.Open))
+            {
+                using (FileStream outStream = new FileStream(outFile, FileMode.Create))
+                {
+                    SevenZip.Compression.LZMA.Encoder encoder = new SevenZip.Compression.LZMA.Encoder();
+                    encoder.SetCoderProperties(propIDs, properties);
+                    encoder.WriteCoderProperties(outStream);
+                    Int64 fileSize;
+                    if (eos || stdInMode)
+                        fileSize = -1;
+                    else
+                        fileSize = inStream.Length;
+                    for (int i = 0; i < 8; i++)
+                        outStream.WriteByte((Byte)(fileSize >> (8 * i)));
+                    encoder.Code(inStream, outStream, -1, -1, null);
+                }
+            }
+
+        }
+
+        public static void DecompressFileLZMA(string inFile, string outFile)
+        {
+            using (FileStream input = new FileStream(inFile, FileMode.Open))
+            {
+                using (FileStream output = new FileStream(outFile, FileMode.Create))
+                {
+                    SevenZip.Compression.LZMA.Decoder decoder = new SevenZip.Compression.LZMA.Decoder();
+
+                    byte[] properties = new byte[5];
+                    if (input.Read(properties, 0, 5) != 5)
+                        throw (new Exception("input .lzma is too short"));
+                    decoder.SetDecoderProperties(properties);
+
+                    long outSize = 0;
+                    for (int i = 0; i < 8; i++)
+                    {
+                        int v = input.ReadByte();
+                        if (v < 0)
+                            throw (new Exception("Can't Read 1"));
+                        outSize |= ((long)(byte)v) << (8 * i);
+                    }
+                    long compressedSize = input.Length - input.Position;
+
+                    decoder.Code(input, output, compressedSize, outSize, null);
+                }
+            }
+        }
+
+        public static void Test()
+        {
+            CompressFileLZMA("DiscUtils.pdb", "DiscUtils.pdb.7z");
+            DecompressFileLZMA("DiscUtils.pdb.7z", "DiscUtils.pdb2");
+        }
+    }
+}
+
+
+I use this code 
+                string PZipPath = @"C:\Program Files\7-Zip\7z.exe";
+                string sourceCompressDir = @"C:\Test";
+                string targetCompressName = @"C:\Test\abc.zip";
+                string CompressName = targetCompressName.Split('\\').Last();
+                string[] fileCompressList = Directory.GetFiles(sourceCompressDir, "*.*");
+
+                    if (fileCompressList.Length == 0)
+                    {
+                        MessageBox.Show("No file in directory", "Important Message");
+                        return;
+                    }
+                    string filetozip = null;
+                    foreach (string filename in fileCompressList)
+                    {
+                        filetozip = filetozip + "\"" + filename + " ";
+                    }
+
+                    ProcessStartInfo pCompress = new ProcessStartInfo();
+                    pCompress.FileName = PZipPath;
+                    if (chkRequestPWD.Checked == true)
+                    {
+                        pCompress.Arguments = "a -tzip \"" + targetCompressName + "\" " + filetozip + " -mx=9" + " -p" + tbPassword.Text;
+                    }
+                    else
+                    {
+                        pCompress.Arguments = "a -tzip \"" + targetCompressName + "\" \"" + filetozip + "\" -mx=9";
+                    }
+                    pCompress.WindowStyle = ProcessWindowStyle.Hidden;
+                    Process x = Process.Start(pCompress);
+                    x.WaitForExit();
+
+
+string zipfile = @"E:\Folderx\NPPES.zip";
+string folder = @"E:\TargetFolderx";
+ ExtractFile(zipfile,folder);
+public void ExtractFile(string source, string destination)
+        {
+            // If the directory doesn't exist, create it.
+            if (!Directory.Exists(destination))
+                Directory.CreateDirectory(destination);
+
+            //string zPath = ConfigurationManager.AppSettings["FileExtactorEXE"];
+          //  string zPath = Properties.Settings.Default.FileExtactorEXE; ;
+
+            string zPath=@"C:\Program Files\7-Zip\7zG.exe";
+
+            try
+            {
+                ProcessStartInfo pro = new ProcessStartInfo();
+                pro.WindowStyle = ProcessWindowStyle.Hidden;
+                pro.FileName = zPath;
+                pro.Arguments = "x \"" + source + "\" -o" + destination;
+                Process x = Process.Start(pro);
+                x.WaitForExit();
+            }
+            catch (System.Exception Ex) { }
+        }
+
+Just Install 7 zip from source and pass parameter to method .
+Thanks Please like answer
+
+These easiest way is to work with .zip files instead of .7z and use Dot Net Zip
+When spinning off 7zip commands to shell there are other issues like user privileges, I had issue with SevenZipSharp.
+Private Function CompressFile(filename As String) As Boolean
+Using zip As New ZipFile()
+    zip.AddFile(filename & ".txt", "")
+    zip.Save(filename & ".zip")
+End Using
+
+Return File.Exists(filename & ".zip")
+End Function
+

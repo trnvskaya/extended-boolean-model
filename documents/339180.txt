@@ -1,0 +1,66 @@
+MySQL/PHP - escaping characters that may slow my database down (or make it perform unexpectedly)
+php mysql security sql-injection
+I run all my integers through a (int)Integer to make them safe to use in my query strings.
+I also run my strings through this function code:-
+if(!get_magic_quotes_gpc()) {
+           $string = mysql_real_escape_string($string);
+        }
+
+$pattern = array("\\'", "\\\"", "\\\\", "\\0");
+$replace = array("", "", "", "");
+if(preg_match("/[\\\\'\"\\0]/", str_replace($pattern, $replace, $string))) $string = addslashes($string); 
+
+
+$cleanedString = str_replace('%','',$string);
+
+I obviously return the $cleanedString variable. Now I replace the % character because it is a wildcard to mySQL and it could potentially slow down my queries (or make them return incorrect data) if the user inserted them. Are there any other special characters for mySQL I should be concerned about? 
+On a second note, is there anything wrong or redundant about my search and replace after the mysql_real_escape_string? I got it from a website when I was first starting out and (if I remember correctly) it said you had to use this search/replace in addition to the escape string. It looks like it's trying to remove any previously escaped injection characters?
+
+
+On your second point:
+It is completely redundant, all the characters have been properly escaped if you run it through mysql_real_escape_string()
+
+yeah I think you've got things going a bit strangely there.
+First of all, I'd check for magic quotes and remove the slashes if it's turned on. That way you've got a string which actually represents the information you want (and not one that has been treated with slashes).
+If you particularly want to remove the % wildcard then you could just escape that or remove it altogether. Before you insert the string into an SQL query, finally run it through mysql_real_escape_string, and everything will be fine.
+$string = $_POST['searchTerm'];
+if (get_magic_quotes_gpc()) {
+    $string = stripslashes($string);
+}
+$string = str_replace("%", "", $string);
+$safeString = mysql_real_escape_string($string);
+
+
+mysql_real_escape_string() escapes these characters for you:
+
+\x00, \n, \r, \, ', " and \x1a
+
+So you don't need to escape them yourself. I suggest removing slashes if magic quotes are on, then use mysql_real_escape_string():
+if(get_magic_quotes_gpc()) {
+    $string = stripslashes($string);
+}
+
+$string = mysql_real_escape_string($string);
+
+$cleanedString = str_replace('%','',$string);
+
+Also, underscores in MySQL are wildcards for single characters, so you may want to do something about that.
+
+Okay I have several comments:
+
+The magic quoting feature is deprecated, your PHP environment should never enable magic quotes.  So checking for it should be unnecessary, unless you're designing code that may be be deployed into other customers' environments who have (inadvisedly) enabled magic quotes. 
+The regular expression in your preg_match() is incorrect if you're searching for sequences of characters.  A regular expression like [xyz] matches any one of the single characters x, y, or z.  It does not match the string xy or yz.  Anyway, this is academic because I don't think you need to search or replace special characters this way at all.
+mysql_real_escape_string() is adequate to escape string literals that you intend to interpolate inside quotes in SQL strings.  No need to do string substitution for other quotes, backslashes, etc.
+% and _ are wildcards in SQL only when using pattern-matching with LIKE expressions.  These characters have no meaning if you're just comparing with equality or inequality operators or regexps.  Even if you are using LIKE expressions, there's no need to escape these characters for the sake of defense against SQL injection.  It's up to you if you want to treat them as literal characters (in which case escape them with a backslash) or wildcards in a LIKE expression (in which case just leave them in).
+All of the above applies when you're interpolating PHP variables into SQL expressions in place of literal string values.  Escaping is not necessary at all if you use bound query parameters instead of interpolating.  Bound parameters are not available in the plain "mysql" API, but only in the "mysqli" API.
+Another case is where you interpolate PHP variables in place of SQL table names, column names, or other SQL syntax.  You can't use bound parameters in such cases; bound parameters only take the place of string literals.  If you need to make the column name dynamic (for example to ORDER BY a column of the user's preference), you should delimit the column name with back-quotes (in MySQL) or square brackets (Microsoft) or double-quotes (other standard SQL).
+
+So I would say your code could be reduced simply to the following:
+$quotedString = mysql_real_escape_string($string);
+
+That's if you are going to use the string for interpolation; if you're going to use it as a bound parameter value, it's even simpler:
+$paramString = $string;
+
+
+If you are really worried about SQL injection issues you should strongly consider using prepared statements.  Because the SQL statement is evaluated before any of your user-data is provided your code is much safer.
+See PDO, and Mysqli

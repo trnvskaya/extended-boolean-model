@@ -1,0 +1,145 @@
+log4net with ASP.NET 3.5 problems
+asp.net .net-3.5 web-config log4net global-asax
+I'm having some trouble getting log4net to work from ASP.NET 3.5. This is the first time I've tried to use log4net, I feel like I'm missing a piece of the puzzle.
+My project references the log4net assembly, and as far as I can tell, it is being deployed successfully on my server.
+My web.config contains the following:
+  <configSections>
+    <section name="log4net"
+      type="log4net.Config.Log4NetConfigurationSectionHandler
+      , log4net"
+      requirePermission="false"/>
+  </configSections>
+
+  <log4net>
+    <appender name="InfoAppender" type="log4net.Appender.FileAppender">
+      <file value="..\..\logs\\InfoLog.html" />
+      <appendToFile value="true" />
+      <layout type="log4net.Layout.PatternLayout">
+        <conversionPattern
+          value="%d [%t] %-5p %c [%x] - %m%n" />
+      </layout>
+    </appender>
+    <logger name="_Default">
+      <level value="INFO" />
+      <appender-ref ref="InfoAppender" />
+    </logger>
+  </log4net>
+
+I'm using the following code to test the logger:
+using log4net;
+using log4net.Config;
+
+public partial class _Default : System.Web.UI.Page
+{
+    private static readonly ILog log = LogManager.GetLogger("_Default");
+
+    protected void Page_Load(object sender, EventArgs e)
+    {
+        log.Info("Hello logging world!");
+    }
+}
+
+In my Global.asax, I'm doing the following:
+void Application_Start(object sender, EventArgs e) 
+{
+    log4net.Config.XmlConfigurator.Configure();
+}
+
+At this point, I can't think of what else I might be doing wrong. The directory I'm trying to store the log in is writable, and even if I try different directories I get the same result: no file, no logs.
+Any suggestions? :-)
+
+Edit: I've tried several different formats for the path & name of the log file, some of which include "..\..\InfoLog.html", "InfoLog.html", "logs\InfoLog.html", etc, just in case someone is wondering if that's the problem.
+
+Edit: I've added the root logger node back into the log4net section, I ommitted that on accident when copying from the samples. The root logger node looks like this:
+<root>
+  <level value="INFO" />
+  <appender-ref ref="InfoAppender" />
+</root>
+
+Even with it, however, I'm still having no luck.
+
+
+The root logger is mandatory I think. I suspect configuration is failing because the root doesn't exist.
+Another potential problem is that Configure isn't being pointed to the Web.config.
+Try Configure(Server.MapPath("~/web.config")) instead.
+
+This is what i have in Global.ASX. Got it all working in asp.net 3.5
+<%@ Application Language="C#" %>
+
+<script runat="server">
+
+    void Application_Start(object sender, EventArgs e) 
+    {
+        // Code that runs on application startup
+         log4net.Config.XmlConfigurator.Configure(); 
+    }
+
+    void Application_End(object sender, EventArgs e) 
+    {
+        //  Code that runs on application shutdown
+        log4net.LogManager.Shutdown();
+    }
+
+    void Application_Error(object sender, EventArgs e) 
+    { 
+        // Code that runs when an unhandled error occurs
+    }
+
+    void Session_Start(object sender, EventArgs e) 
+    {
+        // Code that runs when a new session is started
+    }
+
+    void Session_End(object sender, EventArgs e) 
+    {
+        // Code that runs when a session ends. 
+        // Note: The Session_End event is raised only when the sessionstate mode
+        // is set to InProc in the Web.config file. If session mode is set to StateServer 
+        // or SQLServer, the event is not raised.
+    }
+</script>
+
+
+It sounds very much like a file permissions issue to me. If you specify a file name without any path, log4net will write to the root directory of the web application. Try that. Barring any success there, I'd recommend you enable internal log4net debugging by putting the following in your web.config:
+<?xml version="1.0" encoding="utf-8" ?>
+<configuration>
+    <appSettings>
+        <add key="log4net.Internal.Debug" value="true"/>
+    </appSettings>
+</configuration>
+
+Then, deploy the app compiled in debug mode and run the visual studio remote debugger to see any errors that are thrown.
+
+Just for info: the file path must be formatted as follows:
+<file value="..\\..\\logs\\InfoLog.html" />
+
+
+How about creating the logger with the page's type, like this:
+private static readonly ILog log = LogManager.GetLogger(typeof(_Default));
+
+
+i had the same (frustrating) problem. i moved the root to the top of the log4net config section and it all worked. Also, i too had root and a logger element, this resulted in two lines each time i made a call to the logger. i removed the logger element and simply keep the root and its working great.
+
+Iv just spent 3 hours trying to fix this problem is the end it was the web.config formatting.
+I had this, and it didn't work:
+<section name="SubSonicService" type="SubSonic.SubSonicSection, SubSonic" requirePermission="false"/>
+      <section name="log4net"
+        type="log4net.Config.Log4NetConfigurationSectionHandler
+      , log4net"
+        requirePermission="false"/>
+
+changing it to this fixed it:
+ <section name="log4net" type="log4net.Config.Log4NetConfigurationSectionHandler,log4net" requirePermission="false"/>
+
+Annoying!!
+
+A simple configuration tutorial from CodeProject
+
+I don't have the Global.asx to run in .net 3.5
+this is my code... I configure the log4net in a separate file log4net.config
+// Configure log4net using the .config file
+[assembly: log4net.Config.XmlConfigurator(ConfigFile = "log4net.config", Watch = true)]
+
+//My Web Services class name
+private static readonly log4net.ILog log = log4net.LogManager.GetLogger("Service1");
+

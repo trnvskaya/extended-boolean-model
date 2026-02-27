@@ -1,0 +1,64 @@
+How can I determine that Windows Installer is performing an upgrade rather than a first time install?
+installer installation windows-installer
+I have an install that upgrades a previous version of an app if it exits. I'd like to skip certain actions when the install is upgrade mode. How can I determine if the install is running in upgrade mode vs. first time install mode?
+I'm using Wise Installer, but I don't think that matters. I'm assuming that Windows Installer has a property that is set when the installer is in upgrade mode. I just can't seem to find it. If the property exists, I'm assuming I could use it in a conditional statement.
+
+
+I am not sure I understood your question.
+If you are writting the install script yourself, the best way, on Windows, is to check the registry keys such program usually creates. Unlike install directory (and start menu entries, etc.), it is an invariant. One of these keys can even be the version number of the software, to check in case a user tries to install an oldver version (or to know if some files must be removed, etc.).
+
+Can you elaborate what kind of tools are you using to create this installer?
+I use Windows Installer XML(WIX). In WIX you could do something like this:
+  <!-- Property definitions -->
+  <?define SkuName = "MyCoolApp"?>
+  <?define ProductName="My Cool Application"?>
+  <?define Manufacturer="Acme Inc."?>
+  <?define Copyright="Copyright Â© Acme Inc. All rights reserved."?>
+  <?define ProductVersion="1.1.0.0"?>
+  <?define RTMProductVersion="1.0.0.0" ?>
+  <?define UpgradeCode="{EF9D543D-9BDA-47F9-A6B4-D1845A2EBD49}"?>
+  <?define ProductCode="{27EA5747-9CE3-3F83-96C3-B2F5212CD1A6}"?>
+  <?define Language="1033"?>
+  <?define CodePage="1252"?>
+  <?define InstallerVersion="200"?>
+
+And define upgrade options:   
+<Upgrade Id="$(var.UpgradeCode)">
+      <UpgradeVersion Minimum="$(var.ProductVersion)"
+    		  IncludeMinimum="no"
+    		  OnlyDetect="yes"
+    		  Language="$(var.Language)"
+    		  Property="NEWPRODUCTFOUND" />
+
+      <UpgradeVersion Minimum="$(var.RTMProductVersion)"
+    		  IncludeMinimum="yes"
+    		  Maximum="$(var.ProductVersion)"
+    		  IgnoreRemoveFailure="no"
+    		  IncludeMaximum="no"
+    		  Language="$(var.Language)"
+    		  Property="OLDIEFOUND" />
+
+</Upgrade>
+
+Then further you could use OLDIEFOUND and NEWPRODUCTFOUND properties depending on what you want to do:
+<!-- Define custom actions -->
+<CustomAction   Id="ActivateProduct" 
+    		Directory='MyCoolAppFolder' 
+    		ExeCommand='"[MyCoolAppFolder]activateme.exe"' 
+    		Return='asyncNoWait' 
+		Execute='deferred'/>
+
+<CustomAction   Id="NoUpgrade4U" 
+    		Error="A newer version of MyCoolApp is already installed."/>
+
+The above defined actions have to be define in InstallExcecuteSequence 
+<InstallExecuteSequence>
+    <Custom	Action="NoUpgrade4U" 
+		After="FindRelatedProducts">NEWPRODUCTFOUND</Custom>
+    <Custom	Action="ActivateProduct" 
+		OnExit='success'>NOT OLDIEFOUND</Custom>
+</InstallExecuteSequence>
+
+
+There's an MSI property called Installed that will be true if the product is installed per-machine or for the current user. You can use it in conditional Boolean statements.
+You can also check these other MSI installation status properties, in case one of them would work better. I've never used Wise, but I assume there's a way to retrieve these properties.

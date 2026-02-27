@@ -1,0 +1,150 @@
+Any good "contact us" recipes for Cherrypy?
+python cherrypy contactus
+I'm looking to implement a "Contact Us" form with Cherrypy and was wondering: Is there a good recipe (or a BSD licensed set of code) that I could use instead of reinventing the wheel?
+Ideally, this would be Cherrpy 3.1 compatible.
+
+
+Well, I had to look into a solution.  This works (ugly, and w/o Javascript validation) -- using the smtplib lib.  Also, note that I stole Jeff's captcha for this example.  Anyone using this will need to change it.  
+EDIT: I added validation.
+#!/usr/local/bin/python2.4 
+import smtplib 
+import cherrypy
+
+class InputExample:
+   @cherrypy.expose
+   def index(self):
+       return "<html><head></head><body><a href="contactus">Contact Us</a></body></html>"
+
+
+        @cherrypy.expose
+        def contactus(self,message=''):
+                return """
+<html>
+<head><title>Contact Us</title>
+<script type="text/javascript">
+
+   function isNotEmpty(elem)
+   {
+      var str = elem.value;
+      var re = /.+/;
+      if (!str.match(re))
+      {
+         elem.focus();
+         return false;
+      }
+      else
+      {
+         return true;
+      }
+
+   }
+
+   function isEMailAddr(elem)
+   {
+      var str = elem.value;
+      var re = /^[\w-]+(\.[\w-]+)*@([\w-]+\.)+[a-zA-Z]{2,7}$/;
+      if (!str.match(re))
+      {
+         return false;
+      }
+      else
+      {
+         return true;
+      }
+   }
+
+   function validateForm(form)
+   {
+      if (isNotEmpty(form.firstName) && isNotEmpty(form.lastName))
+      {
+         if (isNotEmpty(form.email))
+         {
+         if (isEMailAddr(form.email))
+         {
+            if (isNotEmpty(form.captcha))
+            {
+               if ( form.captcha.value=='egnaro'.split("").reverse().join(""))
+               {
+                   if (isNotEmpty(form.subject))
+                     {
+                        alert("All required fields are found.  We will respond shortly.");
+                        return true;
+                     }
+               }
+               else
+               {
+                   alert("Please enter the word as displayed in the image.");
+                   return false;
+               }
+            }//captcha empty
+            }
+         else
+         {
+            alert("Please enter a valid email address.");
+            return false;
+         } //email
+         } //email
+      } //first and last name
+      alert("Please fill in all required fields.");
+      return false;
+   }
+
+</script>
+</head>
+<body>
+<p>%(message)s</p>
+<form method='POST' action='contactUsSubmitted' onsubmit='return validateForm(this)'>
+   <label for="firstName">First Name: </label>
+   <input type="text" id="firstName" name="firstName" /> (required)<br/>
+   <label for="lastName">Last Name: </label>
+   <input type="text" id="lastName" name="lastName" /> (required)<br/>
+   <label for="email">E-mail address: </label>
+   <input type="text" id="email" name="email" /> (required)<br/>
+  <label for="phone">Phone number: </label>
+   <input type="text" id="phone" name="phone" /> <br/><br/>
+
+   <!--THIS NEEDS TO BE CHANGED TO MATCH YOUR OWN CAPTCHA SCHEME!! -->
+   <label for="captcha">Enter the word<br /><img alt="rhymes with.." src="http://www.codinghorror.com/blog/images/word.png" width="99" height="26" border="0" /></label><br />
+(<a href="http://www.codinghorror.com/blog/sounds/captcha-word-spoken.mp3">hear it spoken</a>)<br />
+   <input tabindex="3" id="captcha" name="captcha" /><br /><br />
+
+   <label for="subject">Subject: </label>
+   <input type="text" id="subject" name="subject" /> (required)<br/>
+   <label for="body">Details: </label>
+   <textarea id="body" name="body"></textarea><br/>
+
+<input type='submit' value='Contact Us' />
+</form>
+</body>
+</html>
+"""%{'message':message}
+
+
+        @cherrypy.expose
+        def contactUsSubmitted(self, firstName, lastName, email, phone, captcha, subject, body ):
+                if captcha[::-1] != 'egnaro':
+                        return self.contactus("Please reenter the word you see in the image." )
+                self.sendEmail('mail2.example.com','mailbox_account','mailbox_pwd','me@example.com',email,
+                     'Website Contact: '+subject, 'Sender Email: ' + email + '\r\n'
+                     'Name: ' + firstName + ' ' + lastName + '\r\n' + 'Phone: ' + phone + '\r\n' + body)
+                return self.index()
+
+        def sendEmail(self,smtpServer, mailboxName, mailboxPassword, contactEmail,senderEmail,subject,body):
+                server = smtplib.SMTP(smtpServer) #'smtp1.example.com')
+                server.login(mailboxName, mailboxPassword)
+
+                msg = "To: %(contactEmail)s\r\nFrom: %(senderEmail)s\r\nSubject: %(subject)s\r\nContent-type: text/plain\r\n\r\n%(body)s"
+                msg = msg%{'contactEmail':contactEmail,'senderEmail':mailboxName + '@example.com','subject':subject,'body':body}
+
+                server.sendmail(contactEmail, contactEmail, msg) #This is to send it from an internal account to another internal account.
+                server.quit()
+
+
+cherrypy.root = InputExample()
+cherrypy.config.update ( file = 'development.conf' )
+cherrypy.server.start()
+
+
+I realize the question is four years old, but for those still searching:
+I recommend using the python library Marrow Mailer. It abstracts the whole smtp vs sendmail, etc., and also provides excellent server-side validation. The code is under the MIT license (which is BSD-esque and GPL compatible), which is what you were looking for. The readme on github provides examples on how to use. The library is compatible with Python 2.6+ and 3.1+.
+Marrow Mailer, combined with the answer by torial, provides a simple "contact us" form for CherryPy/python. I've found Voluptuous to be a very simple validator (that you can use for the form server side; BSD license), or the WIP Validator. There's also several Javascript/jQuery plugins for validating client side (such as http://docs.jquery.com/Plugins/Validation).

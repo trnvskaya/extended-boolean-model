@@ -1,0 +1,313 @@
+How do exceptions work (behind the scenes) in c++
+c++ performance exception throw try-catch
+I keep seeing people say that exceptions are slow but I never see any proof. So instead of asking if they are I will ask how do exceptions work behind the scene so I can make a decisions of when to use them and if they are slow.
+From what I know exceptions are the same thing as doing a bunch of return but it also checks when it needs to stop doing the return. How does it check when to do stop? I am taking a guess and saying there is a second stack which holds the type of exception and stack location then does returns until it gets there. I am also guessing the only time that stack is touch is on a throw and every try/catch. AFAICT implementing a similar behaviour with return code would take the same amount of time. But this is all a guess so I want to know.
+How do exceptions really work?
+
+
+There are a number of ways you could implement exceptions, but typically they will rely on some underlying support from the OS.  On Windows this is the structured exception handling mechanism.
+There is decent discussion of the details on Code Project: How a C++ compiler implements exception handling
+The overhead of exceptions occurs because the compiler has to generate code to keep track of which objects must be destructed in each stack frame (or more precisely scope) if an exception propagates out of that scope.  If a function has no local variables on the stack that require destructors to be called then it should not have a performance penalty wrt exception handling.
+Using a return code can only unwind a single level of the stack at a time, whereas an exception handling mechanism can jump much further back down the stack in one operation if there is nothing for it to do in the intermediate stack frames.
+
+Matt Pietrek wrote an excellent article on Win32 Structured Exception Handling. While this article was originally written in 1997, it still applies today (but of course only applies to Windows).
+
+A friend of me wrote a bit how Visual C++ handles exceptions some years ago.
+http://www.xyzw.de/c160.html
+
+All good answers.
+Also, think about how much easier it is to debug code that does 'if checks' as gates at the top of methods instead of allowing the code to throw exceptions.
+My motto is that it's easy to write code that works. The most important thing is to write the code for the next person who looks at it.  In some cases, it's you in 9 months, and you don't want to be cursing your name!
+
+This article examines the issue and basically finds that in practice there is a run-time cost to exceptions, although the cost is fairly low if the exception isn't thrown. Good article, recommended.
+
+Instead of guessing, I decided to actually look at the generated code with a small piece of C++ code and a somewhat old Linux install.
+class MyException
+{
+public:
+    MyException() { }
+    ~MyException() { }
+};
+
+void my_throwing_function(bool throwit)
+{
+    if (throwit)
+    	throw MyException();
+}
+
+void another_function();
+void log(unsigned count);
+
+void my_catching_function()
+{
+    log(0);
+    try
+    {
+    	log(1);
+    	another_function();
+    	log(2);
+    }
+    catch (const MyException& e)
+    {
+    	log(3);
+    }
+    log(4);
+}
+
+I compiled it with g++ -m32 -W -Wall -O3 -save-temps -c, and looked at the generated assembly file.
+    .file	"foo.cpp"
+    .section	.text._ZN11MyExceptionD1Ev,"axG",@progbits,_ZN11MyExceptionD1Ev,comdat
+    .align 2
+    .p2align 4,,15
+    .weak	_ZN11MyExceptionD1Ev
+    .type	_ZN11MyExceptionD1Ev, @function
+_ZN11MyExceptionD1Ev:
+.LFB7:
+    pushl	%ebp
+.LCFI0:
+    movl	%esp, %ebp
+.LCFI1:
+    popl	%ebp
+    ret
+.LFE7:
+    .size	_ZN11MyExceptionD1Ev, .-_ZN11MyExceptionD1Ev
+
+_ZN11MyExceptionD1Ev is MyException::~MyException(), so the compiler decided it needed a non-inline copy of the destructor.
+.globl __gxx_personality_v0
+.globl _Unwind_Resume
+    .text
+    .align 2
+    .p2align 4,,15
+.globl _Z20my_catching_functionv
+    .type	_Z20my_catching_functionv, @function
+_Z20my_catching_functionv:
+.LFB9:
+    pushl	%ebp
+.LCFI2:
+    movl	%esp, %ebp
+.LCFI3:
+    pushl	%ebx
+.LCFI4:
+    subl	$20, %esp
+.LCFI5:
+    movl	$0, (%esp)
+.LEHB0:
+    call	_Z3logj
+.LEHE0:
+    movl	$1, (%esp)
+.LEHB1:
+    call	_Z3logj
+    call	_Z16another_functionv
+    movl	$2, (%esp)
+    call	_Z3logj
+.LEHE1:
+.L5:
+    movl	$4, (%esp)
+.LEHB2:
+    call	_Z3logj
+    addl	$20, %esp
+    popl	%ebx
+    popl	%ebp
+    ret
+.L12:
+    subl	$1, %edx
+    movl	%eax, %ebx
+    je	.L16
+.L14:
+    movl	%ebx, (%esp)
+    call	_Unwind_Resume
+.LEHE2:
+.L16:
+.L6:
+    movl	%eax, (%esp)
+    call	__cxa_begin_catch
+    movl	$3, (%esp)
+.LEHB3:
+    call	_Z3logj
+.LEHE3:
+    call	__cxa_end_catch
+    .p2align 4,,3
+    jmp	.L5
+.L11:
+.L8:
+    movl	%eax, %ebx
+    .p2align 4,,6
+    call	__cxa_end_catch
+    .p2align 4,,6
+    jmp	.L14
+.LFE9:
+    .size	_Z20my_catching_functionv, .-_Z20my_catching_functionv
+    .section	.gcc_except_table,"a",@progbits
+    .align 4
+.LLSDA9:
+    .byte	0xff
+    .byte	0x0
+    .uleb128 .LLSDATT9-.LLSDATTD9
+.LLSDATTD9:
+    .byte	0x1
+    .uleb128 .LLSDACSE9-.LLSDACSB9
+.LLSDACSB9:
+    .uleb128 .LEHB0-.LFB9
+    .uleb128 .LEHE0-.LEHB0
+    .uleb128 0x0
+    .uleb128 0x0
+    .uleb128 .LEHB1-.LFB9
+    .uleb128 .LEHE1-.LEHB1
+    .uleb128 .L12-.LFB9
+    .uleb128 0x1
+    .uleb128 .LEHB2-.LFB9
+    .uleb128 .LEHE2-.LEHB2
+    .uleb128 0x0
+    .uleb128 0x0
+    .uleb128 .LEHB3-.LFB9
+    .uleb128 .LEHE3-.LEHB3
+    .uleb128 .L11-.LFB9
+    .uleb128 0x0
+.LLSDACSE9:
+    .byte	0x1
+    .byte	0x0
+    .align 4
+    .long	_ZTI11MyException
+.LLSDATT9:
+
+Surprise! There are no extra instructions at all on the normal code path. The compiler instead generated extra out-of-line fixup code blocks, referenced via a table at the end of the function (which is actually put on a separate section of the executable). All the work is done behind the scenes by the standard library, based on these tables (_ZTI11MyException is typeinfo for MyException).
+OK, that was not actually a surprise for me, I already knew how this compiler did it. Continuing with the assembly output:
+    .text
+    .align 2
+    .p2align 4,,15
+.globl _Z20my_throwing_functionb
+    .type	_Z20my_throwing_functionb, @function
+_Z20my_throwing_functionb:
+.LFB8:
+    pushl	%ebp
+.LCFI6:
+    movl	%esp, %ebp
+.LCFI7:
+    subl	$24, %esp
+.LCFI8:
+    cmpb	$0, 8(%ebp)
+    jne	.L21
+    leave
+    ret
+.L21:
+    movl	$1, (%esp)
+    call	__cxa_allocate_exception
+    movl	$_ZN11MyExceptionD1Ev, 8(%esp)
+    movl	$_ZTI11MyException, 4(%esp)
+    movl	%eax, (%esp)
+    call	__cxa_throw
+.LFE8:
+    .size	_Z20my_throwing_functionb, .-_Z20my_throwing_functionb
+
+Here we see the code for throwing an exception. While there was no extra overhead simply because an exception might be thrown, there is obviously a lot of overhead in actually throwing and catching an exception. Most of it is hidden within __cxa_throw, which must:
+
+Walk the stack with the help of the exception tables until it finds a handler for that exception.
+Unwind the stack until it gets to that handler.
+Actually call the handler.
+
+Compare that with the cost of simply returning a value, and you see why exceptions should be used only for exceptional returns.
+To finish, the rest of the assembly file:
+    .weak	_ZTI11MyException
+    .section	.rodata._ZTI11MyException,"aG",@progbits,_ZTI11MyException,comdat
+    .align 4
+    .type	_ZTI11MyException, @object
+    .size	_ZTI11MyException, 8
+_ZTI11MyException:
+    .long	_ZTVN10__cxxabiv117__class_type_infoE+8
+    .long	_ZTS11MyException
+    .weak	_ZTS11MyException
+    .section	.rodata._ZTS11MyException,"aG",@progbits,_ZTS11MyException,comdat
+    .type	_ZTS11MyException, @object
+    .size	_ZTS11MyException, 14
+_ZTS11MyException:
+    .string	"11MyException"
+
+The typeinfo data.
+    .section	.eh_frame,"a",@progbits
+.Lframe1:
+    .long	.LECIE1-.LSCIE1
+.LSCIE1:
+    .long	0x0
+    .byte	0x1
+    .string	"zPL"
+    .uleb128 0x1
+    .sleb128 -4
+    .byte	0x8
+    .uleb128 0x6
+    .byte	0x0
+    .long	__gxx_personality_v0
+    .byte	0x0
+    .byte	0xc
+    .uleb128 0x4
+    .uleb128 0x4
+    .byte	0x88
+    .uleb128 0x1
+    .align 4
+.LECIE1:
+.LSFDE3:
+    .long	.LEFDE3-.LASFDE3
+.LASFDE3:
+    .long	.LASFDE3-.Lframe1
+    .long	.LFB9
+    .long	.LFE9-.LFB9
+    .uleb128 0x4
+    .long	.LLSDA9
+    .byte	0x4
+    .long	.LCFI2-.LFB9
+    .byte	0xe
+    .uleb128 0x8
+    .byte	0x85
+    .uleb128 0x2
+    .byte	0x4
+    .long	.LCFI3-.LCFI2
+    .byte	0xd
+    .uleb128 0x5
+    .byte	0x4
+    .long	.LCFI5-.LCFI3
+    .byte	0x83
+    .uleb128 0x3
+    .align 4
+.LEFDE3:
+.LSFDE5:
+    .long	.LEFDE5-.LASFDE5
+.LASFDE5:
+    .long	.LASFDE5-.Lframe1
+    .long	.LFB8
+    .long	.LFE8-.LFB8
+    .uleb128 0x4
+    .long	0x0
+    .byte	0x4
+    .long	.LCFI6-.LFB8
+    .byte	0xe
+    .uleb128 0x8
+    .byte	0x85
+    .uleb128 0x2
+    .byte	0x4
+    .long	.LCFI7-.LCFI6
+    .byte	0xd
+    .uleb128 0x5
+    .align 4
+.LEFDE5:
+    .ident	"GCC: (GNU) 4.1.2 (Ubuntu 4.1.2-0ubuntu4)"
+    .section	.note.GNU-stack,"",@progbits
+
+Even more exception handling tables, and assorted extra information.
+So, the conclusion, at least for GCC on Linux: the cost is extra space (for the handlers and tables) whether or not exceptions are thrown, plus the extra cost of parsing the tables and executing the handlers when an exception is thrown. If you use exceptions instead of error codes, and an error is rare, it can be faster, since you do not have the overhead of testing for errors anymore.
+In case you want more information, in particular what all the __cxa_ functions do, see the original specification they came from:
+
+Itanium C++ ABI
+
+
+Exceptions being slow was true in the old days.
+In most modern compiler this no longer holds true.
+Note: Just because we have exceptions does not mean we do not use error codes as well. When error can be handled locally use error codes. When errors require more context for correction use exceptions: I wrote it much more eloquently here: http://stackoverflow.com/questions/106586/what-are-the-principles-guiding-your-exception-handling-policy#106749
+The cost of exception handling code when no exceptions are being used is practically zero.
+When an exception is thrown there is some work done.
+But you have to compare this against the cost of returning error codes and checking them all the way back to to point where the error can be handled. Both more time consuming to write and maintain.
+Also there is one gotcha for novices:
+Though Exception objects are supposed to be small some people put lots of stuff inside them. Then you have the cost of copying the exception object. The solution there is two fold:
+
+Don't put extra stuff in your exception.
+Catch by const reference.
+
+In my opinion I would bet that the same code with exceptions is either more efficient or at least as comparable as the code without the exceptions (but has all the extra code to check function error results). Remember you are not getting anything for free the compiler is generating the code you should have written in the first place to check error codes (and usually the compiler is much more efficient than a human).

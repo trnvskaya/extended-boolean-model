@@ -1,0 +1,112 @@
+How can I modify a saved Microsoft Access 2007 or 2010 Import Specification?
+ms-access
+Does anyone know how to modify an existing import specification in Microsoft Access 2007 or 2010?  In older versions there used to be an Advanced button presented during the import wizard that allowed you to select and edit an existing specification.  I no longer see this feature but hope that it still exists and has just been moved somewhere else.
+
+
+I don't believe there is a direct supported way.  However, if you are desparate, then under navigation options, select to show system objects.  Then in your table list, system tables will appear.  Two tables are of interest here:  MSysIMEXspecs and MSysIMEXColumns.  You'll be able edit import and export information.  Good luck!
+
+I am able to use this feature on my machine using MS Access 2007.
+
+On the Ribbon, select External Data  
+Select the "Text File" option  
+This displays the Get External Data Wizard  
+Specify the location of the file you wish to import  
+Click OK. This displays the "Import Text Wizard"  
+On the bottom of this dialog screen is the Advanced button you referenced  
+Clicking on this button should display the Import Specification screen and allow you to select and modify an existing import spec.  
+
+For what its worth, I'm using Access 2007 SP1
+
+Tim Lentine's answer seems to be true even in the full release. There is just one other thing I would like to mention.
+If you complete your import without going into "Advanced..." and saving the spec, but you do save the import for reuse at the end of the wizard (new feature AFAIK), you will not be able to go back and edit that spec. It is built into the "Saved Import". This may be what Knox was referring to.
+You can, however, do a partial work around:
+
+Import a new file (or the same one all over again) but,
+This time choose to append, instead of making a new 
+Click OK.
+Go into "advanced" All your column heading and data-types will be there.
+Now you can make the changes you need and save the spec inside that dialog. Then cancel out of that import (that is not what you wanted anyway, right?)
+You can then use that spec for any further imports. It's not a full solution, but saves some of the work.
+
+
+Below are three functions you can use to alter and use the MS Access 2010 Import Specification.  The third sub changes the name of an existing import specification.  The second sub allows you to change any xml text in the import spec.  This is useful if you need to change column names, data types, add columns, change the import file location, etc.. In essence anything you want modify for an existing spec.  The first Sub is a routine that allows you to call an existing import spec, modify it for a specific file you are attempting to import, importing that file, and then deleting the modified spec, keeping the import spec "template" unaltered and intact.  Enjoy.
+Public Sub MyExcelTransfer(myTempTable As String, myPath As String)
+On Error GoTo ERR_Handler:
+    Dim mySpec As ImportExportSpecification
+    Dim myNewSpec As ImportExportSpecification
+    Dim x As Integer
+
+    For x = 0 To CurrentProject.ImportExportSpecifications.Count - 1
+    If CurrentProject.ImportExportSpecifications.Item(x).Name = "TemporaryImport" Then
+        CurrentProject.ImportExportSpecifications.Item("TemporaryImport").Delete
+        x = CurrentProject.ImportExportSpecifications.Count
+    End If
+    Next x
+    Set mySpec = CurrentProject.ImportExportSpecifications.Item(myTempTable)
+    CurrentProject.ImportExportSpecifications.Add "TemporaryImport", mySpec.XML
+    Set myNewSpec = CurrentProject.ImportExportSpecifications.Item("TemporaryImport")
+
+    myNewSpec.XML = Replace(myNewSpec.XML, "\\MyComputer\ChangeThis", myPath)
+    myNewSpec.Execute
+    myNewSpec.Delete
+    Set mySpec = Nothing
+    Set myNewSpec = Nothing
+    exit_ErrHandler:
+    For x = 0 To CurrentProject.ImportExportSpecifications.Count - 1
+    If CurrentProject.ImportExportSpecifications.Item(x).Name = "TemporaryImport" Then
+        CurrentProject.ImportExportSpecifications.Item("TemporaryImport").Delete
+        x = CurrentProject.ImportExportSpecifications.Count
+    End If
+    Next x
+Exit Sub    
+ERR_Handler:
+    MsgBox Err.Description
+    Resume exit_ErrHandler
+End Sub
+
+Public Sub fixImportSpecs(myTable As String, strFind As String, strRepl As String)
+    Dim mySpec As ImportExportSpecification    
+    Set mySpec = CurrentProject.ImportExportSpecifications.Item(myTable)    
+    mySpec.XML = Replace(mySpec.XML, strFind, strRepl)
+    Set mySpec = Nothing
+End Sub
+
+
+Public Sub MyExcelChangeName(OldName As String, NewName As String)
+    Dim mySpec As ImportExportSpecification
+    Dim myNewSpec As ImportExportSpecification
+    Set mySpec = CurrentProject.ImportExportSpecifications.Item(OldName)    
+    CurrentProject.ImportExportSpecifications.Add NewName, mySpec.XML
+    mySpec.Delete
+    Set mySpec = Nothing
+    Set myNewSpec = Nothing
+End Sub
+
+
+When I want to examine or change an import / export specification I query the tables in MS Access where the specification is defined.
+SELECT 
+    MSysIMEXSpecs.SpecName,
+    MSysIMexColumns.*
+FROM 
+    MSysIMEXSpecs
+    LEFT JOIN MSysIMEXColumns 
+    ON MSysIMEXSpecs.SpecID = MSysIMEXColumns.SpecID
+WHERE
+    SpecName = 'MySpecName'
+ORDER BY
+    MSysIMEXSpecs.SpecID, MSysIMEXColumns.Start;
+
+You can also use an UPDATE or INSERT statement to alter existing columns or insert and append new columns to an existing specification.  You can create entirely new specifications using this methodology.
+
+Why so complicated?
+Just check System Objects in Access-Options/Current Database/Navigation Options/Show System Objects
+Open Table "MSysIMEXSpecs" and change according to your needs - its easy to read...
+
+Tim Lentine's answer works IF you have yours specs saved. Your question did not specify that, it only stated you had imported the data. His method would not save your specs that way. 
+The way to save the spec of that current import is to re-open the import, hit "apend" and that will allow you to use your current import settings that MS Access picked up. (This is useful if your want to keep the import specs from an Excel format you worked on prior to importing into MS ACCESS.)  
+Once you're in the apend option, use Tim's instructions, which is using the advanced option and "Save As." From there, simply click cancel, and you can now import any other similar data to various tables, etc. 
+
+I have just discovered an apparent bug in the whole Saved Import/XML setup in Access. Also frustrated by the rigidity of the Saved Import system, I created forms and wrote code to pick apart the XML in which the Saved Import specs are stored, to the point that I could use this tool to actually create a Saved Import from scratch via coded examination of a source Excel workbook.
+What I've found out is that, while Access correctly imports a worksheet per modifications of default settings by the user (for example, it likes to take any column with a header name ending with "ID" and make it an indexed field in the resulting table, but you can cancel this during the import process), and while it also correctly creates XML in accordance to the user changes, if you then drop the table and use the Saved Import to re-import the worksheet, it ignores the XML import spec and reverts back to using its own invented defaults, at least in the case of the "ID" columns.
+You can try this on your own: import an worksheet Excel with at least one column header name ending with "ID" ("OrderID", "User ID", or just plain "ID"). During the process, be sure to set "Indexed" to No for those columns. Execute the import and check "Save import steps" in the final dialog window. If you inspect the resulting table design, you will see there is no index on the field(s) in question. Then delete the table, find the saved import and execute it again. This time, those fields will be set as Indexed in the table design, even though the XML still says no index.
+I was pulling my hair out until I discovered what was going on, comparing the XML I built from scratch with examples created through the Access tool.

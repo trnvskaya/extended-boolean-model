@@ -1,0 +1,64 @@
+Is there really no way to follow up dataset parent relation in xaml binding?
+wpf data-binding xaml dataset
+Suppose I have a dataset with those two immortal tables: Employee & Order 
+Emp -> ID, Name 
+Ord -> Something, Anotherthing, EmpID 
+And relation Rel: Ord (EmpID) -> Emp (ID) 
+It works great in standard master/detail scenario 
+(show employees, follow down the relation, show related orders), 
+but what when I wan't to go the opposite way (show Ord table with Emp.Name)? 
+Something like this:
+<stackpanel>   // with datacontext set from code to dataset.tables["ord"]
+   <TextBox Text="{Binding Something}"/>
+   <TextBox Text="{Binding Anotherthing}"/>
+   <TextBox Text="{Binding ???}"/> // that's my problem, how to show related Emp.Name 
+</stackpanel>
+
+Any ideas? I can create value converter, but if I wan't to use dataset instance which I get from parent module it gets tricky.
+
+
+Assuming that you are using a strongly-typed DataSet, in order to bind the TextBox to the 'EmpRow.Name' property, you will probably have to expose it as a property on the 'OrdDataTable' class.
+Since Visual Studio generates the typed DataSet code with partial classes, you could add the property to the 'OrdDataTable' class this way:
+using System.Data;
+
+public partial class OrdDataTable : DataTable
+{
+    public string EmpName
+    {
+        get { return this.EmpRow.Name; }
+    }
+}
+
+Then you would be able to bind to the 'EmpName' property of the 'OrdDataTable' object in the data context.
+
+What is the DataContext for the two TextBox controls?For the second binding to work the DataContext must be set to an instance of the 'USERSDataTable'. Since these are contained in an array in the DataSet, you have to explicitly tell which table you want to bind to. Something like:
+<StackPanel>
+    <StackPanel.Resources>
+        <ObjectDataProvider x:Key="ds" ObjectType="{x:Type mynamespace:MyDataSet}" />
+    </StackPanel.Resources>
+
+    <!-- Notice we set the data context to the first item in the array of tables -->
+    <StackPanel DataContext="{Binding Source={StaticResource ds}, Path=USERS[0]}">
+        <TextBox Text="{Binding NAME}"/>
+        <TextBox Text="{Binding COUNTRIESRow.NAME}"/>
+    </StackPanel>
+</StackPanel>
+
+
+If you want to synchronize the contents of multiple controls, you will need to have them share the same binding source through the DataContext set on a common parent control. Here is an example:
+<StackPanel>
+    <StackPanel.Resources>
+        <ObjectDataProvider x:Key="ds" ObjectType="{x:Type mynamespace:MyDataSet}" />
+    </StackPanel.Resources>
+
+    <!-- We set the data context to the collection of rows in the table -->
+    <StackPanel DataContext="{Binding Source={StaticResource ds}, Path=USERS.Rows}">
+        <ListBox ItemsSource="{Binding}"
+                 DisplayMemberPath="NAME"
+                 IsSynchronizedWithCurrentItem="True" />
+        <TextBox Text="{Binding Path=NAME}"/>
+        <TextBox Text="{Binding Path=COUNTRIESRow.NAME}"/>
+    </StackPanel>
+</StackPanel>
+
+Setting the IsSynchronizedWithCurrentItem property to 'True' will cause the ListBox.SelectedItem property to be automatically synchronized with the CollectionView.CurrentItem of the binding source, that is the collection of rows set at the DataContext. This means that the currently selected row in the ListBox becomes the binding source for the two TextBox controls.

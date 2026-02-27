@@ -1,0 +1,32 @@
+MOSS 2007: SPListItem.GetFormattedValue for DateTime fields has a bug?
+sharepoint datetime moss
+SPListItem.GetFormattedValue seems to have a strange behavior for DateTime fields.
+It retrieves the DateTime value through SPListItem's indexer which according to this MSDN article returns local time.
+Here's a snippet from Reflector
+public string GetFormattedValue(string fieldName)
+{
+    SPField field = this.Fields.GetField(fieldName);
+    if (field != null)
+    {
+        return field.GetFieldValueAsHtml(this[fieldName]);
+    }
+    return null;
+}
+
+So it uses SPListItem's indexer to retrieve the value and than SPFields.GetFieldValueAsHtml to format the value. GetFieldValueAsHtml seems to assume the date is in UTC and convert it to local time no matter what kind it is. (Reflector shows that it uses GetFieldValueAsText which uses value.ToString() but for some reason it assumes the time to be UTC.)
+The end result is that the string representation on a time field obtained trough listItem.GetFormattedValue() (at least in my case) is incorrect, being local time + (local time - UTC).
+Have anybody encountered the same issue with SPListItem.GetFormattedValue() and what was your workaround?
+
+
+I have had a recognised bug with the date conversion from UTC in SharePoint. It was fixed in SP1.
+
+Converting the date back to universal time before calling GetFieldValueAsHtml works just fine.
+DateTime localTime = (DateTime)item["DueDate"];
+// this is local time but if you do localDateTime.Kind it returns Unspecified
+// treats the date as universal time.. 
+// let's give it the universal time :)
+DateTime universalTime = SPContext.Current.Web
+    .RegionalSettings.TimeZone.LocalTimeToUTC(localTime);
+string correctFormattedValue = 
+    item.Fields["DueDate"].GetFieldValueAsHtml(universalTime);
+

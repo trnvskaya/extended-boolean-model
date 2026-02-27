@@ -1,0 +1,264 @@
+How do you create a debug only function that takes a variable argument list? Like printf()
+c++ c c-preprocessor
+I'd like to make a debug logging function with the same parameters as printf.  But one that can be removed by the pre-processor during optimized builds.
+For example:
+Debug_Print("Warning: value %d > 3!\n", value);
+
+I've looked at variadic macros but those aren't available on all platforms. gcc supports them, msvc does not.
+
+
+What platforms are they not available on? stdarg is part of the standard library:
+http://www.opengroup.org/onlinepubs/009695399/basedefs/stdarg.h.html
+Any platform not providing it is not a standard C implementation (or very, very old). For those, you will have to use varargs:
+http://opengroup.org/onlinepubs/007908775/xsh/varargs.h.html
+
+Here's something that I do in C/C++. First off, you write a function that uses the varargs stuff (see the link in Stu's posting). Then do something like this:
+
+ int debug_printf( const char *fmt, ... );
+ #if defined( DEBUG )
+  #define DEBUG_PRINTF(x) debug_printf x
+ #else
+   #define DEBUG_PRINTF(x)
+ #endif
+
+ DEBUG_PRINTF(( "Format string that takes %s %s\n", "any number", "of args" ));
+
+All you have to remember is to use double-parens when calling the debug function, and the whole line will get removed in non-DEBUG code.
+
+I still do it the old way, by defining a macro (XTRACE, below) which correlates to either a no-op or a function call with a variable argument list. Internally, call vsnprintf so you can keep the printf syntax:
+#include <stdio.h>
+
+void XTrace0(LPCTSTR lpszText)
+{
+   ::OutputDebugString(lpszText);
+}
+
+void XTrace(LPCTSTR lpszFormat, ...)
+{
+    va_list args;
+    va_start(args, lpszFormat);
+    int nBuf;
+    TCHAR szBuffer[512]; // get rid of this hard-coded buffer
+    nBuf = _vsnprintf(szBuffer, 511, lpszFormat, args);
+    ::OutputDebugString(szBuffer);
+    va_end(args);
+}
+
+Then a typical #ifdef switch:
+#ifdef _DEBUG
+#define XTRACE XTrace
+#else
+#define XTRACE
+#endif
+
+Well that can be cleaned up quite a bit but it's the basic idea.
+
+Ah, vsprintf() was the thing I was missing.  I can use this to pass the variable argument list directly to printf():
+#include <stdarg.h>
+#include <stdio.h>
+
+void DBG_PrintImpl(char * format, ...)
+{
+    char buffer[256];
+    va_list args;
+    va_start(args, format);
+    vsprintf(buffer, format, args);
+    printf("%s", buffer);
+    va_end(args);
+}
+
+Then wrap the whole thing in a macro.
+
+Another fun way to stub out variadic functions is:
+#define function sizeof
+
+
+In C++ you can use the streaming operator to simplify things:
+#if defined _DEBUG
+
+class Trace
+{
+public:
+   static Trace &GetTrace () { static Trace trace; return trace; }
+   Trace &operator << (int value) { /* output int */ return *this; }
+   Trace &operator << (short value) { /* output short */ return *this; }
+   Trace &operator << (Trace &(*function)(Trace &trace)) { return function (*this); }
+   static Trace &Endl (Trace &trace) { /* write newline and flush output */ return trace; }
+   // and so on
+};
+
+#define TRACE(message) Trace::GetTrace () << message << Trace::Endl
+
+#else
+#define TRACE(message)
+#endif
+
+and use it like:
+void Function (int param1, short param2)
+{
+   TRACE ("param1 = " << param1 << ", param2 = " << param2);
+}
+
+You can then implement customised trace output for classes in much the same way you would do it for outputting to std::cout.
+
+Part of the problem with this kind of functionality is that often it requires
+variadic macros.  These were standardized fairly recently(C99), and lots of
+old C compilers do not support the standard, or have their own special work
+around.
+Below is a debug header I wrote that has several cool features:
+
+Supports C99 and C89 syntax for debug macros
+Enable/Disable output based on function argument
+Output to file descriptor(file io)
+
+Note: For some reason I had some slight code formatting problems.
+#ifndef _DEBUG_H_
+#define _DEBUG_H_
+#if HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#include "stdarg.h"
+#include "stdio.h"
+
+#define ENABLE 1
+#define DISABLE 0
+
+extern FILE* debug_fd;
+
+int debug_file_init(char *file);
+int debug_file_close(void);
+
+#if HAVE_C99
+#define PRINT(x, format, ...) \
+if ( x ) { \
+if ( debug_fd != NULL ) { \
+fprintf(debug_fd, format, ##__VA_ARGS__); \
+} \
+else { \
+fprintf(stdout, format, ##__VA_ARGS__); \
+} \
+}
+#else
+void PRINT(int enable, char *fmt, ...);
+#endif
+
+#if _DEBUG
+#if HAVE_C99
+#define DEBUG(x, format, ...) \
+if ( x ) { \
+if ( debug_fd != NULL ) { \
+fprintf(debug_fd, "%s : %d " format, __FILE__, __LINE__, ##__VA_ARGS__); \
+} \
+else { \
+fprintf(stderr, "%s : %d " format, __FILE__, __LINE__, ##__VA_ARGS__); \
+} \
+}
+
+#define DEBUGPRINT(x, format, ...) \
+if ( x ) { \
+if ( debug_fd != NULL ) { \
+fprintf(debug_fd, format, ##__VA_ARGS__); \
+} \
+else { \
+fprintf(stderr, format, ##__VA_ARGS__); \
+} \
+}
+#else /* HAVE_C99 */
+
+void DEBUG(int enable, char *fmt, ...);
+void DEBUGPRINT(int enable, char *fmt, ...);
+
+#endif /* HAVE_C99 */
+#else /* _DEBUG */
+#define DEBUG(x, format, ...)
+#define DEBUGPRINT(x, format, ...)
+#endif /* _DEBUG */
+
+#endif /* _DEBUG_H_ */
+
+
+@CodingTheWheel:
+There is one slight problem with your approach. Consider a call such as
+XTRACE("x=%d", x);
+
+This works fine in the debug build, but in the release build it will expand to:
+("x=%d", x);
+
+Which is perfectly legitimate C and will compile and usually run without side-effects but generates unnecessary code. The approach I usually use to eliminate that problem is:
+
+Make the XTrace function return an int (just return 0, the return value doesn't matter)
+Change the #define in the #else clause to:
+0 && XTrace
+
+
+Now the release version will expand to:
+0 && XTrace("x=%d", x);
+
+and any decent optimizer will throw away the whole thing since short-circuit evaluation would have prevented anything after the && from ever being executed.
+Of course, just as I wrote that last sentence, I realized that perhaps the original form might be optimized away too and in the case of side effects, such as function calls passed  as parameters to XTrace, it might be a better solution since it will make sure that debug and release versions will behave the same.
+
+This is how I do debug print outs in C++. Define 'dout' (debug out) like this:
+#ifdef DEBUG
+#define dout cout
+#else
+#define dout 0 && cout
+#endif
+
+In the code I use 'dout' just like 'cout'.
+dout << "in foobar with x= " << x << " and y= " << y << '\n';
+
+If the preprocessor replaces 'dout' with '0 && cout' note that << has higher precedence than && and short-circuit evaluation of && makes the whole line evaluate to 0. Since the 0 is not used the compiler generates no code at all for that line.
+
+Have a look at this thread:
+
+How to make a variadic macro (variable number of arguments)
+
+It should answer your question.
+
+Having come across the problem today, my solution is the following macro:
+    static TCHAR __DEBUG_BUF[1024]
+    #define DLog(fmt, ...)  swprintf(__DEBUG_BUF, fmt, ##__VA_ARGS__); OutputDebugString(__DEBUG_BUF) 
+
+You can then call the function like this:
+    int value = 42;
+    DLog(L"The answer is: %d\n", value);
+
+
+This is what I use:
+inline void DPRINTF(int level, char *format, ...)
+{
+#    ifdef _DEBUG_LOG
+        va_list args;
+        va_start(args, format);
+        if(debugPrint & level) {
+                vfprintf(stdout, format, args);
+        }
+        va_end(args);
+#    endif /* _DEBUG_LOG */
+}
+
+which costs absolutely nothing at run-time when the _DEBUG_LOG flag is turned off.
+
+This is a TCHAR version of user's answer, so it will work as ASCII (normal), or Unicode mode (more or less).
+#define DEBUG_OUT( fmt, ...) DEBUG_OUT_TCHAR(       \
+            TEXT(##fmt), ##__VA_ARGS__ )
+#define DEBUG_OUT_TCHAR( fmt, ...)                  \
+            Trace( TEXT("[DEBUG]") #fmt,            \
+            ##__VA_ARGS__ )
+void Trace(LPCTSTR format, ...)
+{
+    LPTSTR OutputBuf;
+    OutputBuf = (LPTSTR)LocalAlloc(LMEM_ZEROINIT,   \
+            (size_t)(4096 * sizeof(TCHAR)));
+    va_list args;
+    va_start(args, format);
+    int nBuf;
+    _vstprintf_s(OutputBuf, 4095, format, args);
+    ::OutputDebugString(OutputBuf);
+    va_end(args);
+    LocalFree(OutputBuf); // tyvm @sam shaw
+}
+
+I say, "more or less", because it won't automatically convert ASCII string arguments to WCHAR, but it should get you out of most Unicode scrapes without having to worry about wrapping the format string in TEXT() or preceding it with L.
+Largely derived from MSDN: Retrieving the Last-Error Code

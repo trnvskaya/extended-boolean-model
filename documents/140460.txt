@@ -1,0 +1,171 @@
+Client/JS Framework for "Unsaved Data" Protection?
+javascript data-protection
+We have a typical web application that is essentially a data entry application with lots of screens some of which have some degree of complexity.  We need to provide that standard capability on making sure if the user forgets to click the "Save" button before navigating away or closing their browser they get a warning and can cancel (but only when there is unsaved or dirty data).
+I know the basics of what I've got to do-- in fact I'm sure I've done it all before over the years (tie in to onbeforeunload, track the "dirty" state of the page, etc...) but before I embark on coding this YET AGAIN, does anyone have some suggestions for libraries already out there (free or otherwise) that will help out?
+
+
+One piece of the puzzle:
+/**
+ * Determines if a form is dirty by comparing the current value of each element
+ * with its default value.
+ *
+ * @param {Form} form the form to be checked.
+ * @return {Boolean} <code>true</code> if the form is dirty, <code>false</code>
+ *                   otherwise.
+ */
+function formIsDirty(form)
+{
+    for (var i = 0; i < form.elements.length; i++)
+    {
+        var element = form.elements[i];
+        var type = element.type;
+        if (type == "checkbox" || type == "radio")
+        {
+            if (element.checked != element.defaultChecked)
+            {
+                return true;
+            }
+        }
+        else if (type == "hidden" || type == "password" || type == "text" ||
+                 type == "textarea")
+        {
+            if (element.value != element.defaultValue)
+            {
+                return true;
+            }
+        }
+        else if (type == "select-one" || type == "select-multiple")
+        {
+            for (var j = 0; j < element.options.length; j++)
+            {
+                if (element.options[j].selected !=
+                    element.options[j].defaultSelected)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+And another:
+window.onbeforeunload = function(e)
+{
+    e = e || window.event;  
+    if (formIsDirty(document.forms["someFormOfInterest"]))
+    {
+        // For IE and Firefox
+        if (e)
+        {
+            e.returnValue = "You have unsaved changes.";
+        }
+        // For Safari
+        return "You have unsaved changes.";
+    }
+};
+
+Wrap it all up, and what do you get?
+var confirmExitIfModified = (function()
+{
+    function formIsDirty(form)
+    {
+        // ...as above
+    }
+
+    return function(form, message)
+    {
+        window.onbeforeunload = function(e)
+        {
+            e = e || window.event;
+            if (formIsDirty(document.forms[form]))
+            {
+                // For IE and Firefox
+                if (e)
+                {
+                    e.returnValue = message;
+                }
+                // For Safari
+                return message;
+            }
+        };
+    };
+})();
+
+confirmExitIfModified("someForm", "You have unsaved changes.");
+
+You'll probably also want to change the registration of the beforeunload event handler to use LIBRARY_OF_CHOICE's event registration.
+
+If you use jQuery, here's an easy trick:
+$('input:text,input:checkbox,input:radio,textarea,select').one('change',function() {
+  $('BODY').attr('onbeforeunload',"return 'Leaving this page will cause any unsaved data to be lost.';");
+});
+
+But just remember, if you have a condition where you redirect from this page, or you want to permit a successful form post, you need to do this before that redirect or submit event like so:
+$('BODY').removeAttr('onbeforeunload');
+
+...or you'll get yourself in a loop where it keeps asking you the prompt.
+In my case, I had a big app and I was doing location.href redirects in Javascript, as well as form posting, and then some AJAX submits that then come back with a success response inline in the page. In any of those conditions, I had to capture that event and use the removeAttr() call.
+
+Wanted to expand slightly on Volomike excellent jQuery code. 
+So with this, we have a very very cool and elegant mechanism to accomplish the objective of preventing inadvertent data loss through navigating away from updated data prior to saving â ie. updated field on a page, then click on a button, link or even the back button in the browser before clicking the Save button.
+The only thing you need to do is add a ânoWarnâ class tag to all controls ( especially Save buttons ) that do a post back to the website, that either save or do not remove any updated data.  
+If the control causes the page to lose data, ie. navigates to the next page or clears the data â you do not need to do anything, as the scripts will automatically show the warning message.
+Awesome!  Well done Volomike!
+Simply have the jQuery code as follows:
+$(document).ready(function() {
+
+    //----------------------------------------------------------------------
+    // Don't allow us to navigate away from a page on which we're changed
+    //  values on any control without a warning message.  Need to class our 
+    //  save buttons, links, etc so they can do a save without the message - 
+    //  ie. CssClass="noWarn"
+    //----------------------------------------------------------------------
+    $('input:text,input:checkbox,input:radio,textarea,select').one('change', function() {
+        $('BODY').attr('onbeforeunload',
+        "return 'Leaving this page will cause any unsaved data to be lost.';");
+    });
+
+    $('.noWarn').click(function() { $('BODY').removeAttr('onbeforeunload'); });
+
+});
+
+
+Additional to Lance's answer, I just spent an afternoon trying to get this snippet running.
+Firstly, jquery 1.4 seems to have bugs with binding the change event (as of Feb '10). jQuery 1.3 is OK.
+Secondly, I can't get jquery to bind the onbeforeunload/beforeunload (I suspect IE7, which I'm using). I've tried different selectors, ("body"), (window).  I've tried '.bind', '.attr'.
+Reverting to pure js worked (I also saw a few similar posts on SO about this problem):
+$(document).ready(function() {
+    $(":input").one("change", function() {
+        window.onbeforeunload = function() { return 'You will lose data changes.'; }
+    });
+    $('.noWarn').click(function() { window.onbeforeunload = null; });
+});
+
+Note I've also used the ':input' selector rather than enumerating all the input types.  Strictly overkill, but I thought it was cool :-)
+
+I made one more slight improvement to the jQuery implementations listed on this page. My implementation will handle if you have client-side ASP.NET page validation enabled and being used on a page.
+It avoids the "error" of clearing the onBeforeLeave function when the page doesn't actually post on click due to a validation failure. Simply use the no-warn-validate class on buttons/links that cause validation. It still has the no-warn class to use on controls that have CausesValidation=false (e.g. a "Save as Draft" button). This pattern could probably be used for other validation frameworks other than ASP.NET, so I post here for reference.
+ function removeCheck() { window.onbeforeunload = null; }
+
+$(document).ready(function() {
+    //-----------------------------------------------------------------------------------------
+    // Don't allow navigating away from page if changes to form are made. Save buttons, links,
+    // etc, can be given "no-warn" or "no-warn-validate" css class to prevent warning on submit.
+    // "no-warn-validate" inputs/links will only remove warning after successful validation
+    //-----------------------------------------------------------------------------------------
+    $(':input').one('change', function() {
+        window.onbeforeunload = function() {
+            return 'Leaving this page will cause edits to be lost.';
+        }
+    });
+
+    $('.no-warn-validate').click(function() {
+        if (Page_ClientValidate == null || Page_ClientValidate()) { removeCheck(); }
+    });
+
+    $('.no-warn').click(function() { removeCheck() });
+});
+
+
+I've created a jQuery plug-in which can be used to implement a warn-on-unsaved-changes feature for web applications.  It supports postbacks.  It also includes a link to information on how to normalize behavior of the onbeforeunload event of Internet Explorer.

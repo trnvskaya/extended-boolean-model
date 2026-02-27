@@ -1,0 +1,91 @@
+Removing Duplicate Images
+c# algorithm image-processing
+We have a collection of photo images sizing a few hundred gigs. A large number of the photos are visually duplicates, but with differing filesizes, resolution, compression etc. 
+Is it possible to use any specific image processing methods to search out and remove these duplicate images?
+
+
+A quick hack at this is to write a program that will calculate the value of the average pixel in each image, in greyscale, sort by this value, and then compare them visually. Very similar images should occur near each other in the sorted order.
+
+The gqview program has an option for finding duplicates, so you might try looking there.  However, it's not foolproof, so it'd only be suitable as a heuristic to present duplicates to a human, for manual confirmation.
+
+Image similarity is probably a sub-field of image processing/AI.
+Be prepared to implement algorithms/formulae from papers if you're looking for an excellent (i.e. performant and scalable) solution.
+If you want something quick n dirty, search google for Image Similarity 
+Here's a C# image similarity app that might do what you want.
+Basically, all algorithms extract and compare features. How they define "feature" depends on the math model they're based on.
+
+The most important part is to make the files comparable.
+A generic solution might be to scale all images to a certain fixed size and greyscale. Then save the resulting images in a separate directory with same name for later reference. It would then be possible to sort by filesize and visually compare neighboring entries.
+The resulting pictures might be quantified in certain ways to programatically detect similarities (averaging of blocks, lines etc.).
+
+This is still a research area, I believe. If you have some time in your hands, some relevant keywords are:
+
+Image copy detection
+Content based image retrieval
+Image indexing
+Image duplicate removal
+
+Basically, each image is processed (indexed) to produce an "image signature". Similar images have similar signatures. If your images are just rescaled then probably their signature are nearly identical, so they cluster well. Some popular signatures are the MPEG-7 descriptors. To cluster, I think K-Means or any of its variants may be enough.
+However, you probably need to deal with millions of images, this may be a problem.
+Here is a link to the main Wikipedia entry:
+http://en.wikipedia.org/wiki/CBIR
+Hope this helps.
+
+Try PerceptualDiff for comparing 2 images with the same dimensions. Allows threshholds such as considering images with only X number of pixels different to be visually indistinguishable. 
+If visual duplicates may have different dimensions due to scaling, or different filetypes,
+you may want to make a standard format for comparisons. For example, I might use ImageMagick
+to scale all images to 100x100 and save them as PNG files.
+
+You will need a command line tool to deal with so much data.
+Comparing every possible pair of images will not scale to such a large set of images.
+You need to sort the entire set of images according to some metric so that further
+comparisons are only needed on neighbouring images.
+An example of a simple metric is the average value of all of the pixels in an image, expressed
+as a single greyscale value. This should work only if the duplicates have not had any visual alterations.
+Using a lossy file format can also result in visual alterations.
+
+A very simple approach is the following:
+
+Convert the image to greyscale in memory, so every pixel is only a number between 0 (black) and 255 (white).
+Scale the image to a fixed size. Finding the right size is important, you should play around with different sizes. E.g. you could scale each image to 64x64 pixels, but you may get better or worse results with either smaller or bigger pictures.
+Once you've done this for all images (yes, that will take a while), always load two images in memory and subtract them from each other. That is subtract the value of pixel (0,0) in image A ob the value of pixel (0,0) in image B, now do the same for (0,1) in both and so on. The resulting value might be positive or negative, you should always store the absolute value (so 5 results in 5, -8 however results in 8).
+Now you have a third image being the "difference image" (delta image) of image A and B. If they were identical, the delta image is all black (all values will subtract to zero). The "less black" it is, the less identical the images are. You need to find a good threshold, since even if the images are in fact identical (to your eyes), by scaling, altering brightness and so on, the delta image will not be totally black, it will however have only very dark greytones. So you need a threshold that says "If average error (delta image brightness) is below a certain value, there is still a good chance they might be identical, however if it is above that value, they are most likely not. Finding the right threshold is as hard as finding the right scaling size. You will always have false positives (images deemed to be identical, though they are not at all) and false negatives (images deemed to be not identical, although they are).
+
+This algorithm is ultra slow. Actually only creating the greyscale images takes tons of time. Then you need to compare each GS image to each other one, again, tons of time. Also storing all the GS images takes a lot of disk space. So this algorithm is very bad, but the results are not that bad, even though its that simple. While the results are not amazing, they are better than I had initially thought.
+The only way to get even better results is to use advanced image processing and here it starts getting really complicated. It involves a lot of math (a real lot of it); there are good applications (dupe finders) for many systems that have these implemented, so unless you must program it yourself, you are probably better off using one of these solutions. I read a lot papers on this topic but I'm afraid most of this goes beyond my horizon. Even the algorithms I might be able to implement according to these papers are beyond it; that means I understand what needs to be done, but I have no idea why it works or how it actually works, it's just magic ;-)
+
+Thinking outside the box, you may be able to use image metadata to narrow down your dataset.
+For example, your images may have fields showing the date and time the image was taken, down to the nearest second.
+Duplicates are likely to have identical values.
+A tool such as exiv2 could be used to dump out this data to a more convenient and sortable text format (with a little knowledge of batch/shell scripting).
+Even fields such as the camera manufacturer and model could be used to reduce a set of 1,000,000 images
+to say 100 sets of 10,000 images, a significant improvement.
+
+I would imagine the most scaleable method would be to store an fingerprint with each image. Then when a new image is added, it's a simple case of SELECT id FROM photos where id='uploaded_image_id' to check for duplicates (or fingerprinting all the images, then doing a query for duplicate
+Obviously a simple file-hash wouldn't work as the actual content differs..
+Acoustic fingerprinting/this paper may be a good start on the concept, as there are many implementations of this. Here is a paper on image fingerprinting.
+That said, you may be able to get away with something simpler. Something as basic as resizing the image to equal width or height, subtracting image_a from image_b, and summing the difference. If the total difference is below a threshold, the image is a duplicate.
+The problem with this is you need to compare every image to every other. The time required will exponentially increase..
+
+If you can come up with a way of comparing images that obeys the triangle inequality (eg, if d(a,b) is the difference between images a and b, then d(a,b) < d(a,c) + d(b,c) for all a,b,c), then a BK-Tree would be an effective way of indexing the images such that you can find matches in O(log n) time instead of O(n) time for each image.
+If your matches are restricted to the same image after varying amounts of compression/resizing/etc, then converting to some canonical size/color balance/etc and simply summing the squares-of-differences of each pixel may be a good metric, and this obeys the triangle inequality, so you could use a BK-tree for efficient access.
+
+It sounds like a procedural problem rather than a programming problem. Who uploads the photos? You or the customers? If you are uploading the photo, standardize the dimensions to a fixed scale and file format. That way comparisons will be easier. However, as it stands, unless you have days - or even weeks of free time - I suggest that you instead manually remove the duplicates images by either yourself or your team by visually comparing the images.
+Perhaps you should group the images by location since it is a tourist images.
+
+If you have a little bit of money to spend, and maybe once you run a first pass to determine which images are maybe matches, you could write a test for Amazon's Mechanical Turk. 
+https://www.mturk.com/mturk/welcome
+Essentially, you'd be creating a small widget that AMT would show to real human users who would then basically just have to answer the question "Are these two images the same?". Or you could show them a grid of say 5x5 images and ask them "Which of these images match?". You'd then collect the data.
+Another approach would be to use the principles of Human Computation which have been most famously espoused by Luis Von Ahn (http://www.cs.cmu.edu/~biglou/) with reCaptcha, which uses Captcha answers to determine the unreadable words that have been run through Optical character Recognition, thus helping to digitize books. You could make a captcha that asked users to help refine the images. 
+
+I actually wrote an application that does this very thing.
+I started with a previous application that used a basic Levenshtein Distance algorithm to compute image similarity, but that method is undesirable for a number of reasons.  Without a doubt, the fastest algorithm you're going to find for determining image similarity is either mean squared error or mean absolute error (both have a running time of O(n), where n is the number of pixels in the image, and it'd also be trivial to thread an implementation of either algorithm in a number of different ways).  Mecki's post is actually just a Mean Absolute Error implementation, which my application can perform (code is also available for your browsing pleasure, should you so desire).
+In any event, in our application, we first down-sample images (e.g. everything is scaled to, say, 32*32 pixels), then convert to gray scale, and then run the resulting images through our comparison algorithms.  We're also working on some more advanced pre-processing algorithms to further normalize images, but...not quite there yet.
+There are definitely better algorithms than MSE/MAE (in fact, the problems with these two algorithms as applied to visual information has been well documented), like SSIM, but it comes at a cost.  Other people attempt to compare other visual qualities in the image, such as luminance, contrast, color histograms, etc., but it's all pricey compared to simply measuring the error signal.
+My application might work, depending on how many images are in those folders.  It's multi-threaded (I've seen it fully load eight processor cores performing comparisons), but I've never tested against an image database larger than a few hundred images.  A few hundred gigs of images sounds prohibitively large. (simply reading them from disk, downsampling, converting to gray scale and storing in memory--assuming you have enough memory to hold everything, which you probably don't--could take a couple hours).
+
+I recently wanted to accomplish this task for a PHP image gallery. I wanted to be able to generate a "fuzzy" fingerprint for an uploaded image, and check a database for any images that had the same fingerprint, indicating they were similar, and then compare them more closely to determine how similar.
+I accomplished it by resizing the uploaded image to 150 pixels wide, reducing it to greyscale, rounding the value of each colour off to the nearest multiple of 16 (giving 17 possible shades of grey between 0 and 255), normalise them and store them in an array, thereby creating a "fuzzy" colour histogram, then creating an md5sum of the histogram which I could then search for in my database. This was extremely effective in narrowing down images which were very visually similar to the uploaded file.
+Then to compare the uploaded file against each "similar" image in the database, I took both images, resized them to 16x16, and analysed them pixel by pixel and took the RGB value of each pixel away from the value of the corresponding pixel in the other image, adding all the values together and dividing by the number of pixels giving me an average colour deviation. Anything less than specific value was determined to be a duplicate.
+The whole thing is written in PHP using the GD module, and a comparison against thousands of images takes only a few hundred milliseconds per uploaded file.
+My code, and methodology is here: http://www.catpa.ws/php-duplicate-image-finder/

@@ -1,0 +1,57 @@
+Installing Capicom without SelfReg: Wix Custom Actions Not Found (Err 2721)
+installer wix windows-installer custom-action
+After following the advice in this question successfully, I added a couple additional lines of code for another custom action.  This one is intended to call regsvr32 on the copy of capicom which I've tried to put in the user's system folder.  However, I'm getting error 2721, which seems to be a custom action not found error, from what I've seen.  Any suggestions? I'm trying to maintain consistency with previous iterations of my installer by calling regsvr, rather than just adding the registry entries during install, which could be a good idea instead.  :::shrug:::
+<Directory Id="SystemFolder" Name="Sys">
+  ...
+  <component ...>
+     ...
+    <File Id="CapiCom.Dll" LongName="CapiCom.Dll" Name="CAPICOM.DLL" Source=... />
+  </component>
+</directory>
+...
+<CustomAction Id="REGCAPICOM" ExeCommand='regsvr32.exe "[SystemFolder]capicom.dll"' Return = "ignore" Execute="deferred" />
+...
+<InstallExecuteSequence>
+  ...
+  <Custom Action="REGCAPICOM" After="InstallFiles" />
+</InstallExecuteSequence>
+
+Edit: Yes, using regsvr32 as an installer is ugly.  But when I downloaded the Capicom SDK, that is what MS said to do in order to install it.  Searching around has found many people saying that this is a stupid way to do it...but it's also mechanism MS provided.  I'll listen to suggestions for a better way.  I don't consider it a big deal if Capicom being left behind when my application is uninstalled, considering that it's a standard windows component.
+Edit: Hmmm.  Apparently, one of the things running selfreg on the dll does is to create a random seed to add to the registry.  Not sure what mechanism it uses to generate this seed but I suspect it would be considered in poor taste to just generate one myself, especially if I gave all the users the same seed.  Not sure....  Apparently if I skip this Capicom does it on its own, so I'm fine.
+
+
+Uhh, are you really trying to install a Windows system file yourself?  That's not allowed on a great many levels.  Also, regsvr32.exe is SelfReg and SelfReg is well known to be evil in installations.  Actually using the Windows Installer to write the registration is far superiour
+However, the whole design here is very suspect.
+
+You could use heat on the File to create a output WXS file, that will put the capicom.dll information in the registry without the use of regsvr32, when the msi is executed
+Something like so:
+heat file [Path\Capicom.dll] -template:product -out capicom.wxs
+
+Then add the capicom.wxs to your installer, in that file create a ComponentGroup Element, that contains the Component(s) element(s): 
+<ComponentGroup Id="capicom">
+  <ComponentRef Id="capicom.dll"/>
+</ComponentGroup>
+
+After in the main WXS file add the Fragment element that will link the capicom component
+
+
+The last step is to add the ComponentGroupRef to the feature that it belongs to:
+<Feature Id="PRODUCTFEATURE">
+  <ComponentGroupRef Id="capicom" />
+  ... [Other components or ComponentGroups references]
+</Feature>
+
+
+The Right way:
+
+c:\Program Files\Microsoft Visual Studio .NET 2003\Common7\Tools\Deployment\regcap.exe" /O capicom.reg capicom.dll
+Run program from Adam Tengen's post here.
+
+Note that Heat (and Tallow, IIRC) do not, as of this posting, work properly on Capicom.
+The Wrong Way:
+<CustomAction Id="RegisterCapicom" Directory="SystemFolder" ExeCommand="regsvr32.exe /s &quot;[SystemFolder]Capicom.dll&quot;" Return="check" Execute="deferred" />
+...
+<InstallExecuteSequence>
+  <Custom Action="RegisterCapicom" After="InstallFiles" />
+</InstallExecuteSequence>
+

@@ -1,0 +1,34 @@
+What can cause intermittent ORA-12519 (TNS: no appropriate handler found) errors
+oracle junit oracle10g ora-12519
+We are running our Junit 4 test suite against Weblogic 9 in front of an Oracle 10 database (using Hudson as a continuous integration server) and occasionally we will get an ORA-12519 crash during script teardown.  However, the error is very intermittent:  
+
+It usually happens for the same Test class  
+It doesn't always happen for the same test cases (sometimes they pass)  
+It doesn't happen for the same number of test cases (anywhere from 3-9)  
+Sometimes it doesn't happen at all, everything passes  
+
+While I can't guarantee this doesn't happen locally (when running against the same database, of course), I have run the same suite of class multiple times with no issues.
+Any ideas?
+
+
+Don't know if this will be everybody's answer, but after some digging, here's what we came up with.
+The error is obviously caused by the fact that the listener was not accepting connections, but why would we get that error when other tests could connect fine (we could also connect no problem through sqlplus)?  The key to the issue wasn't that we couldn't connect, but that it was intermittent
+After some investigation, we found that there was some static data created during the class setup that would keep open connections for the life of the test class, creating new ones as it went.  Now, even though all of the resources were properly released when this class went out of scope (via a finally{} block, of course), there were some cases during the run when this class would swallow up all available connections (okay, bad practice alert - this was unit test code that connected directly rather than using a pool, so the same problem could not happen in production).
+The fix was to not make that class static and run in the class setup, but instead use it in the per method setUp and tearDown methods.
+So if you get this error in your own apps, slap a profiler on that bad boy and see if you might have a connection leak.  Hope that helps.
+
+Another solution I have found to a similar error but the same error message is to increase the number of service handlers found. (My instance of this error was caused by too many connections in the Weblogic Portal Connection pools.)
+
+Run SQL*Plus and login as SYSTEM. You should know what password youâve used during the installation of Oracle DB XE.
+Run the command alter system set processes=150 scope=spfile; in SQL*Plus
+VERY IMPORTANT: Restart the database.
+
+From here:
+
+http://www.atpeaz.com/index.php/2010/fixing-the-ora-12519-tnsno-appropriate-service-handler-found-error/
+
+
+I also had the same problem, I searched for the answers many places. I got many similar answers to change the number of process/service handlers. But I thought, what if I forgot to reset it back?
+Then I tried using Thread.sleep() method after each of my connection.close();.
+I don't know how, but it's working at least for me. 
+If any one wants to try it out and figure out how it's working then please go ahead. I would also like to know it as I am a beginner in programming world.

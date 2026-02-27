@@ -1,0 +1,547 @@
+What's the best way to build a string of delimited items in Java?
+java string
+While working in a Java app, I recently needed to assemble a comma-delimited list of values to pass to another web service without knowing how many elements there would be in advance. The best I could come up with off the top of my head was something like this:
+public String appendWithDelimiter( String original, String addition, String delimiter ) {
+    if ( original.equals( "" ) ) {
+        return addition;
+    } else {
+        return original + delimiter + addition;
+    }
+}
+
+String parameterString = "";
+if ( condition ) parameterString = appendWithDelimiter( parameterString, "elementName", "," );
+if ( anotherCondition ) parameterString = appendWithDelimiter( parameterString, "anotherElementName", "," );
+
+I realize this isn't particularly efficient, since there are strings being created all over the place, but I was going for clarity more than optimization.
+In Ruby, I can do something like this instead, which feels much more elegant:
+parameterArray = [];
+parameterArray << "elementName" if condition;
+parameterArray << "anotherElementName" if anotherCondition;
+parameterString = parameterArray.join(",");
+
+But since Java lacks a join command, I couldn't figure out anything equivalent.
+So, what's the best way to do this in Java?
+
+
+Use an approach based on java.lang.StringBuilder!  ("A mutable sequence of characters. ")
+Like you mentioned, all those string concatenations are creating Strings all over.  StringBuilder won't do that.
+Why StringBuilder instead of StringBuffer?  From the StringBuilder javadoc:
+
+Where possible, it is recommended that this class be used in preference to StringBuffer as it will be faster under most implementations. 
+
+
+You can use Java's StringBuilder type for this. There's also StringBuffer, but it contains extra thread safety logic that is often unnecessary.
+
+Why not write your own join() method?  It would take as parameters collection of Strings and a delimiter String.  Within the method iterate over the collection and build up your result in a StringBuffer.
+
+You can generalize it, but there's no join in Java, as you well say.
+This might work better. 
+public static String join(Iterable<? extends CharSequence> s, String delimiter) {
+    Iterator<? extends CharSequence> iter = s.iterator();
+    if (!iter.hasNext()) return "";
+    StringBuilder buffer = new StringBuilder(iter.next());
+    while (iter.hasNext()) buffer.append(delimiter).append(iter.next());
+    return buffer.toString();
+}
+
+
+You can try something like this:
+StringBuilder sb = new StringBuilder();
+if (condition) { sb.append("elementName").append(","); }
+if (anotherCondition) { sb.append("anotherElementName").append(","); }
+String parameterString = sb.toString();
+
+
+public static String join(String[] strings, char del)
+{
+    StringBuffer sb = new StringBuffer();
+    int len = strings.length;
+    boolean appended = false;
+    for (int i = 0; i < len; i++)
+    {
+        if (appended)
+        {
+            sb.append(del);
+        }
+        sb.append(""+strings[i]);
+        appended = true;
+    }
+    return sb.toString();
+}
+
+
+You should probably use a StringBuilder with the append method to construct your result, but otherwise this is as good of a solution as Java has to offer.
+
+Why don't you do in Java the same thing you are doing in ruby, that is creating the delimiter separated string only after you've added all the pieces to the array?
+ArrayList<String> parms = new ArrayList<String>();
+if (someCondition) parms.add("someString");
+if (anotherCondition) parms.add("someOtherString");
+// ...
+String sep = ""; StringBuffer b = new StringBuffer();
+for (String p: parms) {
+    b.append(sep);
+    b.append(p);
+    sep = "yourDelimiter";
+}
+
+You may want to move that for loop in a separate helper method, and also use StringBuilder instead of StringBuffer...
+Edit: fixed the order of appends.
+
+Pre Java 8:
+Apache's commons lang is your friend here - it provides a join method very similar to the one you refer to in Ruby: 
+StringUtils.join(java.lang.Iterable,char)
+
+Java 8:
+Java 8 provides joining out of the box via StringJoiner and String.join(). The snippets below show how you can use them:
+StringJoiner
+StringJoiner joiner = new StringJoiner(",");
+joiner.add("01").add("02").add("03");
+String joinedString = joiner.toString(); // "01,02,03"
+
+
+String.join(CharSequence delimiter, CharSequence... elements))
+String joinedString = String.join(" - ", "04", "05", "06"); // "04 - 05 - 06"
+
+
+String.join(CharSequence delimiter, Iterable<? extends CharSequence> elements)
+List<String> strings = new LinkedList<>();
+strings.add("Java");strings.add("is");
+strings.add("cool");
+String message = String.join(" ", strings);
+//message returned is: "Java is cool"
+
+
+You could write a little join-style utility method that works on java.util.Lists
+public static String join(List<String> list, String delim) {
+
+    StringBuilder sb = new StringBuilder();
+
+    String loopDelim = "";
+
+    for(String s : list) {
+
+        sb.append(loopDelim);
+        sb.append(s);            
+
+        loopDelim = delim;
+    }
+
+    return sb.toString();
+}
+
+Then use it like so:
+    List<String> list = new ArrayList<String>();
+
+    if( condition )        list.add("elementName");
+    if( anotherCondition ) list.add("anotherElementName");
+
+    join(list, ",");
+
+
+So basically something like this:
+public static String appendWithDelimiter(String original, String addition, String delimiter) {
+
+if (original.equals("")) {
+    return addition;
+} else {
+    StringBuilder sb = new StringBuilder(original.length() + addition.length() + delimiter.length());
+        sb.append(original);
+        sb.append(delimiter);
+        sb.append(addition);
+        return sb.toString();
+    }
+}
+
+
+Apache commons StringUtils class has a join method.
+
+Don't know if this really is any better, but at least it's using StringBuilder, which may be slightly more efficient.
+Down below is a more generic approach if you can build up the list of parameters BEFORE doing any parameter delimiting.
+// Answers real question
+public String appendWithDelimiters(String delimiter, String original, String addition) {
+	StringBuilder sb = new StringBuilder(original);
+	if(sb.length()!=0) {
+		sb.append(delimiter).append(addition);
+	} else {
+		sb.append(addition);
+	}
+	return sb.toString();
+}
+
+
+// A more generic case.
+// ... means a list of indeterminate length of Strings.
+public String appendWithDelimitersGeneric(String delimiter, String... strings) {
+	StringBuilder sb = new StringBuilder();
+	for (String string : strings) {
+		if(sb.length()!=0) {
+			sb.append(delimiter).append(string);
+		} else {
+			sb.append(string);
+		}
+	}
+
+	return sb.toString();
+}
+
+public void testAppendWithDelimiters() {
+	String string = appendWithDelimitersGeneric(",", "string1", "string2", "string3");
+}
+
+
+Your approach is not too bad, but you should use a StringBuffer instead of using the + sign. The + has the big disadvantage that a new String instance is being created for each single operation. The longer your string gets, the bigger the overhead. So using a StringBuffer should be the fastest way:
+public StringBuffer appendWithDelimiter( StringBuffer original, String addition, String delimiter ) {
+        if ( original == null ) {
+                StringBuffer buffer = new StringBuffer();
+                buffer.append(addition);
+                return buffer;
+        } else {
+                buffer.append(delimiter);
+                buffer.append(addition);
+                return original;
+        }
+}
+
+After you have finished creating your string simply call toString() on the returned StringBuffer.
+
+I would use Google Collections.  There is a nice Join facility.
+http://google-collections.googlecode.com/svn/trunk/javadoc/index.html?com/google/common/base/Join.html
+But if I wanted to write it on my own,
+package util;
+
+import java.util.ArrayList;
+import java.util.Iterable;
+import java.util.Collections;
+import java.util.Iterator;
+
+public class Utils {
+    // accept a collection of objects, since all objects have toString()
+    public static String join(String delimiter, Iterable<? extends Object> objs) {
+        if (objs.isEmpty()) {
+            return "";
+        }
+        Iterator<? extends Object> iter = objs.iterator();
+        StringBuilder buffer = new StringBuilder();
+        buffer.append(iter.next());
+        while (iter.hasNext()) {
+            buffer.append(delimiter).append(iter.next());
+        }
+        return buffer.toString();
+    }
+
+    // for convenience
+    public static String join(String delimiter, Object... objs) {
+        ArrayList<Object> list = new ArrayList<Object>();
+        Collections.addAll(list, objs);
+        return join(delimiter, list);
+    }
+}
+
+I think it works better with an object collection, since now you don't have to convert your objects to strings before you join them.
+
+Instead of using string concatenation, you should use StringBuilder if your code is not threaded, and StringBuffer if it is.
+
+You're making this a little more complicated than it has to be. Let's start with the end of your example:
+String parameterString = "";
+if ( condition ) parameterString = appendWithDelimiter( parameterString, "elementName", "," );
+if ( anotherCondition ) parameterString = appendWithDelimiter( parameterString, "anotherElementName", "," );
+
+With the small change of using a StringBuilder instead of a String, this becomes:
+StringBuilder parameterString = new StringBuilder();
+if (condition) parameterString.append("elementName").append(",");
+if (anotherCondition) parameterString.append("anotherElementName").append(",");
+...
+
+When you're done (I assume you have to check a few other conditions as well), just make sure you remove the tailing comma with a command like this:
+if (parameterString.length() > 0) 
+    parameterString.deleteCharAt(parameterString.length() - 1);
+
+And finally, get the string you want with
+parameterString.toString();
+
+You could also replace the "," in the second call to append with a generic delimiter string that can be set to anything. If you have a list of things you know you need to append (non-conditionally), you could put this code inside a method that takes a list of strings. 
+
+//Note: if you have access to Java5+, 
+//use StringBuilder in preference to StringBuffer.  
+//All that has to be replaced is the class name.  
+//StringBuffer will work in Java 1.4, though.
+
+appendWithDelimiter( StringBuffer buffer, String addition, 
+    String delimiter ) {
+    if ( buffer.length() == 0) {
+        buffer.append(addition);
+    } else {
+        buffer.append(delimiter);
+        buffer.append(addition);
+    }
+}
+
+
+StringBuffer parameterBuffer = new StringBuffer();
+if ( condition ) { 
+    appendWithDelimiter(parameterBuffer, "elementName", "," );
+}
+if ( anotherCondition ) {
+    appendWithDelimiter(parameterBuffer, "anotherElementName", "," );
+}
+
+//Finally, to return a string representation, call toString() when returning.
+return parameterBuffer.toString();
+
+
+With Java 5 variable args, so you don't have to stuff all your strings into a collection or array explicitly:
+import junit.framework.Assert;
+import org.junit.Test;
+
+public class StringUtil
+{
+    public static String join(String delim, String... strings)
+    {
+        StringBuilder builder = new StringBuilder();
+
+        if (strings != null)
+        {
+            for (String str : strings)
+            {
+                if (builder.length() > 0)
+                {
+                    builder.append(delim).append(" ");
+                }
+                builder.append(str);
+            }
+        }           
+        return builder.toString();
+    }
+    @Test
+    public void joinTest()
+    {
+        Assert.assertEquals("", StringUtil.join(",", null));
+        Assert.assertEquals("", StringUtil.join(",", ""));
+        Assert.assertEquals("", StringUtil.join(",", new String[0]));
+        Assert.assertEquals("test", StringUtil.join(",", "test"));
+        Assert.assertEquals("foo, bar", StringUtil.join(",", "foo", "bar"));
+        Assert.assertEquals("foo, bar, x", StringUtil.join(",", "foo", "bar", "x"));
+    }
+}
+
+
+So a couple of things you might do to get the feel that it seems like you're looking for:
+1) Extend List class - and add the join method to it.  The join method would simply do the work of concatenating and adding the delimiter (which could be a param to the join method)
+2) It looks like Java 7 is going to be adding extension methods to java - which allows you just to attach a specific method on to a class:  so you could write that join method and add it as an extension method to List or even to Collection.
+Solution 1 is probably the only realistic one, now, though since Java 7 isn't out yet :) But it should work just fine.
+To use both of these, you'd just add all your items to the List or Collection as usual, and then call the new custom method to 'join' them.
+
+Use StringBuilder and Class Separator.
+StringBuilder $ = new StringBuilder();
+Separator sep = new Separator(", ");
+for (String each : list) {
+    $.append(sep).append(each);
+}
+
+Separator wraps a delimiter. The delimiter is returned by Separator's toString method, unless on the first call which returns the empty string!
+
+using Dollar is simple as typing:
+String joined = $(aCollection).join(",");
+
+NB: it works also for Array and other data types
+Implementation
+Internally it uses a very neat trick:
+@Override
+public String join(String separator) {
+    Separator sep = new Separator(separator);
+    StringBuilder sb = new StringBuilder();
+
+    for (T item : iterable) {
+        sb.append(sep).append(item);
+    }
+
+    return sb.toString();
+}
+
+the class Separator return the empty String only the first time that it is invoked, then it returns the separator:
+class Separator {
+
+    private final String separator;
+    private boolean wasCalled;
+
+    public Separator(String separator) {
+        this.separator = separator;
+        this.wasCalled = false;
+    }
+
+    @Override
+    public String toString() {
+        if (!wasCalled) {
+            wasCalled = true;
+            return "";
+        } else {
+            return separator;
+        }
+    }
+}
+
+
+Slight improvement [speed] of version from izb:
+public static String join(String[] strings, char del)
+{
+    StringBuilder sb = new StringBuilder();
+    int len = strings.length;
+
+    if(len > 1) 
+    {
+       len -= 1;
+    }else
+    {
+       return strings[0];
+    }
+
+    for (int i = 0; i < len; i++)
+    {
+       sb.append(strings[i]).append(del);
+    }
+
+    sb.append(strings[i]);
+
+    return sb.toString();
+}
+
+
+In the case of Android, the StringUtils class from commons isn't available, so for this I used
+android.text.TextUtils.join(CharSequence delimiter, Iterable tokens)
+
+http://developer.android.com/reference/android/text/TextUtils.html
+
+The Google's Guava library has com.google.common.base.Joiner class which helps to solve such tasks.
+Samples:
+"My pets are: " + Joiner.on(", ").join(Arrays.asList("rabbit", "parrot", "dog")); 
+// returns "My pets are: rabbit, parrot, dog"
+
+Joiner.on(" AND ").join(Arrays.asList("field1=1" , "field2=2", "field3=3"));
+// returns "field1=1 AND field2=2 AND field3=3"
+
+Joiner.on(",").skipNulls().join(Arrays.asList("London", "Moscow", null, "New York", null, "Paris"));
+// returns "London,Moscow,New York,Paris"
+
+Joiner.on(", ").useForNull("Team held a draw").join(Arrays.asList("FC Barcelona", "FC Bayern", null, null, "Chelsea FC", "AC Milan"));
+// returns "FC Barcelona, FC Bayern, Team held a draw, Team held a draw, Chelsea FC, AC Milan"
+
+
+Here is an article about Guava's string utilities.
+
+If you're using GS Collections, you can use makeString() or appendString().
+makeString() returns a String representation, similar to toString().
+It has three forms
+
+makeString(start, separator, end)
+makeString(separator) defaults start and end to empty strings
+makeString() defaults the separator to ", " (comma and space)
+
+Code example:
+MutableList<Integer> list = FastList.newListWith(1, 2, 3);
+assertEquals("[1/2/3]", list.makeString("[", "/", "]"));
+assertEquals("1/2/3", list.makeString("/"));
+assertEquals("1, 2, 3", list.makeString());
+assertEquals(list.toString(), list.makeString("[", ", ", "]"));
+
+appendString() is similar to makeString(), but it appends to an Appendable (like StringBuilder) and is void. It has the same three forms, with an additional first argument, the Appendable.
+MutableList<Integer> list = FastList.newListWith(1, 2, 3);
+Appendable appendable = new StringBuilder();
+list.appendString(appendable, "[", "/", "]");
+assertEquals("[1/2/3]", appendable.toString());
+
+If you can't convert your collection to a GS Collections type, just adapt it with the relevant adapter.
+List<Object> list = ...;
+ListAdapter.adapt(list).makeString(",");
+
+Note: I am a developer on GS collections.
+
+In Java 8 you can use String.join():
+List<String> list = Arrays.asList("foo", "bar", "baz");
+String joined = String.join(" and ", list); // "foo and bar and baz"
+
+Also have a look at this answer for a Stream API example.
+
+And a minimal one (if you don't want to include Apache Commons or Gauva into project dependencies just for the sake of joining strings)
+/**
+ *
+ * @param delim : String that should be kept in between the parts
+ * @param parts : parts that needs to be joined
+ * @return  a String that's formed by joining the parts
+ */
+private static final String join(String delim, String... parts) {
+    StringBuilder builder = new StringBuilder();
+    for (int i = 0; i < parts.length - 1; i++) {
+        builder.append(parts[i]).append(delim);
+    }
+    if(parts.length > 0){
+        builder.append(parts[parts.length - 1]);
+    }
+    return builder.toString();
+}
+
+
+in Java 8 you can do this like:
+list.stream().map(Object::toString)
+                        .collect(Collectors.joining(delimiter));
+
+if list has nulls you can use:
+list.stream().map(String::valueOf)
+                .collect(Collectors.joining(delimiter))
+
+
+For those who are in a Spring context their StringUtils class is useful as well:
+There are many useful shortcuts like:
+
+collectionToCommaDelimitedString(Collection coll)
+collectionToDelimitedString(Collection coll, String delim)
+arrayToDelimitedString(Object[] arr, String delim)
+
+and many others. 
+This can be helpful if you are not already using Java 8 and you are already in a Spring context.
+I prefer it against the Apache Commons (although very good as well) for the Collection support which is easier like this:
+// Encoding Set<String> to String delimited 
+String asString = org.springframework.util.StringUtils.collectionToDelimitedString(codes, ";");
+
+// Decoding String delimited to Set
+Set<String> collection = org.springframework.util.StringUtils.commaDelimitedListToSet(asString);
+
+
+Fix answer Rob Dickerson.
+It's easier to use:
+public static String join(String delimiter, String... values)
+{
+    StringBuilder stringBuilder = new StringBuilder();
+
+    for (String value : values)
+    {
+        stringBuilder.append(value);
+        stringBuilder.append(delimiter);
+    }
+
+    String result = stringBuilder.toString();
+
+    return result.isEmpty() ? result : result.substring(0, result.length() - 1);
+}
+
+
+Java 8
+stringCollection.stream().collect(Collectors.joining(", "));
+
+
+If you are using Spring MVC then you can try following steps.
+import org.springframework.util.StringUtils;
+
+List<String> groupIds = new List<String>;   
+groupIds.add("a");    
+groupIds.add("b");    
+groupIds.add("c");
+
+String csv = tringUtils.arrayToCommaDelimitedString(groupIds.toArray());
+
+It will result to a,b,c
+
+I personally quite often use  the following simple solution for logging purposes:
+List lst = Arrays.asList("ab", "bc", "cd");
+String str = lst.toString().replaceAll("[\\[\\]]", "");
+

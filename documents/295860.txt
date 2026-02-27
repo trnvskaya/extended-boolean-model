@@ -1,0 +1,110 @@
+Why do people use tarballs?
+linux package archive
+As a primarily Windows developer, perhaps I'm missing something cultural in the Linux community, but it has always confused me when downloading something that the files are first put into a .tar archive, then zipped.  Why the two step process?  Doesn't zipping achieve the file grouping? Is there some other benefit that I'm not aware of?
+
+
+bzip and gzip work on single files, not groups of files. Plain old zip (and pkzip) operate on groups of files and have the concept of the archive built-in.
+The *nix philosophy is one of small tools that do specific jobs very well and can be chained together. That's why there's two tools here that have specific tasks, and they're designed to fit well together. It also means you can use tar to group files and then you have a choice of compression tool (bzip, gzip, etc).
+
+Tar = Groups files in 1 files
+GZip = Zip the file
+They split the process in 2. That's it.
+In the Windows environnement that you might be more used to use the WinZip or WinRar that do a Zip. The Zip process of these software do group the file and zipping but you simply do not see that process.
+
+gzip and bzip2 is simply a compressor, not an archiver-software. Hence, the combination. You need the tar-software to bundle all the files.
+ZIP itself, and RAR aswell are a combination of the two processes.
+
+Usually in the *nux world, bundles of files are distributed as tarballs and then optionally gzipped.  Gzip is a simple file compression program that doesn't do the file bundling that tar or zip does.
+At one time, zip didn't properly handle some of the things that Unix tar and unix file systems considered normal, like symlinks, mixed case files, etc.  I don't know if that's changed, but that's why we use tar.
+
+In the Unix world, most applications are designed to do one thing, and do it well. The most popular zip utilities in Unix, gzip and bzip2, only do file compression. tar does the file concatenation. Piping the output of tar into a compression utility does what's needed, without adding excessive complexity to either piece of software.
+
+I think you were looking for more of historical context to this. The original zip was for a single file. Tar is used to place multiple files into a single file. Therefore tarring and zipping is the two step process. Why it is still so dominant today is anyone's guess.
+From wikipedia for Tar_ (file_format)
+
+In computing, tar (derived from tape archive) is both a file format (in the form of a type of archive bitstream) and the name of the program used to handle such files. The format was standardized by POSIX.1-1988 and later POSIX.1-2001. Initially developed as a raw format, used for tape backup and other sequential access devices for backup purposes, it is now commonly used to collate collections of files into one larger file, for distribution or archiving, while preserving file system information such as user and group permissions, dates, and directory structures.
+
+
+It's odd that no-one else has mentioned that modern versions of GNU tar allow you to compress as you are bundling:
+tar -czf output.tar.gz directory1 ...
+
+tar -cjf output.tar.bz2 directory2 ...
+
+You can also use the compressor of your choosing provided it supports the '-c' (to stdout, or from stdin) and '-d' (decompress) options:
+tar -cf output.tar.xxx --use-compress-program=xxx directory1 ...
+
+This would allow you to specify any alternative compressor.
+[Added: If you are extracting from gzip or bzip2 compressed files, GNU tar auto-detects these and runs the appropriate program.  That is, you can use:
+tar -xf output.tar.gz
+tar -xf output.tgz        # A synonym for the .tar.gz extension
+tar -xf output.tar.bz2
+
+and these will be handled properly.  If you use a non-standard compressor, then you need to specify that when you do the extraction.]
+The reason for the separation is, as in the selected answer, the separation of duties.  Amongst other things, it means that people could use the 'cpio' program for packaging the files (instead of tar) and then use the compressor of choice (once upon a time, the preferred compressor was pack, later it was compress (which was much more effective than pack), and then gzip which ran rings around both its predecessors, and is entirely competitive with zip (which has been ported to Unix, but is not native there), and now bzip2 which, in my experience, usually has a 10-20% advantage over gzip.
+[Added: someone noted in their answer that cpio has funny conventions.  That's true, but until GNU tar got the relevant options ('-T -'), cpio was the better command when you did not want to archive everything that was underneath a given directory -- you could actually choose exactly which files were archived.  The downside of cpio was that you not only could choose the files -- you had to choose them.  There's still one place where cpio scores; it can do an in-situ copy from one directory hierarchy to another without any intermediate storage:
+cd /old/location; find . -depth -print | cpio -pvdumB /new/place
+
+Incidentally, the '-depth' option on find is important in this context - it copies the contents of directories before setting the permissions on the directories themselves.  When I checked the command before entering the addition to this answer, I copied some read-only directories (555 permission); when I went to delete the copy, I had to relax the permissions on the directories before 'rm -fr /new/place' could finish.  Without the -depth option, the cpio command would have failed.  I only re-remembered this when I went to do the cleanup - the formula quoted is that automatic to me (mainly by virtue of many repetitions over many years).
+]
+
+An important distinction is in the nature of the two kinds of archives.
+TAR files are little more than a concatenation of the file contents with some headers, while gzip and bzip2 are stream compressors that, in tarballs, are applied to the whole concatenation.
+ZIP files are a concatenation of individually compressed files, with some headers. Actually, the DEFLATE algorithm is used by both zip and gzip, and with appropriate binary adjusting, you could take the payload of a gzip stream and put it in a zip file with appropriate header and dictionary entries.
+This means that the two different archive types have different trade-offs. For large collections of small files, TAR followed by a stream compressor will normally result in higher compression ratio than ZIP because the stream compressor will have more data to build its dictionary frequencies from, and thus be able to squeeze out more redundant information. On the other hand, a (file-length-preserving) error in a ZIP file will only corrupt those files whose compressed data was affected. Normally, stream compressors cannot meaningfully recover from errors mid-stream. Thus, ZIP files are more resilient to corruption, as part of the archive will still be accessible.
+
+Another reason it is so prevalent is that tar and gzip are on almost the entire *NIX install base out there.  I believe this is probably the single largest reason.  It is also why zip files are extremely prevalent on Windows, because support is built in, regardless of the superior routines in RAR or 7z.
+GNU tar also allows you to create/extract these files from one command (one step):
+
+Create an Archive:
+tar -cfvj destination.tar.bz2 *.files
+tar -cfvz destination.tar.gz *.files
+Extract an Archive: (the -C part is optional, it defaults to current directory)
+tar -xfvj archive.tar.bz2 -C destination_path
+tar -xfvz archive.tar.gz -C destination_path
+
+These are what I have committed to memory from my many years on Linux and recently on Nexenta (OpenSolaris).  
+
+tar is popular mostly for historic reasons. There are several alternatives readily available. Some of them are around for nearly as long as tar, but couldn't surpass tar in popularity for several reasons.
+
+cpio (alien syntax; theoretically more consistent, but people like what they know, tar prevailed)
+ar (popular a long time ago, now used for packing library files)
+shar (self extracting shell scripts, had all sorts of issues; used to be popular never the less)
+zip (because of licensing issues it wasn't readily available on many Unices)
+
+A major advantage (and downside) of tar is that it has neither file header, nor central directory of contents. For many years it therefore never suffered from limitations in file-size (until this decade where an 8 Gb limit on files inside the archive became a problem, solved years ago).
+Apperantly the one downside of tar.gz (or ar.Z for that matter), which is that you have to uncompress the whole archive for extracting single files and listing archive contents, never hurt people enough to make them defect from tar in significant numbers.
+
+Tar is not only a file format, but it is a tape format.  Tapes store data bit-by-bit. Each storage implementation was custom.  Tar was the method by which you could take data off a disk, and store it onto tape in a way that other people could retrieve it without your custom program.
+Later, the compression programs came, and *nix still only had one method of creating a single file that contained multiple files.
+I believe it's just inertia that has continued with the tar.gz trend. Pkzip started with both compression and archival in one fell swoop, but then DOS systems didn't typically have tape drives attached!
+From wikipedia for Tar_ (file_format)
+
+In computing, tar (derived from tape archive) is both a file format (in the form of a type of archive bitstream) and the name of the program used to handle such files. The format was standardized by POSIX.1-1988 and later POSIX.1-2001. Initially developed as a raw format, used for tape backup and other sequential access devices for backup purposes, it is now commonly used to collate collections of files into one larger file, for distribution or archiving, while preserving file system information such as user and group permissions, dates, and directory structures.
+
+
+The funny thing is, you can get behaviour not anticipated by the creators of tar and gzip.  For example, you can not only gzip a tar file, you can also tar gzipped files, to produce a files.gz.tar (this would technically be closer to the way pkzip works).  Or you can put another program into the pipeline, for example some cryptography, and you can choose an arbitrary order of tarring, gzipping and encrypting.  Whoever wrote the cryptography program does not have to have the slightest idea how his program would be used, all he needs to do is read from standard input and write to standard output.
+
+For the same reason why mac users love disk images: They are a really convenient way to archive stuff and then pass it around, up-/download or email it etc. 
+And easier to use and more portable than zips IMHO.
+
+In my Altos-XENIX days (1982) we started using tar (tape archiver) to extract files from 5 1/4 floppies or streaming tape as well as copy to these media. It's functionality is very similar to the BACKUP.EXE and RESTORE.EXE commands in DOS 5.0 and 6.22 as supplements, allowing you to span multiple media if it couldn't fit in only one. The drawback was that if one of the multiple media had problems, the whole thing was worthless. tar and dd originate from UNIX SYstem III and has remained a standard release utility with UNIX-like OS' probably for backward compatibility reasons. 
+
+tar is UNIX as UNIX is tar
+In my opinion the reason of still using tar today is that it's one of the (probably rare) cases where the UNIX approach just made it perfectly right from the very beginning.
+Taking a closer look at the stages involved in creating archives I hope you'll agree that the way the separation of different tasks takes place here is UNIX philosophy at its very best:
+
+one tool (tar to give it a name here) specialized in transforming any selection of files, directories and symbolic links including all relevant meta-data like timestamps, owners and permissions into one byte stream.
+and just another arbitrarily interchangeable tool (gzip bz2 xz to name just a few options) that transforms any input stream of bytes into another (hopefully) smaller output stream.    
+
+Using such and approach delivers a whole couple of benefits to the user as well as to the developer:
+
+extensibility
+Allowing to couple tar with any compression algorithm already existing or any compression algorithm yet still to be developed without having to change anything on the inner workings of tar at all.
+As soon as the all brand new "hyper-zip-utra" or whater compression tool comes out you're already ready to use it embracing your new servant with the whole power of tar.     
+stability
+tar has been in heavy use since the early 80es tested and been run on numberous operating systems and machines. 
+Preventing the need to reinvent the wheel in implementing storing ownership, permissions, timestamps and the like over and over again for every new archiving tool not only saves a lot of (otherwise unnecessarily spent) time in development, but also guarantees the same reliability for every new application.
+consistency The user interface just stays the same all the time.
+There's no need to remember that to restore permissions using tool A you have to pass option --i-hope-you-rember-this-one and using tool B you have to use --this-time-its-another-one  while using tool C it's `--hope-you-didnt-try-with-tool-as-switch. 
+Whereas in utilizing tool D you would have really messed up it if you didn't use --if-you-had-used-tool-bs-switch-your-files-would-have-been-deleted-now.  
+

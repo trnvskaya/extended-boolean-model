@@ -1,0 +1,73 @@
+Normalizing a Table with Low Integrity
+database
+I've been handed a table with about 18000 rows. Each record describes the location of one customer. The issue is, that when the person created the table, they did not add a field for "Company Name", only "Location Name," and one company can have many locations.
+For example, here are some records that describe the same customer:
+Location Table
+ ID  Location_Name     
+ 1   TownShop#1        
+ 2   Town Shop - Loc 2 
+ 3   The Town Shop     
+ 4   TTS - Someplace   
+ 5   Town Shop,the 3   
+ 6   Toen Shop4        
+
+My goal is to make it look like:
+Location Table
+ ID  Company_ID   Location_Name     
+ 1   1            Town Shop#1       
+ 2   1            Town Shop - Loc 2 
+ 3   1            The Town Shop     
+ 4   1            TTS - Someplace   
+ 5   1            Town Shop,the 3   
+ 6   1            Toen Shop4        
+
+Company Table
+ Company_ID  Company_Name  
+ 1           The Town Shop 
+
+There is no "Company" table, I will have to generate the Company Name list from the most descriptive or best Location Name that represents the multiple locations.
+Currently I am thinking I need to generate a list of Location Names that are similar, and then and go through that list by hand.
+Any suggestions on how I can approach this is appreciated.
+@Neall, Thank you for your statement, but unfortunately, each location name is distinct, there are no duplicate location names, only similar. So in the results from your statement "repcount" is 1 in each row.
+@yukondude, Your step 4 is the heart of my question.
+
+
+I've had to do this before. The only real way to do it is to manually match up the various locations. Use your database's console interface and grouping select statements. First, add your "Company Name" field. Then:
+SELECT count(*) AS repcount, "Location Name" FROM mytable WHERE "Company Name" IS NULL GROUP BY "Location Name" ORDER BY repcount DESC LIMIT 5;
+Figure out what company the location at the top of the list belongs to and then update your company name field with an UPDATE ... WHERE "Location Name" = "The Location" statement.
+P.S. - You should really break your company names and location names out into separate tables and refer to them by their primary keys.
+Update: - Wow - no duplicates? How many records do you have?
+Please update the question, do you have a list of CompanyNames available to you? I ask because you maybe able to use Levenshtein algo to find a relationship between your list of CompanyNames and LocationNames.
+
+Update
+
+There is not a list of Company Names, I will have to generate the company name from the most descriptive or best Location Name that represents the multiple locations.
+
+Okay... try this:
+
+Build a list of candidate CompanyNames by finding LocationNames made up of mostly or all alphabetic characters. You can use regular expressions for this. Store this list in a separate table.
+Sort that list alphabetically and (manually) determine which entries should be CompanyNames.
+Compare each CompanyName to each LocationName and come up with a match score (use Levenshtein or some other string matching algo). Store the result in a separate table.
+Set a threshold score such that any MatchScore < Threshold will not be considered a match for a given CompanyName.
+Manually vet through the LocationNames by CompanyName | LocationName | MatchScore, and figure out which ones actually match. Ordering by MatchScore should make the process less painful.
+
+The whole purpose of the above actions is to automate parts and limit the scope of your problem. It's far from perfect, but will hopefully save you the trouble of going through 18K records by hand.
+I was going to recommend some complicated token matching algorithm but it's really tricky to get right and if you're data does not have a lot of correlation (typos, etc) then it's not going to give very good results.
+I would recommend you submit a job to the Amazon Mechanical Turk and let a human sort it out.
+Ideally, you'd probably want a separate table named Company and then a company_id column in this "Location" table that is a foreign key to the Company table's primary key, likely called id. That would avoid a fair bit of text duplication in this table (over 18,000 rows, an integer foreign key would save quite a bit of space over a varchar column).
+But you're still faced with a method for loading that Company table and then properly associating it with the rows in Location. There's no general solution, but you could do something along these lines:
+
+Create the Company table, with an id column that auto-increments (depends on your RDBMS).
+Find all of the unique company names and insert them into Company.
+Add a column, company_id, to Location that accepts NULLs (for now) and that is a foreign key of the Company.id column.
+For each row in Location, determine the corresponding company, and UPDATE that row's company_id column with that company's id. This is likely the most challenging step. If your data is like what you show in the example, you'll likely have to take many runs at this with various string matching approaches.
+Once all rows in Location have a company_id value, then you can ALTER the Company table to add a NOT NULL constraint to the company_id column (assuming that every location must have a company, which seems reasonable).
+
+If you can make a copy of your Location table, you can gradually build up a series of SQL statements to populate the company_id foreign key. If you make a mistake, you can just start over and rerun the script up to the point of failure.
+Yes, that step 4 from my previous post is a doozy.
+No matter what, you're probably going to have to do some of this by hand, but you may be able to automate the bulk of it. For the example locations you gave, a query like the following would set the appropriate company_id value:
+UPDATE  LocationSET     Company_ID = 1WHERE   (LOWER(Location_Name) LIKE '%to_n shop%'OR      LOWER(Location_Name) LIKE '%tts%')AND     Company_ID IS NULL;
+I believe that would match your examples (I added the IS NULL part to not overwrite previously set Company_ID values), but of course in 18,000 rows you're going to have to be pretty inventive to handle the various combinations.
+Something else that might help would be to use the names in Company to generate queries like the one above. You could do something like the following (in MySQL):
+SELECT  CONCAT('UPDATE Location SET Company_ID = ',        Company_ID, ' WHERE LOWER(Location_Name) LIKE ',        LOWER(REPLACE(Company_Name), ' ', '%'), ' AND Company_ID IS NULL;')FROM    Company;
+Then just run the statements that it produces. That could do a lot of the grunge work for you.

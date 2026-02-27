@@ -1,0 +1,77 @@
+Does several levels of base classes slow down a class/struct in c++?
+c++ oop
+Does having several levels of base classes slow down a class?  A derives B derives C derives D derives F derives G, ...
+Does multiple inheritance slow down a class?
+
+
+If there are no virtual functions, then it shouldn't. If there are then there is a performance impact in calling the virtual functions as these are called via function pointers or other indirect methods (depends on the situation). However, I do not think that the impact is related to the depth of the inheritance hierarchy.
+Brian, to be clear and answer your comment. If there are no virtual functions anywhere in your inheritance tree, then there is no performance impact.
+
+Yes, if you're referencing it like this:
+// F is-a E,
+// E is-a D and so on
+
+A* aObject = new F(); 
+aObject->CallAVirtual();
+
+Then you're working with a pointer to an A type object. Given you're calling a function that is virtual, it has to look up the function table (vtable) to get the correct pointers. There is some overhead to that, yes.
+
+Non-virtual function-calls have absolutely no performance hit at run-time, in accordance with the c++ mantra that you shouldn't pay for what you don't use.
+In a virtual function call, you generally pay for an extra pointer lookup, no matter how many levels of inheritance, or number of base classes you have.
+Of course this is all implementation defined.
+Edit: As noted elsewhere, in some multiple inheritance scenarios, an adjustment to the 'this' pointer is required before making the call.  Raymond Chen describes how this works for COM objects.  Basically, calling a virtual function on an object that inherits from multiple bases can require an extra subtraction and a jmp instruction on top of the extra pointer lookup required for a virtual call.
+
+Calling a virtual function is slightly slower than calling a nonvirtual function. However, I don't think it matters how deep your inheritance tree is.
+But this is not a difference that you should normally be worried about.
+
+While I'm not completely sure, I think that unless you're using virtual methods, the compiler should be able to optimize it well enough that inheritance shouldn't matter too much.
+However, if you're calling up to functions in the base class which call functions in its base class, and so on, a lot, it could impact performance.
+In essence, it highly depends on how you've structured your inheritance tree.
+
+[Deep inheritance hierarchies] greatly increases the maintenance burden by adding unnecessary complexity, forcing users to learn the interfaces of many classes even when all they want to do is use a specific derived class. It can also have an impact on memory use and program performance by adding unnecessary vtables and indirection to classes that do not really need them. If you find yourself frequently creating deep inheritance hierarchies, you should review your design style to see if you've picked up this bad habit. Deep hierarchies are rarely needed and almost never good. And if you don't believe that but think that "OO just isn't OO without lots of inheritance," then a good counter-example to consider is the [C++] standard library itself.  -- Herb Sutter 
+
+There is no speed difference between virtual calls at different levels since they all get flattened out into the vtable (pointing to the most derived versions of the overridden methods). So, calling ((A*)inst)->Method() when inst is an instance of B is the same overhead as when inst is an instance of D.
+Now, a virtual call is more expensive than a non-virtual call, but this is because of the pointer dereference and not a function of how deep the class hierarchy actually is. 
+
+
+Does multiple inheritance slow down
+a class?
+
+As mentioned several times, a deeply nested single inheritance hierarchy should impose no additional overhead for a virtual call (above the overhead imposed for any virtual call).
+However, when multiple inheritance is involved, there is sometimes a very slight additional overhead when calling the virtual function through a base class pointer.  In this case some implementations have the virtual function go through a small thunk that adjusts the 'this' pointer since 
+(static_cast<Base*>( this) == this)
+
+Is not necessarily true depending on the object layout.  
+Note that all of this is very, very implementation dependent.
+See Lippman's "Inside the C++ Object Model" Chapter 4.2 - Virtual Member Functions/Virtual Functions under MI
+
+Virtual calls themselves are more time consuming than normal calls because it has to lookup the address of the actual function to call from the vtable 
+Additionally compiler optimizations like inlining might be hard to perform due to the lookup requirement. Situations where inlining is not possible itself can lead to quite a high overhead due to stack pop and push and jump operations
+Here is a proper study which says the overhead can be as high as 50% http://www.cs.ucsb.edu/~urs/oocsb/papers/oopsla96.pdf
+Here is another resource that looks at a side effect of having a large library of virtual classes http://keycorner.org/pub/text/doc/kde-slow.txt
+The dispatching of the virtual calls with multiple inheritances is compiler specific, so the implementation will also have an effect in this case. 
+Regarding your specific question of having a large no of base classes, usually the memory layout of a class object would have the vtbl ptrs for all the other constituent classes within it. 
+Check this page for a sample vtable layout - http://www.codesourcery.com/public/cxx-abi/cxx-vtable-ex.html
+So a call to a method implemented by a class deeper into the heierarchy would still only be a single indirection and not multiple indirections as you seem to think. The call does not have to navigate from class to class to finally find the exact function to call. 
+However if you are using composition instead of inheritance each pointer call would be a virtual call and that overhead would be present and if within that virtual call if that class uses more compositio,n more virtual calls would be made. That kindof a design would be slower depending on the amount of calls you made. 
+
+As pointed out by Corey Ross the vtable is known at compile time for any leaf derived class, and so the cost of the virtual call really should be the same irrespective of the structure of the hierarchy.
+This, however, cannot be said for dynamic_cast.  If you consider how you might implement  dynamic_cast, a basic approach will be have an O(n) search through your hierarchy!
+In the case of a multiple inheritance hierarchy, you are also paying a small cost to convert between different classes in the hierarchy:
+sturct A { int i; };
+struct B { int j; };
+
+struct C : public A, public B { int k ; };
+
+// Let's assume that the layout of C is:  { [ int i ] [ int j ] [int k ] }
+
+void foo (C * c) {
+  A * a = c;                // Probably has zero cost
+  B * b = c;                // Compiler needed to add sizeof(A) to 'c'
+  c = static_cast<B*> (b);  // Compiler needed to take sizeof(A)' from 'b'
+}
+
+
+Almost all answers point toward whether or not virtual methods would be slower in the OP's example, but I think the OP is simply asking if having several level of inheritance in and of itself is slow. The answer is of course no since this all happens at compile-time in C++. I suspect the question is driven from experience with script languages where such inheritance graphs can be dynamic, and in that case, it potentially could be slower.
+
+Having non-trivial constructors in a deep inheritance tree can slow down object creation, when every creation of a child results in function calls to all the parent constructors all the way up to the base.

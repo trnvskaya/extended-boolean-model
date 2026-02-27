@@ -1,0 +1,286 @@
+How do you give a C# Auto-Property a default value?
+c# automatic-properties
+How do you give a C# Auto-Property a default value?  I either use the constructor, or revert to the old syntax. 
+ Using the Constructor:
+class Person 
+{
+    public Person()
+    {
+        Name = "Default Name";
+    }
+    public string Name { get; set; }
+}
+
+Using normal property syntax  (with a default value)
+private string name = "Default Name";
+public string Name 
+{
+    get 
+    {
+        return name;
+    }
+    set
+    {
+        name = value;
+    }
+}
+
+Is there a better way?
+
+
+Have you tried using the DefaultValueAttribute or ShouldSerialize and Reset methods in conjunction with the constructor?  I feel like one of these two methods is necessary if you're making a class that might show up on the designer surface or in a property grid.
+
+In C# 5 and earlier, to give auto implemented properties a default value, you have to do it in a constructor.
+The ability to have auto property initializers is included since C# 6.0. The syntax is:
+public int X { get; set; } = x; // C# 6 or higher
+
+
+DefaultValueAttribute ONLY work in the vs designer. It will not initialize the property to that value. 
+See DefaultValue attribute is not working with my Auto Property
+
+Sometimes I use this, if I don't want it to be actually set and persisted in my db:
+class Person
+{
+    private string _name; 
+    public string Name 
+    { 
+        get 
+        {
+            return string.IsNullOrEmpty(_name) ? "Default Name" : _name;
+        } 
+
+        set { _name = value; } 
+    }
+}
+
+Obviously if it's not a string then I might make the object nullable ( double?, int? ) and check if it's null, return a default, or return the value it's set to.
+Then I can make a check in my repository to see if it's my default and not persist, or make a backdoor check in to see the true status of the backing value, before saving.
+Hope that helps!
+
+Personally, I don't see the point of making it a property at all if you're not going to do  anything at all beyond the auto-property.  Just leave it as a field.  The encapsulation benefit for these item are just red herrings, because there's nothing behind them to encapsulate.  If you ever need to change the underlying implementation you're still free to refactor them as properties without breaking any dependent code.
+Hmm... maybe this will be the subject of it's own question later
+
+When you inline an initial value for a variable it will be done implicitly in the constructor anyway.
+I would argue that this syntax was best practice in C# up to 5:
+class Person 
+{
+    public Person()
+    {
+        //do anything before variable assignment
+
+        //assign initial values
+        Name = "Default Name";
+
+        //do anything after variable assignment
+    }
+    public string Name { get; set; }
+}
+
+As this gives you clear control of the order values are assigned.
+As of C#6 there is a new way:
+public string Name { get; set; } = "Default Name"
+
+
+You should not add a default to the constructor; this will mean that in the creation of the object the property will have to be assigned to twice (once as null, then again in the constructor). If you require a default value for a property it should broken out as a normal property (or possibly deferred to a builder in a creational pattern). 
+One other option is to do what ASP.Net does and define defaults via an attribute:
+http://msdn.microsoft.com/en-us/library/system.componentmodel.defaultvalueattribute.aspx
+But again, I would simply break out the property as this is the clearest and most efficient option.
+
+little complete sample:
+private bool bShowGroup ;
+[Description("Show the group table"), Category("Sea"),DefaultValue(true)]
+public bool ShowGroup
+{
+    get { return bShowGroup; }
+    set { bShowGroup = value; }
+}
+
+
+class Person 
+{    
+    /// Gets/sets a value indicating whether auto 
+    /// save of review layer is enabled or not
+    [System.ComponentModel.DefaultValue(true)] 
+    public bool AutoSaveReviewLayer { get; set; }
+}
+
+
+Edit 1/2/15
+With C# 6 you can initialize auto-properties directly (finally!), there are now other answers in the thread that describe that.
+For C# 5 and below:
+Though the intended use of the attribute is not to actually set the values of the properties, you can use reflection to always set them anyway...
+public class DefaultValuesTest
+{    
+    public DefaultValuesTest()
+    {               
+        foreach (PropertyDescriptor property in TypeDescriptor.GetProperties(this))
+        {
+            DefaultValueAttribute myAttribute = (DefaultValueAttribute)property.Attributes[typeof(DefaultValueAttribute)];
+
+            if (myAttribute != null)
+            {
+                property.SetValue(this, myAttribute.Value);
+            }
+        }
+    }
+
+    public void DoTest()
+    {
+        var db = DefaultValueBool;
+        var ds = DefaultValueString;
+        var di = DefaultValueInt;
+    }
+
+
+    [System.ComponentModel.DefaultValue(true)]
+    public bool DefaultValueBool { get; set; }
+
+    [System.ComponentModel.DefaultValue("Good")]
+    public string DefaultValueString { get; set; }
+
+    [System.ComponentModel.DefaultValue(27)]
+    public int DefaultValueInt { get; set; }
+}
+
+
+To clarify, yes, you need to set default values in the constructor for class derived objects.  You will need to ensure the constructor exists with the proper access modifier for construction where used.  If the object is not instantiated, e.g. it has no constructor (e.g. static methods) then the default value can be set by the field.  The reasoning here is that the object itself will be created only once and you do not instantiate it.  
+@Darren Kopp - good answer, clean, and correct.  And to reiterate, you CAN write constructors for Abstract methods.  You just need to access them from the base class when writing the constructor:  
+Constructor at Base Class:
+public BaseClassAbstract()
+{
+    this.PropertyName = "Default Name";
+}
+
+Constructor at Derived / Concrete / Sub-Class:
+public SubClass() : base() { }
+
+The point here is that the instance variable drawn from the base class may bury your base field name.  Setting the current instantiated object value using "this." will allow you to correctly form your object with respect to the current instance and required permission levels (access modifiers) where you are instantiating it.
+
+initialize in line, using constructors to initialize is bad practice and will lead to more breaking changes later.
+
+My solution is to use a custom attribute that provides default value property initialization by constant or using property type initializer.
+[AttributeUsage(AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
+public class InstanceAttribute : Attribute
+{
+    public bool IsConstructorCall { get; private set; }
+    public object[] Values { get; private set; }
+    public InstanceAttribute() : this(true) { }
+    public InstanceAttribute(object value) : this(false, value) { }
+    public InstanceAttribute(bool isConstructorCall, params object[] values)
+    {
+        IsConstructorCall = isConstructorCall;
+        Values = values ?? new object[0];
+    }
+}
+
+To use this attribute it's necessary to inherit a class from special base class-initializer or use a static helper method:
+public abstract class DefaultValueInitializer
+{
+    protected DefaultValueInitializer()
+    {
+        InitializeDefaultValues(this);
+    }
+
+    public static void InitializeDefaultValues(object obj)
+    {
+        var props = from prop in obj.GetType().GetProperties()
+                    let attrs = prop.GetCustomAttributes(typeof(InstanceAttribute), false)
+                    where attrs.Any()
+                    select new { Property = prop, Attr = ((InstanceAttribute)attrs.First()) };
+        foreach (var pair in props)
+        {
+            object value = !pair.Attr.IsConstructorCall && pair.Attr.Values.Length > 0
+                            ? pair.Attr.Values[0]
+                            : Activator.CreateInstance(pair.Property.PropertyType, pair.Attr.Values);
+            pair.Property.SetValue(obj, value, null);
+        }
+    }
+}
+
+Usage example:
+public class Simple : DefaultValueInitializer
+{
+    [Instance("StringValue")]
+    public string StringValue { get; set; }
+    [Instance]
+    public List<string> Items { get; set; }
+    [Instance(true, 3,4)]
+    public Point Point { get; set; }
+}
+
+public static void Main(string[] args)
+{
+    var obj = new Simple
+        {
+            Items = {"Item1"}
+        };
+    Console.WriteLine(obj.Items[0]);
+    Console.WriteLine(obj.Point);
+    Console.WriteLine(obj.StringValue);
+}
+
+Output:
+Item1
+(X=3,Y=4)
+StringValue
+
+
+I think this would do it for ya givng SomeFlag a default of false.
+private bool _SomeFlagSet = false;
+public bool SomeFlag
+{
+    get
+    {
+        if (!_SomeFlagSet)
+            SomeFlag = false;        
+
+        return SomeFlag;
+    }
+    set
+    {
+        if (!_SomeFlagSet)
+            _SomeFlagSet = true;
+
+        SomeFlag = value;        
+    }
+}
+
+
+Starting with C# 6.0, We can assign default value to auto-implemented properties. 
+public string Name { get; set; } = "Some Name";
+
+We can also create read-only auto implemented property like:
+public string Name { get; } = "Some Name";
+
+See: C# 6: First reactions , Initializers for automatically implemented properties - By Jon Skeet
+
+public Class ClassName{
+    public int PropName{get;set;}
+    public ClassName{
+        PropName=0;  //Default Value
+    }
+}
+
+
+Use the constructor because "When the constructor is finished, Construction should be finished". properties are like states your classes hold, if you had to initialize a default state, you would do that in your constructor.
+
+In the constructor.  The constructor's purpose is to initialized it's data members.
+
+In C# 6.0 this is a breeze!
+You can do it in the Class declaration itself, in the property declaration statements.
+public class Coordinate
+{ 
+    public int X { get; set; } = 34; // get or set auto-property with initializer
+
+    public int Y { get; } = 89;      // read-only auto-property with initializer
+
+    public int Z { get; }            // read-only auto-property with no initializer
+                                     // so it has to be initialized from constructor    
+
+    public Coordinate()              // .ctor()
+    {
+        Z = 42;
+    }
+}
+
+Source: C# 6.0 Features / Auto-property Initializers

@@ -1,0 +1,76 @@
+How to get your own (local) IP-Address from an udp-socket (C/C++)
+c++ sockets udp
+
+You have multiple network adapters.
+Bind a UDP socket to an local port, without specifying an address.
+Receive packets on one of the adapters.
+
+How do you get the local ip address of the adapter which received the packet?
+The question is, "What is the ip address from the receiver adapter?" not the address from the sender which we get in the 
+receive_from( ..., &senderAddr, ... );
+
+call.
+
+
+
+ssize_t
+     recvfrom(int socket, void *restrict buffer, size_t length, int flags,
+         struct sockaddr *restrict address, socklen_t *restrict address_len);
+
+     ssize_t
+     recvmsg(int socket, struct msghdr *message, int flags);
+
+[..]
+     If address is not a null pointer and the socket is not connection-oriented, the
+     source address of the message is filled in.
+
+Actual code:
+
+int nbytes = recvfrom(sock, buf, MAXBUFSIZE, MSG_WAITALL, (struct sockaddr *)&bindaddr, &addrlen);
+fprintf(stdout, "Read %d bytes on local address %s\n", nbytes, inet_ntoa(bindaddr.sin_addr.s_addr));
+
+hope this helps.
+
+You could enumerate all the network adapters, get their IP addresses and compare the part covered by the subnet mask with the sender's address.
+Like:
+IPAddress FindLocalIPAddressOfIncomingPacket( senderAddr )
+{
+    foreach( adapter in EnumAllNetworkAdapters() )
+    {
+        adapterSubnet = adapter.subnetmask & adapter.ipaddress;
+        senderSubnet = adapter.subnetmask & senderAddr;
+        if( adapterSubnet == senderSubnet )
+        {
+            return adapter.ipaddress;
+        }
+    }
+}
+
+
+G'day,
+I assume that you've done your bind using INADDR_ANY to specify the address.
+If this is the case, then the semantics of INADDR_ANY is such that a UDP socket is created on the port specified on all of your interfaces. The socket is going to get all packets sent to all interfaces on the port specified.
+When sending using this socket, the lowest numbered interface is used. The outgoing sender's address field is set to the IP address of that first outgoing interface used.
+First outgoing interface is defined as the sequence when you do an ifconfig -a. It will probably be eth0.
+HTH.
+cheers,
+Rob
+
+The solution provided by timbo assumes that the address ranges are unique and not overlapping. While this is usually the case, it isn't a generic solution.
+There is an excellent implementation of a function that does exactly what you're after provided in the Steven's book "Unix network programming" (section 20.2)
+This is a function based on recvmsg(), rather than recvfrom(). If your socket has the IP_RECVIF option enabled then recvmsg() will return the index of the interface on which the packet was received. This can then be used to look up the destination address.
+The source code is available here. The function in question is 'recvfrom_flags()'
+
+Try this:
+gethostbyname("localhost");
+
+
+Unfortunately the sendto and recvfrom API calls are fundamentally broken when used with sockets bound to "Any IP" because they have no field for local IP information. 
+So what can you do about it? 
+
+You can guess (for example based on the routing table).
+You can get a list of local addresses and bind a seperate socket to each local address. 
+You can use newer APIs that support this information. There are two parts to this, firstly you have to use the relavent socket option (ip_recvif for IPv4, ipv6_recvif for IPv6) to tell the stack you want this information. Then you have to use a different function (recvmsg on linux and several other unix-like systems, WSArecvmsg on windows) to receive the packet. 
+
+None of these options are great. Guessing will obviously produce wrong answers soemtimes. Binding seperate sockets increases the complexity of your software and causes problems if the list of local addresses changes will your program is running. The newer APIs are the correct techical soloution but may reduce portability (in particular it looks like WSArecvmsg is not available on windows XP) and may require modifications to the socket wrapper library you are using.
+Edit looks like I was wrong, it seems the MS documentation is misleading and that WSArecvmsg is available on windows XP. See http://stackoverflow.com/a/37334943/5083516

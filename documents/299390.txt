@@ -1,0 +1,40 @@
+How do I generically use KVC to update fields?
+iphone objective-c cocoa-touch
+Say I have the following Objective-C class:
+@interface Foo {
+     int someNumber;
+     NSString *someString;
+}
+
+and for reasons I won't get into here, I want to use KVC to update, in a generic fashion, the values for those variables:
+[f setValue:object forKey:@"someNumber"];
+
+or
+
+[f setValue:object forKey:@"someString"];`
+
+If object is a string and I'm updating the someNumber variable, it seems that I need to know to use an NSNumberFormatter to get an NSNumber and then Cocoa automatically converts that to an int inside setValue:forKey:. 
+Is there any way to avoid this custom code and have Cocoa infer the conversion to an int from a string, or do I need to catch this situation each time and handle it myself?
+
+
+You should do the conversion yourself with a number formatter, it gives you finer control than anything that the framework might consider to be appropriate. It is also, probably, not a good idea to use a single instance of an object to update the values for your ivars.  More appropriately, you could perform your update based on the class of the object (providing you are not storing in an id by querying the runtime as to the class of the object by means of object_getClassName.  More information is available in the Objective-C 2.0 Runtime Reference.  But in general, you will likely find bugs in your code as a result of doing things that way.
+
+The following code should handle the conversion automatically, as long as the object parameter is a member of a class that implements integerValue.
+Note that both NSNumber and NSString implement this method.
+- (void)setValue:(id)object forKey:(NSString *)key
+{
+    if ([key isEqual:@"someNumber"])
+    {
+        someNumber = [object integerValue];
+    }
+    //...
+}
+edit: (side note):
+You can avoid writing the method yourself by using objective-c properties. The default implementation of setValue:forKey: will do the work for you, as long as you create properties for someNumber and someString.
+
+I'm with wisequark on this one. I think of setValue:forKey: as equivalent to calling the setter directly. If you had a method:
+- (void)setSomeValue:(NSInteger)aValue
+
+You wouldn't expect to be able to pass in an NSString and hope the method can figure it out.
+Put another way, a key value gives you access to a property, and that property has a type. When using KVC, numbers just get wrapped in an NSNumber object so that there's only one setValue:forKey: method. Therefore, I say it's always the calling code's responsibility to package up the string in an NSNumber object.
+It's times like these I lament that Cocoa Touch doesn't support bindings. Bindings would allow you to add a value transformer that could handle the transformation from string to number automatically for you. Maybe in the next version!

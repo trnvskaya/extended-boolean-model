@@ -1,0 +1,79 @@
+How to log in an Oracle database?
+database oracle logging
+I am interested in what methods of logging is frequent in an Oracle database.
+Our method is the following:
+We create a log table for the table to be logged. The log table contains all the columns of the original table plus some special fields including timestamp, modification type (insert, update, delete), modifier's id. A trigger on the original table creates one log row for each insertion and deletion, and two rows for a modification. Log rows contain the data before and after the alteration of the original one.
+Although state of the records can be mined back in time using this method, it has some drawbacks:
+
+Introduction of a new column in the original table does not automatically involves log modification.
+Log modification affects log table and trigger and it is easy to mess up.
+State of a record at a specific past time cannot be determined in a straightforward way.
+...
+
+What other possibilities exist?
+What kind of tools can be used to solve this problem?
+I only know of log4plsql. What are the pros/cons of this tool?
+Edit: Based on Brian's answer I have found the following reference that explains standard and fine grain auditing.
+
+
+log4plsql is a completely different thing, its for logging debug info from PL/SQL
+For what you want, you need to either.
+
+Setup a trigger
+Setup PL/SQL interface around the tables, CRUD operations happen via this interface, the interface ensures the log tables are updated.
+Setup interface in your application layer, as with PL/SQL interface, just higher up.
+Oracle 11g contains versioned tables, I have not used this at all though, so can make no real comment.
+
+
+Judging from your description, I wonder if what you really need is not logging mechanism, but rather some sort of Historical value of some table. If this is the case, then maybe you better off using some kind of Temporal Database design (using VALID_FROM and VALID_TO fields). You can track changes in database using Oracle LogMiner tools.
+As for your scenarios, I would rather stored the changes data in this kind of schema :
++----------------------------------------------------------------------------+
+| Column Name         | Function                                             |
++----------------------------------------------------------------------------+
+| Id                  | PRIMARY_KEY value of the SOURCE table                |
+| TimeStamp           | Time stamp of the action                             |
+| User                | User who make the action                             |
+| ActionType          | INSERT, UPDATE, or DELETE                            |
+| OldValues           | All fields value from source table, seperated by '|' |
+| Newvalues           | All fields value from source table, seperated by '|' |
++----------------------------------------------------------------------------+
+
+With this type of logging table, you can easily determine :
+
+Historical Change action of particular record (using Id)
+State of specific record in some point in time
+
+Of course this kind of logging cannot easily determine all valid values of table in specific point in time. For this, you need to change you table design to Temporal Database Design.
+
+It sounds like you are after 'auditing'.  Oracle has a built-in feature called Fine Grain Auditing (FGA).  In a nutshell you can audit everything or specific conditions.  What is really cool is you can 'audit' selects as well as transactions.  Simple command to get started with auditing:
+audit UPDATE on SCOTT.EMP by access;
+
+Think of it as a 'trigger' for select statements.  For example, you create policies:
+begin
+   dbms_fga.add_policy (
+      object_schema=>'BANK',
+      object_name=>'ACCOUNTS',
+      policy_name=>'ACCOUNTS_ACCESS'
+  );
+end;
+
+After you have defined the policy, when a user queries the table in the usual way, as follows:
+select * from bank.accounts; 
+
+the audit trail records this action. You can see the trail by issuing:
+select timestamp, 
+   db_user,
+   os_user,
+   object_schema,
+   object_name,
+   sql_text
+from dba_fga_audit_trail;
+
+TIMESTAMP DB_USER OS_USER OBJECT_ OBJECT_N SQL_TEXT
+--------- ------- ------- ------- -------- ----------------------
+22-OCT-08 BANK    ananda  BANK    ACCOUNTS select * from accounts
+
+
+If you just interested in knowing what the data looked like in the recent past you could just use Oracles flashback query functionality to query the data for a specific time in the past.  How far in the past is dependent on how much disk space you have and how much database activity there is.  The bright side of this solution is that new columns automatically get added.  The downside is that you can't flashback query past ddl operations.
+
+In the similar question (How to Audit Database Activity without Performance and Scalability Issues?) the accepted answer mentions the monitoring of database traffic using a network traffic sniffer as an interesting alternative.

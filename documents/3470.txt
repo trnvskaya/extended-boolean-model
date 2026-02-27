@@ -1,0 +1,43 @@
+How do I Transform Sql Columns into Rows?
+sql-server sql-server-2005
+I have a very simple problem which requires a very quick and simple solution in SQL Server 2005.
+I have a table with x Columns. I want to be able to select one row from the table and then transform the columns into rows.
+TableA
+Column1, Column2, Column3
+
+SQL Statement to ruturn
+ResultA
+Value of Column1
+Value of Column2
+Value of Column3
+
+
+@Kevin: I've had a google search on the topic but alot of the example where overly complex for my example, are you able to help further?
+@Mario: The solution I am creating has 10 columns which stores the values 0 to 6 and I must work out how many columns have the value 3 or more. So I thought about creating a query to turn that into rows and then using the generated table in a subquery to say count the number of rows with Column >= 3
+
+
+You should take a look at the UNPIVOT clause.
+Update1: GateKiller, strangely enough I read an article (about something unrelated) about it this morning and I'm trying to jog my memory where I saw it again, had some decent looking examples too. It'll come back to me I'm sure.
+Update2: Found it: http://weblogs.sqlteam.com/jeffs/archive/2008/04/23/unpivot.aspx
+UNION should be your friend:
+SELECT Column1 FROM table WHERE idColumn = 1UNION ALLSELECT Column2 FROM table WHERE idColumn = 1UNION ALLSELECT Column3 FROM table WHERE idColumn = 1
+but it can also be your foe on large result sets.
+If you have a fixed set of columns and you know what they are, you can basically do a series of subselects 
+(SELECT Column1 AS ResultA FROM TableA) as R1 
+and join the subselects. All this in a single query.
+I'm not sure of the SQL Server syntax for this but in MySQL I would do
+SELECT IDColumn, ( IF( Column1 >= 3, 1, 0 ) + IF( Column2 >= 3, 1, 0 ) + IF( Column3 >= 3, 1, 0 ) + ... [snip ] )
+  AS NumberOfColumnsGreaterThanThree
+FROM TableA;
+
+EDIT: A very (very) brief Google search tells me that the CASE statement does what I am doing with the IF statement in MySQL.  You may or may not get use out of the Google result I found
+FURTHER EDIT: I should also point out that this isn't an answer to your question but an alternative solution to your actual problem.
+
+I had to do this for a project before. One of the major difficulties I had was explaining what I was trying to do to other people. I spent a ton of time trying to do this in SQL, but I found the pivot function woefully inadequate. I do not remember the exact reason why it was, but it is too simplistic for most applications, and it isn't full implemented in MS SQL 2000. I wound up writing a pivot function in .NET. I'll post it here in hopes it helps someone, someday. 
+ ''' <summary>    ''' Pivots a data table from rows to columns    ''' </summary>    ''' <param name="dtOriginal">The data table to be transformed</param>    ''' <param name="strKeyColumn">The name of the column that identifies each row</param>    ''' <param name="strNameColumn">The name of the column with the values to be transformed from rows to columns</param>    ''' <param name="strValueColumn">The name of the column with the values to pivot into the new columns</param>    ''' <returns>The transformed data table</returns>    ''' <remarks></remarks>    Public Shared Function PivotTable(ByVal dtOriginal As DataTable, ByVal strKeyColumn As String, ByVal strNameColumn As String, ByVal strValueColumn As String) As DataTable        Dim dtReturn As DataTable        Dim drReturn As DataRow        Dim strLastKey As String = String.Empty        Dim blnFirstRow As Boolean = True        ' copy the original data table and remove the name and value columns        dtReturn = dtOriginal.Clone        dtReturn.Columns.Remove(strNameColumn)        dtReturn.Columns.Remove(strValueColumn)        ' create a new row for the new data table        drReturn = dtReturn.NewRow        ' Fill the new data table with data from the original table        For Each drOriginal As DataRow In dtOriginal.Rows            ' Determine if a new row needs to be started            If drOriginal(strKeyColumn).ToString <> strLastKey Then                ' If this is not the first row, the previous row needs to be added to the new data table                If Not blnFirstRow Then                    dtReturn.Rows.Add(drReturn)                End If                blnFirstRow = False                drReturn = dtReturn.NewRow                ' Add all non-pivot column values to the new row                For Each dcOriginal As DataColumn In dtOriginal.Columns                    If dcOriginal.ColumnName <> strNameColumn AndAlso dcOriginal.ColumnName <> strValueColumn Then                        drReturn(dcOriginal.ColumnName.ToLower) = drOriginal(dcOriginal.ColumnName.ToLower)                    End If                Next                strLastKey = drOriginal(strKeyColumn).ToString            End If            ' Add new columns if needed and then assign the pivot values to the proper column            If Not dtReturn.Columns.Contains(drOriginal(strNameColumn).ToString) Then                dtReturn.Columns.Add(drOriginal(strNameColumn).ToString, drOriginal(strValueColumn).GetType)            End If            drReturn(drOriginal(strNameColumn).ToString) = drOriginal(strValueColumn)        Next        ' Add the final row to the new data table        dtReturn.Rows.Add(drReturn)        ' Return the transformed data table        Return dtReturn    End Function
+SELECT IDColumn, 
+       NumberOfColumnsGreaterThanThree = (CASE WHEN Column1 >= 3 THEN 1 ELSE 0 END) + 
+                                         (CASE WHEN Column2 >= 3 THEN 1 ELSE 0 END) + 
+                                         (Case WHEN Column3 >= 3 THEN 1 ELSE 0 END) 
+FROM TableA;
+

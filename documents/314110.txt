@@ -1,0 +1,145 @@
+How do you internationalise text in the database?
+localization internationalization
+Having a fully internationalised application is a necessity if you want to sell worldwide.
+In Java we're using resource bundles and that solves things for static text codeside.
+But what do you do about text that is stored in the database? Starting with static definitions, to user modifiable objects, ending with user entered data.
+Assuming you have a database used by users with different Locales - how do you handle this? How far do you internationalise? Where do you draw the line?
+What workaround can keep users from receiving text in a language they don't understand?
+
+
+Don't store system generated text in the database.  Instead, store a code (like a message number) and then internationalize it at the GUI level.  Make sure that the only text that comes directly out of the database is text that the user put in themselves.  Make sure your database is set to accept unicode text.
+
+Static data is the easiest I would create a Translation Table so imagine a UserStatus table that has a StatusId, TranslationToken, then the TranslationTable has a Token, language, and text. 
+Or simillary you could just return the token for the application to process using your resource files.
+As for user input data this is a lot more complex. You need to accept unicode characters at a minimum but then the question becomes Sorting and Comparing. Sorting is the biggest one. A lot of what you can do depends on your application. So if your database only has to support a single language at any point (Imagine if your application was distributed to your customers), then collation is a moot point since you can set it at install time.
+However, if you have to support multiple languages within a single database you will need to handle collation properly. The only we way we found to change the collation on the fly was to set it within our queries, and that required dynamic sql to be generated. This example would be you are storing Russian, English and Polish all in one field in the same table. 
+We never explored anything beyond the Latin and Cyrillic collations but I imagine the Asian languages would work the same.
+
+We use XML file for our system. The file contain key associations with specific part of ours modules. This way we can quickly do XPath to retrieve information. We have 1 file for every language (we support 2 languages for the moment, but adding a language is very simple just copy-paste the file). This solution is not perfect but have some advantages:
+
+Not in the database.
+Can be edited by someone external to programming.
+Easy to be implemented in multiple views (we have WinForm and WebForm).
+
+
+
+What workaround can keep users from
+  receiving text in a language they
+  don't understand?
+
+That would only be a problem for user entered data. So if you want to avoid other users seeing content in a langauge they might not understand, store the locale code together with the content and only display that content to anyone with the same locale / user chosen langauge.
+On the other hand users might know several langauges so I would not restrict them from seeing content, I would just add a notice like "This content is not available in the language of your choice, ..." and then display the content in the available langauge. This way you increase the probability that the user gets a content she can understand.
+
+Firstly, be very aware of the limitations. For user-created content, you're looking at community translation (erratic), machine translation (unreliable) or paying human translators (expensive!) if you want to localize stuff that your users are entering into your application. You may want to ask your users to provide two version - one for your default culture (English?) and one for their localized culture, so you can provide a fall-back translation for other users?
+Second, be prepared for some extremely lengthy database migrations... if you've got four columns of text in an Excel spreadsheet, suddenly you're dealing with inserting each value into your translation system, retrieving the localized ID, and then storing that in the table you're actually importing - and SELECT * will only give you phrase IDs, which you need to resolve back into strings by localizing them against your translation tables.
+That said - you can localize lots of the lookup tables, drop-down lists, etc. that are driven by the database in a typical project. Other comments have already mentioned storing StringId values in the database that refer to external resource files or spreadsheets, but if you're interested in holding ALL your localized text in the database alongside the data itself, then you might find this approach useful. 
+We've used a table called Phrase, which contains the ID and default (English) content for every piece of text in your application.
+Your other tables end up looking like this:
+CREATE TABLE ProductType (
+    Id int primary key,
+    NamePhraseId int, -- link to the Phrase containing the name of this product type.
+    DescriptionPhraseId int
+)
+
+Create a second table Culture, which contains the specific and neutral cultures you're supporting. For bonus points, implement this table as a self-referential tree (each Culture record contains a nullable ParentCultureCode reference), so you can fall-back from specific cultures ("fr-CA" for Canadian French) to neutral cultures ("fr" if no regional localization exists), to your invariant / default culture (normally 'en' because it's so widely spoken)
+Your actual translations are in a LocalizedPhrase table, that looks like:
+CREATE TABLE LocalizedPhrase (
+  PhraseId int primary key,
+  CultureCode varchar(8) primary key,
+  Content nvarchar(255) -- the actual localized content
+)
+
+You can extend this model if you want to provide male/female-specific localizations:
+CREATE TABLE GenderedLocalizedPhrase (
+  PhraseId  int primary key,
+  CultureCode varchar(8) primary key,
+  GenderCode char(1) primary key, -- 'm', 'f' or '?' - links to Gender table
+  Content nvarchar(255)
+)
+
+You will want to cache this entire table graph in memory and modify your query/join strategies accordingly - caching the localizations inside Phrase classes and overriding the ToString() method on the Phrase object to inspect the current thread culture is one approach. If you try and do this stuff inside your queries, you'll incur a substantial performance cost and every query will end up looking like this:
+-- assume @MyCulture contains the culture code ('ca-FR') that we are looking for:
+SELECT 
+    Product.Id, 
+    Product.Name, 
+
+    COALESCE(ProductStatusLocalizedPhrase.Content, ProductStatusPhrase.Content) as ProductStatus, 
+    COALESCE(ProductTypeLocalizedPhrase.Content, ProductTypePhrase.Content) as ProductType, 
+  FROM Product
+
+    INNER JOIN ProductStatus ON Product.StatusId = ProductStatus.Id
+    INNER JOIN Phrase as ProductStatusPhrase ON ProductStatus.NamePhraseId = Phrase.Id
+    LEFT JOIN LocalizedPhrase as ProductStatusLocalizedPhrase 
+      ON ProductStatus.NamePhraseId = ProductStatusLocalizedPhrase.Id and CultureCode = @MyCulture
+
+    INNER JOIN ProductType ON Product.TypeId = ProductType.Id
+    INNER JOIN Phrase as ProductTypePhrase ON ProductType.NamePhraseId = Phrase.Id
+    LEFT JOIN LocalizedPhrase as ProductTypeLocalizedPhrase 
+      ON ProductType.NamePhraseId = ProductTypeLocalizedPhrase.Id and CultureCode = @MyCulture
+
+
+We are changing a lot of the text in our database to be âkey:default textâ then looking the âkeyâ up in our translation files.  This covers all the text the customer does not change in the database, (e.g. what to call a âcredit noteâ).  When the customer does change the text, they can just remove the key, so that they always get there value.
+Our system has a few tables that contains configuration data that need the above, tables that just contain text the customers input are not a problem if each customer only needs a single language. 
+
+Let's say you have a table:
+create table countries (
+  country_id int primary key,
+  short_name text not null unique,
+  official_name text not null unique,
+  iso_code char(2) not null unique
+);
+
+insert into countries values (12, 'Algeria', 'The People''s Democratic Republic of Algeria' 'DZ');
+
+Then you create a translation table:
+create table countries_t (
+  country_id int not null references countries(country_id),
+  short_name text not null,
+  official_name text not null,
+  locale varchar(5) not null,
+
+  primary key (country_id, locale)
+);
+
+insert into countries_t values
+(12, 'AlgÃ©rie', 'la RÃ©publique algÃ©rienne dÃ©mocratique et populaire', 'fr'),
+(12, 'Algerien', 'Demokratische Volksrepublik Algerien', 'de-DE');
+
+Create a view to return the data based on a user-defined session variable. Below is PostgreSQL-specific but your database might support custom session variables, else use temp table:
+create view countries_i18n as 
+  select 
+    a.country_id,
+    coalesce(c.short_name, b.short_name, a.short_name) as short_name, --default to countries.name if translation not found
+    coalesce(c.official_name, b.official_name, a.official_name) as official_name
+    countries.iso_code
+  from countries a
+  left join countries_t b on b.id = a.id and b.locale = current_setting('my_custom_guc.locale')
+  left join countries_t c on c.id = a.id and c.locale = left(current_setting('my_custom_guc.locale'), 2); --fall-back to 2-letter locale
+
+Query the table in German as spoken in Germany:
+SET my_custom_guc.language_code = 'de-DE';
+
+select country_id, iso_code, short_name, official_name from countries_i18n;
+
+country_id  iso_code  short_name  official_name
+-----------------------------------------------
+12          DZ        Algerien    Demokratische ...
+
+Query the table in Canadian French (falls back to generic French):
+SET my_custom_guc.locale= 'fr-CA';
+
+select country_id, iso_code, short_name, official_name from countries_i18n;
+
+country_id  iso_code  short_name  official_name
+-----------------------------------------------
+12          DZ        AlgÃ©rie     la RÃ©publique ...
+
+Query the table in Spanish (there's no translation, returns English):
+SET my_custom_guc.language_code = 'es';
+
+select country_id, iso_code, short_name, official_name from countries_i18n;
+
+country_id  iso_code  short_name  official_name
+-----------------------------------------------
+12          DZ        Algeria    The People's D ...
+

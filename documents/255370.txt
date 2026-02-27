@@ -1,0 +1,160 @@
+Automating unit tests (junit) for Eclipse Plugin development
+java testing junit eclipse-pde eclipse-3.4
+I am developing Eclipse plugins, and I need to be able to automate the building and execution of the test suite for each plugin.  (Using Junit)
+Test are working within Eclipse, and I can break the plugins into the actual plugin and a fragment plugin for unit testing as described here, here and in a couple places here.
+However, each of the approaches above results in the same issue:  The java ant task/commandline command that issues the build or should trigger the test, generates no observable side effects, and returns the value "13".  I've tried everything I can find, and I've learned a fair bit about how Eclipse starts up (eg: since v3.3 you can no longer use startup.jar -- it doesn't exist -- but you should use org.eclipse.equinox.launcher).  Unfortunately, while that is apparently necessary information, it is far from sufficient.
+I am working with Eclipse 3.4, Junit 4.3.1 (the org.junit4 bundle, but I would much rather use JUnit 4.4.  See here.)
+So, my question is: How exactly do you automate the build and testing of Eclipse plugins? 
+Edit: To clarify, I want to use something like ant + cruise control, but I can't even get the unit tests to run at all outside of Eclipse.  I say "something like" because there are other technologies that accomplish the same thing, and I am not so picky as to discard a solution that works just because it's using say, Maven or Buckminster, if those technologies make this substantially easier.
+Edit2: The 'Java Result 13' mentioned above seems to be caused by the inability to find the coretestrunner.  From the log:
+java.lang.RuntimeException: Application "org.eclipse.test.coretestapplication" could not be found in the registry. The applications available are: org.eclipse.equinox.app.error, com.rcpquickstart.helloworld.application.
+    at org.eclipse.equinox.internal.app.EclipseAppContainer.startDefaultApp(EclipseAppContainer.java:242)
+    at org.eclipse.equinox.internal.app.MainApplicationLauncher.run(MainApplicationLauncher.java:29)
+    at org.eclipse.core.runtime.internal.adaptor.EclipseAppLauncher.runApplication(EclipseAppLauncher.java:110)
+    at org.eclipse.core.runtime.internal.adaptor.EclipseAppLauncher.start(EclipseAppLauncher.java:79)
+    at org.eclipse.core.runtime.adaptor.EclipseStarter.run(EclipseStarter.java:382)
+    at org.eclipse.core.runtime.adaptor.EclipseStarter.run(EclipseStarter.java:179)
+    at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+    at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:39)
+    at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:25)
+    at java.lang.reflect.Method.invoke(Method.java:597)
+    at org.eclipse.equinox.launcher.Main.invokeFramework(Main.java:549)
+    at org.eclipse.equinox.launcher.Main.basicRun(Main.java:504)
+    at org.eclipse.equinox.launcher.Main.run(Main.java:1236)
+    at org.eclipse.equinox.launcher.Main.main(Main.java:1212)
+    at org.eclipse.core.launcher.Main.main(Main.java:30)
+
+!ENTRY org.eclipse.osgi 2 0 2008-11-04 21:02:10.514
+!MESSAGE The following is a complete list of bundles which are not resolved, see the prior log entry for the root cause if it exists:
+!SUBENTRY 1 org.eclipse.osgi 2 0 2008-11-04 21:02:10.515
+!MESSAGE Bundle update@plugins/org.eclipse.test_3.2.0/ [34] was not resolved.
+!SUBENTRY 2 org.eclipse.test 2 0 2008-11-04 21:02:10.516
+!MESSAGE Missing required bundle org.apache.ant_0.0.0.
+!SUBENTRY 2 org.eclipse.test 2 0 2008-11-04 21:02:10.516
+!MESSAGE Missing required bundle org.eclipse.ui.ide.application_0.0.0.
+!SUBENTRY 1 org.eclipse.osgi 2 0 2008-11-04 21:02:10.518
+!MESSAGE Bundle update@plugins/org.eclipse.ant.optional.junit_3.2.100.jar [60] was not resolved.
+!SUBENTRY 2 org.eclipse.ant.optional.junit 2 0 2008-11-04 21:02:10.519
+!MESSAGE Missing host org.apache.ant_[1.6.5,2.0.0).
+!SUBENTRY 2 org.eclipse.ant.optional.junit 2 0 2008-11-04 21:02:10.519
+!MESSAGE Missing required bundle org.eclipse.core.runtime.compatibility_0.0.0.
+
+
+
+We're using the PDE build scripts (see this question), and we export ant build files for our unit-test plugins. These ant build scripts are then invoked from the PDE build scripts (customTargets.xml) using the "ant" ant-task. Unfortunately, this only works with JUnit3. There's supposed to be a JUnit4-adapter for JUnit3 so you can run JUnit4 tests from a JUnit3 test-runner.
+We'll probably move to something like Maven; the PDE build scripts aren't really cut out for what we need to do with them.
+
+Here is a Tool which I can recommand if someone is interrested by TDD : 
+Infinitest
+Short description extracted from the Infinitest site:
+
+What is Infinitest?
+Infinitest is a continuous test runner
+  designed to facilitate Test Driven
+  Development. Infinitest helps you
+  learn TDD by providing feedback as you
+  work, and helps you master TDD by
+  reducing your feedback cycle from
+  minutes to mere seconds.
+Whenever you change a class,
+  Infinitest runs your tests for you.
+  It's smart about what tests to run,
+  and only runs the ones you need. If
+  any errors occur, it reports them
+  clearly and concisely. This gives you
+  instant feedback about the semantic
+  correctness of your code, just as
+  modern IDE's give you instant feedback
+  about syntax errors.
+
+
+Use Ant and CruiseControl - you call the unit tests in the Ant script as well as the rest of your build logic and can run them with each build iteration - then CruiseControl can automate your build calls and run these tests each time.
+
+I have just got JUnit testing working as part of the headless build for our RCP application. 
+I found this article - Automating Eclipse PDE Unit Tests using Ant incredibly helpful. It provides code and approach to get you started. However, a number of things that I discovered:
+About the article's code
+
+there was only one bundle under tests (we have separated out our build process from the code, using Buckminster)
+there was only one test class. 
+these were both effectively hardcoded into the build script
+
+About Eclipse PDE
+
+the uitestapplication requires another testApplication. Using coretestapplication does not. 
+as these applications are both in bundles that have dependencies on SWT. This is a deal killer in most circumstances, though not if your build machine is a Windows box. I would love to see these split into non-UI bundles.
+
+I found that the code provided was a good starting point, but had a number of the above assumptions implicit in their implementation.
+Having discovered these assumptions, doing the work was relatively straight forward.
+Our new and shiny setup
+
+buckminster builds the bundles. 
+target copies the bundles from the target platform, the org.eclipse.pde.runtime and org.eclipse.jdt.junit into a "tester-eclipse-install". This should take care of your Java Result 13 problem.
+find the test fragments from looking at the workspace
+find the fragment host from looking at the manifest
+find the test classes from looking at the project in the workspace.
+register a PDETestListener modified to handle multiple test classes
+invoke the tester-eclipse-install with the multiple test classes.
+
+I also read Build and Test Automation for plug-ins and features but we are not using PDE-Build directly. 
+
+Looking at your exception, it says that the coretestapplication is missing. The ant target could be found at plugins/org.eclipse.test_3.1.0/library.xml:10
+This is actually a dependency issue. Eclipse needs to have all the plugins in order to build.
+To configure it correctly, there're 2 files to look at. 
+
+The product file
+The feature.xml
+
+Product
+Make sure you the product file contains all the plugins you need. 
+After that, add the org.eclipse.rcp and org.eclipse.test features
+...
+plugins are above
+...
+<features>
+      <feature id="mock_feature" version="1.0.0"/>
+      <feature id="mock_feature_test" version="1.0.0"/>
+      <feature id="org.eclipse.rcp" version="3.2.0.v20060609m-SVDNgVrNoh-MeGG"/>
+      <feature id="org.eclipse.test" version="3.2.0.v20060220------0842282442"/>
+ </features>
+
+You need org.eclipse.test to run the tests, and org.eclipse.rcp to launch eclipse in order to run the tests.
+Don't forget to set useFeatures to 'true'
+<product name="mock" id="com.example.mock" application="com.example.mock.application" useFeatures="true">
+
+feature.xml
+Assuming you have a feature for testing, you must add 2 additional plugins.
+...
+other plugins above
+...
+<plugin
+         id="org.apache.ant"
+         download-size="0"
+         install-size="0"
+         version="0.0.0"/>
+
+   <plugin
+         id="org.eclipse.core.runtime.compatibility"
+         download-size="0"
+         install-size="0"
+         version="0.0.0"
+         unpack="false"/>
+
+THe tests need org.apache.ant to run the tests and org.eclipse.core.runtime.compatibility to launch.
+Another gotcha
+Ensure that in your target eclipse(the copy of eclipse that you use to build against), there's only 1 copy of each plugin. For example if there're 2 versions of com.ibm.icu plugins in the plugin folder, eclipse would use the newer one. As the pde build plugin is configured to use a specific version, eclipse would complain that it cannot find the particular plugin even when it is there.
+Some thoughts
+The whole process of building eclipse could be a lot better. In fact I got the process mostly by trial and error. The documentation is outdated and sparse. The error messages doesn't help. It only leaves you feeling helpless and frustrated. Let's hope this post helps a fellow programmer save some time!
+
+As an alternative to Ant, I've had good experience in using the brand new Maven+Tycho with Hudson. Tycho provides complete support for Osgi and Eclipse development in Maven. It's currently under heavy development, but most of the features I've needed worked. It needs only very little configuration from your side, because it can parse MANIFEST.MF files.
+If you have some experience with Maven it's not very hard to start working with it. Hudson is a bit more problematic because of missing Maven 3 support. (the development version of Maven 3 is used by Tycho)
+Links for start:
+
+uncomplete user docs
+
+
+For any one still looking for a way to execute Eclipse plugin tests outside eclipse, the following command works for me:
+java -Xms40m -Xmx1024m -XX:MaxPermSize=512m -Dorg.eclipse.swt.browser.DefaultType=mozilla -Declipse.pde.launch=true -classpath C:\eclipse\eclipse-standard-luna-M2-win32-x86_64\eclipse\plugins/org.eclipse.equinox.launcher_1.3.0.v20130327-1440.jar org.eclipse.equinox.launcher.Main -port 22 -testLoaderClass org.eclipse.jdt.internal.junit4.runner.JUnit4TestLoader -loaderpluginname org.eclipse.jdt.junit4.runtime -classNames testpackage.testClass -application org.eclipse.pde.junit.runtime.uitestapplication -data C:\temp\log.temp -dev bin -consoleLog -testpluginname PluginName
+-classpath should be set to eclipse launcher jar. You can get exact version for your eclipse from eclipse.ini file. 
+-className is the junit plugin test file name
+-data is set to a temp file.
+-testpluginname is the name of plugin you want to test.

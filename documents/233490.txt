@@ -1,0 +1,193 @@
+Need to Impersonate user forAccessing Network resource, Asp.Net Account
+c# .net asp.net impersonation delegation
+I need to access a network resource on which only a given Domain Account has access.
+I am using the LogonUser call, but get a "User does not have required priviliege" exception, as the web application is running with the asp.net account and it does not have adequate permissions to make this call.
+Is there a way to get around it?
+Changing the identity or permissions of the ASP.Net account is not an option as this is a production machine with many projects running.
+Is there a better way to achieve this?
+Using Asp.Net 2.0, Forms Authentication.
+Kind Regards.
+
+
+You could add an
+<identity impersonate="true" userName=""/>
+
+tag to your web.config but that might not be ideal as you probably don't want to run the entire site as that user...
+Can you map the network share as a local drive with the DomainName & Password... and then pull files to the website via the mapped drive ?
+NET USE Z: \\SERVER\Share password /USER:DOMAIN\Username /PERSISTENT:YES
+
+
+I've only had intimate experience with this under 1.1, so things might hav changed in the 2.0 days but...
+We've got an app that gets deployed in intranet scenarios, and we strike the same thing. We run with identity impersonate turned on, forms mode authentication, anonymous access turned off. The easiest way to control this (that I've found) is to put the credentials of the user that has access in the web.config. They go on the node where you turn identity impersonate on. If it's super scret info I wouldn't do it this way though! We're only accessing shared graphics in a print environment, so most sites are happy to setup a limited account for us to put in the web.confit. 
+LogonUser does indeed need elevated privelidges. Msdn has some good articles on how to impersonate a specific user in code. I'd fish out some links but this phone doesn't do copy paste.  
+
+Just calling LogonUser is not enough. You need to impersonate that user. You can impersonate for just the access to the network resource.
+Sample code can be found on MSDN.
+
+Can you change the ACL protecting the network resource?  A trick I've used in the past is to  create an Active Directory group and then put the Computer Object into that group.  I then use that group in the Access Control List of the object (file, share, etc) that I need to access.
+This has allowed me to run Windows Services as Local System and get access to the protected network resources.  And this trick also seems to work for the ASP.NET process which runs as Network Service.
+
+
+With this WebPart y connect to a net resource with restricted access I put a file and y close the connection with the resource (as user with granted access), you dont need to make a new share connection, that was de only restricction, that my sistems departament make to me. May be, there are many imports that necesary, but I do to many tests and I havent got time to clean the code. I hope that help to you. (sorry for my poor english).
+
+Imports System
+Imports System.ComponentModel
+Imports System.Web.UI
+Imports System.Web.UI.WebControls
+Imports System.IO
+Imports System.IO.File
+Imports System.Diagnostics
+Imports System.Xml.Serialization
+Imports Microsoft.SharePoint
+Imports Microsoft.SharePoint.Utilities
+Imports Microsoft.SharePoint.WebPartPages
+Imports Microsoft.SharePoint.WebControls
+Imports Microsoft.SharePoint.Administration
+Imports System.Security.Principal
+Imports System.Security.Permissions
+Imports System.Runtime.InteropServices
+Imports System.Environment
+Imports System.Net.Sockets
+Imports System.Web.UI.HtmlControls
+Public Class Impersonalizacion
+    Private Const LOGON32_PROVIDER_DEFAULT As Integer = 0
+    Private Const LOGON32_LOGON_INTERACTIVE As Integer = 2
+<DllImport("advapi32.dll", SetLastError:=True)> _
+Public Shared Function LogonUser(ByVal lpszUsername As String, ByVal lpszDomain As String, ByVal lpszPassword As String, ByVal dwLogonType As Integer, ByVal dwLogonProvider As Integer, ByRef phToken As IntPtr) As Boolean
+End Function
+
+<DllImport("advapi32.dll", EntryPoint:="DuplicateToken", ExactSpelling:=False, CharSet:=CharSet.Auto, SetLastError:=True)> _
+Public Shared Function DuplicateToken(ByVal ExistingTokenHandle As IntPtr, ByVal ImpersonationLevel As Integer, ByRef DuplicateTokenHandle As IntPtr) As Integer
+End Function
+
+Public Shared Function WinLogOn(ByVal strUsuario As String, ByVal strClave As String, ByVal strDominio As String) As WindowsImpersonationContext
+    Dim tokenDuplicate As New IntPtr(0)
+    Dim tokenHandle As New IntPtr(0)
+    If LogonUser(strUsuario, strDominio, strClave, LOGON32_LOGON_INTERACTIVE, LOGON32_PROVIDER_DEFAULT, tokenHandle) Then
+        If DuplicateToken(tokenHandle, 2, tokenDuplicate) <> 0 Then
+            Return (New WindowsIdentity(tokenDuplicate)).Impersonate()
+        End If
+    End If
+    Return Nothing
+End Function
+
+End Class
+'Description for WebPart1.
+"), XmlRoot(Namespace:="SPSCopiarFichero")> _
+Public Class WebPart1
+    Inherits Microsoft.SharePoint.WebPartPages.WebPart
+Protected WithEvents File1 As HtmlInputFile
+
+Dim vdestino As String = "\\centappd20nd01\uploads_avisos"
+Dim vtemporal As String = "c:\pdf"
+
+Protected WithEvents boton1 As Button
+Protected WithEvents usuario As TextBox
+Protected WithEvents contra As TextBox
+Protected WithEvents dominio As TextBox
+Protected WithEvents destino As TextBox
+Protected WithEvents origen As TextBox
+Protected WithEvents temporal As TextBox
+Protected WithEvents log As TextBox
+'Render this Web Part to the output parameter specified.
+Protected Overrides Sub RenderWebPart(ByVal output As System.Web.UI.HtmlTextWriter)
+    log.RenderControl(output)
+    output.Write("<br><font>Ruta Origen</font><br>")
+    File1.RenderControl(output)
+    output.Write("<br><font>Ruta Temporal </font><br>")
+    temporal.RenderControl(output)
+    output.Write("<br><font>Ruta Destino </font><br>")
+    destino.RenderControl(output)
+    output.Write("<br><font>Usuario </font><br>")
+    usuario.RenderControl(output)
+    output.Write("<br><font>ContraseÃ±a </font><br>")
+    contra.RenderControl(output)
+    output.Write("<br><font>Dominio </font><br>")
+    dominio.RenderControl(output)
+    output.Write("<br><br><center>")
+    boton1.RenderControl(output)
+    output.Write("</center>")
+End Sub
+Protected Overrides Sub CreateChildControls()
+
+    dominio = New TextBox
+    With dominio
+        .Text = "admon-cfnavarra"
+        .Width = Unit.Pixel("255")
+    End With
+    Controls.Add(dominio)
+
+    boton1 = New Button
+    With boton1
+        .Text = "Copiar Fichero"
+    End With
+    Controls.Add(boton1)
+
+    File1 = New HtmlInputFile
+    With File1
+
+    End With
+    Controls.Add(File1)
+
+    usuario = New TextBox
+    With usuario
+        .Text = "SVCWSINCPre_SNS"
+        .Width = Unit.Pixel("255")
+    End With
+    Controls.Add(usuario)
+
+    contra = New TextBox
+    With contra
+        .Text = "SVCWSINCPre_SNS"
+        .Width = Unit.Pixel("255")
+    End With
+    Controls.Add(contra)
+
+    destino = New TextBox
+    With destino
+        .Text = vdestino
+        .Width = Unit.Pixel("255")
+    End With
+    Controls.Add(destino)
+
+    log = New TextBox
+    With log
+        .Width = Unit.Percentage(100)
+        .BackColor = System.Drawing.Color.Black
+        .ForeColor = System.Drawing.Color.White
+    End With
+    Controls.Add(log)
+
+    temporal = New TextBox
+    With temporal
+        .Text = vtemporal
+        .Width = Unit.Pixel("255")
+    End With
+    Controls.Add(temporal)
+End Sub
+Private Sub boton1_Click(ByVal sender As Object, ByVal e As System.EventArgs) Handles boton1.Click
+    If File1.PostedFile.FileName <> "" Then
+        Dim _objContext As WindowsImpersonationContext = Nothing
+        log.Text = QuienSoy()
+        CopyFile(File1.PostedFile.FileName, temporal.Text)
+        _objContext = Impersonalizacion.WinLogOn(usuario.Text, contra.Text, dominio.Text)
+        CopyFile(temporal.Text & "\" & System.IO.Path.GetFileName(File1.PostedFile.FileName), destino.Text)
+        _objContext.Undo()
+    Else
+        log.Text = "Se debe introducir un fichero"
+    End If
+End Sub
+Friend Shared Function QuienSoy() As String
+    Return WindowsIdentity.GetCurrent().Name
+End Function
+Public Function CopyFile(ByVal StartPath As String, ByVal EndPath As String)
+    Try
+        Dim fn As String = System.IO.Path.GetFileName(StartPath)
+        System.IO.File.Copy(StartPath, EndPath & "\" & fn, False)
+        log.Text = "Fichero Copiado Correctamente"
+    Catch ex As Exception
+        log.Text = ex.Message
+    End Try
+End Function
+
+End Class

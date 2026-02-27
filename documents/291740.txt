@@ -1,0 +1,210 @@
+How do I split a huge text file in python
+python text-files
+I have a huge text file (~1GB) and sadly the text editor I use won't read such a large file.  However, if I can just split it into two or three parts I'll be fine, so, as an exercise I wanted to write a program in python to do it.  
+What I think I want the program to do is to find the size of a file, divide that number into parts, and for each part, read up to that point in chunks, writing to a filename.nnn output file, then read up-to the next line-break and write that, then close the output file, etc.  Obviously the last output file just copies to the end of the input file.
+Can you help me with the key filesystem related parts: filesize, reading and writing in chunks and reading to a line-break?
+I'll be writing this code test-first, so there's no need to give me a complete answer, unless its a one-liner ;-)
+
+
+Check out os.stat() for file size and file.readlines([sizehint]). Those two functions should be all you need for the reading part, and hopefully you know how to do the writing :)
+
+You can use wc and split (see the respective manpages) to get the desired effect.  In bash:
+split -dl$((`wc -l 'filename'|sed 's/ .*$//'` / 3 + 1)) filename filename-chunk.
+
+produces 3 parts of the same linecount (with a rounding error in the last, of course), named filename-chunk.00 to filename-chunk.02.
+
+Or, a python version of wc and split:
+lines = 0
+for l in open(filename): lines += 1
+
+Then some code to read the first lines/3 into one file, the next lines/3 into another , etc.
+
+I've written the program and it seems to work fine.  So thanks to Kamil Kisiel for getting me started.
+(Note that FileSizeParts() is a function not shown here)
+Later I may get round to doing a version that does a binary read to see if its any quicker.
+def Split(inputFile,numParts,outputName):
+    fileSize=os.stat(inputFile).st_size
+    parts=FileSizeParts(fileSize,numParts)
+    openInputFile = open(inputFile, 'r')
+    outPart=1
+    for part in parts:
+        if openInputFile.tell()<fileSize:
+            fullOutputName=outputName+os.extsep+str(outPart)
+            outPart+=1
+            openOutputFile=open(fullOutputName,'w')
+            openOutputFile.writelines(openInputFile.readlines(part))
+            openOutputFile.close()
+    openInputFile.close()
+    return outPart-1
+
+
+linux has a split command
+split -l 100000 file.txt
+would split into files of equal 100,000 line size
+
+don't forget seek() and mmap() for random access to files.
+def getSomeChunk(filename, start, len):
+    fobj = open(filename, 'r+b')
+    m = mmap.mmap(fobj.fileno(), 0)
+    return m[start:start+len]
+
+
+This generator method is a (slow) way to get a slice of lines without blowing up your memory.
+import itertools
+
+def slicefile(filename, start, end):
+    lines = open(filename)
+    return itertools.islice(lines, start, end)
+
+out = open("/blah.txt", "w")
+for line in slicefile("/python27/readme.txt", 10, 15):
+    out.write(line)
+
+
+As an alternative method, using the logging library:
+>>> import logging.handlers
+>>> log = logging.getLogger()
+>>> fh = logging.handlers.RotatingFileHandler("D://filename.txt", 
+     maxBytes=2**20*100, backupCount=100) 
+# 100 MB each, up to a maximum of 100 files
+>>> log.addHandler(fh)
+>>> log.setLevel(logging.INFO)
+>>> f = open("D://biglog.txt")
+>>> while True:
+...     log.info(f.readline().strip())
+
+Your files will appear as follows:
+
+filename.txt (end of file)
+  filename.txt.1
+  filename.txt.2
+  ...
+  filename.txt.10 (start of file)
+
+This is a quick and easy way to make a huge log file match your RotatingFileHandler implementation.
+
+This worked for me
+import os
+
+fil = "inputfile"
+outfil = "outputfile"
+
+f = open(fil,'r')
+
+numbits = 1000000000
+
+for i in range(0,os.stat(fil).st_size/numbits+1):
+    o = open(outfil+str(i),'w')
+    segment = f.readlines(numbits)
+    for c in range(0,len(segment)):
+        o.write(segment[c]+"\n")
+    o.close()
+
+
+I had a requirement to split csv files for import into Dynamics CRM since the file size limit for import is 8MB and the files we receive are much larger. This program allows user to input FileNames and LinesPerFile, and then splits the specified files into the requested number of lines. I can't believe how fast it works!
+# user input FileNames and LinesPerFile
+FileCount = 1
+FileNames = []
+while True:
+    FileName = raw_input('File Name ' + str(FileCount) + ' (enter "Done" after last File):')
+    FileCount = FileCount + 1
+    if FileName == 'Done':
+        break
+    else:
+        FileNames.append(FileName)
+LinesPerFile = raw_input('Lines Per File:')
+LinesPerFile = int(LinesPerFile)
+
+for FileName in FileNames:
+    File = open(FileName)
+
+    # get Header row
+    for Line in File:
+        Header = Line
+        break
+
+    FileCount = 0
+    Linecount = 1
+    for Line in File:
+
+        #skip Header in File
+        if Line == Header:
+            continue
+
+        #create NewFile with Header every [LinesPerFile] Lines
+        if Linecount % LinesPerFile == 1:
+            FileCount = FileCount + 1
+            NewFileName = FileName[:FileName.find('.')] + '-Part' + str(FileCount) + FileName[FileName.find('.'):]
+            NewFile = open(NewFileName,'w')
+            NewFile.write(Header)
+
+        NewFile.write(Line)
+        Linecount = Linecount + 1
+
+    NewFile.close()
+
+
+While Ryan Ginstrom's answer is correct, it does take longer than it should (as he has already noted). Here's a way to circumvent the multiple calls to itertools.islice by successively iterating over the open file descriptor:
+def splitfile(infilepath, chunksize):
+    fname, ext = infilepath.rsplit('.',1)
+    i = 0
+    written = False
+    with open(infilepath) as infile:
+        while True:
+            outfilepath = "{}{}.{}".format(fname, i, ext)
+            with open(outfilepath, 'w') as outfile:
+                for line in (infile.readline() for _ in range(chunksize)):
+                    outfile.write(line)
+                written = bool(line)
+            if not written:
+                break
+            i += 1
+
+
+usage - split.py filename splitsizeinkb
+import os
+import sys
+
+def getfilesize(filename):
+   with open(filename,"rb") as fr:
+       fr.seek(0,2) # move to end of the file
+       size=fr.tell()
+       print("getfilesize: size: %s" % size)
+       return fr.tell()
+
+def splitfile(filename, splitsize):
+   # Open original file in read only mode
+   if not os.path.isfile(filename):
+       print("No such file as: \"%s\"" % filename)
+       return
+
+   filesize=getfilesize(filename)
+   with open(filename,"rb") as fr:
+    counter=1
+    orginalfilename = filename.split(".")
+    readlimit = 5000 #read 5kb at a time
+    n_splits = filesize//splitsize
+    print("splitfile: No of splits required: %s" % str(n_splits))
+    for i in range(n_splits+1):
+        chunks_count = int(splitsize)//int(readlimit)
+        data_5kb = fr.read(readlimit) # read
+        # Create split files
+        print("chunks_count: %d" % chunks_count)
+        with open(orginalfilename[0]+"_{id}.".format(id=str(counter))+orginalfilename[1],"ab") as fw:
+            fw.seek(0) 
+            fw.truncate()# truncate original if present
+            while data_5kb:                
+                fw.write(data_5kb)
+                if chunks_count:
+                    chunks_count-=1
+                    data_5kb = fr.read(readlimit)
+                else: break            
+        counter+=1 
+
+if __name__ == "__main__":
+   if len(sys.argv) < 3: print("Filename or splitsize not provided: Usage:     filesplit.py filename splitsizeinkb ")
+   else:
+       filesize = int(sys.argv[2]) * 1000 #make into kb
+       filename = sys.argv[1]
+       splitfile(filename, filesize)
+

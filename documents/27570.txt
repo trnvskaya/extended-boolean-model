@@ -1,0 +1,137 @@
+Find number of files with a specific extension, in all subdirectories
+c# file recursion
+Is there a way to find the number of files of a specific type without having to loop through all results inn a Directory.GetFiles() or similar method? I am looking for something like this:
+int ComponentCount = MagicFindFileCount(@"c:\windows\system32", "*.dll");
+
+I know that I can make a recursive function to call Directory.GetFiles , but it would be much cleaner if I could do this without all the iterating.
+EDIT: If it is not possible to do this without recursing and iterating yourself, what would be the best way to do it?
+
+
+Someone has to do the iterating part.
+AFAIK, there is no such method present in .NET already, so I guess that someone has to be you.
+
+You should use the Directory.GetFiles(path, searchPattern, SearchOption) overload of Directory.GetFiles().
+Path specifies the path, searchPattern specifies your wildcards (e.g., *, *.format) and SearchOption provides the option to include subdirectories.
+The Length property of the return array of this search will provide the proper file count for your particular search pattern and option:
+string[] files = directory.GetFiles(@"c:\windows\system32", "*.dll", SearchOption.AllDirectories);
+
+return files.Length;
+
+EDIT: Alternatively you can use Directory.EnumerateFiles method
+return Directory.EnumerateFiles(@"c:\windows\system32", "*.dll", SearchOption.AllDirectories).Count();
+
+
+You can use this overload of GetFiles:
+
+ Directory.GetFiles Method (String,
+   String, SearchOption)
+
+and this member of SearchOption:
+
+AllDirectories - Includes the current
+  directory and all the subdirectories
+  in a search operation. This option
+  includes reparse points like mounted
+  drives and symbolic links in the
+  search.
+
+GetFiles returns an array of string so you can just get the Length which is the number of files found.
+
+Using recursion your MagicFindFileCount would look like this:
+private int MagicFindFileCount( string strDirectory, string strFilter ) {
+     int nFiles = Directory.GetFiles( strDirectory, strFilter ).Length;
+
+     foreach( String dir in Directory.GetDirectories( strDirectory ) ) {
+        nFiles += GetNumberOfFiles(dir, strFilter);
+     }
+
+     return nFiles;
+  }
+
+Though Jon's solution might be the better one.
+
+I was looking for a more optimized version. Since I haven't found it, I decided to code it and share it here:
+    public static int GetFileCount(string path, string searchPattern, SearchOption searchOption)
+    {
+        var fileCount = 0;
+        var fileIter = Directory.EnumerateFiles(path, searchPattern, searchOption);
+        foreach (var file in fileIter)
+            fileCount++;
+        return fileCount;
+    }
+
+All the solutions using the GetFiles/GetDirectories are kind of slow since all those objects need to be created. Using the enumeration, it doesn't create any temporary objects (FileInfo/DirectoryInfo).
+see Remarks http://msdn.microsoft.com/en-us/library/dd383571.aspx for more information
+
+The slickest method woud be to use linq:
+var fileCount = (from file in Directory.EnumerateFiles(@"H:\iPod_Control\Music", "*.mp3", SearchOption.AllDirectories)
+                    select file).Count();
+
+
+I have an app which generates counts of the directories and files in a parent directory. Some of the directories contain thousands of sub directories with thousands of files in each. To do this whilst maintaining a responsive ui I do the following ( sending the path to ADirectoryPathWasSelected method):
+public class DirectoryFileCounter
+{
+    int mDirectoriesToRead = 0;
+
+    // Pass this method the parent directory path
+    public void ADirectoryPathWasSelected(string path)
+    {
+        // create a task to do this in the background for responsive ui
+        // state is the path
+        Task.Factory.StartNew((state) =>
+        {
+            try
+            {
+                // Get the first layer of sub directories
+                this.AddCountFilesAndFolders(state.ToString())
+
+
+             }
+             catch // Add Handlers for exceptions
+             {}
+        }, path));
+    }
+
+    // This method is called recursively
+    private void AddCountFilesAndFolders(string path)
+    {
+        try
+        {
+            // Only doing the top directory to prevent an exception from stopping the entire recursion
+            var directories = Directory.EnumerateDirectories(path, "*.*", SearchOption.TopDirectoryOnly);
+
+            // calling class is tracking the count of directories
+            this.mDirectoriesToRead += directories.Count();
+
+            // get the child directories
+            // this uses an extension method to the IEnumerable<V> interface,
+           // which will run a function on an object. In this case 'd' is the 
+           // collection of directories
+            directories.ActionOnEnumerable(d => AddCountFilesAndFolders(d));
+        }
+        catch // Add Handlers for exceptions
+        {
+        }
+        try
+        {
+            // count the files in the directory
+            this.mFilesToRead += Directory.EnumerateFiles(path).Count();
+        }
+        catch// Add Handlers for exceptions
+        { }
+    }
+}
+// Extension class
+public static class Extensions
+{ 
+    // this runs the supplied method on each object in the supplied enumerable
+    public static void ActionOnEnumerable<V>(this IEnumerable<V> nodes,Action<V> doit)
+    {
+
+        foreach (var node in nodes)
+        {   
+            doit(node);
+        }
+    }
+}
+

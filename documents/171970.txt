@@ -1,0 +1,228 @@
+How can I find the method that called the current method?
+c# .net reflection logging stack-trace
+When logging in C#, how can I learn the name of the method that called the current method? I know all about System.Reflection.MethodBase.GetCurrentMethod(), but I want to go one step beneath this in the stack trace. I've considered parsing the stack trace, but I am hoping to find a cleaner more explicit way, something like Assembly.GetCallingAssembly() but for methods.
+
+
+Try this:
+using System.Diagnostics;
+// Get call stack
+StackTrace stackTrace = new StackTrace();
+
+// Get calling method name
+Console.WriteLine(stackTrace.GetFrame(1).GetMethod().Name);
+
+It is from Get Calling Method using Reflection [C#].
+
+Note that doing so will be unreliable in release code, due to optimization. Additionally, running the application in sandbox mode (network share) won't allow you to grab the stack frame at all.
+Consider aspect-oriented programming (AOP), like PostSharp, which instead of being called from your code, modifies your code, and thus knows where it is at all times.
+
+Take a look at Logging method name in .NET. Beware of using it in production code. StackFrame may not be reliable...
+
+In general, you can use the System.Diagnostics.StackTrace class to get a System.Diagnostics.StackFrame, and then use the GetMethod() method to get a System.Reflection.MethodBase object. However, there are some caveats to this approach:
+
+It represents the runtime stack -- optimizations could inline a method, and you will not see that method in the stack trace.
+It will not show any native frames, so if there's even a chance your method is being called by a native method, this will not work, and there is in-fact no currently available way to do it.
+
+(NOTE: I am just expanding on the answer provided by Firas Assad.)
+
+We can improve on Mr Assad's code (the current accepted answer) just a little bit by instantiating only the frame we actually need rather than the entire stack:
+new StackFrame(1).GetMethod().Name;
+
+This might perform a little better, though in all likelihood it still has to use the full stack to create that single frame.  Also, it still has the same caveats that Alex Lyman pointed out (optimizer/native code might corrupt the results). Finally, you might want to check to be sure that new StackFrame(1) or .GetFrame(1) don't return null, as unlikely as that possibility might seem.
+See this related question:
+Can you use reflection to find the name of the currently executing method?
+
+Maybe you are looking for something like this:
+StackFrame frame = new StackFrame(1);
+frame.GetMethod().Name; //Gets the current method name
+
+MethodBase method = frame.GetMethod();
+method.DeclaringType.Name //Gets the current class name
+
+
+Another approach I have used is to add a parameter to the method in question. For example, instead of void Foo(), use void Foo(string context). Then pass in some unique string that indicates the calling context.
+If you only need the caller/context for development, you can remove the param before shipping.
+
+/// <summary>
+/// Returns the call that occurred just before the "GetCallingMethod".
+/// </summary>
+public static string GetCallingMethod()
+{
+   return GetCallingMethod("GetCallingMethod");
+}
+
+/// <summary>
+/// Returns the call that occurred just before the the method specified.
+/// </summary>
+/// <param name="MethodAfter">The named method to see what happened just before it was called. (case sensitive)</param>
+/// <returns>The method name.</returns>
+public static string GetCallingMethod(string MethodAfter)
+{
+   string str = "";
+   try
+   {
+      StackTrace st = new StackTrace();
+      StackFrame[] frames = st.GetFrames();
+      for (int i = 0; i < st.FrameCount - 1; i++)
+      {
+         if (frames[i].GetMethod().Name.Equals(MethodAfter))
+         {
+            if (!frames[i + 1].GetMethod().Name.Equals(MethodAfter)) // ignores overloaded methods.
+            {
+               str = frames[i + 1].GetMethod().ReflectedType.FullName + "." + frames[i + 1].GetMethod().Name;
+               break;
+            }
+         }
+      }
+   }
+   catch (Exception) { ; }
+   return str;
+}
+
+
+private static MethodBase GetCallingMethod()
+{
+  return new StackFrame(2, false).GetMethod();
+}
+
+private static Type GetCallingType()
+{
+  return new StackFrame(2, false).GetMethod().DeclaringType;
+}
+
+A fantastic class is here: http://www.csharp411.com/c-get-calling-method/
+
+In C# 5 you can get that information using caller info:
+//using System.Runtime.CompilerServices;
+public void SendError(string Message, [CallerMemberName] string callerName = "") 
+{ 
+    Console.WriteLine(callerName + "called me."); 
+} 
+
+You can also get the [CallerFilePath] and [CallerLineNumber].
+
+As suggested in a comment, you can use Caller Information and optional parameters
+public static string WhoseThere([CallerMemberName] string memberName = "")
+{
+       return memberName;
+}
+
+which this test illustrates
+ [Test]
+ public void Should_get_name_of_calling_method)
+ {
+     var methodName = CachingHelpers.WhoseThere();
+    Assert.That(methodName, Is.EqualTo("Should_get_name_of_calling_method"));
+ }
+
+While the StackTrace works quite fast above and would not be a performance issue in most cases the Caller Information is much faster still.  In a sample of 1000 iterations, I clocked it as 40 times faster.
+
+StackFrame caller = (new System.Diagnostics.StackTrace()).GetFrame(1);
+string methodName = caller.GetMethod().Name;
+
+will be enough, I think.
+
+We can also use lambda's in order to find the caller.
+Suppose you have a method defined by you:
+public void MethodA()
+    {
+        /*
+         * Method code here
+         */
+    }
+
+and you want to find it's caller.
+
+Change the method signature so we have a parameter of type Action (Func will also work):
+public void MethodA(Action helperAction)
+        {
+            /*
+             * Method code here
+             */
+        }
+Lambda names are not generated randomly. The rule seems to be:
+<CallerMethodName>__X where CallerMethodName is replaced by the previous function and X is an index.
+private MethodInfo GetCallingMethodInfo(string funcName)
+    {
+        return GetType().GetMethod(funcName.Substring(1, funcName.IndexOf(">", 1, StringComparison.Ordinal) - 1));
+    }
+When we call MethodA the Action/Func parameter has to be generated by the caller method.
+Example:
+MethodA(() => {});
+Inside MethodA we can now call the helper function defined above and find the MethodInfo of the caller method.
+
+Example:
+MethodInfo callingMethodInfo = GetCallingMethodInfo(serverCall.Method.Name);
+
+
+var callingMethod = new StackFrame(1, true).GetMethod();
+string source = callingMethod.ReflectedType.FullName + ": " + callingMethod.Name;
+
+
+You can now use the Caller Info Attributes:
+
+CallerFilePath - cs file that called the function;
+CallerLineNumber -Line of code that called the function; 
+CallerMemberName - Member that called the function.
+public void WriteLine(
+[CallerFilePath] string callerFilePath= "", 
+[CallerLineNumber] long callerLineNumber= 0,
+[CallerMemberName]    string callerMember= "")
+{
+    Debug.WriteLine(string.Format("Caller File Path: {0}, 
+                    Caller Line Number: {1}, 
+                    Caller Member: {2}", 
+                    callerFilePath,
+                    callerLineNumber,
+                    callerMember));
+}
+
+
+
+A quick recap of the 2 approaches with speed comparison being the important part.
+http://geekswithblogs.net/BlackRabbitCoder/archive/2013/07/25/c.net-little-wonders-getting-caller-information.aspx
+Determining the caller at compile-time
+static void Log(object message, 
+[CallerMemberName] string memberName = "",
+[CallerFilePath] string fileName = "",
+[CallerLineNumber] int lineNumber = 0)
+{
+    // we'll just use a simple Console write for now    
+    Console.WriteLine("{0}({1}):{2} - {3}", fileName, lineNumber, memberName, message);
+}
+
+Determining the caller using the stack
+static void Log(object message)
+{
+    // frame 1, true for source info
+    StackFrame frame = new StackFrame(1, true);
+    var method = frame.GetMethod();
+    var fileName = frame.GetFileName();
+    var lineNumber = frame.GetFileLineNumber();
+
+    // we'll just use a simple Console write for now    
+    Console.WriteLine("{0}({1}):{2} - {3}", fileName, lineNumber, method.Name, message);
+}
+
+Comparison of the 2 approaches
+Time for 1,000,000 iterations with Attributes: 196 ms
+Time for 1,000,000 iterations with StackTrace: 5096 ms
+
+
+So you see, using the attributes is much, much faster!  Nearly 25x
+  faster in fact.
+
+
+Obviously this is a late answer, but I have a better option if you can use .NET 4.5 or more:
+internal static void WriteInformation<T>(string text, [CallerrMemberName]string method = "")
+{
+    Console.WriteLine(DateTime.Now.ToString() + " => " + typeof(T).FullName + "." + method + ": " + text);
+}
+
+This will print the current Date and Time, followed by "Namespace.ClassName.MethodName" and ending with ": text".
+Sample output:
+6/17/2016 12:41:49 PM => WpfApplication.MainWindow..ctor: MainWindow initialized
+
+Sample use:
+Logger.WriteInformation<MainWindow>("MainWindow initialized");
+

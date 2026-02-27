@@ -1,0 +1,281 @@
+How do I set a field value in an C# Expression tree?
+c# lambda expression-trees
+Given:
+FieldInfo field = <some valid string field on type T>;
+ParameterExpression targetExp = Expression.Parameter(typeof(T), "target");
+ParameterExpression valueExp = Expression.Parameter(typeof(string), "value");
+
+How do I compile a lambda expression to set the field on the "target" parameter to "value"?
+
+
+.Net 4.0 : now that there's Expression.Assign, this is easy to do:
+FieldInfo field = typeof(T).GetField("fieldName");
+ParameterExpression targetExp = Expression.Parameter(typeof(T), "target");
+ParameterExpression valueExp = Expression.Parameter(typeof(string), "value");
+
+// Expression.Property can be used here as well
+MemberExpression fieldExp = Expression.Field(targetExp, field);
+BinaryExpression assignExp = Expression.Assign(fieldExp, valueExp);
+
+var setter = Expression.Lambda<Action<T, string>>
+    (assignExp, targetExp, valueExp).Compile();
+
+setter(subject, "new value");
+
+.Net 3.5 : you can't,  you'll have to use System.Reflection.Emit instead:
+class Program
+{
+    class MyObject
+    {
+        public int MyField;
+    }
+
+    static Action<T,TValue> MakeSetter<T,TValue>(FieldInfo field)
+    {
+        DynamicMethod m = new DynamicMethod(
+            "setter", typeof(void), new Type[] { typeof(T), typeof(TValue) }, typeof(Program));
+        ILGenerator cg = m.GetILGenerator();
+
+        // arg0.<field> = arg1
+        cg.Emit(OpCodes.Ldarg_0);
+        cg.Emit(OpCodes.Ldarg_1);
+        cg.Emit(OpCodes.Stfld, field);
+        cg.Emit(OpCodes.Ret);
+
+        return (Action<T,TValue>) m.CreateDelegate(typeof(Action<T,TValue>));
+    }
+
+    static void Main()
+    {
+        FieldInfo f = typeof(MyObject).GetField("MyField");
+
+        Action<MyObject,int> setter = MakeSetter<MyObject,int>(f);
+
+        var obj = new MyObject();
+        obj.MyField = 10;
+
+        setter(obj, 42);
+
+        Console.WriteLine(obj.MyField);
+        Console.ReadLine();
+    }
+}
+
+
+Setting a field is, as already discussed, problematic. You can can (in 3.5) a single method, such as a property-setter - but only indirectly. This gets much easier in 4.0, as discussed here. However, if you actually have properties (not fields), you can do a lot simply with Delegate.CreateDelegate:
+using System;
+using System.Reflection;
+public class Foo
+{
+    public int Bar { get; set; }
+}
+static class Program
+{
+    static void Main()
+    {
+        MethodInfo method = typeof(Foo).GetProperty("Bar").GetSetMethod();
+        Action<Foo, int> setter = (Action<Foo, int>)
+            Delegate.CreateDelegate(typeof(Action<Foo, int>), method);
+
+        Foo foo = new Foo();
+        setter(foo, 12);
+        Console.WriteLine(foo.Bar);
+    }
+}
+
+
+private static Action<object, object> CreateSetAccessor(FieldInfo field)
+	{
+		DynamicMethod setMethod = new DynamicMethod(field.Name, typeof(void), new[] { typeof(object), typeof(object) });
+		ILGenerator generator = setMethod.GetILGenerator();
+		LocalBuilder local = generator.DeclareLocal(field.DeclaringType);
+		generator.Emit(OpCodes.Ldarg_0);
+		if (field.DeclaringType.IsValueType)
+		{
+			generator.Emit(OpCodes.Unbox_Any, field.DeclaringType);
+			generator.Emit(OpCodes.Stloc_0, local);
+			generator.Emit(OpCodes.Ldloca_S, local);
+		}
+		else
+		{
+			generator.Emit(OpCodes.Castclass, field.DeclaringType);
+			generator.Emit(OpCodes.Stloc_0, local);
+			generator.Emit(OpCodes.Ldloc_0, local);
+		}
+		generator.Emit(OpCodes.Ldarg_1);
+		if (field.FieldType.IsValueType)
+		{
+			generator.Emit(OpCodes.Unbox_Any, field.FieldType);
+		}
+		else
+		{
+			generator.Emit(OpCodes.Castclass, field.FieldType);
+		}
+		generator.Emit(OpCodes.Stfld, field);
+		generator.Emit(OpCodes.Ret);
+		return (Action<object, object>)setMethod.CreateDelegate(typeof(Action<object, object>));
+	}
+
+
+I once made this class. Perhaps it helps:
+public class GetterSetter<EntityType,propType>
+{
+    private readonly Func<EntityType, propType> getter;
+    private readonly Action<EntityType, propType> setter;
+    private readonly string propertyName;
+    private readonly Expression<Func<EntityType, propType>> propertyNameExpression;
+
+    public EntityType Entity { get; set; }
+
+    public GetterSetter(EntityType entity, Expression<Func<EntityType, propType>> property_NameExpression)
+    {
+        Entity = entity;
+        propertyName = GetPropertyName(property_NameExpression);
+        propertyNameExpression = property_NameExpression;
+        //Create Getter
+        getter = propertyNameExpression.Compile();
+        // Create Setter()
+        MethodInfo method = typeof (EntityType).GetProperty(propertyName).GetSetMethod();
+        setter = (Action<EntityType, propType>)
+                 Delegate.CreateDelegate(typeof(Action<EntityType, propType>), method);
+    }
+
+
+    public propType Value
+    {
+        get
+        {
+            return getter(Entity);
+        }
+        set
+        {
+            setter(Entity, value);
+        }
+    }
+
+    protected string GetPropertyName(LambdaExpression _propertyNameExpression)
+    {
+        var lambda = _propertyNameExpression as LambdaExpression;
+        MemberExpression memberExpression;
+        if (lambda.Body is UnaryExpression)
+        {
+            var unaryExpression = lambda.Body as UnaryExpression;
+            memberExpression = unaryExpression.Operand as MemberExpression;
+        }
+        else
+        {
+            memberExpression = lambda.Body as MemberExpression;
+        }
+        var propertyInfo = memberExpression.Member as PropertyInfo;
+        return propertyInfo.Name;
+    }
+
+test:
+var gs = new GetterSetter<OnOffElement,bool>(new OnOffElement(), item => item.IsOn);
+        gs.Value = true;
+        var result = gs.Value;
+
+
+Just for completeness here is the getter: 
+    public static IEnumerable<Func<T, object>> GetTypeGetters<T>()
+    {
+        var fields = typeof (T).GetFields();
+
+        foreach (var field in fields)
+        {
+            ParameterExpression targetExp = Expression.Parameter(typeof(T), "target");
+            UnaryExpression boxedFieldExp = Expression.Convert(Expression.Field(targetExp, field), typeof(object));
+            yield return  Expression.Lambda<Func<T,object>>(boxedFieldExp, targetExp).Compile();
+        }
+    }
+
+
+Actually there is a way to set properties and fields with Expression Trees in .NET 3.5. It is may be the only option for some PCL profiles that do not support Delegate.CreateDelegate (besides the Reflection.Emit):
+
+For field the trick is passing field as ref parameter,
+e.g. SetField(ref holder.Field, "NewValue");
+The property (as already pointed by Marc) can be set by reflecting and calling its setter method.
+
+The full proof of concept is provided below as NUnit test fixture. 
+[TestFixture]
+public class CanSetPropAndFieldWithExpressionTreeInNet35
+{
+    class Holder
+    {
+        public int Field;
+        public string Prop { get; set; }
+    }
+
+    public static class FieldAndPropSetter
+    {
+        public static T SetField<T, TField>(T holder, ref TField field, TField value)
+        {
+            field = value;
+            return holder;
+        }
+
+        public static T SetProp<T>(T holder, Action<T> setProp)
+        {
+            setProp(holder);
+            return holder;
+        }
+    }
+
+    [Test]
+    public void Can_set_field_with_expression_tree_in_Net35()
+    {
+        // Shows how expression could look like:
+        Func<Holder, Holder> setHolderField = h => FieldAndPropSetter.SetField(h, ref h.Field, 111);
+        var holder = new Holder();
+        holder = setHolderField(holder);
+        Assert.AreEqual(111, holder.Field);
+
+        var holderType = typeof(Holder);
+        var field = holderType.GetField("Field");
+        var fieldSetterMethod =
+            typeof(FieldAndPropSetter).GetMethod("SetField")
+            .MakeGenericMethod(holderType, field.FieldType);
+
+        var holderParamExpr = Expression.Parameter(holderType, "h");
+        var fieldAccessExpr = Expression.Field(holderParamExpr, field);
+
+        // Result expression looks like: h => FieldAndPropSetter.SetField(h, ref h.Field, 222)
+        var setHolderFieldExpr = Expression.Lambda<Func<Holder, Holder>>(
+            Expression.Call(fieldSetterMethod, holderParamExpr, fieldAccessExpr, Expression.Constant(222)),
+            holderParamExpr);
+
+        var setHolderFieldGenerated = setHolderFieldExpr.Compile();
+        holder = setHolderFieldGenerated(holder);
+        Assert.AreEqual(222, holder.Field);
+    }
+
+    [Test]
+    public void Can_set_property_with_expression_tree_in_Net35()
+    {
+        // Shows how expression could look like:
+        Func<Holder, Holder> setHolderProp = h => FieldAndPropSetter.SetProp(h, _ => _.Prop = "ABC");
+        var holder = new Holder();
+        holder = setHolderProp(holder);
+        Assert.AreEqual("ABC", holder.Prop);
+
+        var holderType = typeof(Holder);
+        var prop = holderType.GetProperty("Prop");
+        var propSet = prop.GetSetMethod();
+
+        var holderParamExpr = Expression.Parameter(holderType, "h");
+        var callSetPropExpr = Expression.Call(holderParamExpr, propSet, Expression.Constant("XXX"));
+        var setPropActionExpr = Expression.Lambda(callSetPropExpr, holderParamExpr);
+
+        var propSetterMethod = typeof(FieldAndPropSetter).GetMethod("SetProp").MakeGenericMethod(holderType);
+
+        // Result expression looks like: h => FieldAndPropSetter.SetProp(h, _ => _.Prop = "XXX")
+        var setHolderPropExpr = Expression.Lambda<Func<Holder, Holder>>(
+            Expression.Call(propSetterMethod, holderParamExpr, setPropActionExpr),
+            holderParamExpr);
+
+        var setHolderPropGenerated = setHolderPropExpr.Compile();
+        holder = setHolderPropGenerated(holder);
+        Assert.AreEqual("XXX", holder.Prop);
+    }
+}
+

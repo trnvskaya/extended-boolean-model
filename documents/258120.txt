@@ -1,0 +1,190 @@
+What is the memory consumption of an object in Java?
+java memory footprint
+Is the memory space consumed by one object with 100 attributes the same as that of 100 objects, with one attribute each?
+How much memory is allocated for an object?
+How much additional space is used when adding an attribute?
+
+
+No, registering an object takes a bit of memory too. 100 objects with 1 attribute will take up more memory.
+
+no, 100 small objects needs more information (memory) than one big.
+
+Each object has a certain overhead for its associated monitor and type information, as well as the fields themselves. Beyond that, fields can be laid out pretty much however the JVM sees fit (I believe) - but as shown in another answer, at least some JVMs will pack fairly tightly. Consider a class like this:
+public class SingleByte
+{
+    private byte b;
+}
+
+vs
+public class OneHundredBytes
+{
+    private byte b00, b01, ..., b99;
+}
+
+On a 32-bit JVM, I'd expect 100 instances of SingleByte to take 1200 bytes (8 bytes of overhead + 4 bytes for the field due to padding/alignment). I'd expect one instance of OneHundredBytes to take 108 bytes - the overhead, and then 100 bytes, packed. It can certainly vary by JVM though - one implementation may decide not to pack the fields in OneHundredBytes, leading to it taking 408 bytes (= 8 bytes overhead + 4 * 100 aligned/padded bytes). On a 64 bit JVM the overhead may well be bigger too (not sure).
+EDIT: See the comment below; apparently HotSpot pads to 8 byte boundaries instead of 32, so each instance of SingleByte would take 16 bytes.
+Either way, the "single large object" will be at least as efficient as multiple small objects - for simple cases like this.
+
+Mindprod points out that this is not a straightforward question to answer:
+
+A JVM is free to store data any way it pleases internally, big or little endian, with any amount of padding or overhead, though primitives must behave as if they had the official sizes.
+  For example, the JVM or native compiler might decide to store a boolean[] in 64-bit long chunks like a BitSet. It does not have to tell you, so long as the program gives the same answers.
+
+It might allocate some temporary Objects on the stack. 
+It may optimize some variables or method calls totally out of existence replacing them with constants. 
+It might version methods or loops, i.e. compile two versions of a method, each optimized for a certain situation, then decide up front which one to call. 
+
+Then of course the hardware and OS have multilayer caches, on chip-cache, SRAM cache, DRAM cache, ordinary RAM working set and backing store on disk. Your data may be duplicated at every cache level. All this complexity means you can only very roughly predict RAM consumption. 
+
+Measurement methods
+You can use Instrumentation.getObjectSize() to obtain an estimate of the storage consumed by an object.
+To visualize the actual object layout, footprint, and references, you can use the JOL (Java Object Layout) tool.
+Object headers and Object references
+In a modern 64-bit JDK, an object has a 12-byte header, padded to a multiple of 8 bytes, so the minimum object size is 16 bytes.  For 32-bit JVMs, the overhead is 8 bytes, padded to a multiple of 4 bytes.  (From Dmitry Spikhalskiy's answer, Jayen's answer, and JavaWorld.)
+Typically, references are 4 bytes on 32bit platforms or on 64bit platforms up to -Xmx32G; and 8 bytes above 32Gb (-Xmx32G).  (See compressed object references.)
+As a result, a 64-bit JVM would typically require 30-50% more heap space. (Should I use a 32- or a 64-bit JVM?, 2012, JDK 1.7)
+Boxed types, arrays, and strings
+Boxed wrappers have overhead compared to primitive types (from JavaWorld):
+
+
+Integer: The 16-byte result is a little worse than I expected because an int value can fit into just 4 extra bytes. Using an Integer costs me a 300 percent memory overhead compared to when I can store the value as a primitive type
+Long: 16 bytes also: Clearly, actual object size on the heap is subject to low-level memory alignment done by a particular JVM implementation for a particular CPU type. It looks like a Long is 8 bytes of Object overhead, plus 8 bytes more for the actual long value. In contrast, Integer had an unused 4-byte hole, most likely because the JVM I use forces object alignment on an 8-byte word boundary. 
+
+
+Other containers are costly too:
+
+
+Multidimensional arrays: it offers another surprise.
+  Developers commonly employ constructs like int[dim1][dim2] in numerical and scientific computing.
+In an int[dim1][dim2] array instance, every nested int[dim2] array is an Object in its own right. Each adds the usual 16-byte array overhead. When I don't need a triangular or ragged array, that represents pure overhead. The impact grows when array dimensions greatly differ.
+For example, a int[128][2] instance takes 3,600 bytes. Compared to the 1,040 bytes an int[256] instance uses (which has the same capacity), 3,600 bytes represent a 246 percent overhead. In the extreme case of byte[256][1], the overhead factor is almost 19! Compare that to the C/C++ situation in which the same syntax does not add any storage overhead. 
+String: a String's memory growth tracks its internal char array's growth. However, the String class adds another 24 bytes of overhead.
+For a nonempty String of size 10 characters or less, the added overhead cost relative to useful payload (2 bytes for each char plus 4 bytes for the length), ranges from 100 to 400 percent. 
+
+
+Alignment
+Consider this example object:
+class X {                      // 8 bytes for reference to the class definition
+   int a;                      // 4 bytes
+   byte b;                     // 1 byte
+   Integer c = new Integer();  // 4 bytes for a reference
+}
+
+A naÃ¯ve sum would suggest that an instance of X would use 17 bytes.  However, due to alignment (also called padding), the JVM allocates the memory in multiples of 8 bytes, so instead of 17 bytes it would allocate 24 bytes.
+
+I've gotten very good results from the java.lang.instrument.Instrumentation approach mentioned in another answer.  For good examples of its use, see the entry, Instrumentation Memory Counter from the JavaSpecialists' Newsletter and the java.sizeOf library on SourceForge.
+
+The rules about how much memory is consumed depend on the JVM implementation and the CPU architecture (32 bit versus 64 bit for example). 
+For the detailed rules for the SUN JVM check my old blog
+Regards,
+Markus
+
+In case it's useful to anyone, you can download from my web site a small Java agent for querying the memory usage of an object. It'll let you query "deep" memory usage as well.
+
+The total used / free memory of an program can be obtained in the program via 
+java.lang.Runtime.getRuntime();
+
+The runtime has several method which relates to the memory. The following coding example demonstrate its usage.
+package test;
+
+ import java.util.ArrayList;
+ import java.util.List;
+
+ public class PerformanceTest {
+     private static final long MEGABYTE = 1024L * 1024L;
+
+     public static long bytesToMegabytes(long bytes) {
+         return bytes / MEGABYTE;
+     }
+
+     public static void main(String[] args) {
+         // I assume you will know how to create a object Person yourself...
+         List < Person > list = new ArrayList < Person > ();
+         for (int i = 0; i <= 100000; i++) {
+             list.add(new Person("Jim", "Knopf"));
+         }
+         // Get the Java runtime
+         Runtime runtime = Runtime.getRuntime();
+         // Run the garbage collector
+         runtime.gc();
+         // Calculate the used memory
+         long memory = runtime.totalMemory() - runtime.freeMemory();
+         System.out.println("Used memory is bytes: " + memory);
+         System.out.println("Used memory is megabytes: " + bytesToMegabytes(memory));
+     }
+ }
+
+
+The question will be a very broad one.
+It depends on the class variable or you may call as states memory usage in java.
+It also has some additional memory requirement for headers and referencing.
+The heap memory used by a Java object includes
+
+memory for primitive fields, according to their size (see below for Sizes of primitive types); 
+memory for reference fields (4 bytes each); 
+an object header, consisting of a few bytes of "housekeeping" information; 
+
+Objects in java also requires some "housekeeping" information, such as recording an object's class, ID and status flags such as whether the object is currently reachable, currently synchronization-locked etc. 
+Java object header size varies on 32 and 64 bit jvm.
+Although these are the main memory consumers jvm also requires additional fields sometimes like for alignment of the code e.t.c.
+Sizes of primitive types
+boolean   & byte -- 1
+char & short -- 2
+int & float -- 4
+long & double -- 8  
+
+It appears that every object has an overhead of 16 bytes on 32-bit systems (and 24-byte on 64-bit systems).
+http://algs4.cs.princeton.edu/14analysis/ is a good source of information. One example among many good ones is the following.
+
+http://www.cs.virginia.edu/kim/publicity/pldi09tutorials/memory-efficient-java-tutorial.pdf is also very informative, for example:
+
+
+It depends on architecture/jdk. For modern JDK and 64bit architecture object has 12-bytes header and padding by 8 bytes - so minimum object size is 16 bytes. You can use tool called Java Object Layout to determine size and get details about object layout and internal structure of any entity or guess this information by class reference. Output, for example, for Integer on my environment:
+Running 64-bit HotSpot VM.
+Using compressed oop with 3-bit shift.
+Using compressed klass with 3-bit shift.
+Objects are 8 bytes aligned.
+Field sizes by type: 4, 1, 1, 2, 2, 4, 4, 8, 8 [bytes]
+Array element sizes: 4, 1, 1, 2, 2, 4, 4, 8, 8 [bytes]
+
+java.lang.Integer object internals:
+ OFFSET  SIZE  TYPE DESCRIPTION                    VALUE
+      0    12       (object header)                N/A
+     12     4   int Integer.value                  N/A
+Instance size: 16 bytes (estimated, the sample instance is not available)
+Space losses: 0 bytes internal + 0 bytes external = 0 bytes total
+
+So, for Integer, instance size is 16 bytes, because 4-bytes int compacted in place right after header and before padding boundary.
+Code sample:
+import org.openjdk.jol.info.ClassLayout;
+import org.openjdk.jol.util.VMSupport;
+
+public static void main(String[] args) {
+    System.out.println(VMSupport.vmDetails());
+    System.out.println(ClassLayout.parseClass(Integer.class).toPrintable());
+}
+
+If you use maven, to get JOL:
+<dependency>
+    <groupId>org.openjdk.jol</groupId>
+    <artifactId>jol-core</artifactId>
+    <version>0.3.2</version>
+</dependency>
+
+
+
+Is the memory space consumed by one object with 100 attributes the same as that of 100 objects, with one attribute each?
+
+No.
+
+How much memory is allocated for an object?
+
+
+The overhead is 8 bytes on 32-bit, 12 bytes on 64-bit;  and then rounded up to a multiple of 4 bytes (32-bit) or 8 bytes (64-bit).
+
+
+How much additional space is used when adding an attribute?
+
+
+Attributes range from 1 byte (char/boolean) to 8 bytes (long/double), but references are either 4 bytes or 8 bytes depending not on whether it's 32bit or 64bit, but rather whether -Xmx is < 32Gb or >= 32Gb:  typical 64-bit JVM's have an optimisation called "-UseCompressedOops" which compress references to 4 bytes if the heap is below 32Gb.
+

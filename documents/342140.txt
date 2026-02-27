@@ -1,0 +1,47 @@
+How to use System::Threading::Interlocked::Increment on a static variable from C++/CLI?
+c++-cli
+I would like to keep a static counter in a garbage collected class and increment it using Interlocked::Increment.  What's the C++/CLI syntax to do this?
+I've been trying variations on the following, but no luck so far:
+ref class Foo
+{
+   static __int64 _counter;
+
+   __int64 Next()
+   {
+      return System::Threading::Interlocked::Increment( &_counter );
+   }
+
+};
+
+
+
+You need to use a tracking reference to your _int64 value, using the % tracking reference notation:
+ref class Bar
+{
+    static __int64 _counter;
+
+    __int64 Next()
+    {
+	    __int64 %trackRefCounter = _counter;
+	    return System::Threading::Interlocked::Increment(trackRefCounter);
+    }
+};
+
+
+Just remove the address-of operator:
+return System::Threading::Interlocked::Increment( _counter );
+
+In C++/CLI, like C++, there is no special notation for passing by reference.
+or you could use the native function, InterlockedIncrement64 (#include <windows.h>)
+return ::InterlockedIncrement64(&_counter);
+
+
+The suggestion to use the native functions/macros (i.e. InterlockedExchangePointer, etc... plus a lot of cool ones I didn't know about such as InterlockedXor64) is severely hampered by the fact that doing so can cause an intrinsic (at least with the default compiler settings) to be dropped into your managed C++/CLI function. When this happens, your whole function will be compiled as native.
+And the managed versions of Interlocked::* are also nice because you don't have to pin_ptr if the target is in a GC object. However, as noted on this page, it can be a real pain to find the right incantations for getting it to work, especially when you want to swap, (i.e) native pointers themselves. Here's how:
+int i1 = 1, i2 = 2;
+
+int *pi1 = &i1, *pi2 = &i2, *pi3;
+
+pi3 = (int*)Interlocked::Exchange((IntPtr%)pi1, IntPtr(pi2)).ToPointer();
+
+I verified that this does work properly, despite the suspiciously unnerving lack of address-taking (&) on the pi1 pointer. But it makes sense, when you think about it because if the target is moving about in a GC host, you wouldn't want to do the usual ** thing by grabbing the & (native) address of the pointer itself.

@@ -1,0 +1,94 @@
+Unique identifier for an iPhone app
+iphone ios-simulator
+For an iPhone app that submits images to a server I need somehow to tie all the images from a particular phone together.  With every submit I'd like to send some unique phone id.  Looked at 
+  [[UIDevice mainDevice] uniqueIdentifier]
+and
+  [[NSUserDefaults standardDefaults] stringForKey:@"SBFormattedPhoneNumber"]
+
+but getting errors in the simulator.
+Is there an Apple sanctioned way of doing this?
+
+
+Haven't done iphone work, but how about taking a hash of something unique to the phone ... oh, say the phone number?
+Getting iphone number
+
+What errors are you getting? [[UIDevice currentDevice] uniqueIdentifier] (edited to fix API, thanks Martin!) is the officially recommended way of doing this.
+
+You can also use CFUUID to generate a UUID. Here's some code:
+NSString *uuid = nil;
+CFUUIDRef theUUID = CFUUIDCreate(kCFAllocatorDefault);
+if (theUUID) {
+  uuid = NSMakeCollectable(CFUUIDCreateString(kCFAllocatorDefault, theUUID));
+  [uuid autorelease];
+  CFRelease(theUUID);
+}
+
+
+By far the easiest and most appropriate way to obtain a unique identifier is to use the mechanisms Apple explicitly provides for obtaining one - [[UIDevice currentDevice] uniqueIdentifier].  You can not guarantee that the phone number will be unique to the device or that the device will even have a phone number. Beyond that, doing so is a horrible idea as it is a definite invasion of the user's privacy. Even the uniqueidentifier should be hashed if you are going to store it in any way.
+
+This is an interesting problem that I am also looking into solving. Here is a scenario that I would like to address.
+What happens when you sell your phone to another person... that Device ID will then belong to somebody else, so even if the app is removed from the iPhone, it could be re-added and all that data would then be re-associated to a new user... this is bad.
+Using the Phone number with the Device ID MD5 would be a great solution. Another we came up with is having a SQL Lite DB with some token Hashed with the Device ID. Then when the app is removed the DB is killed and all the data is disassociated. I think that might be too brittle.
+Any other ideas?
+Rob Ellis (PhoneGap/Nitobi)
+
+snippit:
+NSString *phoneNumber = (NSString *) [[NSUserDefaults standardUserDefaults] objectForKey:@"SBFormattedPhoneNumber"]; // Will return null in simulator!
+NSLog(@"Formatted phone number [%@]", phoneNumber);
+
+I [recently] ran this code as-is on OS 2.2.1 [and OS 3.0].
+It works as expected when run on the device, and returns my phone number with the full international dialing codes [ 1 in my case].
+When run on the simulator, the value [returned] is a null string, so it only works on an actual iPhone device.
+I did not test it on an iPod Touch.
+...
+Ran this code on a different device this week, and got a null value instead of the number.
+On further research, it appears that the number returned by this code snippit is the number that is set up in iTunes for the device.
+If you didnât enter the iPhoneâs number in iTunes at device activation, or perhaps (as in my case) if the default value wasnât the iPhoneâs number and you clicked OK anyway, such that iTunes doesnât list the phone number when your iPhone is plugged in, this code will return a null string.
+[Above is an edited concatenation of comments I recently posted to another article on this topic at http://www.alexcurylo.com/blog/2008/11/15/snippet-phone-number/]
+
+Here is some more information on a way to get it from iTunes which may be useful for testing purposes.
+
+I had success with such code:
+- (NSString *)stringUniqueID {
+	NSString *  result;
+	CFUUIDRef   uuid;
+	CFStringRef uuidStr;
+	uuid = CFUUIDCreate(NULL);
+	assert(uuid != NULL);
+	uuidStr = CFUUIDCreateString(NULL, uuid);
+	assert(uuidStr != NULL);
+	result = [NSString stringWithFormat:@"%@", uuidStr];
+	assert(result != nil);
+	NSLog(@"UNIQUE ID %@", result);
+	CFRelease(uuidStr);
+	CFRelease(uuid);
+	return result;
+}
+
+
+Don't forget that in iOS 5 uniqueIdentifier will be deprecated you should use CFUUID instead of that
+
+Interestingly, Apple has since deprecated the uniqueIdentifier in iOS 5 (as gN0Me mentioned). Here's the relevant TechCrunch article:
+http://techcrunch.com/2011/08/19/apple-ios-5-phasing-out-udid/ 
+Apple suggests that you no longer uniquely identify the device but instead identify the user. In most cases, this is excellent advice though there are some situations which still require a globally unique device ID. These scenarios are quite common in advertising. Hence, I wrote an extremely simple drop-in library which replicates the existing behavior exactly. 
+In a shameless plug of self promotion, I'll link it here in the hope that someone finds it useful. Also, I welcome all and any feedback/criticism:
+http://www.binpress.com/app/myid/591
+Nevertheless, in your particular situation I would advise skipping the globally unique ID functionality my library provides as it's a bit overkill for your situation. Instead, I would generate a simple CFUUID and store it in NSUserDefaults. This ID would be specific to your application but would allow you to group all the photos for that "app install" in your database. 
+In other words, by deprecating the uniqueIdentifier method, Apple is suggesting that you don't  identify per device but instead per app install. Unless you are operating under specific conditions, chances are the per app ID fits your product better anyway.
+
+In order to Persist the Unique Identifier you create between installations, you could use the Keychain Made easy with SSKeychain:  Simply set your UUID as follows:
+        [SSKeychain setPassword:@"Your UUID" forService:@"com.yourapp.yourcompany" account:@"user"];
+
+and then call it again anytime you need it:
+NSString *retrieveuuid = [SSKeychain passwordForService:@"com.yourapp.yourcompany" account:@"user"];
+
+Note:  The services and accounts must match exactly.
+Then, if the App is deleted and reinstalled, the UUID will persist with reinstallation.
+If you then want to share this UUID across devices, set up your app to use iCloud.  You can then store the UUID in NSUserDefaults, sync with KeyValueStore, and then set the UUID in the new devices keychain with the code above.
+This answer would get extremely long if I typed code for all the above, but plenty of sample code around here to figure it all out.
+
+You can use MAC address as a unique id. Following link will help you
+How can I programmatically get the MAC address of an iphone
+
+Use Apple's GenericKeyChain which is the best solution . Here is the working sample >>https://developer.apple.com/library/prerelease/ios/samplecode/GenericKeychain/Introduction/Intro.html
+Have idea about KeyChainAccess >>https://developer.apple.com/library/mac/documentation/Security/Conceptual/keychainServConcepts/02concepts/concepts.html#//apple_ref/doc/uid/TP30000897-CH204-TP9

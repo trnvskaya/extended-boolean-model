@@ -1,0 +1,164 @@
+Object-oriented or sequential?
+c++ oop
+I'm refactoring a 500-lines of C++ code in main() for solving a differential equation.  I'd like to encapsulate the big ideas of our solver into smaller functions (i.e. "SolvePotential(...)" instead of 50 lines of numerics code). 
+Should I code this sequentially with a bunch of functions taking very long parameters lists, such as:
+int main(int *argc, void **argv){
+   interpolate(x,y,z, x_interp, y_interp, z_interp, potential, &newPotential);
+   compute_flux(x,y,z, &flux)
+   compute_energy(x,y,z, &eng)
+   ...
+   // 10 other high-level function calls with long parameter lists
+   ...
+   return 0;
+}
+
+Or should I create a "SolvePotential" class that would be called like so:
+int main(int *argc, void **argv){
+   potential = SolvePotential(nx, ny, nz, nOrder);
+   potential.solve();
+   return 0;
+}
+
+Where I would define functions in SolvePotential that uses member variables rather than long parameter lists, such as:
+SolverPotential::solve(){
+  SolvePotential::interpolate()
+  SolverPotential::compute_flux()
+  SolverPotential::compute_energy()
+  // ... 
+  //  10 other high-level function calls with NO parameter lists (just use private member variables)
+}
+
+In either case, I doubt I'll re-use the code very much... really, I'm just refactoring to help with code clarity down the road.
+Maybe this is like arguing "Is it '12' or 'one dozen'?", but what do you think?
+
+
+Write it sequentially and then refactor if there's something you think you can reuse or would make it clearer.
+Also, a SolvePotential class doesn't make a lot of sense since a class should be an Object with the method SolvePotential.
+
+I vote for the class, as it wraps the data up in a much neater package, and makes your main() function quite clear.
+In a sense, you've cleaned the main() function, and now have a messy class, which you can clean further at your discretion.  Kind of a divide and conquer method.  Or maybe a "cram all my junk in the attic" method, where at least the most used part of the house is clean.
+
+Since you're using an object-oriented language, you should go for objects, assuming you could reuse those in the future.
+Just one advice: try to design a good class diagram. What are the entities of you program? I'd see an "equation" class with a derived "differentialEquation" one, and so on.
+
+Since you're not expecting to reuse the code elsewhere at this point, I'd focus on making the code readable and clean.  That way you can figure out what it does a year from now when you need to solve the differential equations again or when you find out you actually do want to reuse the code.  IMHO, the functions with parameter lists seems like a good approach for now.  If you find it gets too unwieldy or that you actually do need to reuse it, then it can make a lot of sense to go the object route at that point.
+
+"SolvePotential" is a verb, and classes tend to be nouns with verbs attached.  I don't know a lot about the details of your problem, but this may be a sign that a procedural approach would be clearer than OO here.  In any case, it certainly seems like if you did create this class, it would be little more than packaging for the functions.
+Unless I had a second place to use the class, I'd just declare the functions with explicit arguments - this will be clearer (especially to a new person looking at this code for the first time) than using methods on a class that require hidden state.
+
+Actually C++ is not just an OO language, it mixes other paradigms, including the procedural one. Being able to use classes don't make them more suitable for any problem.
+In my opinion, functions make much more sense here since you are implementing mathematical procedures that are not based on a state and dont need to reuse data.
+Using OO here means constructing objects just to call one method and then destroy them. That sounds more error prone and less intuitive to me than a procedural API. Also, as bradheintz says, a explicit list of parameters also removes the problem  of having to remember to initialize the class before actually use it (a typical error when refactoring).
+By the way, in terms of functions, using return values instead of i/o parameters usually make an API look much clearer.
+I would even dare to say that you might want to mix OO and procedures, using classes for concepts like Vectors (I see some x,y,z around). That would also remove some parameters if that is what concerns you so much.
+float SolvePotential(const Vector3& vn, float nOrder)
+{
+    // ...
+    const float newPotential = interpolate(vn, v_interp, potential);
+    const float flux         = compute_flux(vn);
+    const float energy       = compute_energy(vn);
+    // ...
+    return result;
+}
+
+Finally, you dont mention performance, so I guess you dont mind. But if you do, in this case it seems to be easier to do it faster and clean with a procedural approach than with OO.
+Hope it helps!
+
+If you're going for strict MartinFowler-esque refactoring, then you're on the right track.  Look for metaphors for your code, define responsibilities and create classes which adhere to those divisions.  This should make the code more readable if you create classes and members with clear and understandable names.
+You'll probably want to create a few parameter objects for passing around arguments instead of having long lists of parameters.
+I'm in a similar position having worked in Java for a long time and now working in C/C++.  Did you check around to see if this was a 500 line main method for a reason?  There is overhead to instantiating objects and checking virtual tables and the like.  Is performance an issue here?  It seems like it would be in a mathematical computation like this.  If that's the case, all bets are off with the Martin-Fowler-esque approach.
+Good Luck.
+
+You've neglected to mention a middle-ground, which is to begin writing an object, but to pass parameters to its methods. Pseudocode-ly:
+SolverPotential::solve(a, b, c, d){
+  SolvePotential::interpolate(a, b);
+  SolverPotential::compute_flux(b, c);
+  SolverPotential::compute_energy(c, d)
+
+In this way, you begin your refactoring by thinking in the (presumably easier) sequential mode of 'what do I need at hand to solve this step?' Also, perhaps you'll see sequences of parameters and retvals that suggest object divisions ("After this step I never use 'a' again. Maybe the first two steps ought to be encapsulated in a different class.")
+Additionally, parallelization is harder when you just have a "big bag" of instance variables. If you start your work with explicit parameters, you'll have a better sense of dependencies and you may find dependency-free steps that may be easily parallelizable.
+If you have large numbers of parameters, it makes sense to refactor towards instance variables (and multiple objects), but I'm suggesting that your initial steps combine the approaches.
+
+Neither. "Move all my code from one single function to one single class" is not OOP. One of the fundamental rules of OOP is that a class should have one single area of responsibility.
+This is not a single responsibility, it is around 15:
+SolverPotential::solve(){
+SolvePotential::interpolate()
+SolverPotential::compute_flux()
+SolverPotential::compute_energy()
+// ... 
+//  10 other high-level function calls with NO parameter lists (just use private member variables)
+}
+
+It also makes it pretty much impossible to maintain a class invariant, doesn't it? When is it valid to call compute_flux? Solve? Interpolate? What's to stop me from doing it in the wrong order? Will the class be in a valid state if I do? Will I get valid data out of it?
+However, why is it an either-or? Why can't you make multiple classes and functions?
+// This struct could be replaced with something like typedef boost::tuple<double,double,double> coord3d
+struct coord3d {
+double x, y, z;
+};
+
+coord3d interpolate(const coord3d& coord, const coord3d& interpolated, double potential); // Just return the potential, rather than using messy output parameters
+double compute_flux(const coord3d coord&flux); // Return the flux instead of output params
+double compute_energy(const coord3d& coord); // And return the energy directly as well
+
+Of course, these functions don't have to be functions. If necessary/convenient, each could be made a class, or probably better still, a functor, to maintain the necessary state, and perhaps to allow you to pass them as arguments to other functions efficiently.
+If optimal performance is important, you may have to be careful with directly returning larger structures, rather than using output parameters, but I'd definitely profile first, to see if it is a problem, and even if it is, you could probably avoid output params with expression templates.
+If you have an conceptual object on which a number of independent operations can be performed, it's probably a hint that you need some OOP, that it should be modelled as a class with a number of member functions, each of which of course maintain the class invariant, no matter how, when and why they're called.
+If you need to compose a number of functions, gluing them together to form new, larger, pieces of functionality, functional programming and functors are most likely what you need. One common reason (but definitely not the only one) to desire composable functions is if you need to perform the same operation on many different sets of data (perhaps even several different types, all implementing the same concept). Making a functor do the heavy lifting allows it to be used with std::transform or std::for_each.
+You may also want to use currying to gradually assemble your functions (perhaps some of the functions can be parametrized with a set of fixed parameters, which don't vary between calls). Again, create a functor which is initialized with these fixed parameters, and then supply the varying data in operator().
+And finally, if you simply need to perform a sequence of operations on some mutable data, plain old procedural programming may be what best suits your needs.
+Finally, sprinkle with generic programming, templating the necessary classes and functions to allow them to work together without having to jump through hoops like pointer indirection or inheritance.
+Don't get too hung up on OOP. Use the tools at your disposal.
+I don't know enough of the context of your question to say for sure, but it seems to me that what you really need isn't a class, it's just a hierarchy of functions.
+Your user code calls solve(). solve() internally calls, say (made up, for the sake of example), interpolate() and compute_energy(). compute_energy() internally calls compute_flux(), and so on. Each function only makes a couple of calls to perform the logical steps that make up the responsibility of the function. So nowhere do you have a huge class with a dozen different responsibilities, or a big monolithic function which does everything sequentially.
+In any case, there is nothing wrong with "very long parameter lists" (You can usually shorten them by grouping some of them together, but even if you can't, there is nothing "un-OOP" about passing a lot of parameters. On the contrary, it means the function is well encapsulated from everything else. All it needs is passed in the parameters, so it isn't really tied to the rest of the application.
+
+Since you mention that one of your goals is encapsulation, I'd point you towards the OO approach.
+In your example code, I think your class name is a little off. I'd first apply the refactoring that you are doing (Extract Method into smaller functions). After that, analyze what pieces of data go with what pieces of logic and Convert Procedural Design to Objects (Fowler doesn't have a link for this "Big Refactoring").
+That is the bottom-up approach. The top-down approach that I would take is the Command pattern, which is essentially what you have in your original question, save the poor class name: create a class called PotentialEquation, initialize it via a constructor, factory, or setters, whatever you like, and then expose a solve() method, maybe like this:
+PotentialSolution solve()
+
+In PotentialSolution, you can further encapsulate the solution to the equation, which is probably more complex than a primitive type.
+
+I don't really recommend this design as a pragmatic approach in your situation but as a possible solution for this kind of domain it is probably quite interesting.
+If you were to implement your differential solver as a collection of immutable classes which are created and then have some convenient arg-less 'compute()' method to call which computes the value associated with that class using the instances variables and stores and returns the answer.  You would then be able to build a caching mechanism into each class so that you did not have to re-evaluate the answer if you had already computed it for the same arguments.
+I'm afraid that I don't know C++ syntax so I'll use Java instead.
+public class ValuePlusOne implements Computable {
+    private int value;
+    private int result;
+    private Boolean hasRun;
+    private static Map instanceMap = new HashMap();
+
+    // Creates an instance reusing an existing one if possible
+    public static getInstance(int value) {
+        ValuePlusOne instance = (ValuePlusOne)instanceMap.get(value);
+
+        if (instance = null) {
+            instance = new ValuePlusOne(value);
+            instanceMap.put(value,instance);
+        }
+        return instance;
+    }
+
+    // Private constructor
+    private ValuePlusOne(int value) {
+        this.value = value;
+        hasRun = false;
+    }
+
+    // Computes (if not already computed) and returns the answer
+    public int compute() {
+        if (!hasRun) {
+            hasRun = true;
+            result = value + 1;
+        }
+
+        return result;
+    }
+}
+
+This means that you will be able to invisibly reuse any computations that you have done before.  This will only give you a speed up if you are often redoing calculations with the same arguments and in the (approximately) continuous domain of differentials this may occur very infrequently.  This approach also lends itself to parallelisation but requires modification for that to be safe.
+Unless that caching offered real benefits I would prefer to use the flat C-style procedural approach.  Anyone will be able to read and understand your code easily with stateless data-in data-out methods.
+
+It sounds to me like this really is a function that takes an input (though it may be big) and returns an output (which might be big). And it sounds to me like you are willing to take the the functional approach, but are worried about the long parameter lists.
+In that case, I don't think you'd be doing much more than busywork to try and covert it into an object somehow. I'd consider instead to make some structs to hold the parameters which are alike and pass those structs into your functions instead of the individual parameters. I like the idea of breaking down the huge method into sub-methods, but it doesn't sound to me like it has to be tied to a class and it might be more work to try and do so, without much demonstrable benefit.
+If while breaking the function into sub-functions and consolidating the parameters into structs, you see a good object in there, go for it, but I wouldn't spend the time trying to shoehorn it into one if the problem doesn't gravitate there.

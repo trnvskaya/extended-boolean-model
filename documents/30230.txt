@@ -1,0 +1,105 @@
+enter key to insert newline in asp.net multiline textbox control
+asp.net
+I have some C# / asp.net code I inherited which has a textbox which I want to make multiline. I did so by adding textmode="multiline" but when I try to insert a newline, the enter key instead submits the form :P
+I googled around and it seems like the default behavior should be for enter (or control-enter) to insert a newline. Like I said I inherited the code so I'm not sure if there's javascript monkeying around or if there's just a simple asp.net thing I have to do.
+
+
+I suspect it's (like you say) some custom javascript code.
+The original asp.net control works fine... you are going to have to check the code
+
+Are you handling the textchanged event for the textbox?  That would mean ASP.Net sets the textbox to cause a postback (submit the page) for anything the might cause the textbox to lose focus, including the enter key.
+
+I created a sample page with a TextBox and a Button and it worked fine for me:
+<asp:TextBox runat="server" ID="textbox1" TextMode="MultiLine" />
+<br />
+<br />
+<asp:Button runat="server" ID="button1" Text="Button 1" onclick="button1_Click" />
+
+So it most likely depends on either some other property you have set, or some other control on the form.
+Edit: TextChanged event is only triggered when the TextBox loses focus, so that can't be the issue.
+
+
+I can't find that "WebForm_FireDefaultButton" javascript anywhere, is it something asp.net is generating?
+
+Yes.
+That's generated to support the DefaultButton functionality of the form and/or Panel containing your controls.  This is the source for it:
+function WebForm_FireDefaultButton(event, target) {
+  if (event.keyCode == 13) {
+    var src = event.srcElement || event.target;
+    if (!src || (src.tagName.toLowerCase() != "textarea")) {
+      var defaultButton;
+      if (__nonMSDOMBrowser) {
+        defaultButton = document.getElementById(target);
+      }
+      else {
+        defaultButton = document.all[target];
+      }
+      if (defaultButton && typeof (defaultButton.click) != "undefined") {
+        defaultButton.click();
+        event.cancelBubble = true;
+        if (event.stopPropagation) event.stopPropagation();
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+
+@dave-ward, I just dug through mounds of javascript. most was ASP.NET generated stuff for validation and AJAX, there's a bunch starting with "WebForm_" that I guess is standard stuff to do the defaultbutton, etc. the only javascript we put on the page is for toggling visibility and doing some custom validation...
+edit: I did find the below. I don't understand it though :P the beginning of the form the textarea is in, and a script found later: (note, something on stackoverflow is messing with the underscores)
+<form name="Form1" method="post" action="default.aspx" onsubmit="javascript:return WebForm_OnSubmit();" id="Form1">
+
+<script type="text/javascript">
+//<![CDATA[
+var theForm = document.forms['Form1'];
+if (!theForm) {
+    theForm = document.Form1;
+}
+function __doPostBack(eventTarget, eventArgument) {
+    if (!theForm.onsubmit || (theForm.onsubmit() != false)) {
+        theForm.__EVENTTARGET.value = eventTarget;
+        theForm.__EVENTARGUMENT.value = eventArgument;
+        theForm.submit();
+    }
+}
+//]]>
+</script>
+
+
+It turns out this is a bug with Firefox + ASP.NET where the generated javascript for the defaultButton stuff doesn't work in Firefox. I had to put a replacement for the WebForm_FireDefatultButton function as described here:
+function WebForm_FireDefaultButton(event, target) {
+    var element = event.target || event.srcElement;
+    if (event.keyCode == 13 &&
+    !(element &&
+    element.tagName.toLowerCase() == "textarea"))
+    {
+        var defaultButton;
+        if (__nonMSDOMBrowser)
+        {
+            defaultButton = document.getElementById(target);
+        }
+        else
+        {
+            defaultButton = document.all[target];
+        }
+        if (defaultButton && typeof defaultButton.click != "undefined")
+        {
+            defaultButton.click();
+            event.cancelBubble = true;
+            if (event.stopPropagation)
+            {
+                event.stopPropagation();
+            }
+            return false;
+        }
+    }
+    return true;
+}
+
+
+http://blog.codesta.com/codesta_weblog/2007/12/net-gotchas---p.html worked for me.
+
+you can use \n for enter key 
+i.e.
+  [a-zA-Z 0-9/.\n]{20,500}

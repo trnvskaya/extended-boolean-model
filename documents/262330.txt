@@ -1,0 +1,44 @@
+Negotiating a common "network-channel" in a peer-to-peer system
+networking p2p secondlife linden-scripting-language
+Is there a common or established algorithm for peer-nodes in a network to decide on a unique "network-channel" (or any other form of semi-secret identifier)?
+The environment I'm working in is SecondLife.  I am trying to figure out how to get many identical peer scripted objects to agree on a "channel" number which allows them to form a network, without interfering with other existing networks of the same kind of objects.
+All objects get instantiated at roughly the same time, and have access to the (common) system time.
+Approaches I've thought of:
+
+Time-of-instantiation based.  Channel is derived (by md5) from the unix time.  Problem is the "roughly the same time" part.  They may get instantiated right on the cusp of a new second.
+Random wait.  Make objects wait a random amount, and announce a (randomly generated) channel number decided upon by the first one to wake.  Problem is, the system has a low time granularity, and more than one object can wake before the announcement was processed.
+Combine 1 and 2.  Announce a high-res timestamp after waiting a random amount, and derive channel from the lowest announced timestamp.
+
+This has to be something smarter people than me have thought about.  Any better way of doing this?
+
+
+How would a new object know which network to join (new or existing)? Depending on what exactly you need, there are number of approaches.
+First method
+You can use less precise timer than every second, for example something like this:
+integer time = llGetUnixTime();
+integer channel = time - (time % 1000);
+
+All the objects rezzed at nearly the same time are likely to have same channel according to the above code, although you'd probably want to make sure that time % 1000 is not near 0 or 1000 and perhaps use time % 10000 in that case.
+Second method
+Other than that, you can create some sort of discovery protocol. For example:
+
+newly rezzed object says hello on hard-coded control channel
+main server for each network in area responds with channel number of its network
+object chooses network he wants to join
+if nobody responds, object becomes server for its own network, by incrementing control channel by some number (for example +1)
+if object wants to create its own network anyway, it increments highest channel in use by +1 and creates its own channel/network
+
+Combination
+Of course, you can combine both methods - use llGetUnixTime() to derive channel, say hello, and if server responds become node, otherwise become server. Also, you can check appropriate higher and lower channel to avoid having two networks because of time rollover differences in rezzing of objects.
+
+Are your objects being rezzed by another object?  If so, then the easy solution is to provide the channel number in the integer parameter of llRezObject.  The rezzed (child) objects can then just use the param from their on_rez events as the channel.
+For example, the rezzer parent would do something like this:
+integer networkchannel = 3495293;
+llRezObject("myobject", rezpos, rezvel, rezrot, networkchannel);
+
+and the rezzed child objects would do something like this:
+on_rez(integer networkchannel)
+{
+    llListen(networkchannel, "", NULL_KEY, "");
+}
+

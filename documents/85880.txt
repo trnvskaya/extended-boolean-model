@@ -1,0 +1,181 @@
+Determine if a function exists in bash
+linux bash testing scripting
+Currently I'm doing some unit tests which are executed from bash. Unit tests are initialized, executed and cleaned up in a bash script. This script usualy contains an init(), execute() and cleanup() functions. But they are not mandatory. I'd like to test if they are or are not defined.
+I did this previously by greping and seding the source, but it seemed wrong. Is there a more elegant way to do this?
+Edit: The following sniplet works like a charm:
+fn_exists()
+{
+    type $1 | grep -q 'shell function'
+}
+
+
+
+I think you're looking for the 'type' command. It'll tell you whether something is a function, built-in function, external command, or just not defined. Example:
+$ type foo
+bash: type: foo: not found
+
+$ type ls
+ls is aliased to `ls --color=auto'
+
+$ which type
+
+$ type type
+type is a shell builtin
+
+$ type -t rvm
+function
+
+$ if [ -n "$(type -t rvm)" ] && [ "$(type -t rvm)" = function ]; then echo rvm is a function; else echo rvm is NOT a function; fi
+rvm is a function
+
+
+$ g() { return; }
+$ declare -f g > /dev/null; echo $?
+0
+$ declare -f j > /dev/null; echo $?
+1
+
+
+I would improve it to:
+fn_exists()
+{
+    type $1 2>/dev/null | grep -q 'is a function'
+}
+
+And use it like this:
+fn_exists test_function
+if [ $? -eq 0 ]; then
+    echo 'Function exists!'
+else
+    echo 'Function does not exist...'
+fi
+
+
+This tells you if it exists, but not that it's a function
+fn_exists()
+{
+  type $1 >/dev/null 2>&1;
+}
+
+
+Dredging up an old post ... but I recently had use of this and tested both alternatives described with : 
+test_declare () {
+    a () { echo 'a' ;}
+
+    declare -f a > /dev/null
+}
+
+test_type () {
+    a () { echo 'a' ;}
+    type a | grep -q 'is a function'
+}
+
+echo 'declare'
+time for i in $(seq 1 1000); do test_declare; done
+echo 'type'
+time for i in $(seq 1 100); do test_type; done
+
+this generated : 
+real    0m0.064s
+user    0m0.040s
+sys     0m0.020s
+type
+
+real    0m2.769s
+user    0m1.620s
+sys     0m1.130s
+
+declare is a helluvalot faster !
+
+It is possible to use 'type' without any external commands, but you have to call it twice, so it still ends up about twice as slow as the 'declare' version:
+test_function () {
+        ! type -f $1 >/dev/null 2>&1 && type -t $1 >/dev/null 2>&1
+}
+
+Plus this doesn't work in POSIX sh, so it's totally worthless except as trivia!
+
+Borrowing from other solutions and comments, I came up with this:
+fn_exists() {
+  # appended double quote is an ugly trick to make sure we do get a string -- if $1 is not a known command, type does not output anything
+  [ `type -t $1`"" == 'function' ]
+}
+
+Used as ...
+if ! fn_exists $FN; then
+    echo "Hey, $FN does not exist ! Duh."
+    exit 2
+fi
+
+It checks if the given argument is a function, and avoids redirections and other grepping.
+
+I particularly liked solution from GrÃ©gory Joseph
+But I've modified it a little bit to overcome "double quote ugly trick":
+function is_executable()
+{
+    typeset TYPE_RESULT="`type -t $1`"
+
+    if [ "$TYPE_RESULT" == 'function' ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+
+If declare is 10x faster than test, this would seem the obvious answer.
+Edit: the -f option is superfluous in BASH, feel free to leave it out.  Personally, I have trouble remembering which option does which, so I just use both.  -f shows functions, and -F shows function names.
+#!/bin/sh
+
+function_exists() {
+    declare -f -F $1 > /dev/null
+    return $?
+}
+
+function_exists function_name && echo Exists || echo No such function
+
+The "-F" option to declare causes it to only return the name of the found function, rather than the entire contents.
+There shouldn't be any measurable performance penalty for using /dev/null, and if it worries you that much:
+fname=`declare -f -F $1`
+[ -n "$fname" ]    && echo Declare -f says $fname exists || echo Declare -f says $1 does not exist
+
+Or combine the two, for your own pointless enjoyment.  They both work.
+fname=`declare -f -F $1`
+errorlevel=$?
+(( ! errorlevel )) && echo Errorlevel says $1 exists     || echo Errorlevel says $1 does not exist
+[ -n "$fname" ]    && echo Declare -f says $fname exists || echo Declare -f says $1 does not exist
+
+
+It boils down to using 'declare' to either check the output or exit code.
+Output style:
+isFunction() { [[ "$(declare -Ff "$1")" ]]; }
+
+Usage:
+isFunction some_name && echo yes || echo no
+
+However, if memory serves, redirecting to null is faster than output substitution (speaking of, the awful and out-dated `cmd` method should be banished and $(cmd) used instead.) And since declare returns true/false if found/not found, and functions return the exit code of the last command in the function so an explicit return is usually not necessary, and since checking the error code is faster than checking a string value (even a null string):
+Exit status style:
+isFunction() { declare -Ff "$1" >/dev/null; }
+
+That's probably about as succinct and benign as you can get.
+
+fn_exists()
+{
+   [[ $(type -t $1) == function ]] && return 0
+}
+
+update
+isFunc () 
+{ 
+    [[ $(type -t $1) == function ]]
+}
+
+$ isFunc isFunc
+$ echo $?
+0
+$ isFunc dfgjhgljhk
+$ echo $?
+1
+$ isFunc psgrep && echo yay
+yay
+$
+

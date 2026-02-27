@@ -1,0 +1,60 @@
+Game Programming and Event Handlers
+c# xna camera
+I haven't programmed games for about 10 years (My last experience was DJGPP + Allegro), but I thought I'd check out XNA over the weekend to see how it was shaping up.
+I am fairly impressed, however as I continue to piece together a game engine, I have a (probably) basic question.
+How much should you rely on C#'s Delegates and Events to drive the game? As an application programmer, I use delegates and events heavily, but I don't know if there is a significant overhead to doing so.
+In my game engine, I have designed a "chase cam" of sorts, that can be attached to an object and then recalculates its position relative to the object. When the object moves, there are two ways to update the chase cam.
+
+Have an "UpdateCameras()" method in the main game loop.
+Use an event handler, and have the chase cam subscribe to object.OnMoved.
+
+I'm using the latter, because it allows me to chain events together and nicely automate large parts of the engine. Suddenly, what would be huge and complex get dropped down to a handful of 3-5 line event handlers...Its a beauty.
+However, if event handlers firing every nanosecond turn out to be a major slowdown, I'll remove it and go with the loop approach.
+Ideas?
+
+
+If you were to think of an event as a subscriber list, in your code all you are doing is registering a subscriber.  The number of instructions needed to achieve that is likely to be minimal at the CLR level.
+If you want your code to be generic or dynamic, then you're need to check if something is subscribed prior to calling an event.  The event/delegate mechanism of C# and .NET provides this to you at very little cost (in terms of CPU).
+If you're really concerned about every clock cycle, you'd never write generic/dynamic game logic. It's a trade off between maintainable/configurable code and outright speed.
+Written well, I'd favour events/delegates until I could prove it is an issue.
+The only way you'll truly know if it is an issue for you is by profiling your code -- which you should do anyway for any game development!
+
+XNA encourages the use of interfaces, events and delegates to drive something written with it. Take a look at the GameComponent related classes which set this up for you.
+The answer is, "As much as you feel comfortable with".
+To elaborate a little bit, If for example you take and inherit from the gamecomponent class into a cameracontroller class and add it to the Game.Component collection. Then you can create your camera classes and add them to your cameracontroller. 
+Doing this will cause the cameracontroller to be called regularly and be able to select and activate the proper camera or multiple cameras if that is what you are going for.
+Here is an example of this (All of his tutorials are excellent):
+ReoCode
+
+In my extra time away from real work, I've been learning XNA too.
+IMHO (or not so humble if you ask my coworkers) is that the overhead of the event handles will be overwhelmed by other elements in the game such as rendering.  Given the heavy use of events in normal .Net programming I would be the underlying code is well optimized.
+To be honest, I think going to an UpdateCameras method might be a premature optimization.  The event system probably has more uses other than the camera.
+
+It's important to realize that events in C# are not queued asynchronous events (like, for example the Windows message queue). They are essentially a list of function pointers. So raising an event doesn't have worse performance implications than iterating through a list of function pointers and calling each one.
+At the same time, realize that because of this, events are synchronous. If your event listener is slow, you'll slow down the class raising the events.
+
+As an aside, you might be interested to know that Shawn Hargreaves, original developer of Allegro, is one of the main developers on the XNA team :-)
+
+The main question here seems to be:
+"What is the overhead associated with using C# Delegates and Events?"
+Events have little significant overhead in comparison to a regular function call.
+The use of Delegates can create implicit and thus hidden garbage.  Garbage can be a major cause performance problems especially on the XBox360.
+The following code generates around 2000 bytes of garbage per second (at 60 fps) in the form of EntityVisitor objects:
+    private delegate void SpacialItemVisitor(ISpacialItem item);
+
+    protected override void Update(GameTime gameTime)
+    {
+        m_quadTree.Visit(ref explosionCircle, ApplyExplosionEffects);
+    }
+
+    private void ApplyExplosionEffects(ISpacialItem item)
+    {
+    }
+
+As long as you avoid generating garbage, delegates are fast enough for most purposes.  Because of the hidden dangers, I prefer to avoid them and use interfaces instead.
+
+Before going into what is the impact of an event in terms of performance you must first evaluate whether or not it is needed.
+Assuming you are really trying to keep a chase cam updated and its not just an example, what you are looking for is not an event (though events might do the trick just as well), if you are following an avatar likelihood is it will be moving most of the time.
+One approach I found extremely effective is to use hierarchic transformations, if you implement this efficiently the camera won't be the only object to benefit from such a system, the goal would be to keep the camera within the coordinate space of the object it is tracking.
+That approach is not the best one if you want to apply some elasticity to the speed and ways in which the camera tracks the object, for that, it is best to use an update call, a reference, and some basic acceleration and resistance physics.
+Events are more useful for things that only happen from time to time or that affect many different aspects of the application, like a character dying, probably many different systems would like to be aware of such an event, kill statistics, the controlling AI, and so on, in such a case, keeping track of all the objects that would be have to constantly check if this has happened is far less effective than throwing an event and having all the interested objects be notified only when it happens.

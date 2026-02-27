@@ -1,0 +1,209 @@
+How do I reverse a UTF-8 string in place?
+utf-8 string algorithm performance
+Recently, someone asked about an algorithm for reversing a string in place in C. Most of the proposed solutions had troubles when dealing with non single-byte strings. So, I was wondering what could be a good algorithm for dealing specifically with utf-8 strings.
+I came up with some code, which I'm posting as an answer, but I'd be glad to see other people's ideas or suggestions. I preferred to use actual code, so I've chosen C#, as it seems to be one of the most popular language in this site, but I don't mind if your code is in another language, as long as it could be reasonably understood by anyone who is familiar with an imperative language. And, as this is intended to see how such an algorithm could be implemented at a low-level (by low-level I just mean dealing with bytes), the idea is to avoid using libraries for the core code.
+Notes:
+I'm interested in the algorithm itself, its performance and how could it be optimized (I mean algorithm-level optimization, not replacing i++ with ++i and such; I'm not really interested in actual benchmarks either).
+I don't mean to actually use it in production code or "reinventing the wheel". This is just out of curiosity and as an exercise.
+I'm using C# byte arrays so I'm assuming you can get the length of the string without running though the string until you find a NUL.
+That is, I'm not accounting for the complexity of finding the length of the string. But if you're using C, for instance, you could factor that out by using strlen() before calling the core code. 
+Edit:
+As Mike F points out, my code (and other people's code posted here) is not dealing with composite characters. Some info about those here. I'm not familiar with the concept, but if that means that there are "combining characters", i.e., characters / code points that are only valid in combination with other "base" characters / code points, a look-up table of such characters could be used to preserve the order of the "global" character ("base" + "combining" characters) when reversing.
+
+
+I'd make one pass reversing the bytes, then a second pass that reverses the bytes in any multibyte characters (which are easily detected in UTF8) back to their correct order.
+You can definitely handle this in line in a single pass, but I wouldn't bother unless the routine became a bottleneck.
+
+My initial approach could by summarized this way:
+1) Reverse bytes naively
+2) Run the string backwards and fix the utf8 sequences as you go. 
+Illegal sequences are dealt with in the second step and in the first step, we check if the string is in "sync" (that is, if it starts with a legal leading byte).
+EDIT: improved validation for leading byte in Reverse()
+class UTF8Utils {
+
+
+    public static void Reverse(byte[] str) {
+    	int len = str.Length;
+    	int i	= 0;
+    	int j	= len - 1;
+
+    	//	first, check if the string is "synced", i.e., it starts
+    	//	with a valid leading character. Will check for illegal 
+    	//	sequences thru the whole string later.
+    	byte leadChar = str[0];
+
+    	//	if it starts with 10xx xxx, it's a trailing char...
+    	//	if it starts with 1111 10xx or 1111 110x 
+    	//	it's out of the 4 bytes range.
+	//	EDIT: added validation for 7 bytes seq and 0xff
+    	if( (leadChar & 0xc0) == 0x80 ||
+    		(leadChar & 0xfc) == 0xf8 ||
+    		(leadChar & 0xfe) == 0xfc ||
+		(leadChar & 0xff) == 0xfe ||
+		leadChar == 0xff) {
+
+    		throw new Exception("Illegal UTF-8 sequence");
+
+    	}
+
+    	//	reverse bytes in-place naÃ¯vely
+    	while(i < j) {
+    		byte tmp = str[i];
+    		str[i]	= str[j];
+    		str[j]	= tmp;
+    		i++;
+    		j--;
+    	}
+    	//	now, run the string again to fix the multibyte sequences
+    	UTF8Utils.ReverseMbSequences(str);
+
+    }
+
+    private static void ReverseMbSequences(byte[] str) {
+    	int i = str.Length - 1;
+    	byte leadChar = 0;
+    	int nBytes	= 0;
+
+    	//	loop backwards thru the reversed buffer
+    	while(i >= 0) {
+    		//	since the first byte in the unreversed buffer is assumed to be
+    		//	the leading char of that byte, it seems safe to assume that the  
+    		//	last byte is now the leading char. (Given that the string is
+    		//	not out of sync -- we checked that out already)
+    		leadChar = str[i];
+
+    		//	check how many bytes this sequence takes and validate against
+    		//	illegal sequences
+    		if(leadChar < 0x80) {
+    			nBytes = 1;
+    		} else if((leadChar & 0xe0) == 0xc0) {
+    			if((str[i-1] & 0xc0) != 0x80) {
+    				throw new Exception("Illegal UTF-8 sequence");
+    			}
+    			nBytes = 2;
+    		} else if ((leadChar & 0xf0) == 0xe0) {
+    			if((str[i-1] & 0xc0) != 0x80 ||
+    				(str[i-2] & 0xc0) != 0x80 ) {
+    				throw new Exception("Illegal UTF-8 sequence");
+    			}
+    			nBytes = 3;
+    		} else if ((leadChar & 0xf8) == 0xf0) {
+    			if((str[i-1] & 0xc0) != 0x80 ||
+    				(str[i-2] & 0xc0) != 0x80 ||
+    				(str[i-3] & 0xc0) != 0x80  ) {
+    				throw new Exception("Illegal UTF-8 sequence");
+    			}
+    			nBytes = 4;
+    		} else {
+    			throw new Exception("Illegal UTF-8 sequence");
+    		}
+
+    		//	now, reverse the current sequence and then continue
+    		//	whith the next one
+    		int back	= i;
+    		int front	= back - nBytes + 1;
+
+    		while(front < back) {
+    			byte tmp = str[front];
+    			str[front] = str[back];
+    			str[back] = tmp;
+    			front++;
+    			back--;
+    		}
+    		i -= nBytes;
+    	}
+    }
+}
+
+
+The best solution:
+
+Convert to a wide char string
+Reverse the new string
+
+Never, never, never, never treat single bytes as characters.
+
+Agree that your approach is the only sane way to do it in-place.
+Personally I don't like revalidating UTF8 inside every function that deals with it, and generally only do what's needed to avoid crashes; it adds up to a lot less code. Dunno much C# so here it is in C:
+(edited to eliminate strlen)
+void reverse( char *start, char *end )
+{
+    while( start < end )
+    {
+        char c = *start;
+        *start++ = *end;
+        *end-- = c;
+    }
+}
+
+char *reverse_char( char *start )
+{
+    char *end = start;
+    while( (end[1] & 0xC0) == 0x80 ) end++;
+    reverse( start, end );
+    return( end+1 );
+}
+
+void reverse_string( char *string )
+{
+    char *end = string;
+    while( *end ) end = reverse_char( end );
+    reverse( string, end-1 );
+}
+
+
+This code assumes that the input UTF-8 string is valid and well formed (i.e. at most 4 bytes per multibyte character):
+#include "string.h"
+
+void utf8rev(char *str)
+{
+    /* this assumes that str is valid UTF-8 */
+    char    *scanl, *scanr, *scanr2, c;
+
+    /* first reverse the string */
+    for (scanl= str, scanr= str + strlen(str); scanl < scanr;)
+        c= *scanl, *scanl++= *--scanr, *scanr= c;
+
+    /* then scan all bytes and reverse each multibyte character */
+    for (scanl= scanr= str; c= *scanr++;) {
+        if ( (c & 0x80) == 0) // ASCII char
+            scanl= scanr;
+        else if ( (c & 0xc0) == 0xc0 ) { // start of multibyte
+            scanr2= scanr;
+            switch (scanr - scanl) {
+                case 4: c= *scanl, *scanl++= *--scanr, *scanr= c; // fallthrough
+                case 3: // fallthrough
+                case 2: c= *scanl, *scanl++= *--scanr, *scanr= c;
+            }
+            scanr= scanl= scanr2;
+        }
+    }
+}
+
+// quick and dirty main for testing purposes
+#include "stdio.h"
+
+int main(int argc, char* argv[])
+{
+    char buffer[256];
+    buffer[sizeof(buffer)-1]= '\0';
+
+    while (--argc > 0) {
+        strncpy(buffer, argv[argc], sizeof(buffer)-1); // don't overwrite final null
+        printf("%s â ", buffer);
+        utf8rev(buffer);
+        printf("%s\n", buffer);
+    }
+    return 0;
+}
+
+If you compile this program (example name: so199260.c) and run it on a UTF-8 environment (a Linux installation in this case):
+$ so199260 Î³ÎµÎ¹Î± ÎºÎ±Î¹ ÏÎ±ÏÎ¬ franÃ§ais ÐÐÐÐ aâ â¡â¢â£b
+aâ â¡â¢â£b â bâ£â¢â¡â a
+ÐÐÐÐ â ÐÐÐÐ
+franÃ§ais â siaÃ§narf
+ÏÎ±ÏÎ¬ â Î¬ÏÎ±Ï
+ÎºÎ±Î¹ â Î¹Î±Îº
+Î³ÎµÎ¹Î± â Î±Î¹ÎµÎ³
+
+If the code is too cryptic, I will happily clarify.

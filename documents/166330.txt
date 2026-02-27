@@ -1,0 +1,82 @@
+Parameterized Sql queries
+c# .net sql-server-2005 ado.net
+This is a nut I'm cracking these days
+Application I'm working on has some advanced processing towards SQL. One of the operations selects various metadata on the objects in the current context from different tables, based on the item names in the collection. For this, a range of "select...from...where...in()" is executed, and to prevent malicious SQL code, Sql parameters are used for constructing the contents of the "in()" clause.
+However, when the item collection for constructing the "in()" clause is larger than 2100 items, this fails due to the Sql Server limitation of max 2100 Sql parameters per query.
+One approach I'm trying out now is creating a #temp table for storing all item names and then joining the table in the original query, instead of using "where in()". This has me scratching my head on how to populate the table with the item names stored in an Array in the .NET code. Surely, there has to be some bulk way to insert everything rather than issuing a separate "insert into" for each item?
+Other than that, I'm very much interested in alternative approaches for solving this issue.
+Thanks a lot
+
+
+Hrm, without knowing context and more about the data and how you are using the results and performance issues, i will try to suggest an alternative. Could you possibly split into multiple queries? Do the same as you do now, but instead of building a query with 2100+ in items, build two with 1050 in each, and then merge the results.
+
+One potential workaround is to use the ability to query XML and simply send all the data for your 'in' as an xml column and then join on that. 
+The same approach could be used to populate your temp table, but then again, why not just use it directly.
+Here's a short sample that should illustrate:
+declare @wanted xml
+set @wanted = '<ids><id>1</id><id>2</id></ids>'
+select * 
+from (select 1 Id union all select 3) SourceTable 
+where Id in(select Id.value('.', 'int') from @wanted.nodes('/ids/id') as Foo(Id))
+
+Simply build the xml in your application and pass it as parameter.
+
+Prevengint malicious SQL code: > Use a stored procedure.
+And yes, SQL Server 2005 has a bulk insert:
+http://msdn.microsoft.com/en-us/library/ms188365.aspx
+
+For the bulk update problem: take a look at data adapter with a data table in it. You can set a parameter that allows you to insert/update the items in the table in batches, and you can choose the nr of items in a batch
+MSDN article
+It seems like you should take a closer look at the business problem or domain to determine a better way to filter items in your query. An IN() clause may not be the best way for you to do this. Maybe adding categories of data or filters instead of a large list of items to include would be better in your case. Without knowing more aout the business problem/context, it's hard to say.
+
+You can make use of the SqlBulkCopy class that was introduced with .NET 2.0. It's actually very simple to use. Check it out:
+http://msdn.microsoft.com/en-us/library/system.data.sqlclient.sqlbulkcopy.aspx
+
+Ok, I'm not sure how good this is for you or how performant it is, but here is some code I have used in the past to achieve similar:
+    CREATE FUNCTION [dbo].[Split](
+    @list ntext
+)
+RETURNS @tbl TABLE (listpos int IDENTITY(1, 1) NOT NULL,
+                          number  int NOT NULL) 
+AS
+BEGIN
+    DECLARE @pos      int,
+    		@textpos  int,
+    		@chunklen smallint,
+    		@str      nvarchar(4000),
+    		@tmpstr   nvarchar(4000),
+    		@leftover nvarchar(4000)
+
+    SET @textpos = 1
+    SET @leftover = ''
+    WHILE @textpos <= datalength(@list) / 2
+    BEGIN
+       SET @chunklen = 4000 - datalength(@leftover) / 2
+       SET @tmpstr = ltrim(@leftover + substring(@list, @textpos, @chunklen))
+       SET @textpos = @textpos + @chunklen
+
+       SET @pos = charindex(',', @tmpstr)
+       WHILE @pos > 0
+       BEGIN
+    	  SET @str = substring(@tmpstr, 1, @pos - 1)
+    	  INSERT @tbl (number) VALUES(convert(int, @str))
+    	  SET @tmpstr = ltrim(substring(@tmpstr, @pos + 1, len(@tmpstr)))
+    	  SET @pos = charindex(',', @tmpstr)
+       END
+
+       SET @leftover = @tmpstr
+    END
+
+    IF ltrim(rtrim(@leftover)) <> ''
+       INSERT @tbl (number) VALUES(convert(int, @leftover))
+
+    RETURN
+END
+
+Then in your other stored procedure, you can pass in a comma delimited string of the IDs, like:
+select a.number from split('1,2,3') a inner join myothertable b on a.number = b.ID
+
+Like I say, this is probably really bad because it includes lots of string manipulation, and I can't remember where I got the function from... but it's there for picking at...
+I guess that you can also strip out the bits that populate the listpos column if you really don't need to index the original string.
+
+SQL Server 2008 will have table parameters.  This is the hammer that you want.

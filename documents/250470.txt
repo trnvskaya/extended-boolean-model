@@ -1,0 +1,40 @@
+Single instance Amazon EC2
+amazon-ec2 amazon-web-services
+We're running a lightweight web app on a single EC2 server instance, which is fine for our needs, but we're wondering about monitoring and restarting it if it goes down.
+We have a separate non-Amazon server we'd like to use to monitor the EC2 and start a fresh instance if necessary and shut down the old one. All our user data is on Elastic Storage, so we're not too worried about losing anything.
+I was wondering if anyone has any experience of using EC2 in this way, and in particular of automating the process of starting the new instance? We have no problem creating something from scratch, but it seems like it should be a solved problem, so I was wondering if anyone has any tips, links, scripts, tutorials, etc to share.
+Thanks.
+
+
+You should have a look at puppet and its support for AWS. I would also look at the RightScale AWS library as well as this post about starting a server with the RightScale scripts. You may also find this article on web serving with EC2 useful. I have done something similar to this but without the external monitoring, the node monitored itself and shut down when it was no longer needed then a new one would start up later when there was more work to do.
+
+As a side point:
+
+All our user data is on Elastic Storage, so we're not too worried about losing anything.
+
+I'd strongly suggest to regularly snapshot your EBS (Elastic Block Storage) to S3 if you are not doing that already.
+
+Couple of points:
+ You MUST MUST MUST back up your Amazon EBS volume.
+They claim "better" reliability, but not 100%, and it's SEVERAL orders of magnitude off of S3's "12 9's" of durability.  S3 durability >> EBS durability.  That's a fact.  EBS supports a "snapshots" feature which backs up your storage efficiently and incrementally to S3.  Also, with EBS snapshots, you only pay for the compressed deltas, which is typically far far less than the allocated volume size.  In another life, I've sent lost-volume emails to smaller customers like you who "thought" that EBS was "durable" and trusted it with the only copy of a mission-critical database... it's heartbreaking.
+ Your Q: automating start-up of a new instance 
+The design path you mention is relatively untraveled; here's why...  Lots of companies run redundant "hot-spare" instances where the second instance is booted and running.  This allows rapid failover (seconds) in the event of "failure" (could be hardware or software).  The issue with a "cold-spare" is that it's harder to keep the machine up to date and ready to pick up where the old box left off.  More important, it's tricky to VALIDATE that the spare is capable of successfully recovering your production service. Hardware is more reliable than untested software systems.  TEST TEST TEST.  If you haven't tested your fail-over, it doesn't work.
+The simple automation of starting a new EBS instance is easy, bordering on trivial.  It's just a one-line bash script calling the EC2 command-line tools.  What's tricky is everything on top of that.  Such a solution pretty much implies a fully 100% automated deployment process.  And this is all specific to your application.  Can your app pull down all the data it needs to run (maybe it's stored in S3?).  Can you kill you instance today and boot a new instance with 0.000 manual setup/install steps?
+Or, you may be talking about a scenario I'll call "re-instancing an EBS volume":
+
+EC2 box dies (root volume is EBS)
+Force detach EBS volume
+Boot new EC2 instance with the EBS volume
+
+... That mostly works.  The gotchas:
+
+Doesn't protect against EBS failures, either total volume loss or an availability loss
+Recovery time is O(minutes) assuming everything works just right
+Your services need to be configured to restart automatically.  It does no good to bring the box back if Nginx isn't running.
+Your DNS routes or other services or whatever need to be ok with the IP-address changing.  This can be worked around with ElasticIP.
+How are your host SSH keys handled?  Same name, new host key can break SSH-based automation when it gets the strong-warning for host-key-changed.
+I don't have proof of this (other than seeing it happen once), but I believe that EC2/EBS _already_does_this_ automatically for boot-from-EBS instances
+
+Again, the hard part here is on your plate.  Can you stop your production service today and bring it up RELIABLY on a new instance?  If so, the EC2 part of the story is really really easy.
+
+You can use an autoscale group with a min/max/desired quantity of 1. Place the instance behind an ELB and have the autoscale group be triggered by the ELB healthy node count. This allows you to have built in monitoring by cloudwatch and the ELB health check. Anytime there is an issue the instance be replaced by the autoscale service. 

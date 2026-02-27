@@ -1,0 +1,36 @@
+Huge Transaction Log - Is This Normal?
+sql-server
+I have a 5GB database and a 20GB transaction log (SQL Server 2005). Not sure why it is so large or what happened to make it that large, it used to be around 1/2 the size of the DB. DB grows about 1GB/month. 
+Are there any guidelines to how how big your transaction log should be relative to your database file size? 
+EDIT: I'm not saying my transaction log is huge (I know some DBAs would laugh at my weenie-sized DB), just in relation to the DB file I think it is huge.
+
+
+If you have a lot of transactional behavior, it's not uncommon at all. However, you probably should investigate means of making it smaller. There are quite a few options for this, but without knowing your recovery model, I could never presume to make a recommendation. Start with this MSDN link, this knowledge base article, then move from there. Carefully. :)
+
+If you have code that does a lot of transactions (relative to the actual size of the database), it certainly bloat the log.
+If you don't have one now, I'd definitely recommend setting up a Database Maintenance Plan to do nightly backups (and perhaps more frequent transaction log backups).  Typically the backup process will take the log size back down to something reasonable after the backup is complete.
+As far as a general guideline, I try to keep it under 50% of the database size, although with the backup plan, I don't generally see our logs get even close to that.
+If you don't care about keeping the transaction records, this type of query will shrink it, but I'd read up on Shrinkfile first.
+Backup Log DatabaseName With Truncate_Only
+GO
+
+Declare @LogFileLogicalName sysname
+select @LogFileLogicalName=RTRIM(Name) from sysfiles where filename like '%.ldf%'
+--SELECT @LogFileLogicalName
+DBCC Shrinkfile(@LogFileLogicalName,2)
+
+
+Er... excuse the bleeding obvious, but do you have scheduled backups with "BACKUP LOG"
+If the recovery model is FULL then this needs to happen.
+There are other, rare options that I'll include (not exhaustive):
+
+Large table index rebuild/maintenance. However, backup log will clear this.
+An open transaction preventing backup log removing entries (hence it grows)
+A connection with SET IMPLICIT_TRANSACTIONS ON (see previous point)
+
+
+In terms of "is this normal", keep in mind that transactions accumulate in the log forever until you get the backups and checkpoints set up properly. For instance, if you don't get this going, every record in the database has at least one insert transaction.
+
+Besides the checking of what recovery model is used on the database, you can go even further regarding the "what happened to make it that large" - you can read it and see what type of transactions and how many of them are saved in the log. Furthermore, you can inspect when the transactions occurred and who executed them
+To do that, you can use either native SQL Server functions fn_dblog, DBCC PAGE or fn_dump_dblog or some 3rd party tool. However, the native functions are not documented and it's very hard to understand the results they provide. As for a 3rd party tool, you can check the Open LDF file and view LDF file content online article for more details and deeper analysis of what it takes to read the transaction log information
+Disclaimer: I work as a Product Support Engineer at ApexSQL

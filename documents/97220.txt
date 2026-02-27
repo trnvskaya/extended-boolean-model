@@ -1,0 +1,38 @@
+Any HTTP proxies with explicit, configurable support for request/response buffering and delayed connections?
+caching proxy mobile nginx squid
+When dealing with mobile clients it is very common to have multisecond delays during the transmission of HTTP requests. If you are serving pages or services out of a prefork Apache the child processes will be tied up for seconds serving a single mobile client, even if your app server logic is done in 5ms. I am looking for a HTTP server, balancer or proxy server that supports the following:
+
+A request arrives to the proxy. The proxy starts buffering in RAM or in disk the request, including headers and POST/PUT bodies. The proxy DOES NOT open a connection to the backend server. This is probably the most important part.
+The proxy server stops buffering the request when:
+
+A size limit has been reached (say, 4KB), or
+The request has been received completely, headers and body
+
+Only now, with (part of) the request in memory, a connection is opened to the backend and the request is relayed.
+The backend sends back the response. Again the proxy server starts buffering it immediately (up to a more generous size, say 64KB.) 
+Since the proxy has a big enough buffer the backend response is stored completely in the proxy server in a matter of miliseconds, and the backend process/thread is free to process more requests. The backend connection is immediately closed.
+The proxy sends back the response to the mobile client, as fast or as slow as it is capable of, without having a connection to the backend tying up resources.
+
+I am fairly sure you can do 4-6 with Squid, and nginx appears to support 1-3 (and looks like fairly unique in this respect). My question is: is there any proxy server that empathizes these buffering and not-opening-connections-until-ready capabilities? Maybe there is just a bit of Apache config-fu that makes this buffering behaviour trivial? Any of them that it is not a dinosaur like Squid and that supports a lean single-process, asynchronous, event-based execution model?
+(Siderant: I would be using nginx but it doesn't support chunked POST bodies, making it useless for serving stuff to mobile clients. Yes cheap 50$ handsets love chunked POSTs... sigh)
+
+
+Fiddler, a free tool from Telerik, does at least some of the things you're looking for.
+Specifically, go to Rules | Custom Rules... and you can add arbitrary Javascript code at all points during the connection.  You could simulate some of the things you need with sleep() calls.
+I'm not sure this method gives you the fine buffering control you want, however.  Still, something might be better than nothing?
+
+Unfortunately, I'm not aware of a ready-made solution for this. In the worst case scenario, consider developing it yourself, say, using Java NIO -- it shouldn't take more than a week.
+
+What about using both nginx and Squid (client â Squid â nginx â backend)? When returning data from a backend, Squid does convert it from C-T-E: chunked to a regular stream with Content-Length set, so maybe it can normalize POST also.
+
+Nginx can do everything you want. The configuration parameters you are looking for are
+http://wiki.codemongers.com/NginxHttpCoreModule#client_body_buffer_size
+and
+http://wiki.codemongers.com/NginxHttpProxyModule#proxy_buffer_size
+
+Squid 2.7 can support 1-3 with a patch:
+
+http://www.squid-cache.org/Versions/v2/HEAD/changesets/12402.patch
+
+I've tested this and found it to work well, with the proviso that it only buffers to memory, not disk (unless it swaps, of course, and you don't want this), so you need to run it on a box that's appropriately provisioned for your workload.
+Chunked POSTs are a problem for most servers and intermediaries. Are you sure you need support? Usually clients should retry the request when they get a 411.

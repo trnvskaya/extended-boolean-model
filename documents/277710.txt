@@ -1,0 +1,247 @@
+XPath vs DeSerialization: which one is better in performance for read operations
+c# wcf performance serialization xpath
+I'm passing small (2-10 KB)XML documents as input to a WCF service. now I've two option to read data values from incoming XML
+
+Deserialize to a strongly typed object and use object properties to access values
+use XPath to access values
+
+which approach is faster? some statistics to support your answer would be great.
+
+
+There's a third option of sticking with XML, but query with whatever XML API you're using - e.g. LINQ to XML makes queries relatively straightforward in code.
+Have you already parsed the text into an XML document?
+Are you convinced that this is actually a significant performance bottleneck in your code? (e.g. if you're then talking to a database, then don't worry about this to start with - just get it to work in the simplest way first)
+Are the queries always the same, or are they dynamic in some way?
+Do you have a test rig with realistic messages and queries? If not, you need one in order to evaluate any answers given here with your data. If you do, I would expect it to be reasonably easy to try it yourself :)
+
+I would deserialize it.
+If you use xpath, you will deserialize (or "load") it to XmlDocument or something anyway. So both solutions use time deserializing. After this is done, xpath will be slower because of the time spent parsing that string, resolving names, executing functions and so on. Also, if you go with xpath, you get no type safety. Your compiler can't check the xpath syntax for you.
+If you use XmlSerializer and classes, you get static typing. Really fast access to you data, and if you want to query them with xpath, there are still ways to do that.
+Also, I would like to say that your code would probably be easier to understand with classes.
+The only drawback is that the xml has to conform to the same schema all the time, but that might not be a real problem in your case.
+I hope that you forgive the absence of statistics, I think the arguments are strong enough without examples. If you want an ultimate answer, try both and keep a stopwatch ready.
+
+Here are 4 cases, all times in ticks and placing:
+
+XmlSerializer (Slowest 4th)
+Implementing IXmlSerializable (3rd)
+Hand Rolled (Custom) (1st)
+XElement (2nd)
+
+Sample object was read 1000 times.
+Should you care?  For majority of cases, use the default serializers that are built into .net.  There is no need to deviate and that will produce the minimal amount of code.  Those should be more than sufficient, offer type safety and free yourself to do more meaningful things with your time.  In some cases, XElement may be useful if you wish to cherry pick certain data elements off of a large XML structure, but even then one should put those elements into a strongly typed DTO.  But bear in mind, all methods are very fast.  I've personally serialized an extremely broad and deep object model (well over 400 clases) in just a few milliseconds.  For smaller and trivial objects, it will be sub ms response times.  XMLSerializer warm up is slower than the others, but one can mitigate with SGEN or doing some initialization on startup.
+Details and Code...
+Xml Serializer
+[Serializable]
+    public class FoobarXml
+    {
+        public string Name { get; set; }
+        public int Age { get; set; }
+        public bool IsContent { get; set; }
+
+        [XmlElement(DataType = "date")]
+        public DateTime BirthDay { get; set; }
+    }
+
+First Time: 2448965
+1000 Read Average: 245
+IXmlSerializable
+ public class FoobarIXml : IXmlSerializable
+    {
+        public string Name { get; set; }
+        public int Age { get; set; }
+        public bool IsContent { get; set; }
+        public DateTime BirthDay { get; set; }
+
+        public XmlSchema GetSchema()
+        {
+            return null;
+        }
+
+        public void ReadXml(XmlReader reader)
+        {
+            reader.MoveToContent();
+            var isEmptyElement = reader.IsEmptyElement;
+            reader.ReadStartElement();
+            if (!isEmptyElement)
+            {
+                Name = reader.ReadElementString("Name");
+
+                int intResult;
+                var success = int.TryParse(reader.ReadElementString("Age"), out intResult);
+                if (success)
+                {
+                    Age = intResult;
+                }
+
+                bool boolResult;
+                success = bool.TryParse(reader.ReadElementString("IsContent"), out boolResult);
+                if (success)
+                {
+                    IsContent = boolResult;
+                }
+                DateTime dateTimeResult;
+                success = DateTime.TryParseExact(reader.ReadElementString("BirthDay"), "yyyy-MM-dd", null,
+                    DateTimeStyles.None, out dateTimeResult);
+                if (success)
+                {
+                    BirthDay = dateTimeResult;
+                }
+                reader.ReadEndElement(); //Must Do
+            }
+        }
+
+        public void WriteXml(XmlWriter writer)
+        {
+            writer.WriteElementString("Name", Name);
+            writer.WriteElementString("Age", Age.ToString());
+            writer.WriteElementString("IsContent", IsContent.ToString());
+            writer.WriteElementString("BirthDay", BirthDay.ToString("yyyy-MM-dd"));
+        }
+    }
+}
+
+First Time: 2051813
+1000 Read Average: 208
+Hand Rolled
+ public class FoobarHandRolled
+    {
+        public FoobarHandRolled(string name, int age, bool isContent, DateTime birthDay)
+        {
+            Name = name;
+            Age = age;
+            IsContent = isContent;
+            BirthDay = birthDay;
+        }
+
+        public FoobarHandRolled(string xml)
+        {
+            if (string.IsNullOrWhiteSpace(xml))
+            {
+                return;
+            }
+
+            SetName(xml);
+            SetAge(xml);
+            SetIsContent(xml);
+            SetBirthday(xml);
+        }
+
+        public string Name { get; set; }
+        public int Age { get; set; }
+        public bool IsContent { get; set; }
+        public DateTime BirthDay { get; set; }
+
+        /// <summary>
+        ///     Takes this object and creates an XML representation.
+        /// </summary>
+        /// <returns>An XML string that represents this object.</returns>
+        public override string ToString()
+        {
+            var builder = new StringBuilder();
+            builder.Append("<FoobarHandRolled>");
+
+            if (!string.IsNullOrWhiteSpace(Name))
+            {
+                builder.Append("<Name>" + Name + "</Name>");
+            }
+
+            builder.Append("<Age>" + Age + "</Age>");
+            builder.Append("<IsContent>" + IsContent + "</IsContent>");
+            builder.Append("<BirthDay>" + BirthDay.ToString("yyyy-MM-dd") + "</BirthDay>");
+            builder.Append("</FoobarHandRolled>");
+
+            return builder.ToString();
+        }
+
+        private void SetName(string xml)
+        {
+            Name = GetSubString(xml, "<Name>", "</Name>");
+        }
+
+        private void SetAge(string xml)
+        {
+            var ageString = GetSubString(xml, "<Age>", "</Age>");
+            int result;
+            var success = int.TryParse(ageString, out result);
+            if (success)
+            {
+                Age = result;
+            }
+        }
+
+        private void SetIsContent(string xml)
+        {
+            var isContentString = GetSubString(xml, "<IsContent>", "</IsContent>");
+            bool result;
+            var success = bool.TryParse(isContentString, out result);
+            if (success)
+            {
+                IsContent = result;
+            }
+        }
+
+        private void SetBirthday(string xml)
+        {
+            var dateString = GetSubString(xml, "<BirthDay>", "</BirthDay>");
+            DateTime result;
+            var success = DateTime.TryParseExact(dateString, "yyyy-MM-dd", null, DateTimeStyles.None, out result);
+            if (success)
+            {
+                BirthDay = result;
+            }
+        }
+
+        private string GetSubString(string xml, string startTag, string endTag)
+        {
+            var startIndex = xml.IndexOf(startTag, StringComparison.Ordinal);
+            if (startIndex < 0)
+            {
+                return null;
+            }
+
+            startIndex = startIndex + startTag.Length;
+
+            var endIndex = xml.IndexOf(endTag, StringComparison.Ordinal);
+            if (endIndex < 0)
+            {
+                return null;
+            }
+
+            return xml.Substring(startIndex, endIndex - startIndex);
+        }
+    }
+
+First Time: 161105
+1000 Read Average: 29
+XElement
+        var xDoc = XElement.Parse(xml);
+
+        var nameElement = xDoc.Element("Name");
+        var ageElement = xDoc.Element("Age");
+        var isContentElement = xDoc.Element("IsContent");
+        var birthDayElement = xDoc.Element("BirthDay");
+
+        string name = null;
+        if (nameElement != null)
+        {
+            name = nameElement.Value;
+        }
+        var age = 0;
+        if (ageElement != null)
+        {
+            age = int.Parse(ageElement.Value);
+        }
+        var isContent = false;
+        if (isContentElement != null)
+        {
+            isContent = bool.Parse(isContentElement.Value);
+        }
+        var birthDay = new DateTime();
+        if (birthDayElement != null)
+        {
+            birthDay = DateTime.ParseExact(birthDayElement.Value, "yyyy-MM-dd", CultureInfo.InvariantCulture);
+        }
+
+First Time: 247024
+1000 Read Average: 113

@@ -1,0 +1,38 @@
+Get the NTLM credentials from the Response on an APSX page
+c# asp.net credentials
+I have an ASPX page (On server A) which is invoked using NTLM credentials.  Part of that page's job is to call an HTML page (On server B) and proxy it back to the client.  (The firewall allows access to A, but not to B.  The user would normally be allowed access to both servers.).  Server B is also not open to anonymous access, so I need to supply credentials to it.
+If I hardcode some credentials (as per the attached code), it works, but ideally I would echo the credentials that were received by the .aspx page.  Is there some way to get those NetworkCredentials so I can pass them on?
+protected void Page_Load(object sender, EventArgs e) { 
+    Response.Clear(); 
+    WebClient proxyFile = new WebClient(); 
+    CredentialCache cc = new CredentialCache(); 
+    cc.Add(new Uri("http://serverB/"), "NTLM", 
+        new NetworkCredential("userName", "password", "domain")); 
+    proxyFile.Credentials = cc; 
+
+    Stream proxyStream = proxyFile.OpenRead("http://serverB/Content/webPage.html"); 
+    int i; 
+    do { 
+        i = proxyStream.ReadByte(); 
+        if (i != -1) { 
+            Response.OutputStream.WriteByte((byte)i); 
+        } 
+    } while (i != -1); 
+    Response.End(); 
+} 
+
+
+
+Page.User will get you the Security Principal of the user the page is running under.  
+From there you should be able to figure it out.
+
+Can you in your scenario impersonate the callers identity? that way you wouldnt even need to pass along credentials, ex:
+<authentication mode="Windows" />
+<identity impersonate="true" />
+
+in web.config of server A. But this of course depends on your situation, as you may not want that for server A. But if you can this could solve your problem without custom code.
+Heres a link for setting up impersonation: http://msdn.microsoft.com/en-us/library/ms998351.aspx#paght000023_impersonatingorigcaller
+
+You can certainly obtain the login name of the caller, but not the password.  NTLM uses a challenge/response mechanism, so the password is never transmitted.  Your server must have access to a password-equivalent (a hash) in order to form the challenge and check the response, but even if you can get hold of it that password-equivalent will be no use to you in trying to form credentials that will be accepted by server B.
+If you can set up impersonation, as described in another answer, even that doesn't necessarily get you what you want.  By default, an impersonating server process is not allowed to transmit its identity to another server.  That second hop is known as delegation and needs to be configured explicitly on the servers involved (and/or in Active Directory).
+Apart from delegation I think your only option is to maintain a database of credentials that server A can access and present to server B.  Building that in a secure manner is a subtle and time-consuming process.  On the other hand, there is a reason why delegation is disabled by default.  When I log into a server, do I want it to be allowed to use my identity for accessing other servers?  Delegation is the simplest option for you, but you'll need to be sure that server A can't be compromised to do irresponsible things with your users' identities.

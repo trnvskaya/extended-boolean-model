@@ -1,0 +1,138 @@
+How to make sure an application keeps running on Linux
+linux
+I'm trying to ensure a script remains running on a development server. It collates stats and provides a web service so it's supposed to persist, yet a few times a day, it dies off for unknown reasons. When we notice we just launch it again, but it's a pain in the rear and some users don't have permission (or the knowhow) to launch it up.
+The programmer in me wants to spend a few hours getting to the bottom of the problem but the busy person in me thinks there must be an easy way to detect if an app is not running, and launch it again.
+I know I could cron-script ps through grep:
+ps -A | grep appname
+
+But again, that's another hour of my life wasted on doing something that must already exist... Is there not a pre-made app that I can pass an executable (optionally with arguments) and that will keep a process running indefinitely?
+In case it makes any difference, it's Ubuntu.
+
+
+Monit is perfect for this :)
+You can write simple config files which tell monit to watch e.g. a TCP port, a PID file etc
+monit will run a command you specify when the process it is monitoring is unavailable/using too much memory/is pegging the CPU for too long/etc. It will also pop out an email alert telling you what happened and whether it could do anything about it.
+We use it to keep a load of our websites running while giving us early warning when something's going wrong.
+-- Your faithful employee, Monit
+
+It's a job for a DMD (daemon monitoring daemon). there are a few around; but I usually just write a script that checks if the daemon is running, and run if not, and put it in cron to run every minute.
+
+first of all, how do you start this app? Does it fork itself to the background? Is it started with nohup .. & etc? If it's the latter, check why it died in nohup.out, if it's the first, build logging.
+As for your main question: you could cron it, or run another process on the background (not the best choice) and use pidof in a bashscript, easy enough:
+if [ `pidof -s app` -eq 0 ]; then
+    nohup app &
+fi
+
+
+Put your run in a loop- so when it exits, it runs again... while(true){ run my app.. }
+
+You could make it a service launched from inittab (although some Linuxes have moved on to something newer in /etc/event.d).  These built in systems make sure your service keeps running without writing your own scripts or installing something new.
+
+Check out 'nanny' referenced in Chapter 9 (p197 or thereabouts) of "Unix Hater's Handbook" (one of several sources for the book in PDF).
+
+Since you're using Ubuntu, you may be interested in Upstart, which has replaced the traditional sysV init. One key feature is that it can restart a service if it dies unexpectedly. Fedora has moved to upstart, and Debian is in experimental, so it may be worth looking into.
+This may be overkill for this situation though, as a cron script will take 2 minutes to implement.
+#!/bin/bash
+if [[ ! `pidof -s yourapp` ]]; then
+    invoke-rc.d yourapp start
+fi
+
+
+I have used from cron "killall -0 programname || /etc/init.d/programname start".  kill will error if the process doesn't exist.  If it does exist, it'll deliver a null signal to the process (which the kernel will ignore and not bother passing on.)
+This idiom is simple to remember (IMHO).  Generally I use this while I'm still trying to discover why the service itself is failing.  IMHO a program shouldn't just disappear unexpectedly :)
+
+I have used a simple script with cron to make sure that the program is running.  If it is not, then it will start it up.  This may not be the perfect solution you are looking for, but it is simple and works rather well.
+#!/bin/bash
+#make-run.sh
+#make sure a process is always running.
+
+export DISPLAY=:0 #needed if you are running a simple gui app.
+
+process=YourProcessName
+makerun="/usr/bin/program"
+
+if ps ax | grep -v grep | grep $process > /dev/null
+then
+    exit
+else
+    $makerun &
+fi
+
+exit
+
+Then add a cron job every minute, or every 5 minutes.
+
+A nice, simple way to do this is as follows:
+
+Write your server to die if it can't listen on the port it expects
+Set a cronjob to try to launch your server every minute
+
+If it isn't running it'll start, and if it is running it won't. In any case, your server will always be up.
+
+I think a better solution is if you test the function, too. For example, if you had to test an apache, it is not enough only to test, if "apache" processes on the systems exist.
+If you want to test if apache OK is, then try to download a simple web page, and test if your unique code is in the output.
+If not, kill the apache with -9 and then do a restart. And send a mail to the root (which is a forwarded mail address to the roots of the company/server/project).
+
+The supervise tool from daemontools would be my preference - but then everything Dan J Bernstein writes is my preference :)
+http://cr.yp.to/daemontools/supervise.html
+You have to create a particular directory structure for your application startup script, but it's very simple to use.
+
+It's even simplier:
+#!/bin/bash
+
+export DISPLAY=:0
+
+process=processname
+makerun="/usr/bin/processname"
+
+if ! pgrep $process > /dev/null
+then
+    $makerun &
+fi
+
+You have to remember though to make sure processname is unique.
+
+If you are using a systemd-based distro such as Fedora and recent Ubuntu releases, you can use systemd's "Restart" capability for services. It can be setup as a system service or as a user service if it needs to be managed by, and run as, a particular user, which is more likely the case in OP's particular situation.
+The Restart option takes one of no, on-success, on-failure, on-abnormal, on-watchdog, on-abort, or always.
+To run it as a user, simply place a file like the following into ~/.config/systemd/user/something.service:
+[Unit]
+Description=Something
+
+[Service]
+ExecStart=/path/to/something
+Restart=on-failure
+
+[Install]
+WantedBy=graphical.target
+
+then:
+systemctl --user daemon-reload
+systemctl --user [status|start|stop|restart] something
+
+No root privilege / modification of system files needed, no cron jobs needed, nothing to install, flexible as hell (see all the related service options in the documentation).
+See also https://wiki.archlinux.org/index.php/Systemd/User for more information about using the per-user systemd instance.
+
+I couldn't get Chris Wendt solution to work for some reason, and it was hard to debug. This one is pretty much the same but easier to debug, excludes bash from the pattern matching. To debug just run: bash ./root/makerun-mysql.sh. In the following example with mysql-server just replace the value of the variables for process and makerun for your process.
+
+Create a BASH-script like this (nano /root/makerun-mysql.sh):
+
+#!/bin/bash
+process="mysql"
+makerun="/etc/init.d/mysql restart"
+if ps ax | grep -v grep | grep -v bash | grep --quiet $process
+then
+    printf "Process '%s' is running.\n" "$process"
+    exit
+else
+    printf "Starting process '%s' with command '%s'.\n" "$process" "$makerun"
+    $makerun
+fi
+exit
+
+
+Make sure it's executable by adding proper file permissions (i.e. chmod 700 /root/makerun-mysql.sh)
+Then add this to your crontab (crontab -e):
+
+# Keep processes running every 5 minutes
+*/5 * * * * bash /root/makerun-mysql.sh
+

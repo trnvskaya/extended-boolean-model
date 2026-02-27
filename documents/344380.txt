@@ -1,0 +1,163 @@
+Why is January month 0 in Java Calendar?
+java calendar
+In java.util.Calendar, January is defined as month 0, not month 1. Is there any specific reason to that ?
+I have seen many people getting confused about that...
+
+
+I'd say laziness. Arrays start at 0 (everyone knows that); the months of the year are an array, which leads me to believe that some engineer at Sun just didn't bother to put this one little nicety into the Java code.
+
+Because programmers are obsessed with 0-based indexes. OK, it's a bit more complicated than that: it makes more sense when you're working with lower-level logic to use 0-based indexing. But by and large, I'll still stick with my first sentence.
+
+In addition to DannySmurf's answer of laziness, I'll add that it's to encourage you to use the constants, such as Calendar.JANUARY.
+
+It's just part of the horrendous mess which is the Java date/time API. Listing what's wrong with it would take a very long time (and I'm sure I don't know half of the problems). Admittedly working with dates and times is tricky, but aaargh anyway.
+Do yourself a favour and use Joda Time instead, or possibly JSR-310.
+EDIT: As for the reasons why - as noted in other answers, it could well be due to old C APIs, or just a general feeling of starting everything from 0... except that days start with 1, of course. I doubt whether anyone outside the original implementation team could really state reasons - but again, I'd urge readers not to worry so much about why bad decisions were taken, as to look at the whole gamut of nastiness in java.util.Calendar and find something better.
+One point which is in favour of using 0-based indexes is that it makes things like "arrays of names" easier:
+// I "know" there are 12 months
+String[] monthNames = new String[12]; // and populate...
+String name = monthNames[calendar.get(Calendar.MONTH)];
+
+Of course, this fails as soon as you get a calendar with 13 months... but at least the size specified is the number of months you expect.
+This isn't a good reason, but it's a reason...
+EDIT: As a comment sort of requests some ideas about what I think is wrong with Date/Calendar:
+
+Surprising bases (1900 as the year base in Date, admittedly for deprecated constructors; 0 as the month base in both)
+Mutability - using immutable types makes it much simpler to work with what are really effectively values
+An insufficient set of types: it's nice to have Date and Calendar as different things, 
+but the separation of "local" vs "zoned" values is missing, as is date/time vs date vs time
+An API which leads to ugly code with magic constants, instead of clearly named methods
+An API which is very hard to reason about - all the business about when things are recomputed etc
+The use of parameterless constructors to default to "now", which leads to hard-to-test code
+The Date.toString() implementation which always uses the system local time zone (that's confused many Stack Overflow users before now)
+
+
+C based languages copy C to some degree. The tm structure (defined in time.h) has an integer field tm_mon with the (commented) range of 0-11.
+C based languages start arrays at index 0. So this was convenient for outputting a string in an array of month names, with tm_mon as the index.
+
+Probably because C's "struct tm" does the same. 
+
+Personally, I took the strangeness of the Java calendar API as an indication that I needed to divorce myself from the Gregorian-centric mindset and try to program more agnostically in that respect.  Specifically, I learned once again to avoid hardcoded constants for things like months.
+Which of the following is more likely to be correct?
+if (date.getMonth() == 3) out.print("March");
+
+if (date.getMonth() == Calendar.MARCH) out.print("March");
+
+This illustrates one thing that irks me a little about Joda Time - it may encourage programmers to think in terms of hardcoded constants.  (Only a little, though.  It's not as if Joda is forcing programmers to program badly.)
+
+In Java 8, there is a new Date/Time API JSR 310 that is more sane. The spec lead is the same as the primary author of JodaTime and they share many similar concepts and patterns.
+
+It isn't exactly defined as zero per se, it's defined as Calendar.January. It is the problem of using ints as constants instead of enums. Calendar.January == 0.
+
+There has been alot of answers to this, but I will give my view on the subject anyway.
+The reason behind this odd behavior, as stated previously, comes from the POSIX C time.h where the months where stored in an int with the range 0-11.
+To explain why, look at it like this; years and days are considered numbers in spoken language, but months have their own names. So because January is the first month it will be stored as offset 0, the first array element. monthname[JANUARY] would be "January". The first month in the year is the first month array element.
+The day numbers on the other hand, since they do not have names, storing them in an int as 0-30 would be confusing, add a lot of day+1 instructions for outputting and, of course, be prone to alot of bugs.
+That being said, the inconsistency is confusing, especially in javascript (which also has inherited this "feature"), a scripting language where this should be abstracted far away from the langague.
+TL;DR: Because months have names and days of the month do not.
+
+For me, nobody explains it better than mindpro.com: 
+
+Gotchas
+java.util.GregorianCalendar has far fewer bugs and gotchas than the
+  old java.util.Date class but it is still no picnic.
+Had there been programmers when Daylight Saving Time was first
+  proposed, they would have vetoed it as insane and intractable. With
+  daylight saving, there is a fundamental ambiguity. In the fall when
+  you set your clocks back one hour at 2 AM there are two different
+  instants in time both called 1:30 AM local time. You can tell them
+  apart only if you record whether you intended daylight saving or
+  standard time with the reading. 
+Unfortunately, there is no way to tell GregorianCalendar which you
+  intended. You must resort to telling it the local time with the dummy
+  UTC TimeZone to avoid the ambiguity. Programmers usually close their
+  eyes to this problem and just hope nobody does anything during this
+  hour.
+Millennium bug. The bugs are still not out of the Calendar classes.
+  Even in JDK (Java Development Kit) 1.3 there is a 2001 bug. Consider
+  the following code:
+GregorianCalendar gc = new GregorianCalendar();
+gc.setLenient( false );
+/* Bug only manifests if lenient set false */
+gc.set( 2001, 1, 1, 1, 0, 0 );
+int year = gc.get ( Calendar.YEAR );
+/* throws exception */
+
+The bug disappears at 7AM on 2001/01/01 for MST.
+GregorianCalendar is controlled by a giant of pile of untyped int
+  magic constants. This technique totally destroys any hope of
+  compile-time error checking. For example to get the month you use
+  GregorianCalendar. get(Calendar.MONTH));
+GregorianCalendar has the raw
+  GregorianCalendar.get(Calendar.ZONE_OFFSET) and the daylight savings
+  GregorianCalendar. get( Calendar. DST_OFFSET), but no way to get the
+  actual time zone offset being used. You must get these two separately
+  and add them together.
+GregorianCalendar.set( year, month, day, hour, minute) does not set
+  the seconds to 0.
+DateFormat and GregorianCalendar do not mesh properly. You must
+  specify the Calendar twice, once indirectly as a Date.
+If the user has not configured his time zone correctly it will default
+  quietly to either PST or GMT.
+In GregorianCalendar, Months are numbered starting at January=0,
+  rather than 1 as everyone else on the planet does. Yet days start at 1
+  as do days of the week with Sunday=1, Monday=2,â¦ Saturday=7. Yet
+  DateFormat. parse behaves in the traditional way with January=1.
+
+
+Because doing math with months is much easier.
+1 month after December is January, but to figure this out normally you would have to take the month number and do math
+12 + 1 = 13 // What month is 13?
+
+I know! I can fix this quickly by using a modulus of 12.
+(12 + 1) % 12 = 1
+
+This works just fine for 11 months until November...
+(11 + 1) % 12 = 0 // What month is 0?
+
+You can make all of this work again by subtracting 1 before you add the month, then do your modulus and finally add 1 back again... aka work around an underlying problem.
+((11 - 1 + 1) % 12) + 1 = 12 // Lots of magical numbers!
+
+Now let's think about the problem with months 0 - 11.
+(0 + 1) % 12 = 1 // February
+(1 + 1) % 12 = 2 // March
+(2 + 1) % 12 = 3 // April
+(3 + 1) % 12 = 4 // May
+(4 + 1) % 12 = 5 // June
+(5 + 1) % 12 = 6 // July
+(6 + 1) % 12 = 7 // August
+(7 + 1) % 12 = 8 // September
+(8 + 1) % 12 = 9 // October
+(9 + 1) % 12 = 10 // November
+(10 + 1) % 12 = 11 // December
+(11 + 1) % 12 = 0 // January
+
+All of the months work the same and a work around isn't necessary.
+
+Because everything starts with 0. This is a basic fact of programming in Java. If one thing were to deviate from that, then that would lead to a whole slue of confusion. Let's not argue the formation of them and code with them.
+
+Java provides you another way to use 1 based indexes for months 
+Make use of Month.JULY (Gives you 7) 
+instead of Calendar.JULY (Gives you 6).
+(import java.time.*;)
+
+
+The Answer by Jon Skeet is correct.
+Now we have a modern replacement for those troublesome old legacy date-time classes: the java.time classes.
+java.time.Month
+Among those classes is the Month enum, defining a dozen objects, one for each month in the year, January-December. Fortunately, they have sane numbering, 1-12 where 1 is January and 12 is December.
+Get a Month object for a particular month number (1-12).
+Month month = Month.of( 2 );  // 2 â February.
+
+Going the other direction, ask a Month object for its month number.
+int monthNumber = Month.FEBRUARY.getValue();  // February â 2.
+
+Many other handy methods on this class, such as knowing the number of days in each month. The class can even generate a localized name of the month.
+Also, you should pass objects of this enum around your code base rather than mere integer numbers. Doing so provides type-safety, ensures a valid range of values, and makes your code more self-documenting. See Oracle Tutorial if unfamiliar with the surprisingly powerful enum facility in Java.
+You also may find useful the Year and YearMonth classes.
+About java.time
+The java.time framework is built into Java 8 and later. These classes supplant the troublesome old date-time classes such as java.util.Date, .Calendar, & java.text.SimpleDateFormat. 
+The Joda-Time project, now in maintenance mode, advises migration to java.time.
+To learn more, see the Oracle Tutorial. And search Stack Overflow for many examples and explanations.
+Much of the java.time functionality is back-ported to Java 6 & 7 in ThreeTen-Backport and further adapted to Android in ThreeTenABP (see How to useâ¦).
+The ThreeTen-Extra project extends java.time with additional classes. This project is a proving ground for possible future additions to java.time. You may find some useful classes here such as Interval, YearWeek, YearQuarter, and more.

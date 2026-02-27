@@ -1,0 +1,106 @@
+MovieClip isn't removed from Dictionary
+flash actionscript-3 garbage-collection weak-references
+I have a Dictionary where I hold data for movieclips, and I want the data to be garbage collected if I stop using the movieclips. I'm using the weak keys parameters, and it works perfectly with other data, however I've run into a problem. 
+This code works great:
+var mc = new MovieClip();
+var dic = new Dictionary(true);
+dic[mc] = 12;
+mc = null;
+System.gc();
+System.gc();
+for (var obj in dic)
+   trace(obj);    //this doesn't execute
+
+But when I actually use the movieclip, it stops working:
+var mc = new MovieClip();
+var dic = new Dictionary(true);
+dic[mc] = 12;
+addChild(mc);
+removeChild(mc);
+mc = null;
+System.gc();
+System.gc();
+for (var obj in dic)
+   trace(obj);    //this prints [object Movieclip]
+
+Why does this happen? Is it something I'm doing wrong? Is there a workaround?
+Edit: I know that for this specific example I can use delete dic[mc], but of course this is a simplified case. In general, I don't want to manually have to remove the movieclip from the dictionary, but it should be automatic when I don't reference it anymore in the rest of the application.
+Edit2: I tried testing what Aaron said, and came up with just weird stuff... just iterating the dictionary (without doing anything) changes the behaviour:
+var mc = new MovieClip();
+var dic = new Dictionary(true);
+dic[mc] = 12;
+addChild(mc);
+removeChild(mc);
+mc = null;
+
+for (var objeto in dic) {}    // <-- try commenting out this line
+
+addEventListener('enterFrame', f);  // I print the contents every frame, to see if
+                                    // it gets removed after awhile
+
+function f(evento)
+{
+    System.gc();
+    System.gc();
+
+    for (var objeto in dic)
+        trace(objeto);
+}
+
+This keeps printing [object Movieclip] every frame, unless I comment out the indicated line, where it doesn't print anything.
+
+
+I believe that the problem is one of timing. I think that when you call remove child, the reference count isn't getting updated until later in the "frame". (I think this is what is happening anyway.)
+The code below demonstrates why I think this is true. (I'm using flex, but it appears to reproduce your issue.)
+The code below outputs: 
+[object MovieClip]
+here
+
+If you call otherfoo directly at the end of somefoo(), you get:
+[object MovieClip]
+here
+[object MovieClip]
+
+
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Application xmlns:mx="http://www.adobe.com/2006/mxml" layout="absolute" mouseDown="somefoo()">
+<mx:Script>
+	<![CDATA[
+		import mx.core.UIComponent;
+		private var dic:Dictionary = new Dictionary(true);
+		private var ui:UIComponent = new UIComponent();
+		private var mc:MovieClip = new MovieClip();
+
+		private function somefoo():void {
+			this.addChild(ui);
+
+			dic[mc] = 12;
+			ui.addChild(mc);
+			ui.removeChild(mc);
+			for (var obj:Object in dic)
+			   trace(obj);    //this prints [MovieClip]
+
+			this.removeChild(ui);
+
+                            // callLater causes the function to be called in the _next_ frame.
+			callLater(otherfoo);
+		}
+
+		private function otherfoo():void
+		{
+			trace("here");
+			mc = null;
+			System.gc();
+			System.gc();
+
+			for (var obj:Object in dic)
+			   trace(obj);    //this prints [MovieClip]
+
+		}
+	]]>
+</mx:Script>
+</mx:Application>
+
+
+In you're example code here you're never adding the movieclip to the dictionary, but the int 12 instead? Probably a typo.
+If you want the dictionary to have a list of what's currently on the stage, why not have i as a util class instead that listens to Event.ADDED_TO_STAGE and Event.REMOVED_FROM_STAGE and modify the dictionary accordingly? A dictionary doesn't automatically delete references if they get removed from the stage. Also gc in this case has nothing to do with this.

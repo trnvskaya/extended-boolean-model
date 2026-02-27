@@ -1,0 +1,169 @@
+C++ inheritance and member function pointers
+c++ inheritance oop member-function-pointers
+In C++, can member function pointers be used to point to derived (or even base) class members? 
+EDIT: 
+Perhaps an example will help. Suppose we have a hierarchy of three classes X, Y, Z in order of inheritance. 
+Y therefore has a base class X and a derived class Z.
+Now we can define a member function pointer p for class Y. This is written as:
+void (Y::*p)();
+
+(For simplicity, I'll assume we're only interested in functions with the signature void f() )  
+This pointer p can now be used to point to member functions of class Y.
+This question (two questions, really) is then:
+
+Can p be used to point to a function in the derived class Z?
+Can p be used to point to a function in the base class X?
+
+
+
+I believe so.  Since the function pointer uses the signature to identify itself, the base/derived behavior would rely on whatever object you called it on.
+
+You might want to check out this article Member Function Pointers and the Fastest Possible C++ Delegates  The short answer seems to be yes, in some cases.
+
+I'm not 100% sure what you are asking, but here is an example that works with virtual functions:
+#include <iostream>
+using namespace std;
+
+class A { 
+public:
+    virtual void foo() { cout << "A::foo\n"; }
+};
+class B : public A {
+public:
+    virtual void foo() { cout << "B::foo\n"; }
+};
+
+int main()
+{
+    void (A::*bar)() = &A::foo;
+    (A().*bar)();
+    (B().*bar)();
+    return 0;
+}
+
+
+My experimentation revealed the following: Warning - this might be undefined behaviour. It would be helpful if someone could provide a definitive reference.
+
+This worked, but required a cast when assigning the derived member function to p.
+This also worked, but required extra casts when dereferencing p.
+
+If we're feeling really ambitious we could ask if p can be used to point to member functions of unrelated classes. I didn't try it, but the FastDelegate page linked in dagorym's answer suggests it's possible.
+In conclusion, I'll try to avoid using member function pointers in this way. Passages like the following don't inspire confidence:
+
+Casting between member function
+  pointers is an extremely murky area.
+  During the standardization of C++,
+  there was a lot of discussion about
+  whether you should be able to cast a
+  member function pointer from one class
+  to a member function pointer of a base
+  or derived class, and whether you
+  could cast between unrelated classes.
+  By the time the standards committee
+  made up their mind, different compiler
+  vendors had already made
+  implementation decisions which had
+  locked them into different answers to
+  these questions. [FastDelegate article]
+
+
+Assume that we have class X, class Y : public X, and class Z : public Y
+You should be able to assign methods for both X, Y to pointers of type void (Y::*p)() but not methods for Z. To see why consider the following:
+void (Y::*p)() = &Z::func; // we pretend this is legal
+Y * y = new Y; // clearly legal
+(y->*p)(); // okay, follows the rules, but what would this mean?
+
+By allowing that assignment we permit the invocation of a method for Z on a Y object which could lead to who knows what. You can make it all work by casting the pointers but that is not safe or guaranteed to work.
+
+C++03 std, Â§4.11 2 Pointer to member conversions:
+
+An rvalue of type âpointer to member of B of type cv T,â where B is a class type, can be converted to an rvalue of type âpointer to member of D of type cv T,â where D is a derived class (clause 10) of B. If B is an inaccessible (clause 11), ambiguous (10.2) or virtual (10.1) base class of D, a program that necessitates this conversion is ill-formed. The result of the conversion refers to the same member as the pointer to member before the conversion took place, but it refers to the base class member as if it were a member of the derived class. The result refers to the member in Dâs instance of B. Since the result has type âpointer to member of D of type cv T,â it can be dereferenced with a D object. The result is the same as if the pointer to member of B were dereferenced with the B sub-object of D.   The null member pointer value is converted to the null member pointer value of the destination type. 52)
+52)The rule for conversion of pointers to members (from pointer to member of base to pointer to member of derived) appears inverted compared to the rule for pointers to objects (from pointer to derived to pointer to base) (4.10, clause 10). This inversion is necessary to ensure type safety. Note that a pointer to member is not a pointer to object or a pointer to function and the rules for conversions of such pointers do not apply to pointers to members. In particular, a pointer to member cannot be converted to a void*.
+
+In short, you can convert a pointer to a member of an accessible, non-virtual base class to a pointer to a member of a derived class as long as the member isn't ambiguous. 
+class A {
+public: 
+    void foo();
+};
+class B : public A {};
+class C {
+public:
+    void bar();
+};
+class D {
+public:
+    void baz();
+};
+class E : public A, public B, private C, public virtual D {
+public: 
+    typedef void (E::*member)();
+};
+class F:public E {
+public:
+    void bam();
+};
+...
+int main() {
+   E::member mbr;
+   mbr = &A::foo; // invalid: ambiguous; E's A or B's A?
+   mbr = &C::bar; // invalid: C is private 
+   mbr = &D::baz; // invalid: D is virtual
+   mbr = &F::bam; // invalid: conversion isn't defined by the standard
+   ...
+
+Conversion in the other direction (via static_cast) is governed by Â§ 5.2.9 9:
+
+An rvalue of type "pointer to member of D of type cv1 T" can be converted to an rvalue of type "pointer to member of B of type cv2 T", where B is a base class (clause 10 class.derived) of D, if a valid standard conversion from "pointer to member of B of type T" to "pointer to member of D of type T" exists (4.11 conv.mem), and cv2 is the same cv-qualification as, or greater cv-qualification than, cv1.11) The null member pointer value (4.11 conv.mem) is converted to the null member pointer value of the destination type. If class B contains the original member, or is a base or derived class of the class containing the original member, the resulting pointer to member points to the original member.  Otherwise, the result of the cast is undefined. [Note: although class B need not contain the original member, the dynamic type of the object on which the pointer to member is dereferenced must contain the original member; see 5.5 expr.mptr.oper.]
+11) Function types (including those used in pointer to member function
+    types) are never cv-qualified; see 8.3.5 dcl.fct.
+
+In short, you can convert from a derived D::* to a base B::* if you can convert from a B::* to a D::*, though you can only use the B::* on objects that are of type D or are descended from D.
+
+The critical issue with pointers to members is that they can be applied to any reference or pointer to a class of the correct type. This means that because Z is derived from Y a pointer (or reference) of type pointer (or reference) to Y may actually point (or refer) to the base class sub-object of Z or any other class derived from Y.
+void (Y::*p)() = &Z::z_fn; // illegal
+
+This means that anything assigned to a pointer to member of Y must actually work with any Y. If it was allowed to point to a member of Z (that wasn't a member of Y) then it would be possible to call a member function of Z on some thing that wasn't actually a Z.
+On the other hand, any pointer to member of Y also points the member of Z (inheritance means that Z has all the attributes and methods of its base) is it is legal to convert a pointer to member of Y to a pointer to member of Z. This is inherently safe.
+void (Y::*p)() = &Y::y_fn;
+void (Z::*q)() = p; // legal and safe
+
+
+Here is an example of what works.
+You can override a method in derived class, and another method of base class that uses pointer to this overridden method indeed calls the derived class's method.
+#include <iostream>
+#include <string>
+
+using namespace std;
+
+class A {
+public:
+    virtual void traverse(string arg) {
+        find(&A::visit, arg);
+    }
+
+protected:
+    virtual void find(void (A::*method)(string arg),  string arg) {
+        (this->*method)(arg);
+    }
+
+    virtual void visit(string arg) {
+        cout << "A::visit, arg:" << arg << endl;
+    }
+};
+
+class B : public A {
+protected:
+    virtual void visit(string arg) {
+        cout << "B::visit, arg:" << arg << endl;
+    }
+};
+
+int main()
+{
+    A a;
+    B b;
+    a.traverse("one");
+    b.traverse("two");
+    return 0;
+}
+

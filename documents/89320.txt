@@ -1,0 +1,42 @@
+Two Phase Commit/Shared Transaction
+oracle
+The scenario is this
+We have two applications A and B, both which are running in separate database (Oracle 9i ) transactions
+Application A - inserts some data into the database, then calls Application B
+Application B - inserts some data into the database, related (via foreign keys) to A's data. Returns an "ID" to Application A
+Application A - uses ID to insert further data, including the ID from B
+Now, because these are separate transactions, but both rely on data from each others transactions, we need to commit between the calls to each application. This of course makes it very difficult to rollback if anything goes wrong. 
+How would you approach this problem, with minimal refactoring of the code. Surely this kind of this is a common problem in the SOA world?
+------ Update --------
+I have not been able to find anything in Oracle 9i, however Oracle 11g provides DBMS_XA, which does exactly what I was after.
+
+
+You have three options:
+
+Redesign the application so that you don't have two different processes (both with database connections) writing to the database and roll it into a single app.
+Create application C that handles all the database transactions for A and B.
+Roll your own two phase commit. Application C acts as the coordinator. C signals A and B to ask if they're ready to commit. A and B do their processing, and respond to C with either a "ready" or a "fail" reply (note that there should be a timeout on C to avoid an infinite wait if one process hangs or dies). If both reply ready then C tells them to commit. Otherwise it sends a rollback signal.
+
+Note that you may run into issues with option 3 if app A is relying on foreign keys from app B (which you didn't state, so this may not be an issue). Oracle's read consistency would probably prevent this from being allowed, since app A's transaction will begin before app B. Just a warning.
+
+You could probably insert the data from Application A into a 'temporary' area so that Application B can do the inserts of both A and B without changing much in either appplications.  It's not particularly elegant but it might do the trick.
+In another scenario you could add a 'confirmation' flag field to your data which is updated after the entire process has run successfully.  It if fails at one point, it might be easier to track down the records you need to rollback (in effect, delete).
+
+App_A =={0}=>               database # App_A stores information for App_B
+App_A ------> App_B                  # App_A starts App_B
+              App_B <={0}== database # App_B retrieves the information
+              App_B =={1}=> database # App_B stores more informaion
+App_A <={2}== App_B                  # App_B returns 'ID' to App_A
+App_A ={2,3}>               database # App_A stores 'ID' and additional data
+
+Is it just me or does it seem like Application B is essentially just a subroutine of A. I mean Application B doesn't do anything until A asks it, and Application A doesn't do anything until B returns an ID. Which means it makes little sense to have them in different applications, or even separate threads.
+
+I like both solutions presented, so I avoided posting this for a while. But you could also make an update to the main table, having saved the state of the affected rows in some cache before hand. 
+This could be combined with the two-tier (The traffic cop system Zathrus proposed)--because it really wouldn't be needed for neonski's solution of using a "sketchpad" table or tables. The drawback of this is that you would have to have your procs/logic consult the main table from the workarea or the workarea from the main table--or perhaps store your flag in the main table and set it back when you commit the data to the main table. 
+A lady on our team is designing something like that for our realtime system, using permanent work tables.
+
+A few suggestions:
+
+Use Compensating transactions. Basically, you make it possible to undo the transaction you did earlier. The hard part is figuring out which transactions to rollback.
+Commit the data of applications A and B to the database using a flag indicating that it is only temporary. Then, after everything checks out fine, modify the flag to indicate that the data is final. During the night, run a batch job to flush out data that has not been finalized.
+

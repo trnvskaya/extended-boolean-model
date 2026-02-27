@@ -1,0 +1,53 @@
+Why do I get "java.net.BindException: Only one usage of each socket address" if netstat says something else?
+java sockets jetty
+
+I start up my application which uses a Jetty server, using port 9000.
+I then shut down my application with Ctrl-C
+I check with "netstat -a" and see that the port 9000 is no longer being used.
+I restart my application and get:
+
+
+[ERROR,9/19 15:31:08] java.net.BindException: Only one usage of each socket address (protocol/network address/port) is normally permitted
+[TRACE,9/19 15:31:08] java.net.BindException: Only one usage of each socket address (protocol/network address/port) is normally permitted
+[TRACE,9/19 15:31:08]        at java.net.PlainSocketImpl.convertSocketExceptionToIOException(PlainSocketImpl.java:75)
+
+[TRACE,9/19 15:31:08]        at sun.nio.ch.Net.bind(Net.java:101)
+[TRACE,9/19 15:31:08]        at sun.nio.ch.ServerSocketChannelImpl.bind(ServerSocketChannelImpl.java:126)
+[TRACE,9/19 15:31:08]        at sun.nio.ch.ServerSocketAdaptor.bind(ServerSocketAdaptor.java:77)
+[TRACE,9/19 15:31:08]        at org.mortbay.jetty.nio.BlockingChannelConnector.open(BlockingChannelConnector.java:73)
+
+[TRACE,9/19 15:31:08]        at org.mortbay.jetty.AbstractConnector.doStart(AbstractConnector.java:285)
+[TRACE,9/19 15:31:08]        at org.mortbay.component.AbstractLifeCycle.start(AbstractLifeCycle.java:40)
+[TRACE,9/19 15:31:08]        at org.mortbay.jetty.Server.doStart(Server.java:233)
+[TRACE,9/19 15:31:08]        at org.mortbay.component.AbstractLifeCycle.start(AbstractLifeCycle.java:40)
+[TRACE,9/19 15:31:08]        at ...
+
+
+Is this a Java bug? Can I avoid it somehow before starting the Jetty server?
+Edit #1 Here is our code for creating our BlockingChannelConnector, note the "setReuseAddress(true)":
+
+    connector.setReuseAddress( true );
+    connector.setPort( port );
+    connector.setStatsOn( true );
+    connector.setMaxIdleTime( 30000 );
+    connector.setLowResourceMaxIdleTime( 30000 );
+    connector.setAcceptQueueSize( maxRequests );
+    connector.setName( "Blocking-IO Connector, bound to host " + connector.getHost() );
+
+
+Could it have something to do with the idle time?
+Edit #2 Next piece of the puzzle that may or may not help: when running the application in Debug Mode (Eclipse) the server starts up without a problem!!! But the problem described above occurs reproducibly when running the application in Run Mode or as a built jar file. Whiskey Tango Foxtrot?
+Edit #3 (4 days later) - still have the issue. Any thoughts?
+
+
+You might want call setReuseAddress(true) before calling bind() on your socket object. This is caused by a TCP connection persisting even after the socket is closed.
+
+I'm not sure about Jetty, but I have noticed that sometimes Tomcat will not shut down cleanly on some of our Linux servers.  In cases like that, Tomcat will restart but not be able to use the port in question because the previous instance is still bound to it.  In such cases, we have to find the rogue process and explicitly kill -9 it before we restart Tomcat.  I'm not sure if this is a java bug or specific to Tomcat or the JVM we're using.
+
+During your first invocation of your program, did it accept at least one incoming connection? If so then what you are most likely seeing is the socket linger in effect. 
+For the best explanation dig up a copy of TCP/IP Illustrated by Stevens 
+
+But, as I understand it, because the application did not properly close the connection (that is BOTH client and server sent their FIN/ACK sequences) the socket you were listening on cannot be reused until the connection is considered dead, the so called 2MSL timeout. The value of 1 MSL can vary by operating system, but its usually a least a minute, and usually more like 5. 
+The best advice I have heard to avoid this condition (apart from always closing all sockets properly on exit) is to set the SO_LINGER tcp option to 0 on your server socket during the listen() phase. As freespace pointed out, in java this is the setReuseAddress(true) method.
+
+I must say I also thought that it's the usual issue solved by setReuseAddress(true). However, the error message in that case is usually something along the lines that the JVM can't bind to the port. I've never seen the posted error message before. Googling for it seems to suggest that another process is listening on one or more (but not all) network interfaces, and you request your process to bind to all interfaces, whereas it can bind to some (those that the other process isn't listening to) but not all of them. Just guessing here though...

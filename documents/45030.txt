@@ -1,0 +1,405 @@
+How to parse a string into a nullable int
+c# .net string .net-3.5 nullable
+I'm wanting to parse a string into a nullable int in C#.  ie. I want to get back either the int value of the string or null if it can't be parsed.
+I was kind of hoping that this would work
+int? val = stringVal as int?;
+
+But that won't work, so the way I'm doing it now is I've written this extension method
+public static int? ParseNullableInt(this string value)
+{
+	if (value == null || value.Trim() == string.Empty)
+	{
+		return null;
+	}
+	else
+	{
+		try
+		{
+			return int.Parse(value);
+		}
+		catch
+		{
+			return null;
+		}
+	}
+}
+
+Is there a better way of doing this?
+EDIT:  Thanks for the TryParse suggestions, I did know about that, but it worked out about the same.  I'm more interested in knowing if there is a built-in framework method that will parse directly into a nullable int?
+
+
+int.TryParse is probably a tad easier:
+public static int? ToNullableInt(this string s)
+{
+    int i;
+    if (int.TryParse(s, out i)) return i;
+    return null;
+}
+
+Edit @Glenn int.TryParse is "built into the framework". It and int.Parse are the way to parse strings to ints.
+
+Try this:
+public static int? ParseNullableInt(this string value)
+{
+    int intValue;
+    if (int.TryParse(value, out intValue))
+        return intValue;
+    return null;
+}
+
+
+You can do this in one line, using the conditional operator and the fact that you can cast null to a nullable type (two lines, if you don't have a pre-existing int you can reuse for the output of TryParse):
+int tempVal;
+int? val = Int32.TryParse(stringVal, out tempVal) ? tempVal : (int?)null;
+
+
+You should never use an exception if you don't have to - the overhead is horrible.
+The variations on TryParse solve the problem - if you want to get creative (to make your code look more elegant) you could probably do something with an extension method in 3.5 but the code would be more or less the same.
+
+Sorry, couldn't resist - had this problem and Google brought me here, but I ended up with this (after all, an if and 2 returns is soo long-winded!):
+int? ParseNInt (string val)
+{
+	int i;
+	return int.TryParse (val, out i) ? (int?) i : null;
+}
+
+On a more serious note, try not to mix int, which is a C# keyword, with Int32, which is a .NET Framework BCL type - although it works, it just makes code look messy.
+
+
+I'm more interested in knowing if there is a built-in framework method that will parse directly into a nullable int?
+
+There isn't.
+
+Using delegates, the following code is able to provide reusability if you find yourself needing the nullable parsing for more than one structure type. I've shown both the .Parse() and .TryParse() versions here.
+This is an example usage:
+NullableParser.TryParseInt(ViewState["Id"] as string);
+
+And here is the code that gets you there...
+public class NullableParser
+  {
+    public delegate T ParseDelegate<T>(string input) where T : struct;
+    public delegate bool TryParseDelegate<T>(string input, out T outtie) where T : struct;
+    private static T? Parse<T>(string input, ParseDelegate<T> DelegateTheParse) where T : struct
+    {
+      if (string.IsNullOrEmpty(input)) return null;
+      return DelegateTheParse(input);
+    }
+    private static T? TryParse<T>(string input, TryParseDelegate<T> DelegateTheTryParse) where T : struct
+    {
+      T x;
+      if (DelegateTheTryParse(input, out x)) return x;
+      return null;
+    }
+    public static int? ParseInt(string input)
+    {
+      return Parse<int>(input, new ParseDelegate<int>(int.Parse));
+    }
+    public static int? TryParseInt(string input)
+    {
+      return TryParse<int>(input, new TryParseDelegate<int>(int.TryParse));
+    }
+    public static bool? TryParseBool(string input)
+    {
+      return TryParse<bool>(input, new TryParseDelegate<bool>(bool.TryParse));
+    }
+    public static DateTime? TryParseDateTime(string input)
+    {
+      return TryParse<DateTime>(input, new TryParseDelegate<DateTime>(DateTime.TryParse));
+    }
+  }
+
+
+I found and adapted some code for a Generic NullableParser class.  The full code is on my blog Nullable TryParse
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Globalization;
+namespace SomeNamespace
+{
+    /// <summary>
+    /// A parser for nullable types. Will return null when parsing fails.
+    /// </summary>
+    /// <typeparam name="T"></typeparam>
+    ///
+    public static class NullableParser<T> where T : struct
+    {
+        public delegate bool TryParseDelegate(string s, out T result);
+        /// <summary>
+        /// A generic Nullable Parser. Supports parsing of all types that implements the tryParse method;
+        /// </summary>
+        /// <param name="text">Text to be parsed</param>
+        /// <param name="result">Value is true for parse succeeded</param>
+        /// <returns>bool</returns>
+        public static bool TryParse(string s, out Nullable<T> result)
+        {
+            bool success = false;
+            try
+            {
+                if (string.IsNullOrEmpty(s))
+                {
+                    result = null;
+                    success = true;
+                }
+                else
+                {
+                    IConvertible convertableString = s as IConvertible;
+                    if (convertableString != null)
+                    {
+                        result = new Nullable<T>((T)convertableString.ToType(typeof(T),
+                            CultureInfo.CurrentCulture));
+                        success = true;
+                    }
+                    else
+                    {
+                        success = false;
+                        result = null;
+                    }
+                }
+            }
+            catch
+            {
+                success = false;
+                result = null;
+            }
+            return success;
+        }
+    }
+}
+
+
+I realise this is an old topic, but can't you simply:
+(Nullable<int>)int.Parse(stringVal);
+
+?
+
+The following should work for any struct type. It is based off code by Matt Manela from MSDN forums. As Murph points out the exception handling could be expensive compared to using the Types dedicated TryParse method.
+        public static bool TryParseStruct<T>(this string value, out Nullable<T> result)
+            where T: struct 
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                result = new Nullable<T>();
+
+                return true;
+            }
+
+            result = default(T);
+            try
+            {
+                IConvertible convertibleString = (IConvertible)value;
+                result = new Nullable<T>((T)convertibleString.ToType(typeof(T), System.Globalization.CultureInfo.CurrentCulture));
+            }
+            catch(InvalidCastException)
+            {
+                return false;
+            }
+            catch (FormatException)
+            {
+                return false;
+            }
+
+           return true;
+        }
+
+These were the basic test cases I used.
+        string parseOne = "1";
+        int? resultOne;
+        bool successOne = parseOne.TryParseStruct<int>(out resultOne);
+        Assert.IsTrue(successOne);
+        Assert.AreEqual(1, resultOne);
+
+        string parseEmpty = string.Empty;
+        int? resultEmpty;
+        bool successEmpty = parseEmpty.TryParseStruct<int>(out resultEmpty);
+        Assert.IsTrue(successEmpty);
+        Assert.IsFalse(resultEmpty.HasValue);
+
+        string parseNull = null;
+        int? resultNull;
+        bool successNull = parseNull.TryParseStruct<int>(out resultNull);
+        Assert.IsTrue(successNull);
+        Assert.IsFalse(resultNull.HasValue);
+
+        string parseInvalid = "FooBar";
+        int? resultInvalid;
+        bool successInvalid = parseInvalid.TryParseStruct<int>(out resultInvalid);
+        Assert.IsFalse(successInvalid);
+
+
+Old topic, but how about:
+public static int? ParseToNullableInt(string value)
+{
+     return String.IsNullOrEmpty(value) ? null : (int.Parse(value) as int?);
+}
+
+I like this better as the requriement where to parse null, the TryParse version would not throw an error on e.g. ToNullableInt32(XXX). That may introduce unwanted silent errors.
+
+I felt I should share mine which is a bit more generic.
+Usage:
+var result = "123".ParseBy(int.Parse);
+
+var result2 = "123".ParseBy<int>(int.TryParse);
+
+Solution:
+public static class NullableParse
+{
+    public static Nullable<T> ParseBy<T>(this string input, Func<string, T> parser)
+        where T : struct
+    {
+        try
+        {
+            return parser(input);
+        }
+        catch (Exception exc)
+        {
+            return null;
+        }
+    }
+
+    public delegate bool TryParseDelegate<T>(string input, out T result);
+
+    public static Nullable<T> ParseBy<T>(this string input, TryParseDelegate<T> parser)
+        where T : struct
+    {
+        T t;
+        if (parser(input, out t)) return t;
+        return null;
+    }
+}
+
+First version is a slower since it requires a try-catch but it looks cleaner. If it won't be called many times with invalid strings, it is not that important.
+If performance is an issue, please note that when using TryParse methods, you need to specify the type parameter of ParseBy as it can not be inferred by the compiler. I also had to define a delegate as out keyword can not be used within Func<>, but at least this time compiler does not require an explicit instance.
+Finally, you can use it with other structs as well, i.e. decimal, DateTime, Guid, etc. 
+
+I feel my solution is a very clean and nice solution:
+public static T? NullableParse<T>(string s) where T : struct
+{
+    try
+    {
+        return (T)typeof(T).GetMethod("Parse", new[] {typeof(string)}).Invoke(null, new[] { s });
+    }
+    catch (Exception)
+    {
+        return null;
+    }
+}
+
+This is of course a generic solution which only require that the generics argument has a static method "Parse(string)".  This works for numbers, boolean, DateTime, etc.
+
+
+Glenn Slaven: I'm more interested in knowing if
+  there is a built-in framework method
+  that will parse directly into a
+  nullable int?
+
+There is this approach that will parse directly to a nullable int (and not just int) if the value is valid like null or empty string, but does throw an exception for invalid values so you will need to catch the exception and return the default value for those situations:
+public static T Parse<T>(object value)
+{
+    try { return (T)System.ComponentModel.TypeDescriptor.GetConverter(typeof(T)).ConvertFrom(value.ToString()); }
+    catch { return default(T); }
+}
+
+This approach can still be used for non-nullable parses as well as nullable:
+enum Fruit { Orange, Apple }
+var res1 = Parse<Fruit>("Apple");
+var res2 = Parse<Fruit?>("Banana");
+var res3 = Parse<int?>("100") ?? 5; //use this for non-zero default
+var res4 = Parse<Unit>("45%");
+
+NB: There is an IsValid method on the converter you can use instead of capturing the exception (thrown exceptions does result in unnecessary overhead if expected). Unfortunately it only works since .NET 4 but there's still an issue where it doesn't check your locale when validating correct DateTime formats, see bug 93559.
+
+You can forget all other answers - there is a great generic solution:
+http://cleansharp.de/wordpress/2011/05/generischer-typeconverter/
+This allows you to write very clean code like this:
+string value = null;
+int? x = value.ConvertOrDefault();
+
+and also:
+object obj = 1;  
+
+string value = null;
+int x = 5;
+if (value.TryConvert(out x))
+    Console.WriteLine("TryConvert example: " + x); 
+
+bool boolean = "false".ConvertOrDefault();
+bool? nullableBoolean = "".ConvertOrDefault();
+int integer = obj.ConvertOrDefault();
+int negativeInteger = "-12123".ConvertOrDefault();
+int? nullableInteger = value.ConvertOrDefault();
+MyEnum enumValue = "SecondValue".ConvertOrDefault();
+
+MyObjectBase myObject = new MyObjectClassA();
+MyObjectClassA myObjectClassA = myObject.ConvertOrDefault();
+
+
+This solution is generic without reflection overhead.
+public static Nullable<T> ParseNullable<T>(string s, Func<string, T> parser) where T : struct
+{
+    if (string.IsNullOrEmpty(s) || string.IsNullOrEmpty(s.Trim())) return null;
+    else return parser(s);
+}
+
+static void Main(string[] args)
+{
+    Nullable<int> i = ParseNullable("-1", int.Parse);
+    Nullable<float> dt = ParseNullable("3.14", float.Parse);
+}
+
+
+I've come up with this one, which has satisfied my requirements (I wanted my extension method to emulate as close as possible the return of the framework's TryParse, but without try{} catch{} blocks and without the compiler complaining about inferring a nullable type within the framework method)
+private static bool TryParseNullableInt(this string s, out int? result)
+{
+    int i;
+    result = int.TryParse(s, out i) ? (int?)i : null;
+    return result != null;
+}
+
+
+One line easy way : 
+string myString = null;
+
+int? myIntVar;
+
+myIntVar = !string.IsNullOrEmpty(myString) ? (int?)int.Parse(myString) : null;
+
+
+I suggest code bellow. You may work with exception, when convert error occured.
+public static class Utils {      
+public static bool TryParse<Tin, Tout>(this Tin obj, Func<Tin, Tout> onConvert, Action<Tout> onFill, Action<Exception> onError) {
+  Tout value = default(Tout);
+  bool ret = true;
+  try {
+    value = onConvert(obj);
+  }
+  catch (Exception exc) {
+    onError(exc);
+    ret = false;
+  }
+  if (ret)
+    onFill(value);
+  return ret;
+}
+
+public static bool TryParse(this string str, Action<int?> onFill, Action<Exception> onError) {
+  return Utils.TryParse(str
+    , s => string.IsNullOrEmpty(s) ? null : (int?)int.Parse(s)
+    , onFill
+    , onError);
+}
+public static bool TryParse(this string str, Action<int> onFill, Action<Exception> onError) {
+  return Utils.TryParse(str
+    , s => int.Parse(s)
+    , onFill
+    , onError);
+}
+}
+
+Use this extension method in code (fill int? Age property of a person class):
+string ageStr = AgeTextBox.Text;
+Utils.TryParse(ageStr, i => person.Age = i, exc => { MessageBox.Show(exc.Message); });
+
+OR
+AgeTextBox.Text.TryParse(i => person.Age = i, exc => { MessageBox.Show(exc.Message); });
+

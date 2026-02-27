@@ -1,0 +1,35 @@
+What does the PDB get me while debugging and how do I know it's working?
+.net debugging pdb-files
+I have to use a third-party component without source code. I have the release DLL and release PDB file. Let's call it 'CorporateComponent.dll'. My own code creates objects from this DLL and calls methods on these objects.
+CorpObject o = new CorpObject();
+Int32 result = o.DoSomethingLousy();
+
+While debugging, the method 'DoSomethingLousy' throws an exception. What does the PDB file do for me? If it does something nice, how can I be sure I'm making use of it?
+
+
+The PDB is a database file that maps the instructions to their line numbers in the original code so when you get a stack trace you'll get the line numbers for the code. If it's an unmanaged DLL then the PDB file will also give you the names of the functions in the stack trace, whereas that information is usually only available for managed DLLs without PDBs.
+
+The main I get from the pdb is line numbers and real method names for stack traces.
+
+The pdb contains information the debugger needs in order to correctly read the stack.  Your stack traces will contain line numbers and symbol names of the stack frames inside of the modules for which you have the pdb.
+I'll give two usages examples.  The first is the obvious answer.  The second explains source-indexed pdb's.
+1st usage example...
+Depending on calling convention and which optimizations the compiler used, it might not be possible for the debugger to manually unwind the stack through a module for which you do not have a pdb.  This can happen with certain third party libraries and even for some parts of the OS.
+Consider a scenario in which you encounter an access violation inside of the windows OS.  The stack trace does not unwind into your own application because that OS component uses a special calling convention that confuses the debugger.  If you configure your symbol path to download the public OS pdb's, then there is a good chance that the stack trace will unwind into your application.  That enables you to see exactly what arguments your own code passed into the OS system call.  (and similar example for AV inside of a 3rd party library or even inside of your own code)
+2nd usage example...
+Pdb's have another very useful property - they can integrate with some source control systems using a feature that microsoft calls "source indexing".  A source-indexed pdb contains source control commands that specify how to fetch from source control the exact file versions that were used to build the component.  Microsoft's debuggers understand how to execute the commands to automatically fetch the files during a debug session.  This is a powerful feature that saves the debug egineer from having to manually sync a source tree to the correct label for a given build.  It's especially useful for remote debugging sessions and for analyzing crash dumps post-mortem.
+The "debugging tools for windows" installation (windbg) contains a document named srcsrv.doc which provides an example demonstrating how to use srctool.exe to determine which source files are source-indexed in a given pdb.
+To answer your question "how do I know", the "modules" feature in the debugger can tell you which modules have a corresponding pdb.  In windbg use the "lml" command.  In visual studio select modules from somewhere in the debug menus.  (sorry, I don't have a current version of visual studio handy)
+
+To confirm if you're using the provided PDB, CorporateComponent.pdb, during debugging within the Visual Studio IDE review the output window and locate the line indicating that the CorporateComponent.dll is loaded and followed by the string Symbols loaded.
+To illustrate from a project of mine:
+The thread 0x6a0 has exited with code 0 (0x0).
+The thread 0x1f78 has exited with code 0 (0x0).
+'AvayaConfigurationService.vshost.exe' (Managed): Loaded 'C:\Development\Src\trunk\ntity\AvayaConfigurationService\AvayaConfigurationService\bin\Debug  \AvayaConfigurationService.exe', Symbols loaded.
+'AvayaConfigurationService.vshost.exe' (Managed): Loaded 'C:\Development\Src\trunk\ntity\AvayaConfigurationService\AvayaConfigurationService\bin\Debug\IPOConfigService.dll', No symbols loaded.
+
+
+Loaded 'C:\Development\src...\bin\Debug\AvayaConfigurationService.exe', Symbols loaded.
+
+This indicates that the PDB was found and loaded by the IDE debugger.
+As indicated by others When examining stack frames within your application you should be able to see the symbols from the CorporateComponent.pdb. If you don't then perhaps the third-party did not include symbol information in the release PDB build.

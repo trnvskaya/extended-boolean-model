@@ -1,0 +1,121 @@
+SQL query (order by)
+sql sorting
+I want to list (a sorted list) all my entries from an attribute called streetNames in my table/relation Customers.
+eg. I want to achieve the following order: 
+Street_1A
+Street_1B
+Street_2A
+Street_2B
+Street_12A
+Street_12B  
+A simple order by streetNames will do a lexical comparision and then Street_12A and B will come before Street_2A/B, and that is not correct. Is it possible to solve this by pure SQL?
+
+
+Select street_name from tablex
+order by udf_getStreetNumber(street_name)
+in your udf_getStreetNumber - write your business rule for stripping out the number
+EDIT
+I think you can use regex functionality in SQL Server now.  I'd just strip out all non-number characters from the input.
+
+Yes it's possible! But definitely of no interest! If you find somebody here ready to spend a few hours writing down and testing the SP that will split your streetNames into a streetName + streetNumber combination, give me his name: I will submit him a few problems where I thought I had to pay to get the work done.
+By the way, can't you split your data into 2 fields, one 'streetName' with only the name of the street, and a new 'buildingNumber' field? (Avoid to name this one 'streetNumber', as, in some countries/cities, streets are given numbers).
+
+I'm sure you could by splitting up the streetName field into it's different pieces with something like substr(streetName, 1, find(" ",streetName)) just for the street and so on. But that's going to be pretty messy and it will have to deal with all kinds of special cases (no house number, house number without an addition) or international issues (in the US, adresses are typically like 1 Street).
+But if you want to the sorting as you described and that is an important requirement, it would be better to model you streetName in three parts, i.e. street (e.g. "Street"), house_number (e.g. 1, 2, 12), house_num_addition (e.g. "A", "B"). Then the sort becomes trivial in SQL.
+
+If you have write-access to the database I would really recommend converting it all to use 3 separate fields and then using them appropriately. This way you could even do it in PHP (yes, it will take some time, but it will happen only once).
+This could be some pain if you have a large code-base, having to check for all of the queries with this table, but it will eventually pay-off later. For example, it will make the search by address much easier.
+
+The reliable way to do it (reliable in terms of "to sort your data correctly", not "to solve your general problem") is to split the data into street name and house number and sort both of them on their own. But this requires knowing where the house number starts. And this is the tricky part - making the assumption best fits your data.
+You should use something like the following to refactor your data and from now on store the house number in a separate field. All this string-juggling won't perform too well when it comes to sorting large data sets.
+Assuming it is the last thing in the street name, and it contains a number:
+DECLARE @test TABLE
+(
+  street VARCHAR(100)
+)
+
+INSERT INTO @test (street) VALUES('Street')
+INSERT INTO @test (street) VALUES('Street 1A')
+INSERT INTO @test (street) VALUES('Street1 12B')
+INSERT INTO @test (street) VALUES('Street 22A')
+INSERT INTO @test (street) VALUES('Street1 200B-8a')
+INSERT INTO @test (street) VALUES('')
+INSERT INTO @test (street) VALUES(NULL)
+
+SELECT
+  street,
+  CASE 
+    WHEN LEN(street) > 0 AND CHARINDEX(' ', REVERSE(street)) > 0
+    THEN CASE
+      WHEN RIGHT(street, CHARINDEX(' ', REVERSE(street)) - 1) LIKE '%[0-9]%'
+      THEN LEFT(street, LEN(street) - CHARINDEX(' ', REVERSE(street)))
+    END
+  END street_part,
+  CASE 
+    WHEN LEN(street) > 0 AND CHARINDEX(' ', REVERSE(street)) > 0
+    THEN CASE 
+      WHEN RIGHT(street, CHARINDEX(' ', REVERSE(street)) - 1) LIKE '%[0-9]%'
+      THEN RIGHT(street, CHARINDEX(' ', REVERSE(street)) - 1)
+    END
+  END house_part,
+  CASE 
+    WHEN LEN(street) > 0 AND CHARINDEX(' ', REVERSE(street)) > 0
+    THEN CASE 
+      WHEN RIGHT(street, CHARINDEX(' ', REVERSE(street)) - 1) LIKE '%[0-9]%'
+      THEN CASE
+        WHEN PATINDEX('%[a-z]%', LOWER(RIGHT(street, CHARINDEX(' ', REVERSE(street)) - 1))) > 0
+        THEN CONVERT(INT, LEFT(RIGHT(street, CHARINDEX(' ', REVERSE(street)) - 1), PATINDEX('%[^0-9]%', LOWER(RIGHT(street, CHARINDEX(' ', REVERSE(street)) - 1))) - 1))
+      END
+    END
+  END house_part_num
+FROM
+  @test 
+ORDER BY
+  street_part,
+  house_part_num,
+  house_part
+
+This assumes these conditions:
+
+a street address can have a house number
+a house number must be the last thing in a street address (no "525 Monroe Av.")
+a house number should start with a digit to be sorted correctly
+a house number can be a range ("200-205"), this would be sorted below 200
+a house number must not contain spaces or recognition fails (When you look at your data, you could apply something like REPLACE(street, ' - ', '-') to sanitize common patterns beforehand.)
+the whole thing is still an approximation that certainly deviates from what it would look like in a telephone book, for example
+
+
+If it is the case that all values in the streetNames column follow the pattern 
+StreetName- space - StreetNumber
+where StreetName can contain other spaces, but StreetNumber CANNOT, then this will work:
+Declare @T Table (streetName VarChar(50))
+Insert @T(streetName) Values('Street 1A')
+Insert @T(streetName) Values('Street 2A')
+Insert @T(streetName) Values('Street 2B')
+Insert @T(streetName) Values('Street 12A')
+Insert @T(streetName) Values('Another Street 1A')
+Insert @T(streetName) Values('Another Street 4A')
+Insert @T(streetName) Values('a third Street 12B')
+Insert @T(streetName) Values('a third Street 1C')
+
+Select * From @T 
+Order By Substring(StreetName, 0, 1 + len(StreetName) - charIndex(' ', reverse(StreetName))),
+       Cast(Substring(StreetName, 2 + len(StreetName) - charIndex(' ', reverse(StreetName)),  
+    	Case When IsNumeric(Substring(StreetName, 2 + len(StreetName) - charIndex(' ', reverse(StreetName)), 5)) = 1  Then 5
+    		 When IsNumeric(Substring(StreetName, 2 + len(StreetName) - charIndex(' ', reverse(StreetName)), 4)) = 1  Then 4
+    		 When IsNumeric(Substring(StreetName, 2 + len(StreetName) - charIndex(' ', reverse(StreetName)), 3)) = 1  Then 3
+    		 When IsNumeric(Substring(StreetName, 2 + len(StreetName) - charIndex(' ', reverse(StreetName)), 2)) = 1  Then 2
+    		 When IsNumeric(Substring(StreetName, 2 + len(StreetName) - charIndex(' ', reverse(StreetName)), 1)) = 1  Then 1
+    			End) as Integer),
+        Substring(StreetName, len(StreetName) - charIndex(' ', reverse(StreetName)) +
+    		Case When IsNumeric(Substring(StreetName, 2 + len(StreetName) - charIndex(' ', reverse(StreetName)), 5)) = 1  Then 5
+    		 When IsNumeric(Substring(StreetName, 2 + len(StreetName) - charIndex(' ', reverse(StreetName)), 4)) = 1  Then 6
+    		 When IsNumeric(Substring(StreetName, 2 + len(StreetName) - charIndex(' ', reverse(StreetName)), 3)) = 1  Then 5
+    		 When IsNumeric(Substring(StreetName, 2 + len(StreetName) - charIndex(' ', reverse(StreetName)), 2)) = 1  Then 4
+    		 When IsNumeric(Substring(StreetName, 2 + len(StreetName) - charIndex(' ', reverse(StreetName)), 1)) = 1  Then 3
+    			End, Len(StreetName))
+
+
+For the record: it is called Natural Sort Order, and there is a Coding horror article
+in the subject.
+I guess you can do it in SQL using some of the code showed here, but it will by always in a case by case scenario.

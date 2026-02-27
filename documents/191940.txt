@@ -1,0 +1,164 @@
+C# Generics won't allow Delegate Type Constraints
+c# generics events delegates constraints
+Is it possible to define a class in C# such that
+class GenericCollection<T> : SomeBaseCollection<T> where T : Delegate
+
+I couldn't for the life of me accomplish this last night in .NET 3.5. I tried using
+delegate, Delegate, Action<T> and Func<T, T>
+It seems to me that this should be allowable in some way. I'm trying to implement my own EventQueue.
+I ended up just doing this [primitive approximation mind you].
+internal delegate void DWork();
+
+class EventQueue {
+    private Queue<DWork> eventq;
+}
+
+But then I lose the ability to reuse the same definition for different types of functions.
+Thoughts?
+
+
+A number of classes are unavailable as generic contraints - Enum being another.
+For delegates, the closest you can get is ": class", perhaps using reflection to check (for example, in the static constructor) that the T is a delegate:
+    static GenericCollection()
+    {
+        if (!typeof(T).IsSubclassOf(typeof(Delegate)))
+        {
+            throw new InvalidOperationException(typeof(T).Name + " is not a delegate type");
+        }
+    }
+
+
+Edit: Some proposed work-arounds are proposed in these articles:
+http://jacobcarpenters.blogspot.com/2006/06/c-30-and-delegate-conversion.html
+http://jacobcarpenters.blogspot.com/2006_11_01_archive.html
+
+From the C# 2.0 specification we can read (20.7, Constraints):
+A class-type constraint must satisfy the following rules:
+
+The type must be a class type.
+The type must not be sealed.
+The type must not be one of the following types: System.Array, System.Delegate, System.Enum, or System.ValueType.
+The type must not be object. Because all types derive from object, such a constraint would have no effect if it were permitted.
+At most one constraint for a given type parameter can be a class type.
+
+And sure enough VS2008 spits out an error:
+error CS0702: Constraint cannot be special class 'System.Delegate'
+
+For info and investigation on this issue read here.
+
+Delegate already supports chaining.  Doesn't this meet your needs?
+public class EventQueueTests
+{
+    public void Test1()
+    {
+        Action myAction = () => Console.WriteLine("foo");
+        myAction += () => Console.WriteLine("bar");
+
+        myAction();
+        //foo
+        //bar
+    }
+
+    public void Test2()
+    {
+        Action<int> myAction = x => Console.WriteLine("foo {0}", x);
+        myAction += x => Console.WriteLine("bar {0}", x);
+        myAction(3);
+        //foo 3
+        //bar 3
+    }
+
+    public void Test3()
+    {
+        Func<int, int> myFunc = x => { Console.WriteLine("foo {0}", x); return x + 2; };
+        myFunc += x => { Console.WriteLine("bar {0}", x); return x + 1; };
+        int y = myFunc(3);
+        Console.WriteLine(y);
+
+        //foo 3
+        //bar 3
+        //4
+    }
+
+    public void Test4()
+    {
+        Func<int, int> myFunc = x => { Console.WriteLine("foo {0}", x); return x + 2; };
+        Func<int, int> myNextFunc = x => { x = myFunc(x);  Console.WriteLine("bar {0}", x); return x + 1; };
+        int y = myNextFunc(3);
+        Console.WriteLine(y);
+
+        //foo 3
+        //bar 5
+        //6
+    }
+
+}
+
+
+I came across a situation where I needed to deal with a Delegate internally but I wanted a generic constraint. Specifically, I wanted to add an event handler using reflection, but I wanted to use a generic argument for the delegate. The code below does NOT work, since "Handler" is a type variable, and the compiler won't cast Handler to Delegate:
+public void AddHandler<Handler>(Control c, string eventName, Handler d) {
+  c.GetType().GetEvent(eventName).AddEventHandler(c, (Delegate) d);
+}
+
+However, you can pass a function that does the conversion for you. convert takes a Handler argument and returns a Delegate:
+public void AddHandler<Handler>(Control c, string eventName, 
+                  Func<Delegate, Handler> convert, Handler d) {
+      c.GetType().GetEvent(eventName).AddEventHandler(c, convert(d));
+}
+
+Now the compiler is happy. Calling the method is easy. For example, attaching to the KeyPress event on a Windows Forms control:
+AddHandler<KeyEventHandler>(someControl, 
+           "KeyPress", 
+           (h) => (KeyEventHandler) h,
+           SomeControl_KeyPress);
+
+where SomeControl_KeyPress is the event target. The key is the converter lambda - it does no work, but it convinces the compiler you gave it a valid delegate.
+(Begin 280Z28) @Justin: Why not use this?
+public void AddHandler<Handler>(Control c, string eventName, Handler d) { 
+  c.GetType().GetEvent(eventName).AddEventHandler(c, d as Delegate); 
+} 
+
+(End 280Z28)
+
+If you are willing to take a compile time dependency on an IL Weaver you can do this with Fody.
+Using this addin to Fody https://github.com/Fody/ExtraConstraints
+Your code can look like this 
+public class Sample
+{
+    public void MethodWithDelegateConstraint<[DelegateConstraint] T> ()
+    {        
+    }
+    public void MethodWithEnumConstraint<[EnumConstraint] T>()
+    {
+    }
+} 
+
+And be compiled to this 
+public class Sample
+{
+    public void MethodWithDelegateConstraint<T>() where T: Delegate
+    {
+    }
+
+    public void MethodWithEnumConstraint<T>() where T: struct, Enum
+    {
+    }
+}
+
+
+As mentioned above, you cannot have Delegates and Enum as a generic constraint. System.Object and System.ValueType also cannot be used as a generic constraint.
+The work around can be if you construct an appropriate call in you IL. It will work fine.
+Here is a good example by Jon Skeet. 
+http://code.google.com/p/unconstrained-melody/
+I have taken my references from Jon Skeet book C# in Dept 3 edition.
+
+According to MSDN 
+Compiler Error CS0702
+Constraint cannot be special class 'identifier' The following types may not be used as constraints: 
+
+System.Object
+System.Array
+System.Delegate
+System.Enum
+System.ValueType.
+

@@ -1,0 +1,227 @@
+How to efficiently count the number of keys/properties of an object in JavaScript?
+javascript performance properties count key
+What's the fastest way to count the number of keys/properties of an object?  It it possible to do this without iterating over the object?  i.e. without doing
+var count = 0;
+for (k in myobj) if (myobj.hasOwnProperty(k)) count++;
+
+(Firefox did provide a magic __count__ property, but this was removed somewhere around version 4.)
+
+
+I don't think this is possible (at least not without using some internals). And I don't think you would gain much by optimizing this.
+
+If you are actually running into a performance problem I would suggest wrapping the calls that add/remove properties to/from the object with a function that also increments/decrements an appropriately named (size?) property.
+You only need to calculate the initial number of properties once and move on from there. If there isn't an actual performance problem, don't bother. Just wrap that bit of code in a function getNumberOfProperties(object) and be done with it.
+
+I'm not aware of any way to do this, however to keep the iterations to a minimum, you could try checking for the existance of __count__ and if it doesn't exist (ie not Firefox) then you could iterate over the object and define it for later use eg:
+if (myobj.__count__ === undefined) {
+  myobj.__count__ = ...
+}
+
+This way any browser supporting __count__ would use that, and iterations would only be carried out for those which don't. If the count changes and you can't do this, you could always make it a function:
+if (myobj.__count__ === undefined) {
+  myobj.__count__ = function() { return ... }
+  myobj.__count__.toString = function() { return this(); }
+}
+
+This way anytime you reference myobj.__count__ the function will fire and recalculate.
+
+I just stumbled on this question. It's quite old, but since there's no accepted answer try this:
+keys(myObj).length
+
+I'm not sure how efficient this is, but it requires the least amount of code :)
+
+To do this in any ES5-compatible environment, such as Node, Chrome, IE 9+, FF 4+, or Safari 5+:
+Object.keys(obj).length
+
+
+Browser compatibility
+Object.keys documentation
+
+(includes a method you can add to non-ECMA5 browsers)
+
+
+
+You could use this code:
+if (!Object.keys) {
+    Object.keys = function (obj) {
+        var keys = [],
+            k;
+        for (k in obj) {
+            if (Object.prototype.hasOwnProperty.call(obj, k)) {
+                keys.push(k);
+            }
+        }
+        return keys;
+    };
+}
+
+then you can do this in older browsers as well:
+var len = Object.keys(obj).length;
+
+
+If you are using Underscore.js you can use _.size (thanks @douwe):
+_.size(obj)
+Alternatively you can also use _.keys which might be clearer for some:
+_.keys(obj).length 
+I highly recommend Underscore, its a tight library for doing lots of basic things. Whenever possible they match ECMA5 and defer to the native implementation.
+Otherwise I support @Avi's answer. I edited it to add a link to the MDC doc which includes the keys() method you can add to non-ECMA5 browsers.
+
+How I've solved this problem is to build my own implementation of a basic list which keeps a record of how many items are stored in the object. Its very simple. Something like this:
+function BasicList()
+{
+   var items = {};
+   this.count = 0;
+
+   this.add = function(index, item)
+   {
+      items[index] = item;
+      this.count++;
+   }
+
+   this.remove = function (index)
+   {
+      delete items[index];
+      this.count--;
+   }
+
+   this.get = function(index)
+   {
+      if (undefined === index)
+        return items;
+      else
+        return items[index];
+   }
+}
+
+
+Google Closure has a nice function for this... goog.object.getCount(obj)
+look at goog.Object Documentation
+
+For those who have Underscore.js included in their project you can do:
+_({a:'', b:''}).size() // => 2
+
+or functional style:
+_.size({a:'', b:''}) // => 2
+
+
+For those that have Ext JS 4 in their project you can do:
+Ext.Object.getSize(myobj);
+
+The advantage of this is that it'll work on all Ext compatible browsers (IE6-IE8 included), however, I believe the running time is no better than O(n) though, as with other suggested solutions.
+
+If jQuery above does not work, then try
+$(Object.Item).length
+
+
+As stated by Avi Flax http://stackoverflow.com/a/4889658/1047014
+Object.keys(obj).length
+
+will do the trick for all enumerable properties on your object but to also include the non-enumerable properties you can instead use the Object.getOwnPropertyNames. Here's the difference:
+var myObject = new Object();
+
+Object.defineProperty(myObject, "nonEnumerableProp", {
+  enumerable: false
+});
+Object.defineProperty(myObject, "enumerableProp", {
+  enumerable: true
+});
+
+console.log(Object.getOwnPropertyNames(myObject).length); //outputs 2
+console.log(Object.keys(myObject).length); //outputs 1
+
+console.log(myObject.hasOwnProperty("nonEnumerableProp")); //outputs true
+console.log(myObject.hasOwnProperty("enumerableProp")); //outputs true
+
+console.log("nonEnumerableProp" in myObject); //outputs true
+console.log("enumerableProp" in myObject); //outputs true
+
+As stated here this has the same browser support as Object.keys
+However, in most cases, you might not want to include the nonenumerables in these type of operations, but it's always good to know the difference ;)
+
+The standard Object implementation ( ES5.1 Object Internal Properties and Methods
+) does not require an Object to track its number of keys/properties, so there should be no standard way to determine the size of an Object without explicitly or implicitly iterating over its keys.
+So here are the most commonly used alternatives:
+1. ECMAScript's Object.keys()
+Object.keys(obj).length; Works by internally iterating over the keys to compute a temporary array and returns its length.
+
+Pros - Readable and clean syntax. No library or custom code required except a shim if native support is unavailable
+Cons - Memory overhead due to the creation of the array.
+
+2. Library-based solutions
+Many library-based examples elsewhere in this topic are usefull idioms in the context of their library. From a performance viewpoint, however, there is nothing to gain compared to a perfect no-library code since all those library methods actually encapsulate either a for-loop or ES5 Object.keys (native or shimmed). 
+3. Optimizing a for-loop
+The slowest part of such a for-loop is generally the .hasOwnProperty() call, because of the function call overhead. So when I just want the number of entries of a JSON object, I just skip the .hasOwnProperty() call if I know that no code did nor will extend  Object.prototype. 
+Otherwise, your code could be very slightly optimized by making k local (var k) and by using prefix-decrement operator (++count) instead of postfix.
+var count = 0;
+for (var k in myobj) if (myobj.hasOwnProperty(k)) ++count;
+
+Another idea relies on caching the hasOwnProperty method:
+var hasOwn = Object.prototype.hasOwnProperty;
+var count = 0;
+for (var k in myobj) if (hasOwn.call(myobj, k)) ++count;
+
+Whether this is faster or not on a given environment is a question of benchmarking. Very limited performance gain can be expected anyway.
+
+To iterate on Avi Flax answer Object.keys(obj).length is correct for an object that doesnt have functions tied to it
+example:
+obj = {"lol": "what", owo: "pfft"};
+Object.keys(obj).length; // should be 2
+
+versus
+arr = [];
+obj = {"lol": "what", owo: "pfft"};
+obj.omg = function(){
+    _.each(obj, function(a){
+        arr.push(a);
+    });
+};
+Object.keys(obj).length; // should be 3 because it looks like this 
+/* obj === {"lol": "what", owo: "pfft", omg: function(){_.each(obj, function(a){arr.push(a);});}} */
+
+steps to avoid this:
+
+do not put functions in an object that you want to count the number of keys in
+use a seperate object or make a new object specifically for functions (if you want to count how many functions there are in the file using Object.keys(obj).length)
+
+also yes i used the _ or underscore module from nodejs in my example 
+documentation can be found here http://underscorejs.org/ as well as its source on github and various other info
+And finally a lodash implementation https://lodash.com/docs#size
+_.size(obj)
+
+From: https://developer.mozilla.org/en/docs/Web/JavaScript/Reference/Global_Objects/Object/defineProperty
+
+Object.defineProperty(obj, prop, descriptor)
+
+You can either add it to all your objects:
+Object.defineProperty(Object.prototype, "length", {
+    enumerable: false,
+    get: function() {
+        return Object.keys(this).length;
+    }
+});
+
+Or a single object:
+var myObj = {};
+Object.defineProperty(myObj, "length", {
+    enumerable: false,
+    get: function() {
+        return Object.keys(this).length;
+    }
+});
+
+Example:
+var myObj = {};
+myObj.name  = "John Doe";
+myObj.email = "leaked@example.com";
+myObj.length; //output: 2
+
+Added that way, it won't be displayed in for..in loops:
+for(var i in myObj) {
+     console.log(i + ":" + myObj[i]);
+}
+
+Output:
+name:John Doe
+email:leaked@example.com
+
+Note: it does not work in < IE9 browsers.

@@ -1,0 +1,29 @@
+How to communicate with a windows service from an application that interacts with the desktop?
+c# .net windows-services service mono
+With .Net what is the best way to interact with a service (i.e. how do most tray-apps communicate with their servers).  It would be preferred if this method would be cross-platform as well (working in Mono, so I guess remoting is out?)
+
+Edit:
+Forgot to mention, we still have to support Windows 2000 machines in the field, so WCF and anything above .Net 2.0 won't fly.
+
+
+Remoting is an option, but it's not cross-platform. Some other ways are to use named pipes, IPC, or kernel events.
+
+Funnily enough I was going to suggest Remoting! The http://go-mono.com/archive/1.0/features.html">Mono 1.0 Release Notes (from archive.org because the original location is missing) mention System.Runtime.Remoting.dll as a supported library and doesn't say anything about known issues.
+If remoting is out then you probably have to implement your own TCP message framing protocol. Windows doesn't have an equivalent of UNIX-domain sockets for communication on the same machine.
+
+Most services that have a GUI component are run as a named user, and are allowed access to the desktop. This lets you access it via COM or .NET but only locally (unless you want to get complicated)
+Personally, I open an ordinary old socket on the service - its cross platform, allows multiple clients, allows any app to access it, doesn't rely on Windows security to be opened up for it, and allows your GUI to be written in any language you like (as everything supports sockets).
+For a tray app, you'd want a simle protocol to communicate - you might as well use a REST style system to send commands to it, and stream XML (yuk) or a custom data format back.
+
+Have your service listen to 127.0.0.1 on a predefined port with a plain old TCP stream socket. Connect to that port from your desktop application.
+It's dead simple and it's completely cross platform.
+
+Be aware that if you are planning to eventually deploy on Windows Vista or Windows Server 2008, many ways that this can be done today will not work. This is because of the introduction of a new security feature called "Session 0 Isolation". 
+Most windows services have been moved to run in Session 0 now in order to properly isolate them from the rest of the system. An extension of this is that the first user to login to the system no longer is placed in Session #0, they are placed in Session 1. And hence, the isolation will break code that does certain types of communication between services and desktop applications.
+The best way to write code today that will work on Vista and Server 2008 going forward when doing communication between services and applications is to use a proper cross-process API like RPC, Named Pipes, etc. Do not use SendMessage/PostMessage as that will fail under Session 0 Isolation.
+http://www.microsoft.com/whdc/system/vista/services.mspx
+Now, given your requirements, you are going to be in a bit of a pickle. For the cross-platform concerns, I'm not sure if Remoting would be supported. You may have to drop down and go all the way back to sockets: http://msdn.microsoft.com/en-us/library/system.net.sockets.aspx
+
+If this is a tray app, and not a true service, be wary of how you set up your communications if using pipes or TCP/IP.  If multiple users are logged into a machine (Citrix, Remote Desktop), and each user launches a tray app "service", then you can run into a situation where you have multiple processes trying to use the same well known port or pipe.  Of course this isn't a problem if you don't plan on supporting multiple pipes or if you have a true service as opposed to a tray app that runs in each user shell.
+
+Did any one of you actually try remoting with Mono? It works just fine. You might bump into some corner cases, but this is highly unlikely. Just test your application for cross-platform (MS.Net <-> Mono) remoting from time to time to catch any possible glitches. And start with a recent Mono, 2.4.2 is current.

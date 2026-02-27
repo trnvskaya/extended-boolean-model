@@ -1,0 +1,152 @@
+Asp.Net MVC: How do I enable dashes in my urls?
+asp.net-mvc
+I'd like to have dashes separate words in my URLs.  So instead of:
+/MyController/MyAction
+
+I'd like:
+/My-Controller/My-Action
+
+Is this possible?
+
+
+You could write a custom route that derives from the Route class GetRouteData to strip dashes, but when you call the APIs to generate a URL, you'll have to remember to include the dashes for action name and controller name.
+That shouldn't be too hard.
+
+You can use the ActionName attribute like so:
+[ActionName("My-Action")]
+public ActionResult MyAction() {
+    return View();
+}
+
+Note that you will then need to call your View file "My-Action.cshtml" (or appropriate extension). You will also need to reference "my-action" in any Html.ActionLink methods.
+There isn't such a simple solution for controllers.
+Edit: Update for MVC5
+Now with MVC5, Attribute Routing has been absorbed into the project. You can now use:
+[Route("My-Action")]
+
+On Action Methods. 
+For controllers, you can apply a RoutePrefix attribute which will be applied to all action methods in that controller:
+[RoutePrefix("my-controller")]
+
+One of the benefits of using RoutePrefix is URL parameters will also be passed down to any action methods.
+[RoutePrefix("clients/{clientId:int}")]
+public class ClientsController : Controller .....
+
+Snip..
+[Route("edit-client")]
+public ActionResult Edit(int clientId) // will match /clients/123/edit-client
+
+
+You could create a custom route handler as shown in this blog:
+http://blog.didsburydesign.com/2010/02/how-to-allow-hyphens-in-urls-using-asp-net-mvc-2/
+public class HyphenatedRouteHandler : MvcRouteHandler{
+        protected override IHttpHandler  GetHttpHandler(RequestContext requestContext)
+        {
+            requestContext.RouteData.Values["controller"] = requestContext.RouteData.Values["controller"].ToString().Replace("-", "_");
+            requestContext.RouteData.Values["action"] = requestContext.RouteData.Values["action"].ToString().Replace("-", "_");
+            return base.GetHttpHandler(requestContext);
+        }
+    }
+
+...and the new route:
+routes.Add(
+            new Route("{controller}/{action}/{id}", 
+                new RouteValueDictionary(
+                    new { controller = "Default", action = "Index", id = "" }),
+                    new HyphenatedRouteHandler())
+        );
+
+A very similar question was asked here: ASP.net MVC support for URL's with hyphens
+
+You can define a specific route such as:
+routes.MapRoute(
+    "TandC", // Route controllerName
+    "CommonPath/{controller}/Terms-and-Conditions", // URL with parameters
+    new {
+        controller = "Home",
+        action = "Terms_and_Conditions"
+    } // Parameter defaults
+);
+
+But this route has to be registered BEFORE your default route.
+
+If you have access to the IIS URL Rewrite module ( http://blogs.iis.net/ruslany/archive/2009/04/08/10-url-rewriting-tips-and-tricks.aspx ), you can simply rewrite the URLs.
+Requests to /my-controller/my-action can be rewritten to /mycontroller/myaction and then there is no need to write custom handlers or anything else.  Visitors get pretty urls and you get ones MVC can understand.
+Here's an example for one controller and action, but you could modify this to be a more generic solution:
+<rewrite>
+  <rules>
+    <rule name="Dashes, damnit">
+      <match url="^my-controller(.*)" />
+      <action type="Rewrite" url="MyController/Index{R:1}" />
+    </rule>
+  </rules>
+</rewrite>
+
+The possible downside to this is you'll have to switch your project to use IIS Express or IIS for rewrites to work during development.
+
+I'm still pretty new to MVC, so take it with a grain of salt.  It's not an elegant, catch-all solution but did the trick for me in MVC4:
+routes.MapRoute(
+    name: "ControllerName",
+    url: "Controller-Name/{action}/{id}",
+    defaults: new { controller = "ControllerName", action = "Index", id = UrlParameter.Optional }
+);
+
+
+I've developed an open source NuGet library for this problem which implicitly converts EveryMvc/Url to every-mvc/url. 
+Uppercase urls are problematic because cookie paths are case-sensitive, most of the internet is actually case-sensitive while Microsoft technologies treats urls as case-insensitive. (More on my blog post)
+NuGet Package: https://www.nuget.org/packages/LowercaseDashedRoute/
+To install it, simply open the NuGet window in the Visual Studio by right clicking the Project and selecting NuGet Package Manager, and on the "Online" tab type "Lowercase Dashed Route", and it should pop up.
+Alternatively, you can run this code in the Package Manager Console:
+Install-Package LowercaseDashedRoute
+After that you should open App_Start/RouteConfig.cs and comment out existing route.MapRoute(...) call and add this instead:
+routes.Add(new LowercaseDashedRoute("{controller}/{action}/{id}",
+  new RouteValueDictionary(
+    new { controller = "Home", action = "Index", id = UrlParameter.Optional }),
+    new DashedRouteHandler()
+  )
+);
+
+That's it. All the urls are lowercase, dashed, and converted implicitly without you doing anything more.
+Open Source Project Url: https://github.com/AtaS/lowercase-dashed-route
+
+Asp.Net MVC 5 will support attribute routing, allowing more explicit control over route names. Sample usage will look like:
+[RoutePrefix("dogs-and-cats")]
+public class DogsAndCatsController : Controller
+{
+    [HttpGet("living-together")]
+    public ViewResult LivingTogether() { ... }
+
+    [HttpPost("mass-hysteria")]
+    public ViewResult MassHysteria() { }
+}
+
+To get this behavior for projects using Asp.Net MVC prior to v5, similar functionality can be found with the AttributeRouting project (also available as a nuget). In fact, Microsoft reached out to the author of AttributeRouting to help them with their implementation for MVC 5.
+
+Here's what I did using areas in ASP.NET MVC 5 and it worked liked a charm. I didn't have to rename my views, either.
+In RouteConfig.cs, do this:
+ public static void RegisterRoutes(RouteCollection routes)
+    {
+        // add these to enable attribute routing and lowercase urls, if desired
+        routes.MapMvcAttributeRoutes();
+        routes.LowercaseUrls = true;
+
+        // routes.MapRoute...
+    }
+
+In your controller, add this before your class definition:
+[RouteArea("SampleArea", AreaPrefix = "sample-area")]
+[Route("{action}")]
+public class SampleAreaController: Controller
+{
+    // ...
+
+    [Route("my-action")]
+    public ViewResult MyAction()
+    {
+        // do something useful
+    }
+}
+
+The URL that shows up in the browser if testing on local machine is: localhost/sample-area/my-action. You don't need to rename your view files or anything. I was quite happy with the end result.
+After routing attributes are enabled you can delete any area registration files you have such as SampleAreaRegistration.cs.
+This article helped me come to this conclusion. I hope it is useful to you.

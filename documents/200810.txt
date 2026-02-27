@@ -1,0 +1,140 @@
+How can I do access control via an SQL table?
+sql postgresql access-control
+I'm trying to create an access control system. 
+Here's a stripped down example of what the table I'm trying to control access to looks like:
+things table:
+id   group_id   name
+1    1          thing 1
+2    1          thing 2
+3    1          thing 3
+4    1          thing 4
+5    2          thing 5
+
+And the access control table looks like this:
+access table:
+user_id  type   object_id  access
+1        group  1          50
+1        thing  1          10
+1        thing  2          100
+
+Access can be granted either by specifying the id of the 'thing' directly, or granted for an entire group of things by specifying a group id. In the above example, user 1 has been granted an access level of 50 to group 1, which should apply unless there are any other rules granting more specific access to an individual thing.
+I need a query that returns a list of things (ids only is okay) along with the access level for a specific user. So using the example above I'd want something like this for user id 1:
+desired result:
+thing_id   access
+1          10
+2          100
+3          50   (things 3 and 4 have no specific access rule,
+4          50   so this '50' is from the group rule)
+5               (thing 5 has no rules at all, so although I 
+                still want it in the output, there's no access
+		level for it)
+
+The closest I can come up with is this:
+SELECT * 
+FROM things 
+LEFT JOIN access ON 
+	user_id = 1
+	AND (
+		(access.type = 'group' AND access.object_id = things.group_id)
+		OR (access.type = 'thing' AND access.object_id = things.id)
+	)
+
+But that returns multiple rows, when I only want one for each row in the 'things' table. I'm not sure how to get down to a single row for each 'thing', or how to prioritise 'thing' rules over 'group' rules.
+If it helps, the database I'm using is PostgreSQL.
+Please feel free to leave a comment if there's any information I've missed out. 
+Thanks in advance!
+
+
+I just read a paper last night on this.  It has some ideas on how to do this.  If you can't  use the link on the title try using Google Scholar on Limiting Disclosure in Hippocratic Databases.
+
+I don't know the Postgres SQL dialect, but maybe something like:
+select thing.*, coalesce ( ( select access
+                             from   access
+                             where  userid = 1
+                             and    type = 'thing'
+                             and    object_id = thing.id
+                           ),
+                           ( select access
+                             from   access
+                             where  userid = 1
+                             and    type = 'group'
+                             and    object_id = thing.group_id
+                           )
+                         )
+from things
+
+Incidentally, I don't like the design.  I would prefer the access table to be split into two:
+thing_access (user_id, thing_id, access)
+group_access (user_id, group_id, access)
+
+My query then becomes:
+select thing.*, coalesce ( ( select access
+                             from   thing_access
+                             where  userid = 1
+                             and    thing_id = thing.id
+                           ),
+                           ( select access
+                             from   group_access
+                             where  userid = 1
+                             and    group_id = thing.group_id
+                           )
+                         )
+from things
+
+I prefer this because foreign keys can now be used in the access tables.    
+
+While there are several good answers, the most efficient would probably be something like this:
+SELECT things.id, things.group_id, things.name, max(access) 
+FROM things 
+LEFT JOIN access ON 
+        user_id = 1 
+        AND (
+                (access.type = 'group' AND access.object_id = things.group_id)
+                OR (access.type = 'thing' AND access.object_id = things.id)
+        )
+group by things.id, things.group_id, things.name
+
+Which simply uses summarization added to you query to get what you're looking for.
+
+Tony:
+Not a bad solution, I like it, seems to work. Here's your query after minor tweaking:
+SELECT 
+    things.*, 
+    coalesce ( 
+        (   SELECT access 
+            FROM access 
+            WHERE user_id = 1 
+                AND type = 'thing' 
+                AND object_id = things.id
+        ), 
+        (   SELECT access 
+            FROM access 
+            WHERE user_id = 1 
+                AND type = 'group' 
+                AND object_id = things.group_id 
+        ) 
+    ) AS access
+    FROM things;
+
+And the results look correct:
+ id | group_id |  name   | access 
+----+----------+---------+--------
+  1 |        1 | thing 1 |     10
+  2 |        1 | thing 2 |    100
+  3 |        1 | thing 3 |     50
+  4 |        1 | thing 4 |     50
+  5 |        2 | thing 5 |
+
+I do completely take the point about it not being an ideal schema. However, I am stuck with it to some extent.
+
+Josef:
+Your solution is very similar to the stuff I was playing with, and my instincts (such as they are) tell me that it should be possible to do it that way. Unfortunately it doesn't produce completely correct results:
+ id | group_id |  name   | max 
+----+----------+---------+-----
+  1 |        1 | thing 1 |  50
+  2 |        1 | thing 2 | 100
+  3 |        1 | thing 3 |  50
+  4 |        1 | thing 4 |  50
+  5 |        2 | thing 5 |
+
+The access level for 'thing 1' has taken the higher 'group' access value, rather than the more specific 'thing' access value of 10, which is what I'm after. I don't think there's a way to fix that within a GROUP BY, but if anyone has any suggestions I'm more than happy to be proven incorrect on that point.

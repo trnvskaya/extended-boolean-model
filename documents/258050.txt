@@ -1,0 +1,137 @@
+How to convert CString and ::std::string  ::std::wstring to each other?
+c++ mfc cstring stdstring
+CString is quite handy, while std::string is more compatible with STL container.
+I am using hash_map. However, hash_map does not support CString as key, so I want to convert CString into std::string.
+Writing a CString hash function seems to take a lot of time.
+CString -----> std::string
+
+How can I do this?
+std::string -----> CString:
+
+inline CString toCString(std::string const& str)
+{
+    return CString(str.c_str()); 
+}
+
+Am I right?
+
+EDIT:
+Here are more questions:
+How can I convert wstring, CString to each other?
+//wstring -> CString,
+std::wstring src;
+CString result(src.c_str());
+//CString->wstring. 
+CString src;
+::std::wstring des(src.GetString());
+
+Is there any problem?
+How can I convert std::wstring, std::string to each other?
+
+
+According to CodeGuru:
+CString to std::string:
+CString cs("Hello");
+std::string s((LPCTSTR)cs);
+
+BUT: std::string cannot always construct from a LPCTSTR. i.e. the code will fail for UNICODE builds.
+As std::string can construct only from LPSTR / LPCSTR, a programmer who uses VC++ 7.x or better can utilize conversion classes such as CT2CA as an intermediary.
+CString cs ("Hello");
+// Convert a TCHAR string to a LPCSTR
+CT2CA pszConvertedAnsiString (cs);
+// construct a std::string using the LPCSTR input
+std::string strStd (pszConvertedAnsiString);
+
+std::string to CString: (From Visual Studio's CString FAQs...)
+std::string s("Hello");
+CString cs(s.c_str());
+
+CStringT can construct from both character or wide-character strings. i.e. It can convert from char* (i.e. LPSTR) or from wchar_t* (LPWSTR).
+In other words, char-specialization (of CStringT) i.e. CStringA, wchar_t-specilization CStringW, and TCHAR-specialization CString can be constructed from either char or wide-character, null terminated (null-termination is very important here) string sources.
+Althoug IInspectable amends the "null-termination" part in the comments:
+
+NUL-termination is not required.
+CStringT has conversion constructors that take an explicit length argument. This also means that you can construct CStringT objects from std::string objects with embedded NUL characters.
+
+
+Solve that by using std::basic_string<TCHAR> instead of std::string and it should work fine regardless of your character setting.
+
+If you're looking to convert easily between other strings types, perhaps the _bstr_t class would be more appropriate? It supports converstion between char, wchar_t and BSTR.
+
+If you want something more C++-like, this is what I use.  Although it depends on Boost, that's just for exceptions.  You can easily remove those leaving it to depend only on the STL and the WideCharToMultiByte() Win32 API call.
+#include <string>
+#include <vector>
+#include <cassert>
+#include <exception>
+
+#include <boost/system/system_error.hpp>
+#include <boost/integer_traits.hpp>
+
+/**
+ * Convert a Windows wide string to a UTF-8 (multi-byte) string.
+ */
+std::string WideStringToUtf8String(const std::wstring& wide)
+{
+    if (wide.size() > boost::integer_traits<int>::const_max)
+        throw std::length_error(
+            "Wide string cannot be more than INT_MAX characters long.");
+    if (wide.size() == 0)
+        return "";
+
+    // Calculate necessary buffer size
+    int len = ::WideCharToMultiByte(
+        CP_UTF8, 0, wide.c_str(), static_cast<int>(wide.size()), 
+        NULL, 0, NULL, NULL);
+
+    // Perform actual conversion
+    if (len > 0)
+    {
+        std::vector<char> buffer(len);
+        len = ::WideCharToMultiByte(
+            CP_UTF8, 0, wide.c_str(), static_cast<int>(wide.size()),
+            &buffer[0], static_cast<int>(buffer.size()), NULL, NULL);
+        if (len > 0)
+        {
+            assert(len == static_cast<int>(buffer.size()));
+            return std::string(&buffer[0], buffer.size());
+        }
+    }
+
+    throw boost::system::system_error(
+        ::GetLastError(), boost::system::system_category);
+}
+
+
+It is more effecient to convert CString to std::string using the conversion where the length is specified.
+CString someStr("Hello how are you");
+std::string std(somStr, someStr.GetLength());
+
+In tight loop this makes a significant performance improvement.
+
+Works for me:
+std::wstring CStringToWString(const CString& s)
+{
+    std::string s2;
+    s2 = std::string((LPCTSTR)s);
+    return std::wstring(s2.begin(),s2.end());
+}
+
+CString WStringToCString(std::wstring s)
+{
+    std::string s2;
+    s2 = std::string(s.begin(),s.end());
+    return s2.c_str();
+}
+
+
+This is a follow up to Sal's answer, where he/she provided the solution:
+CString someStr("Hello how are you");
+std::string std(somStr, someStr.GetLength());
+
+This is useful also when converting a non-typical C-String to a std::string
+A use case for me was having a pre-allocated char array (like C-String), but it's not NUL terminated. (i.e. SHA digest).
+The above syntax allows me to specify the length of the SHA digest of the char array so that std::string doesn't have to look for the terminating NUL char, which may or may not be there.
+Such as:
+unsigned char hashResult[SHA_DIGEST_LENGTH];    
+auto value = std::string(reinterpret_cast<char*>hashResult, SHA_DIGEST_LENGTH);
+

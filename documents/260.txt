@@ -1,0 +1,49 @@
+Adding scripting functionality to .NET applications
+c# .net scripting compiler-construction
+I have a little game written in C#. It uses a database as back-end. It's 
+a trading card game, and I wanted to implement the function of the cards as a script.
+What I mean is that I essentially have an interface, ICard, which a card class implements (public class Card056 : ICard) and which contains function that are called by the game.
+Now, to make the thing maintainable/moddable, I would like to have the class for each card as source code in the database and essentially compile it on first use. So when I have to add/change a card, I'll just add it to the database and tell my application to refresh, without needing any assembly deployment (especially since we would be talking about 1 assembly per card which means hundreds of assemblies).
+Is that possible? Register a class from a source file and then instantiate it, etc.
+ICard Cards[current] = new MyGame.CardLibrary.Card056();
+Cards[current].OnEnterPlay(ref currentGameState);
+
+The language is C#, but extra bonus if it's possible to write the script in any .NET language.
+
+
+Yes, I thought about that, but I soon figured out that another Domain-Specific-Language (DSL) would be a bit too much.
+Essentially, they need to interact with my gamestate in possibly unpredictable ways. For example, a card could have a rule "When this cards enter play, all your undead minions gain +3 attack against flying enemies, except when the enemy is blessed". As trading card games are turn based, the GameState Manager will fire OnStageX events and let the cards modify other cards or the GameState in whatever way the card needs.
+If I try to create a DSL, I have to implement a rather large feature set and possibly constantly update it, which shifts the maintenance work to another part without actually removing it.
+That's why I wanted to stay with a "real" .NET language to essentially be able to just fire the event and let the card manipulate the gamestate in whatever way (within the limits of the code access security).
+
+Oleg Shilo's C# Script solution (at The Code Project) really is a great introduction to providing script abilities in your application.
+A different approach would be to consider a language that is specifically built for scripting, such as IronRuby, IronPython, or Lua.
+IronPython and IronRuby are both available today.
+For a guide to embedding IronPython read
+How to embed IronPython script support in your existing app in 10 easy steps.
+Lua is a scripting language commonly used in games. There is a Lua compiler for .NET, available from CodePlex -- http://www.codeplex.com/Nua
+That codebase is a great read if you want to learn about building a compiler in .NET.
+A different angle altogether is to try PowerShell. There are numerous examples of embedding PowerShell into an application -- here's a thorough project on the topic: 
+Powershell Tunnel
+
+You might be able to use IronRuby for that. 
+Otherwise I'd suggest you have a directory where you place precompiled assemblies. Then you could have a reference in the DB to the assembly and class, and use reflection to load the proper assemblies at runtime.
+If you really want to compile at run-time you could use the CodeDOM, then you could use reflection to load the dynamic assembly. MSDN article which might help.
+You could use any of the DLR languages, which provide a way to really easily host your own scripting platform. However, you don't have to use a scripting language for this. You could use C# and compile it with the C# code provider. As long as you load it in its own AppDomain, you can load and unload it to your heart's content.
+If you don't want to use the DLR you can use Boo (which has an interpreter) or you could consider the Script.NET (S#) project on CodePlex. With the Boo solution you can choose between compiled scripts or using the interpreter, and Boo makes a nice scripting language, has a flexible syntax and an extensible language via its open compiler architecture. Script.NET looks nice too, though, and you could easily extend that language as well as its an open source project and uses a very friendly Compiler Generator (Irony.net).
+The main application that my division sells does something very similar to provide client customisations (which means that I can't post any source). We have a C# application that loads dynamic VB.NET scripts (although any .NET language could be easily supported - VB was chosen because the customisation team came from an ASP background).
+Using .NET's CodeDom we compile the scripts from the database, using the VB CodeDomProvider (annoyingly it defaults to .NET 2, if you want to support 3.5 features you need to pass a dictionary with "CompilerVersion" = "v3.5" to its constructor). Use the CodeDomProvider.CompileAssemblyFromSource method to compile it (you can pass settings to force it to compile in memory only.
+This would result in hundreds of assemblies in memory, but you could put all the dynamic classes' code together into a single assembly, and recompile the whole lot when any change. This has the advantage that you could add a flag to compile on disk with a PDB for when you're testing, allowing you to debug through the dynamic code.
+
+I'd suggest using LuaInterface as it has fully implemented Lua where it appears that Nua is not complete and likely does not implement some very useful functionality (coroutines, etc).
+If you want to use some of the outside prepacked Lua modules, I'd suggest using something along the lines of 1.5.x as opposed to the 2.x series that builds fully managed code and cannot expose the necessary C API.
+
+The next version of .NET (5.0?) has had a lot of talk about opening the "compiler as a service" which would make things like direct script evaluation possible.
+
+I'm using LuaInterface1.3 + Lua 5.0 for NET1.1 application.
+The issue with Boo is that everytime you parse/compile/eval your code on the fly, it creates a set of boo classes so you will get memory leaks.
+Lua in the other hand, does not do that, so it's very very stable and works wonderful (I can pass objects from C# to Lua and backwards).
+So far I havent put it in PROD yet, but seems very promising.
+UPDATE: I did have memory leaks issues in PROD using LuaInterface + Lua 5.0, therefore I used Lua 5.2 and linked directly into C# with DllImport. The memory leaks were inside the LuaInterface library.
+Lua 5.2: from http://luabinaries.sourceforge.net and http://sourceforge.net/projects/luabinaries/files/5.2/Windows%20Libraries/Dynamic/lua-5.2_Win32_dll7_lib.zip/download
+Once I did this, all my memory leaks were gone and the app was very stable.

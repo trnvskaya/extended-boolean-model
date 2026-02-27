@@ -1,0 +1,93 @@
+MySQL/Apache Error in PHP MySQL query
+php mysql
+I am getting the following error:
+
+Access denied for user 'apache'@'localhost' (using password: NO)
+
+When using the following code:
+<?php
+
+include("../includes/connect.php");
+
+$query = "SELECT * from story";
+
+$result = mysql_query($query) or die(mysql_error());
+
+echo "<h1>Delete Story</h1>";
+
+if (mysql_num_rows($result) > 0) {
+    while($row = mysql_fetch_row($result)){
+          echo '<b>'.$row[1].'</b><span align="right"><a href="../process/delete_story.php?id='.$row[0].'">Delete</a></span>';
+      echo '<br /><i>'.$row[2].'</i>';
+    }
+}
+else {
+   echo "No stories available.";
+}
+?>
+
+The connect.php file contains my MySQL connect calls that are working fine with my INSERT queries in another portion of the software.  If I comment out the $result = mysql_query line, then it goes through to the else statement.  So, it is that line or the content in the if.
+I have been searching the net for any solutions, and most seem to be related to too many MySQL connections or that the user I am logging into MySQL as does not have permission.  I have checked both.  I can still perform my other queries elsewhere in the software, and I have verified that the account has the correct permissions.
+
+
+Just to check, if you use just this part you get an error?
+<?php
+include("../includes/connect.php");
+
+$query = "SELECT * from story";
+$result = mysql_query($query) or die(mysql_error());
+
+If so, do you still get an error if you copy and paste one of those Inserts into this page, I am trying to see if it's local to the page or that actual line.
+Also, can you post a copy of the connection calls (minus passwords), unless the inserts use exactly the same syntax as this example.
+
+Does the apache user require a password to connect to the database?  If so, then the fact that it says "using password: NO" would lead me to believe that the code is trying to connect without a password.
+If, however, the apache user doesn't require a password, a double-check of the permissions may be a good idea (which you mentioned you already checked).  It may still be beneficial to try executing something like this at a mysql prompt:
+
+GRANT ALL PRIVILEGES ON databasename.* to 'apache'@'localhost';
+
+That syntax should be correct.  
+Other than that, I'm just as stumped as you are.
+If indeed you are able to insert using the same connection calls, your problem most likely lies in the user "apache" not having SELECT permissions on the database. If you have phpMyAdmin installed you can look at the permissions for the user in the Privileges pane. phpMyAdmin also makes it very easy to modify the permissions.
+If you only have access to the command line, you can check the permissions from the mysql database.
+You'll probably need to do something like: 
+GRANT SELECT ON myDatabase.myTable TO 'apache'@'localhost';
+
+Just to check, if you use just this part you get an error?
+If so, do you still get an error if you copy and paste one of those Inserts into this >page, I am trying to see if it's local to the page or that actual line.
+Also, can you post a copy of the connection calls (minus passwords), unless the inserts >use exactly the same syntax as this example.
+
+Here is what is in the connection.php file.  I linked to the file through an include in the same fashion as where I execute the INSERT queries elsewhere in the code.
+$conn = mysql_connect("localhost", ******, ******) or die("Could not connect");
+mysql_select_db("adbay_com_-_cms") or die("Could not select database");
+
+I will try the working INSERT query in this area to check that out.
+As to the others posting about the password access.  I did, as stated in my first posting, check permissions.  I used phpMyAdmin to verify that the permissions for the user account I was using were correct.  And if it matters at all, apache@localhost is not the name of the user account that I use to get into the database.  I don't have any user accounts with the name apache in them at all for that matter.
+
+
+And if it matters at all, apache@localhost is not the name of the user account that I use to get into the database. I don't have any user accounts with the name apache in them at all for that matter.
+
+If it is saying 'apache@localhost' the username is not getting passed correctly to the MySQL connection. 'apache' is normally the user that runs the httpd process (at least on Redhat-based systems) and if no username is passed during the connection MySQL uses whomever is calling for the connection.
+If you do the connection right in your script, not in a called file, do you get the same error?
+Don't forget to check your database error logs. You should be able to see if you are even hitting the DB. If you aren't, you should check your firewall rules on the box. On a linux box you can run iptables -L to get the firewall list rules. 
+Otherwise it will be a pure access issue. Do a "select * from mysql.user" to see if the apache user is even set up in there. Further, I would recommend creating an account specifically for your app as opposed to using apache, since any other app you create will run as apache by default, and could get unauthorized access to your db. 
+Just look up "GRANT" in the documentation @ dev.mysql.com to get more info. If you have more specific questiosn regarding db, just edit your question, and i will take a look.
+
+Does the connect.php script actually make the connection or does it just define a function you need to call to create a connection? The error you're getting is symptomatic of not having a previously established connection at all.
+ETA: Also change the include to a require. I suspect it's not actually including the file at all. But include can fail silently.
+
+Change the include() to require(). If the "connect.php" file can't be require()d, the script will fail with a fatal error, whereas include() only generates a warning. If the username you're passing to mysql_connect() isn't "apache", an incorrect path to the connect script is the most common way to get this type of error.
+
+Dude the answer is a big DUH! which unfortunately it took me a while to figure out as well. You probably have a function like dbconnect() and you are using variables from an include file to make the connection. $conn = mysql_connect($dbhost, $dbuser, $dbpass).
+Well since this is inside a function the variables from the include file need to be passed to the function or else the function will not know what $dbhost, $dbuser and $dbpass is. A way to fix this is to make those variables global so your functions can pick them up. Another solution which is not very secure would be to write out you host, user and pass in the mysql_connect function.
+Hope this helps but I had the same problem.
+
+You can do one of the following:
+
+Add the user "apache" and setup its privileges from phpmyadmin or using mysql on a shell
+Tell php to run mysql_connect as another user, someone who already has the privileges needed (but maybe not root), look for mysql.default_user in your php.ini file.
+
+
+Did you remember to do:
+flush privileges;
+
+If the user is not set up then it will give the 'apache'@'localhost' error.

@@ -1,0 +1,71 @@
+How do you set your Cocoa application as the default web browser?
+objective-c cocoa
+How do you set your Cocoa application as the default web browser?
+I want to create an application that is launched by default when the user clicks on an HTTP or HTTPS link in other applications (Mail, iChat etc.).
+
+
+There are four steps to making an app that can act as the default web browser. The first three steps allow your app to act as a role handler for the relevant URL schemes (HTTP and HTTPS) and the final step makes it the default role handler for those schemes.
+1) Add the URL schemes your app can handle to your application's info.plist file
+To add support for http:// and https:// you'd need to add the following to your application's info.plist file. This tells the OS that your application is capable of handling HTTP and HTTP URLs.
+<key>CFBundleURLTypes</key>
+<array>
+    <dict>
+        <key>CFBundleURLName</key>
+        <string>http URL</string>
+        <key>CFBundleURLSchemes</key>
+        <array>
+            <string>http</string>
+        </array>
+    </dict>
+    <dict>
+        <key>CFBundleURLName</key>
+        <string>Secure http URL</string>
+        <key>CFBundleURLSchemes</key>
+        <array>
+            <string>https</string>
+        </array>
+    </dict>
+</array>
+
+2) Write an URL handler method
+This method will be called by the OS when it wants to use your application to open a URL. It doesn't matter which object you add this method to, that'll be explicitly passed to the Event Manager in the next step. The URL handler method should look something like this:
+- (void)getUrl:(NSAppleEventDescriptor *)event 
+    withReplyEvent:(NSAppleEventDescriptor *)replyEvent
+{
+  // Get the URL
+  NSString *urlStr = [[event paramDescriptorForKeyword:keyDirectObject] 
+    stringValue];
+
+  //TODO: Your custom URL handling code here
+}
+
+3) Register the URL handler method
+Next, tell the event manager which object and method to call when it wants to use your app to load an URL. In the code here I'm passed self as the event handler, assuming that we're calling setEventHandler from the same object that defines the getUrl:withReplyEvent: method.
+You should add this code somewhere in your application's initialisation code.
+NSAppleEventManager *em = [NSAppleEventManager sharedAppleEventManager];
+[em 
+  setEventHandler:self 
+  andSelector:@selector(getUrl:withReplyEvent:) 
+  forEventClass:kInternetEventClass 
+  andEventID:kAEGetURL];
+
+Some applications, including early versions of Adobe AIR, use the alternative WWW!/OURL AppleEvent to request that an application opens URLs, so to be compatible with those applications you should also add the following:
+[em
+  setEventHandler:self 
+  andSelector:@selector(getUrl:withReplyEvent:) 
+  forEventClass:'WWW!' 
+  andEventID:'OURL'];
+
+4) Set your app as the default browser
+Everything we've done so far as told the OS that your application is a browser, now we need to make it the default browser.
+We've got to use the Launch Services API to do this. In this case we're setting our app to be the default role handler for HTTP and HTTPS links:
+CFStringRef bundleID = (CFStringRef)[[NSBundle mainBundle] bundleIdentifier];
+OSStatus httpResult = LSSetDefaultHandlerForURLScheme(CFSTR("http"), bundleID);
+OSStatus httpsResult = LSSetDefaultHandlerForURLScheme(CFSTR("https"), bundleID);
+//TODO: Check httpResult and httpsResult for errors
+
+(It's probably best to ask the user's permission before changing their default browser.)
+Custom URL schemes
+It's worth noting that you can also use these same steps to handle your own custom URL schemes. If you're creating a custom URL scheme it's a good idea to base it on your app's bundle identifier to avoid clashes with other apps. So if your bundle ID is com.example.MyApp you should consider using x-com-example-myapp:// URLs.
+
+If you just want to change the default helper app for http(s), you can do so in the Safari preferences. There youâll find a drop down which will let you select all the registered handler applications for http. To automatically have the app set itself as the default browser see the previous instructions.

@@ -1,0 +1,59 @@
+How to implement database engine independent paging?
+database paging
+Task: implement paging of database records suitable for different RDBMS. Method should work for mainstream engines - MSSQL2000+, Oracle, MySql, etc.
+Please don't post RDBMS specific solutions, I know how to implement this for most of the modern database engines. I'm looking for the universal solution. Only temporary tables based solutions come to my mind at the moment.
+EDIT:
+I'm looking for SQL solution, not 3rd party library.
+
+
+SubSonic can do this for you if you if you can tolerate Open Source...
+http://subsonicproject.com/querying/webcast-using-paging/
+Other than that I know NHib does as well
+
+JPA lets you do it with the Query class:
+Query q = ...;
+q.setFirstResult (0);
+q.setMaxResults (10);
+
+gives you the first 10 results in the result set.
+If you want a DBMS independent raw SQL solution, I'm afraid you're out of luck.  All the vendors do it differently.
+
+The most natural and efficient way to do paging is using the LIMIT/OFFSET (TOP in Sybase world) construct. A DBindependent way would have to know which engine it's running on and apply the proper SQL construct.
+At least, that's the way I've seen it done in DB independent libraries' code. You can abstract away the paging logic once you get the data from the engine with the specific query. 
+If you really are looking for a single, one SQL sentence solution, could you show what you have in mind? Like the SQL for the temp table solution. That would probably get you more relevant suggestions.
+EDIT: 
+I wanted to see what were you thinking because I couldn't see a way to do it with temp tables and not use a engine specific construct. You used specific constructs in the example. I still don't see a way to implement paging in the database with only (implemented) standard SQL. You could bring the whole table in standard SQL and page in the application, but that is obviously stupid.
+So the question would now be more like "Is there a way to implement paging without using LIMIT/OFFSET or equivalent?" and I guess that the answer is "Sanely, no." You could try using cursors but you'll fall prey to database specific sentences/behavior there as well.
+A wacko (read stupid) idea that just occurred to me would be to add a page column to the table, say create table test (id int, name varchar, phone varchar, page int) and then you can get page 1 with select * from table where page = 1. But that means having to add code to maintain that column, which, again could only be done by either bringing the whole database or using database specific constructs. That besides having to add a different column per each possible ordering and many other flaws.
+I can't provide proof, but I really think you just can't do it sanely.
+
+Proceed as usual:
+
+Start by implementing it according to the standard. And then handle the corner cases, i.e. the DBMSes which don't implement the standard. How to handle the corner cases depends on your development environment.
+You are looking for a "universal" approach. The most universal way to paginate is through the use of cursors, but cursor-based pagination don't fit very well with a non-stateful environment like a web application.
+I've written about the standard and the implementations (including cursors) here:
+http://troels.arvin.dk/db/rdbms/#select-limit-offset
+
+@Vinko Vrsalovic,
+as I wrote in question I know how to do it in most DBs. I what to find universal solution or get a proof that it doesn't exist.
+Here is one stupid solution based on temporary table. It's obviously bad, so no need to comment on it. 
+N - upper bound
+M - lower bound
+
+create #temp (Id int identity, originalId int)
+
+insert into #temp(originalId)
+select top N KeyColumn from MyTable
+where ...
+
+select MyTable.* from MyTable
+join #temp t on t.originalId = MyTable.KeyColumn
+where Id between M and M
+order by Id asc
+
+drop #temp
+
+
+There would have been a universal solution if SQL specifications had included paging as a standard. The requirement for any RDBMS language to be called an RDBMS language does not include paging support as well. 
+Many database products support SQL with proprietary extensions to the standard language. Some of them support paging like MySQL with the limit clause, Rowid with Oracle; each handled differently. Other DBMS's will need to add a field called rowid or something like that.
+I dont think you can have a universal solution (anyone is free to prove me wrong here;open to debate) unless it is built into the database system itself or unless there is a company say ABC that uses Oracle, MySQL, SQL Server and they decide to have all the various database systems provide their own implementation of paging by their database developers providing a universal interface for the code that uses it.  

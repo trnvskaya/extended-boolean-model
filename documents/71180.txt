@@ -1,0 +1,212 @@
+How can I find last row that contains data in the Excel sheet with a macro?
+excel excel-vba
+How can I find the last row that contains data in a specific column and on a specific sheet?
+
+
+Function LastRow(rng As Range) As Long
+    Dim iRowN As Long
+    Dim iRowI As Long
+    Dim iColN As Integer
+    Dim iColI As Integer
+    iRowN = 0
+    iColN = rng.Columns.count
+    For iColI = 1 To iColN
+        iRowI = rng.Columns(iColI).Offset(65536 - rng.Row, 0).End(xlUp).Row
+        If iRowI > iRowN Then iRowN = iRowI
+    Next
+    LastRow = iRowN
+End Function
+
+
+function LastRowIndex(byval w as worksheet, byval col as variant) as long
+  dim r as range
+
+  set r = application.intersect(w.usedrange, w.columns(col))
+  if not r is nothing then
+    set r = r.cells(r.cells.count)
+
+    if isempty(r.value) then
+      LastRowIndex = r.end(xlup).row
+    else
+      LastRowIndex = r.row
+    end if
+  end if
+end function
+
+Usage:
+? LastRowIndex(ActiveSheet, 5)
+? LastRowIndex(ActiveSheet, "AI")
+
+
+How about:
+ Sub GetLastRow(strSheet, strColum)
+ Dim MyRange As Range
+ Dim lngLastRow As Long
+
+    Set MyRange = Worksheets(strSheet).Range(strColum & "1")
+
+    lngLastRow = Cells(Rows.Count, MyRange.Column).End(xlUp).Row
+ End Sub
+
+Re Comment
+This
+  Cells.Find("*",SearchOrder:=xlByRows,SearchDirection:=xlPrevious).Row
+
+Will return the row number of the last cell even when only a single cell in the last row has data. 
+
+First function moves the cursor to the last non-empty row in the column.
+Second Function prints that columns row.
+Selection.End(xlDown).Select
+MsgBox (ActiveCell.Row)
+
+
+You should use the .End(xlup) but instead of using 65536 you might want to use:
+sheetvar.Rows.Count
+
+That way it works for Excel 2007 which I believe has more than 65536 rows
+
+Public Function LastData(rCol As Range) As Range    
+    Set LastData = rCol.Find("*", rCol.Cells(1), , , , xlPrevious)    
+End Function
+
+Usage: ?lastdata(activecell.EntireColumn).Address
+
+Here's a solution for finding the last row, last column, or last cell.  It addresses the A1 R1C1 Reference Style dilemma for the column it finds.  Wish I could give credit, but can't find/remember where I got it from, so "Thanks!" to whoever it was that posted the original code somewhere out there.
+Sub Macro1
+    Sheets("Sheet1").Select
+    MsgBox "The last row found is: " & Last(1, ActiveSheet.Cells)
+    MsgBox "The last column (R1C1) found is: " & Last(2, ActiveSheet.Cells)
+    MsgBox "The last cell found is: " & Last(3, ActiveSheet.Cells)
+    MsgBox "The last column (A1) found is: " & Last(4, ActiveSheet.Cells)
+End Sub
+
+Function Last(choice As Integer, rng As Range)
+' 1 = last row
+' 2 = last column (R1C1)
+' 3 = last cell
+' 4 = last column (A1)
+    Dim lrw As Long
+    Dim lcol As Integer
+
+    Select Case choice
+    Case 1:
+        On Error Resume Next
+        Last = rng.Find(What:="*", _
+                        After:=rng.Cells(1), _
+                        LookAt:=xlPart, _
+                        LookIn:=xlFormulas, _
+                        SearchOrder:=xlByRows, _
+                        SearchDirection:=xlPrevious, _
+                        MatchCase:=False).Row
+        On Error GoTo 0
+
+    Case 2:
+        On Error Resume Next
+        Last = rng.Find(What:="*", _
+                        After:=rng.Cells(1), _
+                        LookAt:=xlPart, _
+                        LookIn:=xlFormulas, _
+                        SearchOrder:=xlByColumns, _
+                        SearchDirection:=xlPrevious, _
+                        MatchCase:=False).Column
+        On Error GoTo 0
+
+    Case 3:
+        On Error Resume Next
+        lrw = rng.Find(What:="*", _
+                       After:=rng.Cells(1), _
+                       LookAt:=xlPart, _
+                       LookIn:=xlFormulas, _
+                       SearchOrder:=xlByRows, _
+                       SearchDirection:=xlPrevious, _
+                       MatchCase:=False).Row
+        lcol = rng.Find(What:="*", _
+                        After:=rng.Cells(1), _
+                        LookAt:=xlPart, _
+                        LookIn:=xlFormulas, _
+                        SearchOrder:=xlByColumns, _
+                        SearchDirection:=xlPrevious, _
+                        MatchCase:=False).Column
+        Last = Cells(lrw, lcol).Address(False, False)
+        If Err.Number > 0 Then
+            Last = rng.Cells(1).Address(False, False)
+            Err.Clear
+        End If
+        On Error GoTo 0
+    Case 4:
+        On Error Resume Next
+        Last = rng.Find(What:="*", _
+                        After:=rng.Cells(1), _
+                        LookAt:=xlPart, _
+                        LookIn:=xlFormulas, _
+                        SearchOrder:=xlByColumns, _
+                        SearchDirection:=xlPrevious, _
+                        MatchCase:=False).Column
+        On Error GoTo 0
+        Last = R1C1converter("R1C" & Last, 1)
+        For i = 1 To Len(Last)
+            s = Mid(Last, i, 1)
+            If Not s Like "#" Then s1 = s1 & s
+        Next i
+        Last = s1
+
+    End Select
+
+End Function
+
+Function R1C1converter(Address As String, Optional R1C1_output As Integer, Optional RefCell As Range) As String
+    'Converts input address to either A1 or R1C1 style reference relative to RefCell
+    'If R1C1_output is xlR1C1, then result is R1C1 style reference.
+    'If R1C1_output is xlA1 (or missing), then return A1 style reference.
+    'If RefCell is missing, then the address is relative to the active cell
+    'If there is an error in conversion, the function returns the input Address string
+    Dim x As Variant
+    If RefCell Is Nothing Then Set RefCell = ActiveCell
+    If R1C1_output = xlR1C1 Then
+        x = Application.ConvertFormula(Address, xlA1, xlR1C1, , RefCell) 'Convert A1 to R1C1
+    Else
+        x = Application.ConvertFormula(Address, xlR1C1, xlA1, , RefCell) 'Convert R1C1 to A1
+    End If
+    If IsError(x) Then
+        R1C1converter = Address
+    Else
+        'If input address is A1 reference and A1 is requested output, then Application.ConvertFormula
+        'surrounds the address in single quotes.
+        If Right(x, 1) = "'" Then
+            R1C1converter = Mid(x, 2, Len(x) - 2)
+        Else
+            x = Application.Substitute(x, "$", "")
+            R1C1converter = x
+        End If
+    End If
+End Function
+
+
+Simple and quick:
+Dim lastRow as long
+Range("A1").select
+lastRow = Cells.Find("*",SearchOrder:=xlByRows,SearchDirection:=xlPrevious).Row
+
+Example use:
+cells(lastRow,1)="Ultima Linha, Last Row. Youpi!!!!"
+
+'or 
+
+Range("A" & lastRow).Value = "FIM, THE END"
+
+
+sub test()
+msgbox Worksheets("sheet_name").Range("A65536").End(xlUp).Row
+end sub
+
+This is look for value in column A because of "A65536"
+
+I would like to add one more reliable way using UsedRange to find the last used row:
+lastRow = Sheet1.UsedRange.Row + Sheet1.UsedRange.Rows.Count - 1
+
+Similarly to find the last used column you can see this
+
+Result in Immediate Window:
+?Sheet1.UsedRange.Row+Sheet1.UsedRange.Rows.Count-1
+ 21 
+

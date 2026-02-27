@@ -1,0 +1,58 @@
+SQL Server Views, blessing or curse?
+sql
+I once worked with an architect who banned the use of SQL views. His main reason was that views made it too easy for a thoughtless coder to needlessly involve joined tables which, if that coder tried harder, could be avoided altogether.  Implicitly he was encouraging code reuse via copy-and-paste instead of encapsulation in views.
+The database had nearly 600 tables and was highly normalised, so most of the useful SQL was necessarily verbose.
+Several years later I can see at least one bad outcome from the ban - we have many hundreds of dense, lengthy stored procs that verge on unmaintainable.
+In hindsight I would say it was a bad decision, but what are your experiences with SQL views?  Have you found them bad for performance? Any other thoughts on when they are or are not appropriate?
+
+
+You've answered your own question:
+
+he was encouraging code reuse via copy-and-paste
+
+Reuse the code by creating a view.  If the view performs poorly, it will be much easier to track down than if you have the same poorly performing code in several places.
+
+My current database was completely awash with countless small tables of no more than 5 rows each.  Well, I could count them but it was cluttered.  These tables simply held constant type values (think enum) and could very easily be combined into one table.  I then made views that simulated each of the tables I deleted to ensure backward compactability.  Worked great.
+
+We use views for all of our simple data exports to csv files. This simplifies the process of writing a package and embedding the sql within the package which becomes cumbersome and hard to debug against.
+Using views, we can execute a view and see exactly what was exported, no cruft or unknowns. It greatly helps in troubleshooting problems with improper data exports and hides any complex joins behind the view. Granted, we use a very old legacy system from a TERMS based system that exports to sql, so the joins are a little more complex than usual.
+
+Views are good for ad-hoc queries, the kind that a DBA does behind the scenes when he/she needs quick access to data to see what's going on with the system.
+But they can be bad for production code.  Part of the reason is that it's sort of unpredictable what indexes you will need with a view, since the where clause can be different, and therefore hard to tune.  Also, you are generally returning a lot more data than is actually necesary for the individual queries that are using the view.  Each of these queries could be tightened up and tuned individually.
+There are specific uses of views in cases of data partitioning that can be extremely useful, so I'm not saying they should avoided altogether.  I'm just saying that if a view can be replaced by a few stored procedures, you will be better off without the view.
+
+There are some very good uses for views; I have used them a lot for tuning and for exposing less normalized sets of information, or for UNION-ing results from multiple selects into a single result set.
+Obviously any programming tool can be used incorrectly, but I can't think of any times in my experience where a poorly tuned view has caused any kind of drawbacks from a performance standpoint, and the value they can provide by providing explicitly tuned selects and avoiding duplication of complex SQL code can be significant.
+Incidentally, I have never been a fan of architectural "rules" that are based on keeping developers from hurting themselves.  These rules often have unintended side-effects -- the last place I worked didn't allow using NULLs in the database, because developers might forget to check for null.  This ended up forcing us to work around "1/1/1900" dates and  integers defaulted to "0" in all the software built against the databases, and introducing a litany of bugs caused by devs working around places where NULL was the appropriate value.
+
+Like all power views have its own dark side. However you cannot blame views for when somebody writes bad performed code. Moreover views can limit the exposure of some columns and provide extra security.
+
+Let's see if I can come up with a lame analogy ...
+"I don't need a phillips screwdriver.  I carry a flat head and a grinder!"
+Dismissing views out of hand will cause pain long term.  For one, it's easier to debug and modify a single view definition than it is to ship modified code.
+
+One thing that hasn't been mentioned thus far is use of views to provide a logical picture of the data to end users for ad hoc reporting or similar.
+This has two merits:
+
+To allow the user to single "tables" containing the data they expect rather requiring relatively non technical users to work out potentially complex joins (because the database is normalised)
+It provides a means to allow some degree of ah hoc access without exposing the data or the structure to the end users.
+
+Even with non ad-hoc reporting its sometimes signicantly easier to provide a view to the reporting system that contains the relveant data, neatly separating production of data from presentation of same.
+
+Some time ago I've tried to maintain code that used views built from views built from views... That was a pain in the a**, so I got a little allergic to views :)
+I usually prefer working with tables directly, especially for web applications where speed is a main concern. When accessing tables directly you have the chance to tweak your SQL-Queries to achieve the best performance. "Precompiled"/cached working plans might be one advantage of views, but in many cases just-in-time compilation with all given parameters and where clauses in consideration will result in faster processing over all.
+However that does not rule out views totally, if used adequately. For example you can use a view with the "users" table joined with the "users_status" table to get an textual explanation for each status - if you need it. However if you don't need the explanation: use the "users" table, not the view. As always: Use your brain!
+
+Not a big fan of views (Can't remember the last time I wrote one) but wouldn't ban them entirely either. If your database allows you to put indexes on the views and not just on the table, you can often improve performance a good bit which makes them better. If you are using views, make sure to look into indexing them.
+I really only see the need for views for partitioning data and for extremely complex joins that are really critical to the application (thinking of financial reports here where starting from the same dataset for everything might be critical). I do know some reporting tools seem to prefer views over stored procs.
+I am a big proponent of never returning more records or fields than you need in a specific instance and the overuse of views tends to make people return more fields (and in way too many cases, too many joins) than they need which wastes system resources. 
+I also tend to see that people who rely on views (not the developer of the view - the people who only use them) often don't understand the database very well (so they would get the joins wrong if not using the view) and that to me is critical to writing good code against the database. I want people to understand what they are asking the db to do, not rely on some magic black box of a view. That is all personal opinion of course, your mileage may vary.
+Like BlaM I personally haven't found them easier to maintain than stored procs.
+Edited in Oct 2010 to add:
+Since I orginally wrote this, I have had occasion to work with a couple of databases designed by people who were addicted to using views. Even worse they used views that called views that called views (to the point where eventually we hit the limit of the number of tables that can be called). This was a performance nightmare. It took 8 minutes to get a simple count(*) of the records in one view and much longer to get data. If you use views, be very wary of using views that call other views. You will be building a system that will very probably not work under the normal performance load on production. In SQL Server you can only index views that do not call other views, so what ends up happening when you use views in a chain, is that the entire record set has to be built for each view and it is not until you get to the last one that the where clause criteria are applied. You may need to generate millions of records just to see three. You may join to the same table 6 times when you really only need to join to it once, you may return many many more columns than you need in the final results set. 
+
+Views have been helpful to us in their role for use by public web based applications that dip from a production database. Simplified security is the primary advantage we see since the table design in the database may combine sensitive and non-sensitive data within the same table. A stored procedure shares much of this advantage, but the view is read-only, has potential interop advantages, and is a less complex thing for junior people to implement.
+This security abstraction advantage also applies when views are used for end-user ad-hoc queries; this would be less of an advantage if we had a proper, flattened, data warehouse representation of our data.
+
+Views can also reduce the size of complex queries (in the same way stored procs can).
+This can reduce network bandwith for very busy databases.

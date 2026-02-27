@@ -1,0 +1,396 @@
+How to encrypt in VBScript using AES?
+asp-classic vbscript aes rijndael rfc2898
+I am looking to encrypt some data using Rijndael/AES in VBScript using a specific key and IV value. Are there any good function libraries or COM components that would be good to use?
+I looked at CAPICOM; it allows a passphrase only, and won't allow setting specific key and IV values.
+
+
+Somebody wrote a short tutorial on using AES is VBScript:
+http://www.example-code.com/vbscript/AesIv.asp
+The module mentioned in that tutorial can be found at:
+http://www.chilkatsoft.com/refdoc/xChilkatCrypt2Ref.html
+
+One option would be to create a simple wrapper class in .NET for the RijndaelManaged class from the .NET framework and expose it via COM Interop so you can call it from VBScript.
+
+One response suggested wrapping the RijndaelManaged class in COM. You could also wrap some other AES implementation in COM.  I just tried SlowAES, which is a JavaScript implementation of AES. Wrapping it in COM via a Windows Script Component makes it callable from VBScript.  I would recommend this only if you cannot use the .NET approach; I would guess the AES for .NET will be faster than the AES implemented in JavaScript. 
+In my tests of the COM-wrapped-SlowAEs, I used CBC mode, and the encryption was completely compatible with the RijndaelManaged class in .NET. 
+Here's the WSC; I left out the 3 .js files provided by SlowAES.  You need to insert them unchanged where I marked the file. 
+<?xml version="1.0"?>
+
+<!--
+
+//
+// Ionic.COM.SlowAES.wsc
+//
+// This is a Windows Script Component that exposes the SlowAES
+// encryption engine via COM. This AES can be used from any 
+// COM-capable environment, including Javascript or VBScript. 
+//
+//
+// This code is licensed under the Microsoft Public License. See the
+// accompanying License.txt file for details.
+//
+// Copyright 2009 Dino Chiesa
+//
+
+-->
+
+<package>
+
+<component id="Ionic.Com.SlowAES">
+
+  <comment>
+SlowAES is a Javascript implementation of AES.  
+     See http://code.google.com/p/slowaes.  
+This is a COM package for SlowAES.
+  </comment>
+
+<?component error="true" debug="true"?>
+
+<registration
+  description="WSC Component for SlowAES"
+  progid="Ionic.Com.SlowAES"
+  version="1.00"
+  classid="{ba78383f-1bcc-4df6-9fb9-61cd639ebc94}"
+  remotable="False">
+
+  <!-- boilerplate registration/unregistration logic -->
+  <script language="VBScript">
+  <![CDATA[
+
+strComponent = "Ionic SlowAES"
+
+Function Register
+  MsgBox strComponent & " - registered."
+End Function
+
+Function Unregister
+  MsgBox strComponent & " - unregistered."
+End Function
+
+  ]]>
+  </script>
+</registration>
+
+<public>
+  <method name="EncryptString">
+<parameter name="plainText"/>
+  </method>
+
+  <method name="DecryptBytes">
+<parameter name="cipherText"/>
+  </method>
+
+  <method name="DecryptBytesToString">
+<parameter name="cipherText"/>
+  </method>
+
+  <method name="DecryptHexString">
+<parameter name="hexStringCipherText"/>
+  </method>
+
+  <method name="DecryptCommaDelimitedStringToString">
+<parameter name="cipherText"/>
+  </method>
+
+  <property name="Key">
+  <put/>
+  </property>
+
+  <property name="Mode">
+  <put/>
+  <get/>
+  </property>
+
+  <property name="IV">
+  <put/>
+  <get/>
+  </property>
+
+  <property name="KeySize">
+  <put/>
+  <get/>
+  </property>
+</public>
+
+<script language="JavaScript">
+<![CDATA[
+
+// ...insert slowAES code here... //
+
+// defaults
+var _keysize = slowAES.aes.SIZE_128;
+var _mode = slowAES.modeOfOperation.CBC;
+var _iv = [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
+var _key;
+
+/* 
+* byteArrayToHexString
+* convert a byte array to hex string.
+*/
+function byteArrayToHexString(a)
+{
+try { hexcase } catch(e) { hexcase=0; }
+var hex_tab = hexcase ? "0123456789ABCDEF" : "0123456789abcdef";
+var r= "";
+for (var i = 0; i < a.length; i++)
+{
+    var b  = hex_tab.charAt((a[i] >> 4) & 0x0F) + 
+    hex_tab.charAt(a[i] & 0x0F);
+    r+= b;
+}
+return r;
+}
+
+/* 
+* hexStringToByteArray
+* convert a string of hex byts to a byte array
+*/
+function hexStringToByteArray(s)
+{
+var r= Array(s.length/2);
+for (var i = 0; i < s.length; i+=2)
+{
+    r[i/2] = parseInt(s.substr(i,2),16);
+}
+return r;
+}
+
+function EncryptString(plainText)
+{
+ var bytesToEncrypt = cryptoHelpers.convertStringToByteArray(plainText);
+ var result = slowAES.encrypt(bytesToEncrypt, 
+     _mode,
+     _key,
+     _keysize,
+     _iv);
+return result['cipher'];
+}
+
+function DecryptBytesToString(cipherText)
+{
+var d = DecryptBytes(cipherText);
+var s = cryptoHelpers.convertByteArrayToString(d);
+s[cipherText.length]= 0;
+return s;
+}
+
+function DecryptHexString(hexStringCipherText)
+{
+var cipherText = hexStringToByteArray(hexStringCipherText);
+return DecryptBytesToString(cipherText);
+}
+
+function DecryptCommaDelimitedStringToString(cipherText)
+{
+var c = [];
+var atoms = cipherText.split(",");
+for (i=0; i < atoms.length; i++)
+{
+    c.push(parseInt(atoms[i], 10));
+}
+var d = DecryptBytes(c);
+return cryptoHelpers.convertByteArrayToString(d);
+}
+
+function DecryptBytes(cipherText)
+{
+if (cipherText == undefined) return null;
+
+var originalSize = cipherText.length;
+
+var result = slowAES.decrypt(cipherText, 
+    originalSize,
+    _mode,
+    _key,
+    _keysize,
+    _iv);
+
+return result;
+}
+
+function put_Key(keyString)
+{
+  _key = hexStringToByteArray(keyString);
+}
+
+function put_KeySize(size)
+{
+if (size == 128) _keysize = slowAES.aes.keySize.SIZE_128;
+else if (size == 192) _keysize = slowAES.aes.keySize.SIZE_192;
+else if (size == 256) _keysize = slowAES.aes.keySize.SIZE_256;
+else
+    throw "Unsupported key size.  Must be one of { 128, 192, 256 }.";
+}
+
+function get_KeySize()
+{
+if (_keysize == slowAES.aes.keySize.SIZE_128) return 128;
+else if (_keysize == slowAES.aes.keySize.SIZE_192) return 192;
+else if (_keysize == slowAES.aes.keySize.SIZE_256) return 256;
+else return -1;
+}
+
+function put_IV(ivString)
+{
+    _iv = hexStringToByteArray(ivString);
+}
+
+function get_IV()
+{
+return byteArrayToHexString(_iv);
+}
+
+function put_Mode(mode)
+{
+if (mode == "CBC") _mode= slowAES.modeOfOperation.CBC;
+else if (mode == "OFB") _mode= slowAES.modeOfOperation.OFB;
+else if (mode == "CFB") _mode= slowAES.modeOfOperation.CFB;
+else throw "Unsupported mode.  Must be one of {CBC, OFB, CFB}";
+}
+
+function get_Mode()
+{
+if (_mode == slowAES.modeOfOperation.CBC) return "CBC";
+if (_mode == slowAES.modeOfOperation.OFB) return "OFB";
+if (_mode == slowAES.modeOfOperation.CFB) return "CFB";
+return "???";
+}
+
+]]>
+
+</script>
+
+</component>
+
+</package>
+
+Save that to a file called SlowAES.wsc.  Register it with "regsvr32 SlowAES.wsc."
+Here's some VBScript code that uses the component.
+' '
+' byteArrayToHexString'
+' convert a byte array to hex string.'
+' '
+Function byteArrayToHexString(a)
+Dim r,b,i
+r = ""
+For i = 0 To UBound(a)
+    b = Hex( (a(i) And &HF0) / 16) & Hex(a(i) And &HF)
+    r= r & b
+Next
+byteArrayToHexString= r
+End Function
+
+' '
+' hexStringToByteArray'
+' convert a string of hex byts to a byte array'
+' '
+Function hexStringToByteArray(s)
+Dim r()
+ReDim r(Len(s)/2-1)
+Dim x
+For i = 0 To  Len(s)-2 Step 2
+    x= "&H" & Mid(s,i+1,2)
+    r(i/2) = CInt(x)
+Next
+hexStringToByteArray= r
+End Function
+
+Function DemoEncryption()
+WScript.echo "Testing Ionic.Com.SlowAES..."
+
+WScript.echo "key:              " & byteArrayToHexString(key)
+WScript.echo "iv:               " & byteArrayToHexString(iv)
+WScript.echo "key length:       " & keyLengthInBytes & " bytes"
+WScript.echo "key length:       " & (keyLengthInBytes*8) & " bits"
+WScript.echo "plaintext:        " & plaintext
+WScript.echo "plaintext.length: " & Len(plaintext)
+
+WScript.echo "instantiate Ionic.Com.SlowAES"
+Dim aes
+set aes = CreateObject("Ionic.Com.SlowAES")
+
+WScript.echo "keysize"
+aes.KeySize = keyLengthInBytes * 8
+
+WScript.echo "key"
+aes.Key = byteArrayToHexString(key)
+
+WScript.echo "iv "
+aes.IV= byteArrayToHexString(iv)
+
+WScript.echo "mode "
+aes.Mode = "CBC"
+
+WScript.echo "encrypting... "
+Dim result
+result= aes.EncryptString(plaintext)
+
+' result is a comma-separated string '
+' if we Eval() on it we convert it to an array '
+Dim expr
+expr = "Array(" & result & ")" 
+
+result= Eval( expr )
+
+WScript.echo "Cryptotext/Eval: " & byteArrayToHexString(result)
+WScript.echo "Cryptotext.length: " & UBound(result)+1
+
+WScript.echo "decrypting... "
+Dim decrypted
+'The javascript way to do this is to pass the byte array.'
+' Like so:'
+'    var decrypted = aes.DecryptBytesToString(result);'
+' '
+'This does not work from VBScript. So, convert to a hexstring,'
+'pass the hex string, and then convert back, in the COM component.'
+decrypted= aes.DecryptHexString(byteArrayToHexString(result))
+
+WScript.echo "decrypted: " & decrypted
+End Function
+
+dim plaintext, iv, key, keyLengthInBytes
+
+plaintext= "Hello. This is a test. of the emergency broadcasting system."
+' iv must be a hexstring representation of an array of bytes, length=16'
+iv =  hexStringToByteArray("feedbeeffeedbeefbaadf00dbaadf00d")
+' key must be a hexstring representation of an array of bytes, length=16 or 32'
+key = hexStringToByteArray("cafebabe0099887766554433221100AA")
+keyLengthInBytes= UBound(key)+1
+
+If Err.Number <> 0 Then Err.Clear
+
+Call DemoEncryption
+
+If (Err.Number <> 0) Then WScript.echo("Error: " & Err.Description)
+
+If you also want a password-based key derivation capability, then you can grab the very succint JavaScript code for PBKDF2 here, and create another WSC for that, without too much trouble.
+
+EDIT:  I did what I described - grabbed the source for PBKDF2 and integrated it into the code for SlowAES.  I also produced a second, independent implementation in C# that uses the built-in .NET class libraries to do the RFC 2898-key derivation and AES encryption.  
+The result is 3 test applications, one in C#, one in JavaScript and another in VBScript.  The source is available. They all take the same set of arguments.  They each use a RFC 2898-compliant key derivation function.  You can specify the password, salt, IV, and plaintext, as well as the number of RFC 2898 iterations to use in the PBKDF2.  You can easily verify that the ciphertext is the same for each of these test programs. Maybe this example will be useful for someone. 
+
+I know this question is old and OP disappeared, but it is worth noting for future vb6 users that VbCorLib now supports cryptography, including the dreaded Rijndael.
+Link: http://vbcorlib.blogspot.com/
+
+Old question- that really never gets old! One way is to declare encryption classes within vbscript, without needing external added COM objects or wrapper. The following example takes a string, encrypts and decrypts using Rijndael managed class:
+'-----------------------------------------------------
+Dim obj,arr,i,r,str,enc,asc
+dim bytes,bytesd,s,sc,sd
+set obj=WScript.CreateObject("System.Security.Cryptography.RijndaelManaged")
+Set asc = CreateObject("System.Text.UTF8Encoding")
+s="This is a private message"
+bytes=asc.GetBytes_4(s)
+obj.GenerateKey()
+obj.GenerateIV()
+set enc=obj.CreateEncryptor()
+set dec=obj.CreateDecryptor()
+
+bytec=enc.TransformFinalBlock((bytes),0,lenb(bytes))
+sc=asc.GetString((bytec))
+msgbox sc
+
+byted=dec.TransformFinalBlock((bytec),0,lenb(bytec))
+sd=asc.GetString((byted))
+msgbox sd
+'-----------------------------------------------------
+
+Best,

@@ -1,0 +1,48 @@
+Question SpeechSynthesizer.SetOutputToAudioStream audio format problem
+c# audio speech-recognition text-to-speech
+I'm currently working on an application which requires transmission of speech encoded to a specific audio format.
+System.Speech.AudioFormat.SpeechAudioFormatInfo synthFormat = 
+                        new System.Speech.AudioFormat.SpeechAudioFormatInfo(System.Speech.AudioFormat.EncodingFormat.Pcm, 
+                            8000, 16, 1, 16000, 2, null);
+
+This states that the audio is in PCM format, 8000 samples per second, 16 bits per sample, mono, 16000 average bytes per second, block alignment of 2.
+When I attempt to execute the following code there is nothing written to my MemoryStream instance; however when I change from 8000 samples per second up to 11025 the audio data is written successfully.
+SpeechSynthesizer synthesizer = new SpeechSynthesizer(); 
+waveStream = new MemoryStream(); 
+
+PromptBuilder pbuilder = new PromptBuilder(); 
+PromptStyle pStyle = new PromptStyle(); 
+
+pStyle.Emphasis = PromptEmphasis.None; 
+pStyle.Rate = PromptRate.Fast; 
+pStyle.Volume = PromptVolume.ExtraLoud; 
+
+pbuilder.StartStyle(pStyle); 
+pbuilder.StartParagraph(); 
+pbuilder.StartVoice(VoiceGender.Male, VoiceAge.Teen, 2); 
+pbuilder.StartSentence(); 
+pbuilder.AppendText("This is some text."); 
+pbuilder.EndSentence(); 
+pbuilder.EndVoice(); 
+pbuilder.EndParagraph(); 
+pbuilder.EndStyle(); 
+
+synthesizer.SetOutputToAudioStream(waveStream, synthFormat);  
+synthesizer.Speak(pbuilder); 
+synthesizer.SetOutputToNull();
+
+There are no exceptions or errors recorded when using a sample rate of 8000 and I couldn't find anything useful in the documentation regarding SetOutputToAudioStream and why it succeeds at 11025 samples per second and not 8000. I have a workaround involving a wav file that I generated and converted to the correct sample rate using some sound editing tools, but I would like to generate the audio from within the application if I can.
+One particular point of interest was that the SpeechRecognitionEngine accepts that audio format and successfully recognized the speech in my synthesized wave file...
+Update: Recently discovered that this audio format succeeds for certain installed voices, but fails for others. It fails specifically for LH Michael and LH Michelle, and failure varies for certain voice settings defined in the PromptBuilder.
+
+
+I have created some classes in my NAudio library to allow you to convert your audio data to a different sample rate, if you are stuck with 11025 from the synthesizer. Have a look at WaveFormatConversionStream (which uses ACM) or ResamplerDMO (uses a DirectX Media Object)
+
+It's entirely possible that the LH Michael and LH Michelle voices simply don't support 8000 Hz sample rates (because they inherently generate samples > 8000 Hz).  SAPI allows engines to reject unsupported rates.
+
+I was having a similar issue and wanted to post a reply in case it helps anyone. This thread got me towards finding the answer. My issue was, I was having the SpeechSynthesizer output to a WAV file, and then playing that WAV file with NAudio. When outputted to a file, it worked without modification. However, when trying to use a MemoryStream, it would play back, but so fast all you heard was a squeak.
+This code for outputting the SpeechSynthesizer fixed the issue, and no modification is needed on the NAudio side:
+SpeechAudioFormatInfo synthFormat = new SpeechAudioFormatInfo(EncodingFormat.Pcm, 88200, 16, 1, 16000, 2, null);
+synth.SetOutputToAudioStream(streamAudio, synthFormat);
+
+The 88200 is the key. By default, this is 11025. Creating the SpeechAudioFormatInfo and setting it to 88200 is all that is needed.

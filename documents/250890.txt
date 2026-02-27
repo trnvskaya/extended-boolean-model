@@ -1,0 +1,66 @@
+Using QSortFilterProxyModel with a tree model
+model-view-controller qt
+I have a QDirModel whose current directory is set. Then I have a QListView which is supposed to show the files in that directory. This works fine. Now I want to limit the files shown, so it only shows png files (the filename ends with .png). The problem is that using a QSortFilterProxyModel and setting the filter regexp will try to match every parent of the files as well. According to the documentation:
+
+For hierarchical models, the filter is
+  applied recursively to all children.
+  If a parent item doesn't match the
+  filter, none of its children will be
+  shown.
+
+So, how do I get the QSortFilterProxyModel to only filter the files in the directory, and not the directories it resides in?
+
+
+We ran into something similar where I work, and ended up making our own proxy model to do our filtering.  However, looking through the documentation for what you want (which seems like it would be a more common case), I came across two possibilities.
+
+You might be able to set a name filter on the QDirModel and filter things that way.  I have no idea if this will work like you want, or if the name filters apply to directories also.  The documentation is kind of sparse on these.
+Subclass the QSortFilterProxyModel and override the filterAcceptsRow function.  From the documentation:
+
+
+Custom filtering behavior can be achieved by reimplementing the filterAcceptsRow() and filterAcceptsColumn() functions.
+
+Then you could presumably use the model index to check if the index item is a directory (automatically accept) or a file (filter on filename).
+
+derive qsortfilterproxymodel and then...
+bool YourQSortFilterProxyModel::filterAcceptsRow ( int source_row, const QModelIndex & source_parent ) const
+{
+    if (source_parent == qobject_cast<QStandardItemModel*>(sourceModel())->invisibleRootItem()->index())
+    {
+        // always accept children of rootitem, since we want to filter their children 
+        return true;
+    }
+
+    return QSortFilterProxyModel::filterAcceptsRow(source_row, source_parent);
+}
+
+
+For people like me who are interested in the following behaviour : if a child matches the filter, then its ancestors should not be hidden :
+bool MySortFilterProxyModel::filterAcceptsRow(int source_row, const QModelIndex & source_parent) const
+{
+    // custom behaviour :
+    if(filterRegExp().isEmpty()==false)
+    {
+        // get source-model index for current row
+        QModelIndex source_index = sourceModel()->index(source_row, this->filterKeyColumn(), source_parent) ;
+        if(source_index.isValid())
+        {
+            // if any of children matches the filter, then current index matches the filter as well
+            int i, nb = sourceModel()->rowCount(source_index) ;
+            for(i=0; i<nb; ++i)
+            {
+                if(filterAcceptsRow(i, source_index))
+                {
+                    return true ;
+                }
+            }
+            // check current index itself :
+            QString key = sourceModel()->data(source_index, filterRole()).toString();
+            return key.contains(filterRegExp()) ;
+        }
+    }
+    // parent call for initial behaviour
+    return QSortFilterProxyModel::filterAcceptsRow(source_row, source_parent) ;
+}
+
+
+Just use KRecursiveFilterProxyModel model from the KItemModels KDE API

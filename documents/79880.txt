@@ -1,0 +1,49 @@
+ActiveRecord#save_only_valid_attributes
+ruby-on-rails ruby
+I'm looking for a variation on the #save method that will only save 
+attributes that do not have errors attached to them. 
+So a model can be updated without being valid overall, and this will 
+still prevent saving invalid data to the database.
+By "valid attributes", I mean those attributes that give nil when calling @model_instance.errors.on(:attribute)
+Anyone have an idea of how to accomplish this?
+So far, I have the following:
+def save_valid_attributes 
+ valid? 
+ update_atrtibutes attributes.inject({}){|k, v, m| m[k] = v unless errors_on(k.to_sym); m} 
+end
+
+This works if there's no processing done on assignment, which in my case there is.
+For example, I have a database column "start_date", and two methods defined:
+def nice_start_date=(startdate)
+ self.start_date = Chronic.parse(startdate) || startdate
+end
+
+def nice_start_date
+ self.start_date.to_s
+end
+
+These two methods allow me to properly parse the user inputted dates using Chronic before saving. So, second way of doing this, one attribute at a time:
+def save_valid_attributes(attrib) 
+  valid?
+  attrib.each{|(k,v)| send("${k}=", v); save; reload)
+end
+
+The model needs to be reloaded each time since, if one of the dates is invalid and doesn't save, it will prevent all further attributes from saving.
+Is there a better way to do this? I'm sure this isn't an uncommon problem in the Rails world, I just can't seem to find anything in the Google universe of knowledge.
+
+
+I'm not sure how much luck you will have with this without a lot of messing around.
+No matter how DRY and OO and easy your framework makes things ( which is in this case - alot =) you've still got  to remember it's running in front of a bog-standard relational database, which has atomic commits as one of it's defining features. It's designed from the ground up to make sure either all of your changes are commited, or none.
+You're effectively going to be over riding this standard functionality with something that goes 100% against the grain of how rails +  was designed to work. This is likely to lead (as said already) to inconsistent data. 
+Having said that . . . it's always possible. I would look along the lines of doing manual validation of the attributes you care about, and then using the built-in method object.update_attribute_with_validation_skipping.
+Good luck! 
+
+You can overwrite #save like this:
+def save
+  errors.each do |attr, msg|
+    send("#{attr}=", send("#{attr}_was"))
+  end
+  super
+end
+
+This will reset all attributes with errors attached to their original value.

@@ -1,0 +1,103 @@
+How do I sum a list<> of arrays
+c# linq
+I have a List< int[] > myList, where I know that all the int[] arrays are the same length - for the sake of argument, let us say I have 500 arrays, each is 2048 elements long.  I'd like to sum all 500 of these arrays, to give me a single array, 2048 elements long, where each element is the sum of all the same positions in all the other arrays.
+Obviously this is trivial in imperative code:
+int[] sums = new int[myList[0].Length];
+foreach(int[] array in myList)
+{
+    for(int i = 0; i < sums.Length; i++)
+    {
+        sums[i] += array[i];
+    }
+}
+
+But I was wondering if there was a nice Linq or Enumerable.xxx technique?
+
+
+EDIT: I've left this here for the sake of interest, but the accepted answer is much nicer.
+EDIT: Okay, my previous attempt (see edit history) was basically completely wrong... 
+You can do this with a single line of LINQ, but it's horrible:
+var results = myList.SelectMany(array => array.Select(
+                                               (value, index) => new { value, index })
+                    .Aggregate(new int[myList[0].Length],
+                               (result, item) => { result[item.index] += value; return result; });
+
+I haven't tested it, but I think it should work. I wouldn't recommend it though. The SelectMany flattens all the data into a sequence of pairs - each pair is the value, and its index within its original array.
+The Aggregate step is entirely non-pure - it modifies its accumulator as it goes, by adding the right value at the right point.
+Unless anyone can think of a way of basically pivoting your original data (at which point my earlier answer is what you want) I suspect you're best off doing this the non-LINQ way.
+
+Edit: Ouch...This became a bit harder while I wasn't looking. Changing requirements can be a real PITA.
+Okay, so take each position in the array, and sum it:
+var sums = Enumerable.Range(0, myList[0].Length)
+           .Select(i => myList.Select(
+                     nums => nums[i]
+                  ).Sum()
+           );
+
+That's kind of ugly...but I think the statement version would be even worse.
+
+OK, assuming we can assume that the sum of the ints at each position over the list of arrays will itself fit into an int (which is a dodgy assumption, but I'll make it anyway to make the job easier):
+int[] sums = 
+    Enumerable.Range(0, listOfArrays[0].Length-1).
+        Select(sumTotal => 
+            Enumerable.Range(0, listOfArrays.Count-1).
+                Aggregate((total, listIndex) => 
+                    total += listOfArrays[listIndex][sumTotal])).ToArray();
+
+EDIT - D'oh. For some reason .Select evaded me originally. That's a bit better. It's a slight hack because sumTotal is acting as both the input (the position in the array which is used in the Aggregate call) and the output sum in the resulting IEnumerable, which is counter-intuitive. 
+Frankly this is far more horrible than doing it the old-fasioned way :-)
+
+I would do it as follows â¦ but this solution might actually be very slow so you might want to run a benchmark before deploying it in performance-critical sections.
+var result = xs.Aggregate(
+    (a, b) => Enumerable.Range(0, a.Length).Select(i => a[i] + b[i]).ToArray()
+);
+
+
+This works with any 2 sequences, not just arrays:
+var myList = new List<int[]>
+{
+    new int[] { 1, 2, 3, 4, 5, 6, 7, 8, 9 },
+    new int[] { 10, 20, 30, 40, 50, 60, 70, 80, 90 }
+};
+
+var sums =
+    from array in myList
+    from valueIndex in array.Select((value, index) => new { Value = value, Index = index })
+    group valueIndex by valueIndex.Index into indexGroups
+    select indexGroups.Select(indexGroup => indexGroup.Value).Sum()
+
+foreach(var sum in sums)
+{
+    Console.WriteLine(sum);
+}
+
+// Prints:
+//
+// 11
+// 22
+// 33
+// 44
+// 55
+// 66
+// 77
+// 88
+// 99
+
+
+Here is one that trades the Linq statement simplicity with performance.
+var colSums = 
+   from col in array.Pivot()
+   select col.Sum();
+
+
+ public static class LinqExtensions {
+    public static IEnumerable<IEnumerable<T>> Pivot<T>( this IList<T[]> array ) {
+        for( int c = 0; c < array[ 0 ].Length; c++ )
+            yield return PivotColumn( array, c );
+    }
+    private static IEnumerable<T> PivotColumn<T>( IList<T[]> array, int c ) {
+        for( int r = 0; r < array.Count; r++ )
+            yield return array[ r ][ c ];
+    }
+}
+

@@ -1,0 +1,75 @@
+Running many virtual machines on a single host
+performance vmware virtual-machine
+I have a need to run a relatively large number of virtual machines on a relatively small number of physical hosts. Each virtual machine isn't doing to much - each only needs to run essentially one basic network service - think SMTP or the like. Furthermore, the load on each is going to be extremely light. 
+Unfortunately, the numbers are something like 100 virtual machines on 5 physical hosts. Each host is decent enough - core 2 with 2 gigs of ram and a 1tb disk. However, I know just taking a vmware image of ubuntu and throwing on that machine wont get me anywhere near 100 instances and would be something closer to 20.
+So, is there any hope for this ratio of images to hosts? Also, which implementation of virtual machine would be best suited for this purpose - ie has efficient overall usage of resources? We mostly use vmware here, but if there is a significant performance advantage that could be gained by switching to Xen or the like, I am sure we would consider it.
+Thank you in advance for your insights :)
+Note: We ended up using OpenVZ and it worked rather well. The default parameters for an ubuntu template let us run about 40 instances per machine.
+
+
+If you can slim down the guest enough you could probably do it, no X, minimal services started etc.  Look at slackware or ubuntu server.
+Xen seems popular among web hosting companies, so might be worth looking at.  
+CPU usage will depend on the apps but you might want to buy some more ram!
+
+If you do the math, you get in average 100 MB of ram for each machine. This is not much. The overhead for a VM is pretty big, having to run a complete OS in each instance.
+Either you use some really small footprint os (http://www.damnsmalllinux.org/?) and spend time to strip it down even more or you get bigger machines.
+Machines being that cheap, I'd tend to upgrade to a 64bit OS with plenty of ram.
+
+VMWare has a cool option where you can "pool" a group of physical machines, and it will automatically move the virtual machines to whichever hardware is least utilized, without interrupting the operation of the VM.
+Rather advertisey link.
+
+Are you restricted to vmware? Have you considered Operating system-level virtualization? You'll get more VMs with less overhead, given that each VM can run the same kernel.
+
+Several thoughts ...
+1- As pointed out by others, the memory arithmetic doesn't work, you will need more RAM.
+2- Depending on the service, you may be able to find pre-configured virtual machines.  For instance, Astaro has a VM setup for it's free firewall software. You may also be able to find a very small linux distro that you can adapt.
+3- Maybe I am missing something, but it sounds like Ubuntu is pretty close already ... 20 instances per machine on 5 machines get the 100 instances that you require. There is not much headroom for future growth, however ... 
+Take care, good luck.
+
+A couple of problems with that...
+
+For Vmware server you really need Server hardware unless it's only for testing. 
+Go with a virtualization solution that is bare level like Xen Server, or VMware ESX or ESXi (free) or Hyper-V which isn't bare-level but closer in performance.
+For 20-1 you will need more RAM.  The math doesn't add up.  Minimal functional machines need 512 unless it's a perfectly stripped linux that should have at least 256.  20x256= 5gb + 5-10% overhead.  Not really going to happen on those specs.
+For 20-1 you will need more processor.  Each machine will have a vCPU.  shared on a core 2 means that 10-1 per processor.  not good.  We run almost 20 on a dual quad core Dell 1950, 16gb RAM.  Works great.
+Whatever you choose, you are going to be oversubscribing memory.  Not exactly sure which ones let you.  Vmware will, but shows warnings.
+I've heard but have no proof that XenServer will offer performance benefits, but nobody claims more than 10-20%.
+
+Good luck
+
+there are three main fronts to make those fit:
+
+lower overhead. OpenVZ, Vserver, chroot, would be ideal if applicable.  if you really need each instance be a real VM with it's own kernel, try KVM/Xen instead of VMWare.  may be less mature, but you'll have a lot more flexibility.
+smaller guests.  try Ubuntu JeOS, or roll your own with busybox
+share as much as possible between guests.  try sharing a single R/O image with all the OS, and mount a small R/W image for each guest on /var, /home, /etc, etc
+
+
+You'd be best off running VMware ESX/ESXi as they both have a fancy memory pooling feature. It basically takes pages of memory that are identical and uses them amongst multiple guests, so if you're running a lot of identical guests, you'll be able to get a lot more on your host than with other VMs.
+Check the bit about "Transparent Page Sharing" in this blog entry, and a comment about it here too.
+Obviously you're still pushing it with 20 guests per host and only 2Gb RAM on each, but if you remove all extraneous services and apps, and build 1 guest image and clone it before installing the dedicated app on each, you might just get away with it, especially as the VMware link shows a 4Gb host running 40 guests!
+
+Do you really need 100 full-functional operating systems?
+Why not take approach web servers use already? I mean virtual web servers/hosts.
+For example take Apache HTTPD installed on single physical server hosting many virtual servers using single config file. Plus you'll need DNS configured and/or many virtual network interfaces (eth0:0, eth0:1, ... ,eth0:n) with different IP addresses.
+This should work if you really need only several services exposed to the world and the load is not high.
+
+Is there a reason why each network service instance needs to be compartmentalized into their own virtual machines? If you don't need to isolate users from each other, but do need to isolate the processes and traffic, then you'd probably be better off just using the five servers as-is and launching separate processes for each instance. Each instance would be bound to a separate virtual interface.
+For example, configure up a virtual interface and assign it an IP address. Create an httpd.conf file and/or sendmail.cf file for the instance you want to create. In the config file, specify that the daemon should be bound to the virtual interface (and only that one). Launch the daemon.
+Repeat for each of the instances. You'll have a lot of processes running (hundreds, if not thousands), the sum total of them will use less memory than dozens of VMs. Plus, your OS will be able to swap unused ones out to disk.
+
+Another possibility is to use a lightweight Linux distribution that can run in very small amounts of memory. Something like DamnSmallLinux or a variation on DDWRT. They can run in as little as 16MB of memory, allowing you to run 20 or more on a single machine.
+
+I don't know if this is possible, but how about running each service in a chroot environment? You could probably save disk space by hard linking the necessary library files to create each chroot filesystem.
+
+Another issue with running each service in its own VM is that they will all need their own IP address. 100 IPs may not be an issue on an internal network (like a 172/8 or 10/8 setup), but if they're part of your Class A (presuming you have that many public), you're going to run out fast.
+And, as others have asked, why does each service need to be its own VM? Many of them should be easily capable of running on the same host.
+
+If it's something that can be done at the application level - I'd go without any virtualizatoin. You can run multiple instances of your app on different port numbers, even different IPs with IP aliasing easily. That way you can easily run more than 20 copies on each of your boxes. Heck, you might be able to do everything with half of your hardware.
+Virtualization is not the solution for everything. :)
+My 2c.
+
+i've got one quadcore machine running a full desktop and 9 virtual machines. since this is a testing machine i use all sorts of guests. the best on ram usage seem to be debian-kfreebsd, and tiny core linux. tiny core linux uses 10M of ram doing nothing. add a couple of services and it might be 32M, so i could run 32 vm's within 1GB of ram! you have 2GB so lets say you could run 48 machines including a hypervisor and overhead(i'm using kvm.) so with 5 machines we'd be up to 240 machines :D 
+i think i'm going to try that in a moment :D
+btw. you said the vm's whould have a light load, so i didn't count on cpuload or diskload. and those figures have exactly 0 redundancy.
+
+Cloud Foundry. I know nothing about VMs compared to anyone else who may have submitted an answer, but from what I understand if you have a host, a VM on that host, and then Cloud Foundry on that VM you can easily create a base Secondary VM and easily replicate and configure all of your services within that Secondary VM set, while keeping hardware usage low. I don't know if it will work for sure, but from what I understand that would be one of the more minimal approaches and it is a two hull approach which would reduce possible risk of damaging the host machine.

@@ -1,0 +1,80 @@
+How to check whether a file is valid UTF-8?
+validation utf-8 internationalization
+I'm processing some data files that are supposed to be valid UTF-8 but aren't, which causes the parser (not under my control) to fail. I'd like to add a stage of pre-validating the data for UTF-8 well-formedness, but I've not yet found a utility to help do this.
+There's a web service at W3C which appears to be dead, and I've found a Windows-only validation tool that reports invalid UTF-8 files but doesn't report which lines/characters to fix.
+I'd be happy with either a tool I can drop in and use (ideally cross-platform), or a ruby/perl script I can make part of my data loading process. 
+
+
+Use python and str.encode|decode functions.
+>>> a="Î³ÎµÎ¹Î±"
+>>> a
+'\xce\xb3\xce\xb5\xce\xb9\xce\xb1'
+>>> b='\xce\xb3\xce\xb5\xce\xb9\xff\xb1' # note second-to-last char changed
+>>> print b.decode("utf_8")
+Traceback (most recent call last):
+  File "<stdin>", line 1, in <module>
+  File "/usr/local/lib/python2.5/encodings/utf_8.py", line 16, in decode
+    return codecs.utf_8_decode(input, errors, True)
+UnicodeDecodeError: 'utf8' codec can't decode byte 0xff in position 6: unexpected code byte
+
+The exception thrown has the info requested in its .args property.
+>>> try: print b.decode("utf_8")
+... except UnicodeDecodeError, exc: pass
+...
+>>> exc
+UnicodeDecodeError('utf8', '\xce\xb3\xce\xb5\xce\xb9\xff\xb1', 6, 7, 'unexpected code byte')
+>>> exc.args
+('utf8', '\xce\xb3\xce\xb5\xce\xb9\xff\xb1', 6, 7, 'unexpected code byte')
+
+
+How about the gnu iconv library?  Using the iconv() function: "An invalid multibyte sequence is encountered in the input. In this case it sets errno to EILSEQ and returns (size_t)(-1). *inbuf is left pointing to the beginning of the invalid multibyte sequence."
+EDIT:  oh - i missed the part where you want a scripting language.  But for command line work, the iconv utility should validate for you too.
+
+You can use GNU iconv:
+$ iconv -f UTF-8 your_file -o /dev/null
+
+iconv will return 0 if the file could be converted successfully, and 1 if not. Additionally, it will print out the byte offset where the invalid byte sequence occurred.
+Edit: The output encoding doesn't have to be specified, it will be assumed to be UTF-8.
+
+The C++ code below is based upon one posted over many sites over the Internet. I corrected the error in the original code and added the possibility to retrieve both position of invalid character and invalid character itself.
+///Returns -1 if string is valid. Invalid character is put to ch.
+int getInvalidUtf8SymbolPosition(const unsigned char *input, unsigned char &ch) {
+  int                 nb, na;
+  const unsigned char *c = input;
+
+  for (c = input;  *c;  c += (nb + 1)) {
+    if (!(*c & 0x80))
+        nb = 0;
+    else if ((*c & 0xc0) == 0x80)
+    {
+        ch = *c;
+        return (int)c - (int)input;
+    }
+    else if ((*c & 0xe0) == 0xc0)
+        nb = 1;
+    else if ((*c & 0xf0) == 0xe0)
+        nb = 2;
+    else if ((*c & 0xf8) == 0xf0)
+        nb = 3;
+    else if ((*c & 0xfc) == 0xf8)
+        nb = 4;
+    else if ((*c & 0xfe) == 0xfc)
+        nb = 5;
+    na = nb;
+    while (na-- > 0)
+      if ((*(c + nb) & 0xc0) != 0x80)
+      {
+          ch = *(c + nb);
+          return (int)(c + nb) - (int)input;
+      }
+  } 
+
+  return -1;
+}
+
+
+You can use isutf8 from the moreutils collection.
+$ apt-get install moreutils
+$ isutf8 your_file
+
+In a shell script, use the --quiet switch and check the exit status, which is zero for files that are valid utf-8.

@@ -1,0 +1,209 @@
+SQL: How do I SELECT only the rows with a unique value on certain column?
+sql-server
+Thanks a million everyone for everyone's response.  Unfortunately, none of the solutions appear to be working on my end, and my guess is that the example I've provided is messed up.
+So let me try again.
+My table looks like this:
+	contract	project	activity
+row1	1000	8000	10
+row2	1000	8000	20
+row3	1000	8001	10
+row4	2000	9000	49
+row5	2000	9001	49
+row6	3000	9000	79
+row7	3000	9000	78
+
+Basically, the query I'm looking for would return "2000,49" for "contract, activity" because only contract #2000 has one, and ONLY one, unique activity value.
+Again, thanks a million in advance,
+boroatel
+
+
+Updated to use your newly provided data:
+The solutions using the original data may be found at the end of this answer.
+Using your new data:
+DECLARE  @T TABLE( [contract] INT, project INT, activity INT )
+INSERT INTO @T VALUES( 1000,    8000,    10 )
+INSERT INTO @T VALUES( 1000,    8000,    20 )
+INSERT INTO @T VALUES( 1000,    8001,    10 )
+INSERT INTO @T VALUES( 2000,    9000,    49 )
+INSERT INTO @T VALUES( 2000,    9001,    49 )
+INSERT INTO @T VALUES( 3000,    9000,    79 )
+INSERT INTO @T VALUES( 3000,    9000,    78 )
+
+SELECT DISTINCT [contract], activity FROM @T AS A WHERE
+	(SELECT COUNT( DISTINCT activity ) 
+	 FROM @T AS B WHERE B.[contract] = A.[contract]) = 1
+
+returns:
+    2000, 49
+Solutions using original data
+WARNING:
+The following solutions use the data previously given in the question and may not make sense for the current question.  I have left them attached for completeness only.
+SELECT Col1, Count( col1 ) AS count FROM table 
+GROUP BY col1
+HAVING count > 1
+
+This should get you a list of all the values in col1 that are not distinct.  You can place this in a table var or temp table and join against it.
+Here is an example using a sub-query:
+DECLARE @t TABLE( col1 VARCHAR(1), col2 VARCHAR(1), col3 VARCHAR(1) )
+
+INSERT INTO @t VALUES( 'A', 'B', 'C' );
+INSERT INTO @t VALUES( 'D', 'E', 'F' );
+INSERT INTO @t VALUES( 'A', 'J', 'K' );
+INSERT INTO @t VALUES( 'G', 'H', 'H' );
+
+SELECT * FROM @t
+
+SELECT col1, col2 FROM @t WHERE col1 NOT IN 
+    (SELECT col1 FROM @t AS t GROUP BY col1 HAVING COUNT( col1 ) > 1)
+
+This returns:
+D   E
+G   H
+
+And another method that users a temp table and join:
+DECLARE @t TABLE( col1 VARCHAR(1), col2 VARCHAR(1), col3 VARCHAR(1) )
+
+INSERT INTO @t VALUES( 'A', 'B', 'C' );
+INSERT INTO @t VALUES( 'D', 'E', 'F' );
+INSERT INTO @t VALUES( 'A', 'J', 'K' );
+INSERT INTO @t VALUES( 'G', 'H', 'H' );
+
+SELECT * FROM @t
+
+DROP TABLE #temp_table	
+SELECT col1 INTO #temp_table
+	FROM @t AS t GROUP BY col1 HAVING COUNT( col1 ) = 1
+
+SELECT t.col1, t.col2 FROM @t AS t
+	INNER JOIN #temp_table AS tt ON t.col1 = tt.col1
+
+Also returns:
+D   E
+G   H
+
+
+For MySQL:
+SELECT contract, activity
+FROM table
+GROUP BY contract
+HAVING COUNT(DISTINCT activity) = 1
+
+
+Modified!
+SELECT distinct contract, activity from @t a
+WHERE (SELECT COUNT(DISTINCT activity) FROM @t b WHERE b.contract = a.contract) = 1
+
+And here's another one -- shorter/cleaner without subquery
+select contract, max(activity) from @t
+group by contract
+having count(distinct activity) = 1
+
+
+Try this:
+select 
+         contract,
+        max (activity) 
+from
+         mytable 
+group by
+         contract 
+having
+         count (activity) = 1
+
+
+Assuming your table of data is called ProjectInfo:
+SELECT DISTINCT Contract, Activity
+    FROM ProjectInfo
+    WHERE Contract = (SELECT Contract
+                          FROM (SELECT DISTINCT Contract, Activity
+                                    FROM ProjectInfo) AS ContractActivities
+                          GROUP BY Contract
+                          HAVING COUNT(*) = 1);
+
+The innermost query identifies the contracts and the activities.  The next level of the query (the middle one) identifies the contracts where there is just one activity.  The outermost query then pulls the contract and activity from the ProjectInfo table for the contracts that have a single activity.
+Tested using IBM Informix Dynamic Server 11.50 - should work elsewhere too.
+
+Here is another option using sql servers count distinct:
+DECLARE  @T TABLE( [contract] INT, project INT, activity INT )
+INSERT INTO @T VALUES( 1000,    8000,    10 )
+INSERT INTO @T VALUES( 1000,    8000,    20 )
+INSERT INTO @T VALUES( 1000,    8001,    10 )
+INSERT INTO @T VALUES( 2000,    9000,    49 )
+INSERT INTO @T VALUES( 2000,    9001,    49 )
+INSERT INTO @T VALUES( 3000,    9000,    79 )
+INSERT INTO @T VALUES( 3000,    9000,    78 )
+
+
+
+SELECT DISTINCT [contract], activity FROM @T AS A WHERE
+	(SELECT COUNT( DISTINCT activity ) 
+	 FROM @T AS B WHERE B.[contract] = A.[contract]) = 1
+
+
+SELECT DISTINCT Contract, Activity
+FROM Contract WHERE Contract IN (
+SELECT Contract 
+FROM Contract
+GROUP BY Contract
+HAVING COUNT( DISTINCT Activity ) = 1 )
+
+
+Utilizing the "dynamic table" capability in SQL Server (querying against a parenthesis-surrounded query), you can return 2000, 49 w/ the following.
+If your platform doesn't offer an equivalent to the "dynamic table" ANSI-extention, you can always utilize a temp table in two-steps/statement by inserting the results within the "dynamic table" to a temp table, and then performing a subsequent select on the temp table.
+DECLARE  @T TABLE(
+    [contract] INT,
+    project INT,
+    activity INT
+)
+
+INSERT INTO @T VALUES( 1000,    8000,    10 )
+INSERT INTO @T VALUES( 1000,    8000,    20 )
+INSERT INTO @T VALUES( 1000,    8001,    10 )
+INSERT INTO @T VALUES( 2000,    9000,    49 )
+INSERT INTO @T VALUES( 2000,    9001,    49 )
+INSERT INTO @T VALUES( 3000,    9000,    79 )
+INSERT INTO @T VALUES( 3000,    9000,    78 )
+
+SELECT
+    [contract],
+    [Activity] =  max (activity)
+FROM
+    (
+    SELECT
+        [contract],
+        [Activity]
+    FROM
+        @T
+    GROUP BY
+        [contract],
+        [Activity]
+    ) t
+GROUP BY
+    [contract]
+HAVING count (*) = 1
+
+
+Sorry you're not using PostgreSQL...
+SELECT DISTINCT ON contract, activity
+*
+FROM thetable
+ORDER BY contract, activity
+http://www.postgresql.org/docs/8.3/static/sql-select.html#SQL-DISTINCT
+Oh wait.  You only want values with exactly one...
+SELECT contract, activity, count() 
+FROM thetable GROUP BY contract, activity HAVING count() = 1
+
+I'm a fan of NOT EXISTS
+SELECT DISTINCT contract, activity FROM table t1
+WHERE NOT EXISTS (
+  SELECT * FROM table t2
+  WHERE t2.contract = t1.contract AND t2.activity != t1.activity
+)
+
+
+Sorry old post I know but I had the same issue, couldn't get any of the above to work for me, however I figured it out.
+This worked for me:
+SELECT DISTINCT [column]As UniqueValues
+  FROM [db].[dbo].[table]
+
+SELECT DISTINCT Col1,Col2 FROM Table GROUP BY Col1 HAVING COUNT( DISTINCT Col1 ) = 1

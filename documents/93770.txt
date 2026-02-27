@@ -1,0 +1,137 @@
+EEFileLoadException when using C# classes in C++(win32 app)
+c# managed-c++
+For deployment reasons, I am trying to use IJW to wrap a C# assembly in C++ instead of using a COM Callable Wrapper.  
+I've done it on other projects, but on this one, I am getting an EEFileLoadException.  Any help would be appreciated!
+Managed C++ wrapper code (this is in a DLL):
+extern "C" __declspec(dllexport) IMyObject* CreateMyObject(void)
+{
+    //this class references c# in the constructor
+    return new CMyWrapper( );
+}
+
+extern "C" __declspec(dllexport)  void DeleteMyObject(IMyObject* pConfigFile)
+{
+    delete pConfigFile;
+}
+
+extern "C" __declspec(dllexport) void TestFunction(void)
+{
+    ::MessageBox(NULL, _T("My Message Box"), _T("Test"), MB_OK);
+}
+
+Test Code (this is an EXE):
+typedef void* (*CreateObjectPtr)();
+typedef void (*TestFunctionPtr)();
+
+int _tmain testwrapper(int argc, TCHAR* argv[], TCHAR* envp[])
+{
+    HMODULE hModule = ::LoadLibrary(_T("MyWrapper"));
+    _ASSERT(hModule != NULL);
+
+    PVOID pFunc1 = ::GetProcAddress(hModule, "TestFunction");
+    _ASSERT(pFunc1 != NULL);
+    TestFunctionPtr pTest = (TestFunctionPtr)pFunc1;
+
+    PVOID pFunc2 = ::GetProcAddress(hModule, "CreateMyObject");
+    _ASSERT(pFunc2 != NULL);
+    CreateObjectPtr pCreateObjectFunc = (CreateObjectPtr)pFunc2;
+
+    (*pTest)();  //this successfully pops up a message box
+    (*pCreateObjectFunc)();  //this tosses an EEFileLoadException
+
+    return 0;
+}
+
+For what it's worth, the Event Log reports the following:
+.NET Runtime version 2.0.50727.143 - 
+Fatal Execution Engine Error (79F97075) (80131506)
+Unfortunately, Microsoft has no information on that error.
+
+
+The first issue is to make sure the Debugger type is set to mixed.  Then you get useful exceptions.
+
+The problem was where the DLLs were located.
+
+c:\dlls\managed.dll
+c:\dlls\wrapper.dll
+c:\exe\my.exe
+
+I confirmed this by copying managed.dll into c:\exe and it worked without issue. Apparently, the CLR won't look for managed DLLs in the path of the unmanaged DLL and will only look for it where the executable is. (or in the GAC).
+For reasons not worth going into, this is the structure I need, which meant that I needed to give the CLR a hand in located the managed dll.  See code below:
+AssemblyResolver.h:
+/// <summary>
+/// Summary for AssemblyResolver
+/// </summary>
+public ref class AssemblyResolver
+{
+public:
+
+static Assembly^ MyResolveEventHandler( Object^ sender, ResolveEventArgs^ args )
+{
+    Console::WriteLine( "Resolving..." );
+
+    Assembly^ thisAssembly = Assembly::GetExecutingAssembly();
+    String^ thisPath = thisAssembly->Location;
+    String^ directory = Path::GetDirectoryName(thisPath);
+    String^ pathToManagedAssembly = Path::Combine(directory, "managed.dll");
+
+    Assembly^ newAssembly = Assembly::LoadFile(pathToManagedAssembly);
+    return newAssembly;
+}
+
+};
+
+Wrapper.cpp:
+#include "AssemblyResolver.h"
+
+extern "C" __declspec(dllexport) IMyObject* CreateMyObject(void)
+{
+    try
+    {
+        AppDomain^ currentDomain = AppDomain::CurrentDomain;
+        currentDomain->AssemblyResolve += gcnew ResolveEventHandler( AssemblyResolver::MyResolveEventHandler );
+
+        return new CMyWrapper( );
+    }
+    catch(System::Exception^ e)
+    {
+        System::Console::WriteLine(e->Message);
+
+        return NULL;
+    }
+}
+
+
+When you run in debugger C++ native project which use C++ managed dll you may get this exception. When VS2010 catch it and your application after some chain exceptions will be aborted you may try in exception filter (Menu|Debug|Excpetion) disable all C++ exceptions. You will still see this exception in output but your application won't abort
+
+In case anyone else stumbles upon this question, and you are using a dynamic assembly name: make sure you are stripping the assembly name, it may contain version, culture and other content that you may not use.
+I.e.,  your MyResolveEventHandler should be in the form of:
+static Assembly^ MyResolveEventHandler( Object^ sender, ResolveEventArgs^ args )
+{
+    Console::WriteLine( "Resolving..." );
+
+    String^ assemblyName = args->Name;
+
+    // Strip irrelevant information, such as assembly, version etc.
+    // Example: "Acme.Foobar, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"
+    if( assemblyName->Contains(",") ) 
+    {
+        assemblyName = assemblyName->Substring(0, assemblyName->IndexOf(","));
+    }
+
+    Assembly^ thisAssembly = Assembly::GetExecutingAssembly();
+    String^ thisPath = thisAssembly->Location;
+    String^ directory = Path::GetDirectoryName(thisPath);
+    String^ pathToManagedAssembly = Path::Combine(directory, assemblyName );
+
+    Assembly^ newAssembly = Assembly::LoadFile(pathToManagedAssembly);
+    return newAssembly;
+}
+
+
+For you native application consuming the mixed mode dll (Your EXE), change the **"Debugger Type" to "Mixed" mode. (Go to Project Properties -> Configuration Properties -> Debugging)
+There are some other points (which might not be relevant to you) but in my experience they could cause issues.
+ - On windows 8 (with tighter security) please try launching your VS as admin.
+ - Make sure that for x86 configuration you are using x86 binaries.
+ - Watch for StrongName verification, if your C# assemblies which you are consuming in Managed C++ as signed, please consider signing the mixed mode dll too.
+Hope this would help.

@@ -1,0 +1,1516 @@
+Using .NET, how can you find the mime type of a file based on the file signature not the extension
+c# mime mime-types
+I am looking for a simple way to get a mime type where the file extension is incorrect or not given, something similar to this question only in .Net.
+
+
+In Urlmon.dll, there's a function called FindMimeFromData.
+From the documentation 
+
+MIME type detection, or "data sniffing," refers to the process of determining an appropriate MIME type from binary data. The final result depends on a combination of server-supplied MIME type headers, file extension, and/or the data itself. Usually, only the first 256 bytes of data are significant. 
+
+So, read the first (up to) 256 bytes from the file and pass it to FindMimeFromData.
+
+I did use urlmon.dll in the end. I thought there would be an easier way but this works. I include the code to help anyone else and allow me to find it again if I need it.
+using System.Runtime.InteropServices;
+
+...
+    [DllImport(@"urlmon.dll", CharSet = CharSet.Auto)]
+    private extern static System.UInt32 FindMimeFromData(
+        System.UInt32 pBC,
+        [MarshalAs(UnmanagedType.LPStr)] System.String pwzUrl,
+        [MarshalAs(UnmanagedType.LPArray)] byte[] pBuffer,
+        System.UInt32 cbSize,
+        [MarshalAs(UnmanagedType.LPStr)] System.String pwzMimeProposed,
+        System.UInt32 dwMimeFlags,
+        out System.UInt32 ppwzMimeOut,
+        System.UInt32 dwReserverd
+    );
+
+    public static string getMimeFromFile(string filename)
+    {
+        if (!File.Exists(filename))
+            throw new FileNotFoundException(filename + " not found");
+
+        byte[] buffer = new byte[256];
+        using (FileStream fs = new FileStream(filename, FileMode.Open))
+        {
+            if (fs.Length >= 256)
+                fs.Read(buffer, 0, 256);
+            else
+                fs.Read(buffer, 0, (int)fs.Length);
+        }
+        try
+        {
+            System.UInt32 mimetype;
+            FindMimeFromData(0, null, buffer, 256, null, 0, out mimetype, 0);
+            System.IntPtr mimeTypePtr = new IntPtr(mimetype);
+            string mime = Marshal.PtrToStringUni(mimeTypePtr);
+            Marshal.FreeCoTaskMem(mimeTypePtr);
+            return mime;
+        }
+        catch (Exception e)
+        {
+            return "unknown/unknown";
+        }
+    }
+
+
+You can also look in the registry.
+    using System.IO;
+    using Microsoft.Win32;
+
+    string GetMimeType(FileInfo fileInfo)
+    {
+        string mimeType = "application/unknown";
+
+        RegistryKey regKey = Registry.ClassesRoot.OpenSubKey(
+            fileInfo.Extension.ToLower()
+            );
+
+        if(regKey != null)
+        {
+            object contentType = regKey.GetValue("Content Type");
+
+            if(contentType != null)
+                mimeType = contentType.ToString();
+        }
+
+        return mimeType;
+    }
+
+One way or another you're going to have to tap into a database of MIMEs - whether they're mapped from extensions or magic numbers is somewhat trivial - windows registry is one such place.
+For a platform independent solution though one would have to ship this DB with the code (or as a standalone library).
+
+I think the right answer is a combination of Steve Morgan's and Serguei's answers.  That's how Internet Explorer does it.  The pinvoke call to FindMimeFromData works for only 26 hard-coded mime types.  Also, it will give ambigous mime types (such as text/plain or application/octet-stream) even though there may exist a more specific, more appropriate mime type.  If it fails to give a good mime type, you can go to the registry for a more specific mime type.  The server registry could have more up-to-date mime types.
+Refer to:  http://msdn.microsoft.com/en-us/library/ms775147(VS.85).aspx
+
+I've found a hard-coded solution, I hope i will help somebody:
+public static class MIMEAssistant
+{
+  private static readonly Dictionary<string, string> MIMETypesDictionary = new Dictionary<string, string>
+  {
+    {"ai", "application/postscript"},
+    {"aif", "audio/x-aiff"},
+    {"aifc", "audio/x-aiff"},
+    {"aiff", "audio/x-aiff"},
+    {"asc", "text/plain"},
+    {"atom", "application/atom+xml"},
+    {"au", "audio/basic"},
+    {"avi", "video/x-msvideo"},
+    {"bcpio", "application/x-bcpio"},
+    {"bin", "application/octet-stream"},
+    {"bmp", "image/bmp"},
+    {"cdf", "application/x-netcdf"},
+    {"cgm", "image/cgm"},
+    {"class", "application/octet-stream"},
+    {"cpio", "application/x-cpio"},
+    {"cpt", "application/mac-compactpro"},
+    {"csh", "application/x-csh"},
+    {"css", "text/css"},
+    {"dcr", "application/x-director"},
+    {"dif", "video/x-dv"},
+    {"dir", "application/x-director"},
+    {"djv", "image/vnd.djvu"},
+    {"djvu", "image/vnd.djvu"},
+    {"dll", "application/octet-stream"},
+    {"dmg", "application/octet-stream"},
+    {"dms", "application/octet-stream"},
+    {"doc", "application/msword"},
+    {"docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+    {"dotx", "application/vnd.openxmlformats-officedocument.wordprocessingml.template"},
+    {"docm","application/vnd.ms-word.document.macroEnabled.12"},
+    {"dotm","application/vnd.ms-word.template.macroEnabled.12"},
+    {"dtd", "application/xml-dtd"},
+    {"dv", "video/x-dv"},
+    {"dvi", "application/x-dvi"},
+    {"dxr", "application/x-director"},
+    {"eps", "application/postscript"},
+    {"etx", "text/x-setext"},
+    {"exe", "application/octet-stream"},
+    {"ez", "application/andrew-inset"},
+    {"gif", "image/gif"},
+    {"gram", "application/srgs"},
+    {"grxml", "application/srgs+xml"},
+    {"gtar", "application/x-gtar"},
+    {"hdf", "application/x-hdf"},
+    {"hqx", "application/mac-binhex40"},
+    {"htm", "text/html"},
+    {"html", "text/html"},
+    {"ice", "x-conference/x-cooltalk"},
+    {"ico", "image/x-icon"},
+    {"ics", "text/calendar"},
+    {"ief", "image/ief"},
+    {"ifb", "text/calendar"},
+    {"iges", "model/iges"},
+    {"igs", "model/iges"},
+    {"jnlp", "application/x-java-jnlp-file"},
+    {"jp2", "image/jp2"},
+    {"jpe", "image/jpeg"},
+    {"jpeg", "image/jpeg"},
+    {"jpg", "image/jpeg"},
+    {"js", "application/x-javascript"},
+    {"kar", "audio/midi"},
+    {"latex", "application/x-latex"},
+    {"lha", "application/octet-stream"},
+    {"lzh", "application/octet-stream"},
+    {"m3u", "audio/x-mpegurl"},
+    {"m4a", "audio/mp4a-latm"},
+    {"m4b", "audio/mp4a-latm"},
+    {"m4p", "audio/mp4a-latm"},
+    {"m4u", "video/vnd.mpegurl"},
+    {"m4v", "video/x-m4v"},
+    {"mac", "image/x-macpaint"},
+    {"man", "application/x-troff-man"},
+    {"mathml", "application/mathml+xml"},
+    {"me", "application/x-troff-me"},
+    {"mesh", "model/mesh"},
+    {"mid", "audio/midi"},
+    {"midi", "audio/midi"},
+    {"mif", "application/vnd.mif"},
+    {"mov", "video/quicktime"},
+    {"movie", "video/x-sgi-movie"},
+    {"mp2", "audio/mpeg"},
+    {"mp3", "audio/mpeg"},
+    {"mp4", "video/mp4"},
+    {"mpe", "video/mpeg"},
+    {"mpeg", "video/mpeg"},
+    {"mpg", "video/mpeg"},
+    {"mpga", "audio/mpeg"},
+    {"ms", "application/x-troff-ms"},
+    {"msh", "model/mesh"},
+    {"mxu", "video/vnd.mpegurl"},
+    {"nc", "application/x-netcdf"},
+    {"oda", "application/oda"},
+    {"ogg", "application/ogg"},
+    {"pbm", "image/x-portable-bitmap"},
+    {"pct", "image/pict"},
+    {"pdb", "chemical/x-pdb"},
+    {"pdf", "application/pdf"},
+    {"pgm", "image/x-portable-graymap"},
+    {"pgn", "application/x-chess-pgn"},
+    {"pic", "image/pict"},
+    {"pict", "image/pict"},
+    {"png", "image/png"}, 
+    {"pnm", "image/x-portable-anymap"},
+    {"pnt", "image/x-macpaint"},
+    {"pntg", "image/x-macpaint"},
+    {"ppm", "image/x-portable-pixmap"},
+    {"ppt", "application/vnd.ms-powerpoint"},
+    {"pptx","application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+    {"potx","application/vnd.openxmlformats-officedocument.presentationml.template"},
+    {"ppsx","application/vnd.openxmlformats-officedocument.presentationml.slideshow"},
+    {"ppam","application/vnd.ms-powerpoint.addin.macroEnabled.12"},
+    {"pptm","application/vnd.ms-powerpoint.presentation.macroEnabled.12"},
+    {"potm","application/vnd.ms-powerpoint.template.macroEnabled.12"},
+    {"ppsm","application/vnd.ms-powerpoint.slideshow.macroEnabled.12"},
+    {"ps", "application/postscript"},
+    {"qt", "video/quicktime"},
+    {"qti", "image/x-quicktime"},
+    {"qtif", "image/x-quicktime"},
+    {"ra", "audio/x-pn-realaudio"},
+    {"ram", "audio/x-pn-realaudio"},
+    {"ras", "image/x-cmu-raster"},
+    {"rdf", "application/rdf+xml"},
+    {"rgb", "image/x-rgb"},
+    {"rm", "application/vnd.rn-realmedia"},
+    {"roff", "application/x-troff"},
+    {"rtf", "text/rtf"},
+    {"rtx", "text/richtext"},
+    {"sgm", "text/sgml"},
+    {"sgml", "text/sgml"},
+    {"sh", "application/x-sh"},
+    {"shar", "application/x-shar"},
+    {"silo", "model/mesh"},
+    {"sit", "application/x-stuffit"},
+    {"skd", "application/x-koan"},
+    {"skm", "application/x-koan"},
+    {"skp", "application/x-koan"},
+    {"skt", "application/x-koan"},
+    {"smi", "application/smil"},
+    {"smil", "application/smil"},
+    {"snd", "audio/basic"},
+    {"so", "application/octet-stream"},
+    {"spl", "application/x-futuresplash"},
+    {"src", "application/x-wais-source"},
+    {"sv4cpio", "application/x-sv4cpio"},
+    {"sv4crc", "application/x-sv4crc"},
+    {"svg", "image/svg+xml"},
+    {"swf", "application/x-shockwave-flash"},
+    {"t", "application/x-troff"},
+    {"tar", "application/x-tar"},
+    {"tcl", "application/x-tcl"},
+    {"tex", "application/x-tex"},
+    {"texi", "application/x-texinfo"},
+    {"texinfo", "application/x-texinfo"},
+    {"tif", "image/tiff"},
+    {"tiff", "image/tiff"},
+    {"tr", "application/x-troff"},
+    {"tsv", "text/tab-separated-values"},
+    {"txt", "text/plain"},
+    {"ustar", "application/x-ustar"},
+    {"vcd", "application/x-cdlink"},
+    {"vrml", "model/vrml"},
+    {"vxml", "application/voicexml+xml"},
+    {"wav", "audio/x-wav"},
+    {"wbmp", "image/vnd.wap.wbmp"},
+    {"wbmxl", "application/vnd.wap.wbxml"},
+    {"wml", "text/vnd.wap.wml"},
+    {"wmlc", "application/vnd.wap.wmlc"},
+    {"wmls", "text/vnd.wap.wmlscript"},
+    {"wmlsc", "application/vnd.wap.wmlscriptc"},
+    {"wrl", "model/vrml"},
+    {"xbm", "image/x-xbitmap"},
+    {"xht", "application/xhtml+xml"},
+    {"xhtml", "application/xhtml+xml"},
+    {"xls", "application/vnd.ms-excel"},                        
+    {"xml", "application/xml"},
+    {"xpm", "image/x-xpixmap"},
+    {"xsl", "application/xml"},
+    {"xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+    {"xltx","application/vnd.openxmlformats-officedocument.spreadsheetml.template"},
+    {"xlsm","application/vnd.ms-excel.sheet.macroEnabled.12"},
+    {"xltm","application/vnd.ms-excel.template.macroEnabled.12"},
+    {"xlam","application/vnd.ms-excel.addin.macroEnabled.12"},
+    {"xlsb","application/vnd.ms-excel.sheet.binary.macroEnabled.12"},
+    {"xslt", "application/xslt+xml"},
+    {"xul", "application/vnd.mozilla.xul+xml"},
+    {"xwd", "image/x-xwindowdump"},
+    {"xyz", "chemical/x-xyz"},
+    {"zip", "application/zip"}
+  };
+
+  public static string GetMIMEType(string fileName)
+  {
+    //get file extension
+    string extension = Path.GetExtension(fileName).ToLowerInvariant();
+
+    if (extension.Length > 0 && 
+        MIMETypesDictionary.ContainsKey(extension.Remove(0, 1)))
+    {
+      return MIMETypesDictionary[extension.Remove(0, 1)];
+    }
+    return "unknown/unknown";
+  }
+}
+
+
+I found this one useful.
+For VB.NET developers:
+    Public Shared Function GetFromFileName(ByVal fileName As String) As String
+        Return GetFromExtension(Path.GetExtension(fileName).Remove(0, 1))
+    End Function
+
+    Public Shared Function GetFromExtension(ByVal extension As String) As String
+        If extension.StartsWith("."c) Then
+            extension = extension.Remove(0, 1)
+        End If
+
+        If MIMETypesDictionary.ContainsKey(extension) Then
+            Return MIMETypesDictionary(extension)
+        End If
+
+        Return "unknown/unknown"
+    End Function
+
+    Private Shared ReadOnly MIMETypesDictionary As New Dictionary(Of String, String)() From { _
+         {"ai", "application/postscript"}, _
+         {"aif", "audio/x-aiff"}, _
+         {"aifc", "audio/x-aiff"}, _
+         {"aiff", "audio/x-aiff"}, _
+         {"asc", "text/plain"}, _
+         {"atom", "application/atom+xml"}, _
+         {"au", "audio/basic"}, _
+         {"avi", "video/x-msvideo"}, _
+         {"bcpio", "application/x-bcpio"}, _
+         {"bin", "application/octet-stream"}, _
+         {"bmp", "image/bmp"}, _
+         {"cdf", "application/x-netcdf"}, _
+         {"cgm", "image/cgm"}, _
+         {"class", "application/octet-stream"}, _
+         {"cpio", "application/x-cpio"}, _
+         {"cpt", "application/mac-compactpro"}, _
+         {"csh", "application/x-csh"}, _
+         {"css", "text/css"}, _
+         {"dcr", "application/x-director"}, _
+         {"dif", "video/x-dv"}, _
+         {"dir", "application/x-director"}, _
+         {"djv", "image/vnd.djvu"}, _
+         {"djvu", "image/vnd.djvu"}, _
+         {"dll", "application/octet-stream"}, _
+         {"dmg", "application/octet-stream"}, _
+         {"dms", "application/octet-stream"}, _
+         {"doc", "application/msword"}, _
+         {"dtd", "application/xml-dtd"}, _
+         {"dv", "video/x-dv"}, _
+         {"dvi", "application/x-dvi"}, _
+         {"dxr", "application/x-director"}, _
+         {"eps", "application/postscript"}, _
+         {"etx", "text/x-setext"}, _
+         {"exe", "application/octet-stream"}, _
+         {"ez", "application/andrew-inset"}, _
+         {"gif", "image/gif"}, _
+         {"gram", "application/srgs"}, _
+         {"grxml", "application/srgs+xml"}, _
+         {"gtar", "application/x-gtar"}, _
+         {"hdf", "application/x-hdf"}, _
+         {"hqx", "application/mac-binhex40"}, _
+         {"htm", "text/html"}, _
+         {"html", "text/html"}, _
+         {"ice", "x-conference/x-cooltalk"}, _
+         {"ico", "image/x-icon"}, _
+         {"ics", "text/calendar"}, _
+         {"ief", "image/ief"}, _
+         {"ifb", "text/calendar"}, _
+         {"iges", "model/iges"}, _
+         {"igs", "model/iges"}, _
+         {"jnlp", "application/x-java-jnlp-file"}, _
+         {"jp2", "image/jp2"}, _
+         {"jpe", "image/jpeg"}, _
+         {"jpeg", "image/jpeg"}, _
+         {"jpg", "image/jpeg"}, _
+         {"js", "application/x-javascript"}, _
+         {"kar", "audio/midi"}, _
+         {"latex", "application/x-latex"}, _
+         {"lha", "application/octet-stream"}, _
+         {"lzh", "application/octet-stream"}, _
+         {"m3u", "audio/x-mpegurl"}, _
+         {"m4a", "audio/mp4a-latm"}, _
+         {"m4b", "audio/mp4a-latm"}, _
+         {"m4p", "audio/mp4a-latm"}, _
+         {"m4u", "video/vnd.mpegurl"}, _
+         {"m4v", "video/x-m4v"}, _
+         {"mac", "image/x-macpaint"}, _
+         {"man", "application/x-troff-man"}, _
+         {"mathml", "application/mathml+xml"}, _
+         {"me", "application/x-troff-me"}, _
+         {"mesh", "model/mesh"}, _
+         {"mid", "audio/midi"}, _
+         {"midi", "audio/midi"}, _
+         {"mif", "application/vnd.mif"}, _
+         {"mov", "video/quicktime"}, _
+         {"movie", "video/x-sgi-movie"}, _
+         {"mp2", "audio/mpeg"}, _
+         {"mp3", "audio/mpeg"}, _
+         {"mp4", "video/mp4"}, _
+         {"mpe", "video/mpeg"}, _
+         {"mpeg", "video/mpeg"}, _
+         {"mpg", "video/mpeg"}, _
+         {"mpga", "audio/mpeg"}, _
+         {"ms", "application/x-troff-ms"}, _
+         {"msh", "model/mesh"}, _
+         {"mxu", "video/vnd.mpegurl"}, _
+         {"nc", "application/x-netcdf"}, _
+         {"oda", "application/oda"}, _
+         {"ogg", "application/ogg"}, _
+         {"pbm", "image/x-portable-bitmap"}, _
+         {"pct", "image/pict"}, _
+         {"pdb", "chemical/x-pdb"}, _
+         {"pdf", "application/pdf"}, _
+         {"pgm", "image/x-portable-graymap"}, _
+         {"pgn", "application/x-chess-pgn"}, _
+         {"pic", "image/pict"}, _
+         {"pict", "image/pict"}, _
+         {"png", "image/png"}, _
+         {"pnm", "image/x-portable-anymap"}, _
+         {"pnt", "image/x-macpaint"}, _
+         {"pntg", "image/x-macpaint"}, _
+         {"ppm", "image/x-portable-pixmap"}, _
+         {"ppt", "application/vnd.ms-powerpoint"}, _
+         {"ps", "application/postscript"}, _
+         {"qt", "video/quicktime"}, _
+         {"qti", "image/x-quicktime"}, _
+         {"qtif", "image/x-quicktime"}, _
+         {"ra", "audio/x-pn-realaudio"}, _
+         {"ram", "audio/x-pn-realaudio"}, _
+         {"ras", "image/x-cmu-raster"}, _
+         {"rdf", "application/rdf+xml"}, _
+         {"rgb", "image/x-rgb"}, _
+         {"rm", "application/vnd.rn-realmedia"}, _
+         {"roff", "application/x-troff"}, _
+         {"rtf", "text/rtf"}, _
+         {"rtx", "text/richtext"}, _
+         {"sgm", "text/sgml"}, _
+         {"sgml", "text/sgml"}, _
+         {"sh", "application/x-sh"}, _
+         {"shar", "application/x-shar"}, _
+         {"silo", "model/mesh"}, _
+         {"sit", "application/x-stuffit"}, _
+         {"skd", "application/x-koan"}, _
+         {"skm", "application/x-koan"}, _
+         {"skp", "application/x-koan"}, _
+         {"skt", "application/x-koan"}, _
+         {"smi", "application/smil"}, _
+         {"smil", "application/smil"}, _
+         {"snd", "audio/basic"}, _
+         {"so", "application/octet-stream"}, _
+         {"spl", "application/x-futuresplash"}, _
+         {"src", "application/x-wais-source"}, _
+         {"sv4cpio", "application/x-sv4cpio"}, _
+         {"sv4crc", "application/x-sv4crc"}, _
+         {"svg", "image/svg+xml"}, _
+         {"swf", "application/x-shockwave-flash"}, _
+         {"t", "application/x-troff"}, _
+         {"tar", "application/x-tar"}, _
+         {"tcl", "application/x-tcl"}, _
+         {"tex", "application/x-tex"}, _
+         {"texi", "application/x-texinfo"}, _
+         {"texinfo", "application/x-texinfo"}, _
+         {"tif", "image/tiff"}, _
+         {"tiff", "image/tiff"}, _
+         {"tr", "application/x-troff"}, _
+         {"tsv", "text/tab-separated-values"}, _
+         {"txt", "text/plain"}, _
+         {"ustar", "application/x-ustar"}, _
+         {"vcd", "application/x-cdlink"}, _
+         {"vrml", "model/vrml"}, _
+         {"vxml", "application/voicexml+xml"}, _
+         {"wav", "audio/x-wav"}, _
+         {"wbmp", "image/vnd.wap.wbmp"}, _
+         {"wbmxl", "application/vnd.wap.wbxml"}, _
+         {"wml", "text/vnd.wap.wml"}, _
+         {"wmlc", "application/vnd.wap.wmlc"}, _
+         {"wmls", "text/vnd.wap.wmlscript"}, _
+         {"wmlsc", "application/vnd.wap.wmlscriptc"}, _
+         {"wrl", "model/vrml"}, _
+         {"xbm", "image/x-xbitmap"}, _
+         {"xht", "application/xhtml+xml"}, _
+         {"xhtml", "application/xhtml+xml"}, _
+         {"xls", "application/vnd.ms-excel"}, _
+         {"xml", "application/xml"}, _
+         {"xpm", "image/x-xpixmap"}, _
+         {"xsl", "application/xml"}, _
+         {"xslt", "application/xslt+xml"}, _
+         {"xul", "application/vnd.mozilla.xul+xml"}, _
+         {"xwd", "image/x-xwindowdump"}, _
+         {"xyz", "chemical/x-xyz"}, _
+         {"zip", "application/zip"} _
+        }
+
+
+I came across the same issue and eventually opted for my own flavour of Kirk Baucom's solution, found here. 
+It seems to me that this is an opportunity for someone to write an online look-up service.
+Anyway, Hope it helps.
+
+I use an hybrid solution:
+    using System.Runtime.InteropServices;
+
+    [DllImport (@"urlmon.dll", CharSet = CharSet.Auto)]
+    private extern static System.UInt32 FindMimeFromData(
+        System.UInt32 pBC, 
+        [MarshalAs(UnmanagedType.LPStr)] System.String pwzUrl,
+        [MarshalAs(UnmanagedType.LPArray)] byte[] pBuffer,
+        System.UInt32 cbSize,
+        [MarshalAs(UnmanagedType.LPStr)] System.String pwzMimeProposed,
+        System.UInt32 dwMimeFlags,
+        out System.UInt32 ppwzMimeOut,
+        System.UInt32 dwReserverd
+    );
+
+    private string GetMimeFromRegistry (string Filename)
+    {
+        string mime = "application/octetstream";
+        string ext = System.IO.Path.GetExtension(Filename).ToLower();
+        Microsoft.Win32.RegistryKey rk = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(ext);
+        if (rk != null && rk.GetValue("Content Type") != null)
+            mime = rk.GetValue("Content Type").ToString();
+        return mime;
+    }
+
+    public string GetMimeTypeFromFileAndRegistry (string filename)
+    {
+        if (!File.Exists(filename))
+        {
+           return GetMimeFromRegistry (filename);
+        }
+
+        byte[] buffer = new byte[256];
+
+        using (FileStream fs = new FileStream(filename, FileMode.Open))
+        {
+            if (fs.Length >= 256)
+                fs.Read(buffer, 0, 256);
+            else
+                fs.Read(buffer, 0, (int)fs.Length);
+        }
+
+        try
+        {            
+            System.UInt32 mimetype;
+
+            FindMimeFromData(0, null, buffer, 256, null, 0, out mimetype, 0);
+
+            System.IntPtr mimeTypePtr = new IntPtr(mimetype);
+
+            string mime = Marshal.PtrToStringUni(mimeTypePtr);
+
+            Marshal.FreeCoTaskMem(mimeTypePtr);
+
+            if (string.IsNullOrWhiteSpace (mime) || 
+                mime =="text/plain" || mime == "application/octet-stream")                    
+            {
+                return GetMimeFromRegistry (filename);
+            }
+
+            return mime;
+        }
+        catch (Exception e)
+        {
+            return GetMimeFromRegistry (filename);
+        }
+    }
+
+
+If you're using .NET Framework 4.5 or above, there is a now a MimeMapping.GetMimeMapping(filename) method that will return a string with the correct Mime mapping for the passed filename.
+Documentation is at http://msdn.microsoft.com/en-us/library/system.web.mimemapping.getmimemapping
+
+If someone was up for it they could port the excellent perl module File::Type to .NET. In the code is a set of file header magic number look ups for each file type or regex matches.
+Here's a .NET file type detecting library http://filetypedetective.codeplex.com/ but it only detects a smallish number of files at the moment.
+
+Edit: Just use Mime Detective
+I use byte array sequences to determine the correct MIME type of a given file. The advantage of this over just looking at the file extension of the file name is that if a user were to rename a file to bypass certain file type upload restrictions, the file name extension would fail to catch this. On the other hand, getting the file signature via byte array will stop this mischievous behavior from happening.
+Here is an example in C#:
+public class MimeType
+{
+    private static readonly byte[] BMP = { 66, 77 };
+    private static readonly byte[] DOC = { 208, 207, 17, 224, 161, 177, 26, 225 };
+    private static readonly byte[] EXE_DLL = { 77, 90 };
+    private static readonly byte[] GIF = { 71, 73, 70, 56 };
+    private static readonly byte[] ICO = { 0, 0, 1, 0 };
+    private static readonly byte[] JPG = { 255, 216, 255 };
+    private static readonly byte[] MP3 = { 255, 251, 48 };
+    private static readonly byte[] OGG = { 79, 103, 103, 83, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0 };
+    private static readonly byte[] PDF = { 37, 80, 68, 70, 45, 49, 46 };
+    private static readonly byte[] PNG = { 137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82 };
+    private static readonly byte[] RAR = { 82, 97, 114, 33, 26, 7, 0 };
+    private static readonly byte[] SWF = { 70, 87, 83 };
+    private static readonly byte[] TIFF = { 73, 73, 42, 0 };
+    private static readonly byte[] TORRENT = { 100, 56, 58, 97, 110, 110, 111, 117, 110, 99, 101 };
+    private static readonly byte[] TTF = { 0, 1, 0, 0, 0 };
+    private static readonly byte[] WAV_AVI = { 82, 73, 70, 70 };
+    private static readonly byte[] WMV_WMA = { 48, 38, 178, 117, 142, 102, 207, 17, 166, 217, 0, 170, 0, 98, 206, 108 };
+    private static readonly byte[] ZIP_DOCX = { 80, 75, 3, 4 };
+
+    public static string GetMimeType(byte[] file, string fileName)
+    {
+
+        string mime = "application/octet-stream"; //DEFAULT UNKNOWN MIME TYPE
+
+        //Ensure that the filename isn't empty or null
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return mime;
+        }
+
+        //Get the file extension
+        string extension = Path.GetExtension(fileName) == null
+                               ? string.Empty
+                               : Path.GetExtension(fileName).ToUpper();
+
+        //Get the MIME Type
+        if (file.Take(2).SequenceEqual(BMP))
+        {
+            mime = "image/bmp";
+        }
+        else if (file.Take(8).SequenceEqual(DOC))
+        {
+            mime = "application/msword";
+        }
+        else if (file.Take(2).SequenceEqual(EXE_DLL))
+        {
+            mime = "application/x-msdownload"; //both use same mime type
+        }
+        else if (file.Take(4).SequenceEqual(GIF))
+        {
+            mime = "image/gif";
+        }
+        else if (file.Take(4).SequenceEqual(ICO))
+        {
+            mime = "image/x-icon";
+        }
+        else if (file.Take(3).SequenceEqual(JPG))
+        {
+            mime = "image/jpeg";
+        }
+        else if (file.Take(3).SequenceEqual(MP3))
+        {
+            mime = "audio/mpeg";
+        }
+        else if (file.Take(14).SequenceEqual(OGG))
+        {
+            if (extension == ".OGX")
+            {
+                mime = "application/ogg";
+            }
+            else if (extension == ".OGA")
+            {
+                mime = "audio/ogg";
+            }
+            else
+            {
+                mime = "video/ogg";
+            }
+        }
+        else if (file.Take(7).SequenceEqual(PDF))
+        {
+            mime = "application/pdf";
+        }
+        else if (file.Take(16).SequenceEqual(PNG))
+        {
+            mime = "image/png";
+        }
+        else if (file.Take(7).SequenceEqual(RAR))
+        {
+            mime = "application/x-rar-compressed";
+        }
+        else if (file.Take(3).SequenceEqual(SWF))
+        {
+            mime = "application/x-shockwave-flash";
+        }
+        else if (file.Take(4).SequenceEqual(TIFF))
+        {
+            mime = "image/tiff";
+        }
+        else if (file.Take(11).SequenceEqual(TORRENT))
+        {
+            mime = "application/x-bittorrent";
+        }
+        else if (file.Take(5).SequenceEqual(TTF))
+        {
+            mime = "application/x-font-ttf";
+        }
+        else if (file.Take(4).SequenceEqual(WAV_AVI))
+        {
+            mime = extension == ".AVI" ? "video/x-msvideo" : "audio/x-wav";
+        }
+        else if (file.Take(16).SequenceEqual(WMV_WMA))
+        {
+            mime = extension == ".WMA" ? "audio/x-ms-wma" : "video/x-ms-wmv";
+        }
+        else if (file.Take(4).SequenceEqual(ZIP_DOCX))
+        {
+            mime = extension == ".DOCX" ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document" : "application/x-zip-compressed";
+        }
+
+        return mime;
+    }
+
+
+}
+
+Notice I handled DOCX file types differently since DOCX is really just a ZIP file. In this scenario, I simply check the file extension once I verified that it has that sequence. This example is far from complete for some people, but you can easily add your own.
+If you want to add more MIME types, you can get the byte array sequences of many different file types from here. Also, here is another good resource concerning file signatures. 
+What I do a lot of times if all else fails is step through several files of a particular type that I am looking for and look for a pattern in the byte sequence of the files. In the end, this is still basic verification and cannot be used for 100% proof of determining file types.
+
+IIS 7 or more
+Use this code, but you need to be the admin on the server
+public bool CheckMimeMapExtension(string fileExtension)
+        {
+            try
+            {
+
+                using (
+                ServerManager serverManager = new ServerManager())
+                {   
+                    // connects to default app.config
+                    var config = serverManager.GetApplicationHostConfiguration();
+                    var staticContent = config.GetSection("system.webServer/staticContent");
+                    var mimeMap = staticContent.GetCollection();
+
+                    foreach (var mimeType in mimeMap)
+                    {
+
+                        if (((String)mimeType["fileExtension"]).Equals(fileExtension, StringComparison.OrdinalIgnoreCase))
+                            return true;
+
+                    }
+
+                }
+                return false;
+            }
+            catch (Exception ex)
+            { 
+                Console.WriteLine("An exception has occurred: \n{0}", ex.Message);
+                Console.Read();
+            }
+
+            return false;
+
+        }
+
+
+This class use previous answers to try in 3 different ways: harcoded based on extension, FindMimeFromData API and using registry.
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Runtime.InteropServices;
+
+using Microsoft.Win32;
+
+namespace YourNamespace
+{
+    public static class MimeTypeParser
+    {
+        [DllImport(@"urlmon.dll", CharSet = CharSet.Auto)]
+        private extern static System.UInt32 FindMimeFromData(
+                System.UInt32 pBC,
+                [MarshalAs(UnmanagedType.LPStr)] System.String pwzUrl,
+                [MarshalAs(UnmanagedType.LPArray)] byte[] pBuffer,
+                System.UInt32 cbSize,
+                [MarshalAs(UnmanagedType.LPStr)] System.String pwzMimeProposed,
+                System.UInt32 dwMimeFlags,
+                out System.UInt32 ppwzMimeOut,
+                System.UInt32 dwReserverd
+        );
+
+        public static string GetMimeType(string sFilePath)
+        {
+            string sMimeType = GetMimeTypeFromList(sFilePath);
+
+            if (String.IsNullOrEmpty(sMimeType))
+            {
+                sMimeType = GetMimeTypeFromFile(sFilePath);
+
+                if (String.IsNullOrEmpty(sMimeType))
+                {
+                    sMimeType = GetMimeTypeFromRegistry(sFilePath);
+                }
+            }
+
+            return sMimeType;
+        }
+
+        public static string GetMimeTypeFromList(string sFileNameOrPath)
+        {
+            string sMimeType = null;
+            string sExtensionWithoutDot = Path.GetExtension(sFileNameOrPath).Substring(1).ToLower();
+
+            if (!String.IsNullOrEmpty(sExtensionWithoutDot) && spDicMIMETypes.ContainsKey(sExtensionWithoutDot))
+            {
+                sMimeType = spDicMIMETypes[sExtensionWithoutDot];
+            }
+
+            return sMimeType;
+        }
+
+        public static string GetMimeTypeFromRegistry(string sFileNameOrPath)
+        {
+            string sMimeType = null;
+            string sExtension = Path.GetExtension(sFileNameOrPath).ToLower();
+            RegistryKey pKey = Registry.ClassesRoot.OpenSubKey(sExtension);
+
+            if (pKey != null && pKey.GetValue("Content Type") != null)
+            {
+                sMimeType = pKey.GetValue("Content Type").ToString();
+            }
+
+            return sMimeType;
+        }
+
+        public static string GetMimeTypeFromFile(string sFilePath)
+        {
+            string sMimeType = null;
+
+            if (File.Exists(sFilePath))
+            {
+                byte[] abytBuffer = new byte[256];
+
+                using (FileStream pFileStream = new FileStream(sFilePath, FileMode.Open))
+                {
+                    if (pFileStream.Length >= 256)
+                    {
+                        pFileStream.Read(abytBuffer, 0, 256);
+                    }
+                    else
+                    {
+                        pFileStream.Read(abytBuffer, 0, (int)pFileStream.Length);
+                    }
+                }
+
+                try
+                {
+                    UInt32 unMimeType;
+
+                    FindMimeFromData(0, null, abytBuffer, 256, null, 0, out unMimeType, 0);
+
+                    IntPtr pMimeType = new IntPtr(unMimeType);
+                    string sMimeTypeFromFile = Marshal.PtrToStringUni(pMimeType);
+
+                    Marshal.FreeCoTaskMem(pMimeType);
+
+                    if (!String.IsNullOrEmpty(sMimeTypeFromFile) && sMimeTypeFromFile != "text/plain" && sMimeTypeFromFile != "application/octet-stream")
+                    {
+                        sMimeType = sMimeTypeFromFile;
+                    }
+                }
+                catch {}
+            }
+
+            return sMimeType;
+        }
+
+        private static readonly Dictionary<string, string> spDicMIMETypes = new Dictionary<string, string>
+        {
+            {"ai", "application/postscript"},
+            {"aif", "audio/x-aiff"},
+            {"aifc", "audio/x-aiff"},
+            {"aiff", "audio/x-aiff"},
+            {"asc", "text/plain"},
+            {"atom", "application/atom+xml"},
+            {"au", "audio/basic"},
+            {"avi", "video/x-msvideo"},
+            {"bcpio", "application/x-bcpio"},
+            {"bin", "application/octet-stream"},
+            {"bmp", "image/bmp"},
+            {"cdf", "application/x-netcdf"},
+            {"cgm", "image/cgm"},
+            {"class", "application/octet-stream"},
+            {"cpio", "application/x-cpio"},
+            {"cpt", "application/mac-compactpro"},
+            {"csh", "application/x-csh"},
+            {"css", "text/css"},
+            {"dcr", "application/x-director"},
+            {"dif", "video/x-dv"},
+            {"dir", "application/x-director"},
+            {"djv", "image/vnd.djvu"},
+            {"djvu", "image/vnd.djvu"},
+            {"dll", "application/octet-stream"},
+            {"dmg", "application/octet-stream"},
+            {"dms", "application/octet-stream"},
+            {"doc", "application/msword"},
+            {"docx","application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+            {"dotx", "application/vnd.openxmlformats-officedocument.wordprocessingml.template"},
+            {"docm","application/vnd.ms-word.document.macroEnabled.12"},
+            {"dotm","application/vnd.ms-word.template.macroEnabled.12"},
+            {"dtd", "application/xml-dtd"},
+            {"dv", "video/x-dv"},
+            {"dvi", "application/x-dvi"},
+            {"dxr", "application/x-director"},
+            {"eps", "application/postscript"},
+            {"etx", "text/x-setext"},
+            {"exe", "application/octet-stream"},
+            {"ez", "application/andrew-inset"},
+            {"gif", "image/gif"},
+            {"gram", "application/srgs"},
+            {"grxml", "application/srgs+xml"},
+            {"gtar", "application/x-gtar"},
+            {"hdf", "application/x-hdf"},
+            {"hqx", "application/mac-binhex40"},
+            {"htc", "text/x-component"},
+            {"htm", "text/html"},
+            {"html", "text/html"},
+            {"ice", "x-conference/x-cooltalk"},
+            {"ico", "image/x-icon"},
+            {"ics", "text/calendar"},
+            {"ief", "image/ief"},
+            {"ifb", "text/calendar"},
+            {"iges", "model/iges"},
+            {"igs", "model/iges"},
+            {"jnlp", "application/x-java-jnlp-file"},
+            {"jp2", "image/jp2"},
+            {"jpe", "image/jpeg"},
+            {"jpeg", "image/jpeg"},
+            {"jpg", "image/jpeg"},
+            {"js", "application/x-javascript"},
+            {"kar", "audio/midi"},
+            {"latex", "application/x-latex"},
+            {"lha", "application/octet-stream"},
+            {"lzh", "application/octet-stream"},
+            {"m3u", "audio/x-mpegurl"},
+            {"m4a", "audio/mp4a-latm"},
+            {"m4b", "audio/mp4a-latm"},
+            {"m4p", "audio/mp4a-latm"},
+            {"m4u", "video/vnd.mpegurl"},
+            {"m4v", "video/x-m4v"},
+            {"mac", "image/x-macpaint"},
+            {"man", "application/x-troff-man"},
+            {"mathml", "application/mathml+xml"},
+            {"me", "application/x-troff-me"},
+            {"mesh", "model/mesh"},
+            {"mid", "audio/midi"},
+            {"midi", "audio/midi"},
+            {"mif", "application/vnd.mif"},
+            {"mov", "video/quicktime"},
+            {"movie", "video/x-sgi-movie"},
+            {"mp2", "audio/mpeg"},
+            {"mp3", "audio/mpeg"},
+            {"mp4", "video/mp4"},
+            {"mpe", "video/mpeg"},
+            {"mpeg", "video/mpeg"},
+            {"mpg", "video/mpeg"},
+            {"mpga", "audio/mpeg"},
+            {"ms", "application/x-troff-ms"},
+            {"msh", "model/mesh"},
+            {"mxu", "video/vnd.mpegurl"},
+            {"nc", "application/x-netcdf"},
+            {"oda", "application/oda"},
+            {"ogg", "application/ogg"},
+            {"pbm", "image/x-portable-bitmap"},
+            {"pct", "image/pict"},
+            {"pdb", "chemical/x-pdb"},
+            {"pdf", "application/pdf"},
+            {"pgm", "image/x-portable-graymap"},
+            {"pgn", "application/x-chess-pgn"},
+            {"pic", "image/pict"},
+            {"pict", "image/pict"},
+            {"png", "image/png"}, 
+            {"pnm", "image/x-portable-anymap"},
+            {"pnt", "image/x-macpaint"},
+            {"pntg", "image/x-macpaint"},
+            {"ppm", "image/x-portable-pixmap"},
+            {"ppt", "application/vnd.ms-powerpoint"},
+            {"pptx","application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+            {"potx","application/vnd.openxmlformats-officedocument.presentationml.template"},
+            {"ppsx","application/vnd.openxmlformats-officedocument.presentationml.slideshow"},
+            {"ppam","application/vnd.ms-powerpoint.addin.macroEnabled.12"},
+            {"pptm","application/vnd.ms-powerpoint.presentation.macroEnabled.12"},
+            {"potm","application/vnd.ms-powerpoint.template.macroEnabled.12"},
+            {"ppsm","application/vnd.ms-powerpoint.slideshow.macroEnabled.12"},
+            {"ps", "application/postscript"},
+            {"qt", "video/quicktime"},
+            {"qti", "image/x-quicktime"},
+            {"qtif", "image/x-quicktime"},
+            {"ra", "audio/x-pn-realaudio"},
+            {"ram", "audio/x-pn-realaudio"},
+            {"ras", "image/x-cmu-raster"},
+            {"rdf", "application/rdf+xml"},
+            {"rgb", "image/x-rgb"},
+            {"rm", "application/vnd.rn-realmedia"},
+            {"roff", "application/x-troff"},
+            {"rtf", "text/rtf"},
+            {"rtx", "text/richtext"},
+            {"sgm", "text/sgml"},
+            {"sgml", "text/sgml"},
+            {"sh", "application/x-sh"},
+            {"shar", "application/x-shar"},
+            {"silo", "model/mesh"},
+            {"sit", "application/x-stuffit"},
+            {"skd", "application/x-koan"},
+            {"skm", "application/x-koan"},
+            {"skp", "application/x-koan"},
+            {"skt", "application/x-koan"},
+            {"smi", "application/smil"},
+            {"smil", "application/smil"},
+            {"snd", "audio/basic"},
+            {"so", "application/octet-stream"},
+            {"spl", "application/x-futuresplash"},
+            {"src", "application/x-wais-source"},
+            {"sv4cpio", "application/x-sv4cpio"},
+            {"sv4crc", "application/x-sv4crc"},
+            {"svg", "image/svg+xml"},
+            {"swf", "application/x-shockwave-flash"},
+            {"t", "application/x-troff"},
+            {"tar", "application/x-tar"},
+            {"tcl", "application/x-tcl"},
+            {"tex", "application/x-tex"},
+            {"texi", "application/x-texinfo"},
+            {"texinfo", "application/x-texinfo"},
+            {"tif", "image/tiff"},
+            {"tiff", "image/tiff"},
+            {"tr", "application/x-troff"},
+            {"tsv", "text/tab-separated-values"},
+            {"txt", "text/plain"},
+            {"ustar", "application/x-ustar"},
+            {"vcd", "application/x-cdlink"},
+            {"vrml", "model/vrml"},
+            {"vxml", "application/voicexml+xml"},
+            {"wav", "audio/x-wav"},
+            {"wbmp", "image/vnd.wap.wbmp"},
+            {"wbmxl", "application/vnd.wap.wbxml"},
+            {"wml", "text/vnd.wap.wml"},
+            {"wmlc", "application/vnd.wap.wmlc"},
+            {"wmls", "text/vnd.wap.wmlscript"},
+            {"wmlsc", "application/vnd.wap.wmlscriptc"},
+            {"wrl", "model/vrml"},
+            {"xbm", "image/x-xbitmap"},
+            {"xht", "application/xhtml+xml"},
+            {"xhtml", "application/xhtml+xml"},
+            {"xls", "application/vnd.ms-excel"},                                                
+            {"xml", "application/xml"},
+            {"xpm", "image/x-xpixmap"},
+            {"xsl", "application/xml"},
+            {"xlsx","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+            {"xltx","application/vnd.openxmlformats-officedocument.spreadsheetml.template"},
+            {"xlsm","application/vnd.ms-excel.sheet.macroEnabled.12"},
+            {"xltm","application/vnd.ms-excel.template.macroEnabled.12"},
+            {"xlam","application/vnd.ms-excel.addin.macroEnabled.12"},
+            {"xlsb","application/vnd.ms-excel.sheet.binary.macroEnabled.12"},
+            {"xslt", "application/xslt+xml"},
+            {"xul", "application/vnd.mozilla.xul+xml"},
+            {"xwd", "image/x-xwindowdump"},
+            {"xyz", "chemical/x-xyz"},
+            {"zip", "application/zip"}
+        };
+    }
+}
+
+
+When working with Windows Azure Web role or any other host that runs your app in Limited Trust do not forget that you will not be allowed to access registry or unmanaged code. Hybrid approach - combination of try-catch-for-registry and in-memory dictionary looks like a good solution that has a bit of everything. 
+I use this code to do it : 
+public class DefaultMimeResolver : IMimeResolver
+{
+    private readonly IFileRepository _fileRepository;
+
+    public DefaultMimeResolver(IFileRepository fileRepository)
+    {
+        _fileRepository = fileRepository;
+    }
+
+    [DllImport(@"urlmon.dll", CharSet = CharSet.Auto)]
+    private static extern System.UInt32 FindMimeFromData(
+        System.UInt32 pBC, [MarshalAs(UnmanagedType.LPStr)] System.String pwzUrl,
+         [MarshalAs(UnmanagedType.LPArray)] byte[] pBuffer,
+         System.UInt32 cbSize,
+         [MarshalAs(UnmanagedType.LPStr)] System.String pwzMimeProposed,
+         System.UInt32 dwMimeFlags,
+         out System.UInt32 ppwzMimeOut,
+         System.UInt32 dwReserverd);
+
+
+    public string GetMimeTypeFromFileExtension(string fileExtension)
+    {
+        if (string.IsNullOrEmpty(fileExtension))
+        {
+            throw new ArgumentNullException("fileExtension");
+        }
+
+        string mimeType = GetMimeTypeFromList(fileExtension);
+
+        if (String.IsNullOrEmpty(mimeType))
+        {
+            mimeType = GetMimeTypeFromRegistry(fileExtension);
+        }
+
+        return mimeType;
+    }
+
+    public string GetMimeTypeFromFile(string filePath)
+    {
+        if (string.IsNullOrEmpty(filePath))
+        {
+            throw new ArgumentNullException("filePath");
+        }
+
+        if (!File.Exists(filePath))
+        {
+            throw new FileNotFoundException("File not found : ", filePath);
+        }
+
+        string mimeType = GetMimeTypeFromList(Path.GetExtension(filePath).ToLower());
+
+        if (String.IsNullOrEmpty(mimeType))
+        {
+            mimeType = GetMimeTypeFromRegistry(Path.GetExtension(filePath).ToLower());
+
+            if (String.IsNullOrEmpty(mimeType))
+            {
+                mimeType = GetMimeTypeFromFileInternal(filePath);
+            }
+        }
+
+        return mimeType;
+    }
+
+    private string GetMimeTypeFromList(string fileExtension)
+    {
+        string mimeType = null;
+
+        if (fileExtension.StartsWith("."))
+        {
+            fileExtension = fileExtension.TrimStart('.');
+        }
+
+        if (!String.IsNullOrEmpty(fileExtension) && _mimeTypes.ContainsKey(fileExtension))
+        {
+            mimeType = _mimeTypes[fileExtension];
+        }
+
+        return mimeType;
+    }
+
+    private string GetMimeTypeFromRegistry(string fileExtension)
+    {
+        string mimeType = null;
+        try
+        {
+            RegistryKey key = Registry.ClassesRoot.OpenSubKey(fileExtension);
+
+            if (key != null && key.GetValue("Content Type") != null)
+            {
+                mimeType = key.GetValue("Content Type").ToString();
+            }
+        }
+        catch (Exception)
+        {
+            // Empty. When this code is running in limited mode accessing registry is not allowed.
+        }
+
+        return mimeType;
+    }
+
+    private string GetMimeTypeFromFileInternal(string filePath)
+    {
+        string mimeType = null;
+
+        if (!File.Exists(filePath))
+        {
+            return null;
+        }
+
+        byte[] byteBuffer = new byte[256];
+
+        using (FileStream fileStream = _fileRepository.Get(filePath))
+        {
+            if (fileStream.Length >= 256)
+            {
+                fileStream.Read(byteBuffer, 0, 256);
+            }
+            else
+            {
+                fileStream.Read(byteBuffer, 0, (int)fileStream.Length);
+            }
+        }
+
+        try
+        {
+            UInt32 MimeTypeNum;
+
+            FindMimeFromData(0, null, byteBuffer, 256, null, 0, out MimeTypeNum, 0);
+
+            IntPtr mimeTypePtr = new IntPtr(MimeTypeNum);
+            string mimeTypeFromFile = Marshal.PtrToStringUni(mimeTypePtr);
+
+            Marshal.FreeCoTaskMem(mimeTypePtr);
+
+            if (!String.IsNullOrEmpty(mimeTypeFromFile) && mimeTypeFromFile != "text/plain" && mimeTypeFromFile != "application/octet-stream")
+            {
+                mimeType = mimeTypeFromFile;
+            }
+        }
+        catch
+        {
+            // Empty. 
+        }
+
+        return mimeType;
+    }
+
+    private readonly Dictionary<string, string> _mimeTypes = new Dictionary<string, string>
+        {
+            {"ai", "application/postscript"},
+            {"aif", "audio/x-aiff"},
+            {"aifc", "audio/x-aiff"},
+            {"aiff", "audio/x-aiff"},
+            {"asc", "text/plain"},
+            {"atom", "application/atom+xml"},
+            {"au", "audio/basic"},
+            {"avi", "video/x-msvideo"},
+            {"bcpio", "application/x-bcpio"},
+            {"bin", "application/octet-stream"},
+            {"bmp", "image/bmp"},
+            {"cdf", "application/x-netcdf"},
+            {"cgm", "image/cgm"},
+            {"class", "application/octet-stream"},
+            {"cpio", "application/x-cpio"},
+            {"cpt", "application/mac-compactpro"},
+            {"csh", "application/x-csh"},
+            {"css", "text/css"},
+            {"dcr", "application/x-director"},
+            {"dif", "video/x-dv"},
+            {"dir", "application/x-director"},
+            {"djv", "image/vnd.djvu"},
+            {"djvu", "image/vnd.djvu"},
+            {"dll", "application/octet-stream"},
+            {"dmg", "application/octet-stream"},
+            {"dms", "application/octet-stream"},
+            {"doc", "application/msword"},
+            {"docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+            {"dotx", "application/vnd.openxmlformats-officedocument.wordprocessingml.template"},
+            {"docm", "application/vnd.ms-word.document.macroEnabled.12"},
+            {"dotm", "application/vnd.ms-word.template.macroEnabled.12"},
+            {"dtd", "application/xml-dtd"},
+            {"dv", "video/x-dv"},
+            {"dvi", "application/x-dvi"},
+            {"dxr", "application/x-director"},
+            {"eps", "application/postscript"},
+            {"etx", "text/x-setext"},
+            {"exe", "application/octet-stream"},
+            {"ez", "application/andrew-inset"},
+            {"gif", "image/gif"},
+            {"gram", "application/srgs"},
+            {"grxml", "application/srgs+xml"},
+            {"gtar", "application/x-gtar"},
+            {"hdf", "application/x-hdf"},
+            {"hqx", "application/mac-binhex40"},
+            {"htc", "text/x-component"},
+            {"htm", "text/html"},
+            {"html", "text/html"},
+            {"ice", "x-conference/x-cooltalk"},
+            {"ico", "image/x-icon"},
+            {"ics", "text/calendar"},
+            {"ief", "image/ief"},
+            {"ifb", "text/calendar"},
+            {"iges", "model/iges"},
+            {"igs", "model/iges"},
+            {"jnlp", "application/x-java-jnlp-file"},
+            {"jp2", "image/jp2"},
+            {"jpe", "image/jpeg"},
+            {"jpeg", "image/jpeg"},
+            {"jpg", "image/jpeg"},
+            {"js", "application/x-javascript"},
+            {"kar", "audio/midi"},
+            {"latex", "application/x-latex"},
+            {"lha", "application/octet-stream"},
+            {"lzh", "application/octet-stream"},
+            {"m3u", "audio/x-mpegurl"},
+            {"m4a", "audio/mp4a-latm"},
+            {"m4b", "audio/mp4a-latm"},
+            {"m4p", "audio/mp4a-latm"},
+            {"m4u", "video/vnd.mpegurl"},
+            {"m4v", "video/x-m4v"},
+            {"mac", "image/x-macpaint"},
+            {"man", "application/x-troff-man"},
+            {"mathml", "application/mathml+xml"},
+            {"me", "application/x-troff-me"},
+            {"mesh", "model/mesh"},
+            {"mid", "audio/midi"},
+            {"midi", "audio/midi"},
+            {"mif", "application/vnd.mif"},
+            {"mov", "video/quicktime"},
+            {"movie", "video/x-sgi-movie"},
+            {"mp2", "audio/mpeg"},
+            {"mp3", "audio/mpeg"},
+            {"mp4", "video/mp4"},
+            {"mpe", "video/mpeg"},
+            {"mpeg", "video/mpeg"},
+            {"mpg", "video/mpeg"},
+            {"mpga", "audio/mpeg"},
+            {"ms", "application/x-troff-ms"},
+            {"msh", "model/mesh"},
+            {"mxu", "video/vnd.mpegurl"},
+            {"nc", "application/x-netcdf"},
+            {"oda", "application/oda"},
+            {"ogg", "application/ogg"},
+            {"pbm", "image/x-portable-bitmap"},
+            {"pct", "image/pict"},
+            {"pdb", "chemical/x-pdb"},
+            {"pdf", "application/pdf"},
+            {"pgm", "image/x-portable-graymap"},
+            {"pgn", "application/x-chess-pgn"},
+            {"pic", "image/pict"},
+            {"pict", "image/pict"},
+            {"png", "image/png"},
+            {"pnm", "image/x-portable-anymap"},
+            {"pnt", "image/x-macpaint"},
+            {"pntg", "image/x-macpaint"},
+            {"ppm", "image/x-portable-pixmap"},
+            {"ppt", "application/vnd.ms-powerpoint"},
+            {"pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+            {"potx", "application/vnd.openxmlformats-officedocument.presentationml.template"},
+            {"ppsx", "application/vnd.openxmlformats-officedocument.presentationml.slideshow"},
+            {"ppam", "application/vnd.ms-powerpoint.addin.macroEnabled.12"},
+            {"pptm", "application/vnd.ms-powerpoint.presentation.macroEnabled.12"},
+            {"potm", "application/vnd.ms-powerpoint.template.macroEnabled.12"},
+            {"ppsm", "application/vnd.ms-powerpoint.slideshow.macroEnabled.12"},
+            {"ps", "application/postscript"},
+            {"qt", "video/quicktime"},
+            {"qti", "image/x-quicktime"},
+            {"qtif", "image/x-quicktime"},
+            {"ra", "audio/x-pn-realaudio"},
+            {"ram", "audio/x-pn-realaudio"},
+            {"ras", "image/x-cmu-raster"},
+            {"rdf", "application/rdf+xml"},
+            {"rgb", "image/x-rgb"},
+            {"rm", "application/vnd.rn-realmedia"},
+            {"roff", "application/x-troff"},
+            {"rtf", "text/rtf"},
+            {"rtx", "text/richtext"},
+            {"sgm", "text/sgml"},
+            {"sgml", "text/sgml"},
+            {"sh", "application/x-sh"},
+            {"shar", "application/x-shar"},
+            {"silo", "model/mesh"},
+            {"sit", "application/x-stuffit"},
+            {"skd", "application/x-koan"},
+            {"skm", "application/x-koan"},
+            {"skp", "application/x-koan"},
+            {"skt", "application/x-koan"},
+            {"smi", "application/smil"},
+            {"smil", "application/smil"},
+            {"snd", "audio/basic"},
+            {"so", "application/octet-stream"},
+            {"spl", "application/x-futuresplash"},
+            {"src", "application/x-wais-source"},
+            {"sv4cpio", "application/x-sv4cpio"},
+            {"sv4crc", "application/x-sv4crc"},
+            {"svg", "image/svg+xml"},
+            {"swf", "application/x-shockwave-flash"},
+            {"t", "application/x-troff"},
+            {"tar", "application/x-tar"},
+            {"tcl", "application/x-tcl"},
+            {"tex", "application/x-tex"},
+            {"texi", "application/x-texinfo"},
+            {"texinfo", "application/x-texinfo"},
+            {"tif", "image/tiff"},
+            {"tiff", "image/tiff"},
+            {"tr", "application/x-troff"},
+            {"tsv", "text/tab-separated-values"},
+            {"txt", "text/plain"},
+            {"ustar", "application/x-ustar"},
+            {"vcd", "application/x-cdlink"},
+            {"vrml", "model/vrml"},
+            {"vxml", "application/voicexml+xml"},
+            {"wav", "audio/x-wav"},
+            {"wbmp", "image/vnd.wap.wbmp"},
+            {"wbmxl", "application/vnd.wap.wbxml"},
+            {"wml", "text/vnd.wap.wml"},
+            {"wmlc", "application/vnd.wap.wmlc"},
+            {"wmls", "text/vnd.wap.wmlscript"},
+            {"wmlsc", "application/vnd.wap.wmlscriptc"},
+            {"wrl", "model/vrml"},
+            {"xbm", "image/x-xbitmap"},
+            {"xht", "application/xhtml+xml"},
+            {"xhtml", "application/xhtml+xml"},
+            {"xls", "application/vnd.ms-excel"},
+            {"xml", "application/xml"},
+            {"xpm", "image/x-xpixmap"},
+            {"xsl", "application/xml"},
+            {"xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+            {"xltx", "application/vnd.openxmlformats-officedocument.spreadsheetml.template"},
+            {"xlsm", "application/vnd.ms-excel.sheet.macroEnabled.12"},
+            {"xltm", "application/vnd.ms-excel.template.macroEnabled.12"},
+            {"xlam", "application/vnd.ms-excel.addin.macroEnabled.12"},
+            {"xlsb", "application/vnd.ms-excel.sheet.binary.macroEnabled.12"},
+            {"xslt", "application/xslt+xml"},
+            {"xul", "application/vnd.mozilla.xul+xml"},
+            {"xwd", "image/x-xwindowdump"},
+            {"xyz", "chemical/x-xyz"},
+            {"zip", "application/zip"}
+        };
+}
+
+
+This answer is a copy of the author's answer (Richard Gourlay), but improved to solve issues on IIS 8 / win2012 (where function would cause app pool to crash), based on Rohland's comment pointing to http://www.pinvoke.net/default.aspx/urlmon.findmimefromdata
+using System.Runtime.InteropServices;
+
+...
+public static string GetMimeFromFile(string filename)
+{
+
+    if (!File.Exists(filename))
+        throw new FileNotFoundException(filename + " not found");
+
+    const int maxContent = 256;
+
+    var buffer = new byte[maxContent];
+    using (var fs = new FileStream(filename, FileMode.Open))
+    {
+        if (fs.Length >= maxContent)
+            fs.Read(buffer, 0, maxContent);
+        else
+            fs.Read(buffer, 0, (int) fs.Length);
+    }
+
+    var mimeTypePtr = IntPtr.Zero;
+    try
+    {
+        var result = FindMimeFromData(IntPtr.Zero, null, buffer, maxContent, null, 0, out mimeTypePtr, 0);
+        if (result != 0)
+        {
+            Marshal.FreeCoTaskMem(mimeTypePtr);
+            throw Marshal.GetExceptionForHR(result);
+        }
+
+        var mime = Marshal.PtrToStringUni(mimeTypePtr);
+        Marshal.FreeCoTaskMem(mimeTypePtr);
+        return mime;
+    }
+    catch (Exception e)
+    {
+        if (mimeTypePtr != IntPtr.Zero)
+        {
+            Marshal.FreeCoTaskMem(mimeTypePtr);
+        }
+        return "unknown/unknown";
+    }
+}
+
+[DllImport("urlmon.dll", CharSet = CharSet.Unicode, ExactSpelling = true, SetLastError = false)]
+private static extern int FindMimeFromData(IntPtr pBC,
+    [MarshalAs(UnmanagedType.LPWStr)] string pwzUrl,
+    [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.I1, SizeParamIndex = 3)] byte[] pBuffer,
+    int cbSize,
+    [MarshalAs(UnmanagedType.LPWStr)] string pwzMimeProposed,
+    int dwMimeFlags,
+    out IntPtr ppwzMimeOut,
+    int dwReserved);
+
+
+@Steve Morgan and @Richard Gourlay this is a great solution, thank you for that.  One small drawback is that when the number of bytes in a file is 255 or below, the mime type will sometimes yield "application/octet-stream", which is slightly inaccurate for files which would be expected to yield "text/plain".  I have updated your original method to account for this situation as follows:
+If the number of bytes in the file is less than or equal to 255 and the deduced mime type is "application/octet-stream", then create a new byte array that consists of the original file bytes repeated n-times until the total number of bytes is >= 256.  Then re-check the mime-type on that new byte array.
+Modified method:
+Imports System.Runtime.InteropServices
+
+<DllImport("urlmon.dll", CharSet:=CharSet.Auto)> _
+Private Shared Function FindMimeFromData(pBC As System.UInt32, <MarshalAs(UnmanagedType.LPStr)> pwzUrl As System.String, <MarshalAs(UnmanagedType.LPArray)> pBuffer As Byte(), cbSize As System.UInt32, <MarshalAs(UnmanagedType.LPStr)> pwzMimeProposed As System.String, dwMimeFlags As System.UInt32, _
+ByRef ppwzMimeOut As System.UInt32, dwReserverd As System.UInt32) As System.UInt32
+End Function
+Private Function GetMimeType(ByVal f As FileInfo) As String
+    'See http://stackoverflow.com/questions/58510/using-net-how-can-you-find-the-mime-type-of-a-file-based-on-the-file-signature
+    Dim returnValue As String = ""
+    Dim fileStream As FileStream = Nothing
+    Dim fileStreamLength As Long = 0
+    Dim fileStreamIsLessThanBByteSize As Boolean = False
+
+    Const byteSize As Integer = 255
+    Const bbyteSize As Integer = byteSize + 1
+
+    Const ambiguousMimeType As String = "application/octet-stream"
+    Const unknownMimeType As String = "unknown/unknown"
+
+    Dim buffer As Byte() = New Byte(byteSize) {}
+    Dim fnGetMimeTypeValue As New Func(Of Byte(), Integer, String)(
+        Function(_buffer As Byte(), _bbyteSize As Integer) As String
+            Dim _returnValue As String = ""
+            Dim mimeType As UInt32 = 0
+            FindMimeFromData(0, Nothing, _buffer, _bbyteSize, Nothing, 0, mimeType, 0)
+            Dim mimeTypePtr As IntPtr = New IntPtr(mimeType)
+            _returnValue = Marshal.PtrToStringUni(mimeTypePtr)
+            Marshal.FreeCoTaskMem(mimeTypePtr)
+            Return _returnValue
+        End Function)
+
+    If (f.Exists()) Then
+        Try
+            fileStream = New FileStream(f.FullName(), FileMode.Open, FileAccess.Read, FileShare.ReadWrite)
+            fileStreamLength = fileStream.Length()
+
+            If (fileStreamLength >= bbyteSize) Then
+                fileStream.Read(buffer, 0, bbyteSize)
+            Else
+                fileStreamIsLessThanBByteSize = True
+                fileStream.Read(buffer, 0, CInt(fileStreamLength))
+            End If
+
+            returnValue = fnGetMimeTypeValue(buffer, bbyteSize)
+
+            If (returnValue.Equals(ambiguousMimeType, StringComparison.OrdinalIgnoreCase) AndAlso fileStreamIsLessThanBByteSize AndAlso fileStreamLength > 0) Then
+                'Duplicate the stream content until the stream length is >= bbyteSize to get a more deterministic mime type analysis.
+                Dim currentBuffer As Byte() = buffer.Take(fileStreamLength).ToArray()
+                Dim repeatCount As Integer = Math.Floor((bbyteSize / fileStreamLength) + 1)
+                Dim bBufferList As List(Of Byte) = New List(Of Byte)
+                While (repeatCount > 0)
+                    bBufferList.AddRange(currentBuffer)
+                    repeatCount -= 1
+                End While
+                Dim bbuffer As Byte() = bBufferList.Take(bbyteSize).ToArray()
+                returnValue = fnGetMimeTypeValue(bbuffer, bbyteSize)
+            End If
+        Catch ex As Exception
+            returnValue = unknownMimeType
+        Finally
+            If (fileStream IsNot Nothing) Then fileStream.Close()
+        End Try
+    End If
+    Return returnValue
+End Function
+

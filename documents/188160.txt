@@ -1,0 +1,448 @@
+How Do You Handle Validation In Silverlight?
+silverlight silverlight-2.0
+How have you decided to handle data/control validation in your silverlight applications?  
+
+
+Haven't done much of this yet personally, but some good starting points here. I imagine that these will come as part of a future release, but for now we'll probably have to roll our own using ASP.NET validators as a starting point.
+
+You can throw and capture data validation exceptions.
+To manage both of these types of errors need to take 3 steps:
+
+Identify the error handler either in the control or higher in the visiblity hierarchy (e.g., a container; in this case the grid that contains the text box)
+Set NotifyOnValidationError and ValidateOnException to true. The latter tells the Binding Engine to create a validation error event when an exception occurs. The former tells the Binding Engine to raise the BindingValidationError event when a validation error occurs.
+Create the event handler named in step 1.
+
+Taken from here.
+Sample code:
+// page.xaml.cs
+
+private bool clean = true;
+
+
+private void LayoutRoot_BindingValidationError( 
+   object sender, ValidationErrorEventArgs e )
+{
+   if ( e.Action == ValidationErrorEventAction.Added )
+   {
+      QuantityOnHand.Background = new SolidColorBrush( Colors.Red );
+      clean = false;
+   }
+   else if ( e.Action == ValidationErrorEventAction.Removed )
+   {
+      QuantityOnHand.Background = new SolidColorBrush( Colors.White );
+      clean = true;
+   }
+}
+
+
+
+// page.xaml
+
+<Grid x:Name="LayoutRoot" Background="White" BindingValidationError="LayoutRoot_BindingValidationError" >
+
+<TextBox x:Name="QuantityOnHand"   
+    Text="{Binding Mode=TwoWay, Path=QuantityOnHand, 
+        NotifyOnValidationError=true,  ValidatesOnExceptions=true }"
+    VerticalAlignment="Bottom"
+    HorizontalAlignment="Left"
+    Height="30" Width="90"red
+    Grid.Row="4" Grid.Column="1" />
+
+
+// book.cs
+
+public int QuantityOnHand
+{
+   get { return quantityOnHand; }
+   set
+   {
+      if ( value < 0 )
+      {
+         throw new Exception( "Quantity on hand cannot be negative!" );
+      }
+      quantityOnHand = value;
+      NotifyPropertyChanged( "QuantityOnHand" );
+   }       // end set
+}
+
+
+You might want to look at PostSharp, it makes attributing your client-side data model very simple.
+
+If you are experiencing problems trying to implement this, it's not  because your code is broken, it's because the feature is broken in the DataGrid. Check out the article by Jesse Liberty here.
+
+A very easy validation control source code is given at this location:
+http://silverlightvalidator.codeplex.com/SourceControl/changeset/view/20754#
+The following are the conditions under which it works.
+1. The indicator showing invalid values assumes the position of the control to validate, therefore controls should be tightly packed in a row and column so that it indicates adjacent to the control.
+2. It doesn't work for the validating on the ChildWindow.
+I had to modify the code to include the conditions of childwindow in the validatorbase class as follows:
+
+using System;
+using System.Net;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Documents;
+using System.Windows.Ink;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Shapes;
+using Silverlight.Validators.Controls;
+
+namespace Silverlight.Validators
+{
+    public enum ValidationType
+    {
+        Validator,
+        OnDemand
+    }
+
+
+    public abstract class ValidatorBase : DependencyObject
+    {
+        protected ValidatorManager Manager { get; set; }
+
+
+        public string ManagerName { get; set; }
+        public ValidationType ValidationType { get; set; }
+        public IIndicator Indicator { get; set; }
+        public FrameworkElement ElementToValidate { get; set; }
+        public bool IsRequired { get; set; }
+        public bool IsValid { get; set; }
+        public Brush InvalidBackground { get; set; }
+        public Brush InvalidBorder { get; set; }
+        public Thickness InvalidBorderThickness { get; set; }
+        public string ErrorMessage { get; set; }
+
+        private Brush OrigBackground = null;
+        private Brush OrigBorder = null;
+        private Thickness OrigBorderThickness = new Thickness(1);
+        private object OrigTooltip = null;
+
+        public ValidatorBase()
+        {
+            IsRequired = false;
+            IsValid = true;
+            ManagerName = "";
+            this.ValidationType = ValidationType.Validator;
+        }
+
+        public void Initialize(FrameworkElement element)
+        {
+            ElementToValidate = element;
+            element.Loaded += new RoutedEventHandler(element_Loaded);
+        }
+
+        private bool loaded = false;
+        public UserControl UserControl { get; set; }
+        public ChildWindow ChildUserControl { get; set; }
+        private void element_Loaded(object sender, RoutedEventArgs e)
+        {
+            if (!loaded)
+            {
+
+                this.UserControl = FindUserControl(ElementToValidate);
+                //UserControl o = FindUserControl(ElementToValidate);
+                this.ChildUserControl = FindChildUserControl(ElementToValidate);
+                //MessageBox.Show(o.GetType().BaseType.ToString());
+                //no usercontrol.  throw error?
+                if ((this.UserControl == null) && (this.ChildUserControl==null)) return;
+
+                if (this.UserControl != null)
+                    this.Manager = FindManager(this.UserControl, ManagerName);
+                else if (this.ChildUserControl != null)
+                    this.Manager = FindManager(this.ChildUserControl, ManagerName);
+
+
+                if (this.Manager == null)
+                {
+                    System.Diagnostics.Debug.WriteLine(String.Format("No ValidatorManager found named '{0}'", ManagerName));
+                    throw new Exception(String.Format("No ValidatorManager found named '{0}'", ManagerName));
+                }
+
+                this.Manager.Register(ElementToValidate, this);
+
+                if (ValidationType == ValidationType.Validator)
+                {
+                    ActivateValidationRoutine();
+                }
+
+                //Use the properties from the manager if they are not set at the control level
+                if (this.InvalidBackground == null)
+                {
+                    this.InvalidBackground = this.Manager.InvalidBackground;
+                }
+
+                if (this.InvalidBorder == null)
+                {
+                    this.InvalidBorder = this.Manager.InvalidBorder;
+
+                    if (InvalidBorderThickness.Bottom == 0)
+                    {
+                        this.InvalidBorderThickness = this.Manager.InvalidBorderThickness;
+                    }
+                }
+
+                if (this.Indicator ==null)
+                {
+                    Type x = this.Manager.Indicator.GetType();
+                    this.Indicator = x.GetConstructor(System.Type.EmptyTypes).Invoke(null) as IIndicator;
+                    foreach (var param in x.GetProperties())
+                    {
+                        var val = param.GetValue(this.Manager.Indicator, null);
+                        if (param.CanWrite && val!= null && val.GetType().IsPrimitive)
+                        {
+                            param.SetValue(this.Indicator, val, null);
+                        }
+                    }
+                }
+                loaded = true;
+            }
+            ElementToValidate.Loaded -= new RoutedEventHandler(element_Loaded);
+        }
+
+        public void SetManagerAndControl(ValidatorManager manager, FrameworkElement element)
+        {
+            this.Manager = manager;
+            this.ElementToValidate = element;
+        }
+
+        public bool Validate(bool checkControl)
+        {
+            bool newIsValid;
+            if (checkControl)
+            {
+                newIsValid= ValidateControl() && ValidateRequired();
+            }
+            else
+            {
+                newIsValid = ValidateRequired();
+            }
+
+            if (newIsValid && !IsValid)
+            {
+                ControlValid();
+            }
+            if (!newIsValid && IsValid)
+            {
+                ControlNotValid();
+            }
+            IsValid=newIsValid;
+            return IsValid;
+        }
+
+        public virtual void ActivateValidationRoutine()
+        {
+            ElementToValidate.LostFocus += new RoutedEventHandler(ElementToValidate_LostFocus);
+            ElementToValidate.KeyUp += new KeyEventHandler(ElementToValidate_KeyUp);
+        }
+
+        /// <summary>
+        /// Find the nearest UserControl up the control tree for the FrameworkElement passed in
+        /// </summary>
+        /// <param name="element">Control to validate</param>
+        protected static UserControl FindUserControl(FrameworkElement element)
+        {
+            if (element == null)
+            {
+                return null;
+            }
+            if (element.Parent != null)
+            {
+                //MessageBox.Show(element.Parent.GetType().BaseType.ToString());
+                if (element.Parent is UserControl)
+                {
+                    return element.Parent as UserControl;
+                }
+                return FindUserControl(element.Parent as FrameworkElement);
+            }
+            return null;
+        }
+        protected static ChildWindow FindChildUserControl(FrameworkElement element)
+        {
+            if (element == null)
+            {
+                return null;
+            }
+            if (element.Parent != null)
+            {
+                //MessageBox.Show(element.Parent.GetType().BaseType.ToString());
+                if (element.Parent is ChildWindow)
+                {
+                    return element.Parent as ChildWindow;
+                }
+                return FindChildUserControl(element.Parent as FrameworkElement);
+            }
+            return null;
+        }
+
+        protected virtual void ElementToValidate_KeyUp(object sender, RoutedEventArgs e)
+        {
+            Dispatcher.BeginInvoke(delegate() { Validate(false); });
+        }
+
+        protected virtual void ElementToValidate_LostFocus(object sender, RoutedEventArgs e)
+        {
+            Dispatcher.BeginInvoke(delegate() { Validate(true); });
+        }
+
+        protected abstract bool ValidateControl();
+
+        protected bool ValidateRequired()
+        {
+            if (IsRequired && ElementToValidate is TextBox)
+            {
+                TextBox box = ElementToValidate as TextBox;
+                return !String.IsNullOrEmpty(box.Text);
+            }
+            return true;
+        }
+
+        protected void ControlNotValid()
+        {
+            GoToInvalidStyle();
+        }
+
+        protected void ControlValid()
+        {
+            GoToValidStyle();
+        }
+
+        protected virtual void GoToInvalidStyle()
+        {
+            if (!string.IsNullOrEmpty(this.ErrorMessage))
+            {
+                object tooltip = ToolTipService.GetToolTip(ElementToValidate);
+
+                if (tooltip != null)
+                {
+                    OrigTooltip = tooltip;
+                }
+
+                //causing a onownermouseleave error currently...
+                this.ElementToValidate.ClearValue(ToolTipService.ToolTipProperty);
+
+                SetToolTip(this.ElementToValidate, this.ErrorMessage);
+            }
+
+            if (Indicator != null)
+            {
+                Indicator.ShowIndicator(this);
+            }
+
+            if (ElementToValidate is TextBox)
+            {
+                TextBox box = ElementToValidate as TextBox;
+
+                if (InvalidBackground != null)
+                {
+                    if (OrigBackground == null)
+                    {
+                    OrigBackground = box.Background;
+                    }
+                    box.Background = InvalidBackground;
+                }
+
+                if (InvalidBorder != null)
+                {
+                    if (OrigBorder == null)
+                    {
+                    OrigBorder = box.BorderBrush;
+                        OrigBorderThickness = box.BorderThickness;
+                    }
+                    box.BorderBrush = InvalidBorder;
+
+                    if (InvalidBorderThickness != null)
+                    {
+                        box.BorderThickness = InvalidBorderThickness;
+                    }
+                }
+            }   
+        }
+
+        protected virtual void GoToValidStyle()
+        {
+            if (!string.IsNullOrEmpty(this.ErrorMessage))
+            {
+                this.ElementToValidate.ClearValue(ToolTipService.ToolTipProperty);
+
+                if (this.OrigTooltip != null)
+                {
+                    SetToolTip(this.ElementToValidate, this.OrigTooltip);
+                }
+            }
+
+            if (Indicator != null)
+            {
+                Indicator.HideIndicator();
+            }
+
+            if (ElementToValidate is TextBox)
+            {
+                TextBox box = ElementToValidate as TextBox;
+                if (OrigBackground != null)
+                {
+                    box.Background = OrigBackground;
+                }
+
+                if (OrigBorder != null)
+                {
+                    box.BorderBrush = OrigBorder;
+
+                    if (OrigBorderThickness != null)
+                    {
+                        box.BorderThickness = OrigBorderThickness;
+                    }
+                }
+            }
+        }
+
+        protected void SetToolTip(FrameworkElement element, object tooltip)
+        {
+            Dispatcher.BeginInvoke(() =>
+                        ToolTipService.SetToolTip(element, tooltip));
+        }
+
+        private ValidatorManager FindManager(UserControl c, string groupName)
+        {
+            string defaultName = "_DefaultValidatorManager";
+            var mgr = this.UserControl.FindName(ManagerName);
+            if (mgr == null)
+            {
+                mgr = this.UserControl.FindName(defaultName);
+            }
+            if (mgr == null)
+            {
+                mgr = new ValidatorManager()
+                {
+                    Name = defaultName
+                };
+                Panel g = c.FindName("LayoutRoot") as Panel;
+                g.Children.Add(mgr as ValidatorManager);
+            }
+            return mgr as ValidatorManager;
+        }
+
+        private ValidatorManager FindManager(ChildWindow c, string groupName)
+        {
+            string defaultName = "_DefaultValidatorManager";
+            var mgr = this.ChildUserControl.FindName(ManagerName);
+            if (mgr == null)
+            {
+                mgr = this.ChildUserControl.FindName(defaultName);
+            }
+            if (mgr == null)
+            {
+                mgr = new ValidatorManager()
+                {
+                    Name = defaultName
+                };
+                Panel g = c.FindName("LayoutRoot") as Panel;
+                g.Children.Add(mgr as ValidatorManager);
+            }
+            return mgr as ValidatorManager;
+        }
+
+    }
+}
+

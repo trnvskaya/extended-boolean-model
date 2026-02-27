@@ -1,0 +1,60 @@
+Can garbage collection coexist with explicit memory management?
+language-agnostic garbage-collection computer-science theory
+For example, say one was to include a 'delete' keyword in C# 4. Would it be possible to guarantee that you'd never have wild pointers, but still be able to rely on the garbage collecter, due to the reference-based system?
+The only way I could see it possibly happening is if instead of references to memory locations, a reference would be an index to a table of pointers to actual objects. However, I'm sure that there'd be some condition where that would break, and it'd be possible to break type safety/have dangling pointers.
+EDIT: I'm not talking about just .net. I was just using C# as an example.
+
+
+With garbage collection, as long as you have a referenced reference to the object, it stays alive. With manual delete you can't guarantee that.
+Example (pseudocode):
+obj1 = new instance;
+obj2 = obj1;
+
+// 
+
+delete obj2;
+// obj1 now references the twilightzone.
+
+Just to be short, combining manual memory management with garbage collection defeats the purpose of GC. Besides, why bother? And if you really want to have control, use C++ and not C#. ;-).
+
+The best you could get would be a partition into two âhemispheresâ where one hemisphere is managed and can guarantee the absence of dangling pointers. The other hemisphere has explicit memory management and gives no guarantees. These two can coexist, but no, you can't give your strong guarantees to the second hemisphere. All you could do is to track all pointers. If one gets deleted, then all other pointers to the same instance could be set to zero. Needless to say, this is quite expensive. Your table would help, but introduce other costs (double indirection).
+
+You can - kind of: make your object disposable, and then dispose it yourself.
+A manual delete is unlikely to improve memory performance in a managed environment. It might help with unmanaged ressources, what dispose is all about. 
+I'd rather have implementing and consuming Disposable objects made easier. I have no consistent, complete idea how this should look like, but managing unmanaged ressources is a verbose pain under .NET.
+
+An idea for implementing delete:
+delete tags an object for manual deletion. At the next garbage collection cycle, the object is removed and all references to it are set to null.
+It sounds cool at first (at least to me), but I doubt it would be useful.
+This isn't particulary safe, either - e.g.  another thread might be busy executing a member method of that object, such an methods needs to throw e.g. when accessing object data.
+
+Chris Sells also discussed this on .NET Rocks. I think it was during his first appearance but the subject might have been revisited in later interviews.
+http://www.dotnetrocks.com/default.aspx?showNum=10
+
+My first reaction was: Why not? I can't imagine that you want to do is something as obscure as just leave an unreferenced chunk out on the heap to find it again later on. As if a four-byte pointer to the heap were too much to maintain to keep track of this chunk. 
+So the issue is not leaving unreferenced memory allocated, but intentionally disposing of memory still in reference. Since garbage collection performs the function of marking the memory free at some point, it seems that we should just be able to call an alternate sequence of instructions to dispose of this particular chunk of memory. 
+However, the problem lies here:
+String s = "Here is a string."; 
+String t = s;
+String u = s;
+junk( s );
+
+What do t and u point to? In a strict reference system, t and u should be null. So that means that you have to not only do reference counting, but perhaps tracking as well. 
+However, I can see that you should be done with s at this point in your code. So junk can set the reference to null, and pass it to the sweeper with a sort of priority code. The gc could be activated for a limited run, and the memory freed only if not reachable. So we can't explicitly free anything that somebody has coded to use in some way again. But if s is the only reference, then the chunk is deallocated. 
+So, I think it would only work with a limited adherence to the explicit side. 
+
+It's possible, and already implemented, in non-managed languages such as C++. Basically, you implement or use an existing garbage collector: when you want manual memory management, you call new and delete as normal, and when you want garbage collection, you call GC_MALLOC or whatever the function or macro is for your garbage collector.
+See http://www.hpl.hp.com/personal/Hans%5FBoehm/gc/ for an example.
+Since you were using C# as an example, maybe you only had in mind implementing manual memory management in a managed language, but this is to show you that the reverse is possible.
+
+If the semantics of delete on a object's reference would make all other references referencing that object be null, then you could do it with 2 levels of indirection (1 more than you hint). Though note that while the underlying object would be destroyed, a fixed amount of information (enough to hold a reference) must be kept live on the heap.
+All references a user uses would reference a hidden reference (presumably living in a heap) to the real object. When doing some operation on the object (such as calling a method or relying on its identity, wuch as using the == operator), the reference the programmer uses would dereference the hidden reference it points to. When deleting an object, the actual object would be removed from the heap, and the hidden reference would be set to null. Thus the references programmers would see evaluate to null.
+It would be the GC's job to clean out these hidden references.
+
+This would help in situations with long-lived objects.  Garbage Collection works well when objects are used for short periods of time and de-referenced quickly.  The problem is when some objects live for a long time.  The only way to clean them up is to perform a resource-intensive garbage collection.
+In these situations, things would work much easier if there was a way to explicitly delete objects, or at least a way to move a graph of objects back to generation 0.
+
+Yes ... but with some abuse.
+C# can be abused a little to make that happen.
+If you're willing to play around with the Marshal class, StructLayout attribute and unsafe code, you could write your very own manual memory manager.
+You can find a demonstration of the concept here: Writing a Manual Memory Manager in C#.

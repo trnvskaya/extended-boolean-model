@@ -1,0 +1,108 @@
+Why override operator()?
+c++ boost operator-overloading functor function-call-operator
+In the Boost Signals library, they are overloading the () operator.
+Is this a convention in C++? For callbacks, etc.?
+I have seen this in code of a co-worker (who happens to be a big Boost fan). Of all the Boost goodness out there, this has only led to confusion for me.
+Any insight as to the reason for this overload?
+
+
+Another co-worker pointed out that it could be a way to disguise functor objects as functions. For example, this:
+my_functor();
+
+Is really:
+my_functor.operator()();
+
+So does that mean this:
+my_functor(int n, float f){ ... };
+
+Can be used to overload this as well?
+my_functor.operator()(int n, float f){ ... };
+
+
+You may also look over the C++ faq's Matrix example. There are good uses for doing it but it of course depends on what you are trying to accomplish.
+
+A functor is not a function, so you cannot overload it.
+Your co-worker is correct though that the overloading of operator() is used to create "functors" - objects that can be called like functions.  In combination with templates expecting "function-like" arguments this can be quite powerful because the distinction between an object and a function becomes blurred.
+As other posters have said: functors have an advantage over plain functions in that they can have state.  This state can be used over a single iteration (for example to calculate the sum of all elements in a container) or over multiple iterations (for example to find all elements in multiple containers satisfying particular criteria).
+
+It allows a class to act like a function. I have used it in a logging class where the call should be a function but i wanted the extra benefit of the class.
+so something like this:
+logger.log("Log this message");
+
+turns into this:
+logger("Log this message");
+
+
+Start using std::for_each, std::find_if, etc. more often in your code and you'll see why it's handy to have the ability to overload the () operator.  It also allows functors and tasks to have a clear calling method that won't conflict with the names of other methods in the derived classes.
+
+Functors are basically like function pointers. They are generally intended to be copyable (like function pointers) and invoked in the same way as function pointers. The main benefit is that when you have an algorithm that works with a templated functor, the function call to operator() can be inlined. However, function pointers are still valid functors.
+
+Many have answered that it makes a functor, without telling one big reason why a functor is better than a plain old function.
+The answer is that a functor can have state.  Consider a summing function - it needs to keep a running total.
+class Sum
+{
+public:
+    Sum() : m_total(0)
+    {
+    }
+    void operator()(int value)
+    {
+        m_total += value;
+    }
+    int m_total;
+};
+
+
+One of the primary goal when overloading operator() is to create a functor. A functor acts just like a function, but it has the advantages that it is stateful, meaning it can keep data reflecting its state between calls.
+Here is a simple functor example :
+struct Accumulator
+{
+    int counter = 0;
+    int operator()(int i) { return counter += i; }
+}
+...
+Accumulator acc;
+cout << acc(10) << endl; //prints "10"
+cout << acc(20) << endl; //prints "30"
+
+Functors are heavily used with generic programming. Many STL algorithms are written in a very general way, so that you can plug-in your own function/functor into the algorithm. For example, the algorithm std::for_each allows you to apply an operation on each element of a range. It could be implemented something like that :
+template <typename InputIterator, typename Functor>
+void for_each(InputIterator first, InputIterator last, Functor f)
+{
+    while (first != last) f(*first++);
+}
+
+You see that this algorithm is very generic since it is parametrized by a function. By using the operator(), this function lets you use either a functor or a function pointer. Here's an example showing both possibilities :
+void print(int i) { std::cout << i << std::endl; }
+...    
+std::vector<int> vec;
+// Fill vec
+
+// Using a functor
+Accumulator acc;
+std::for_each(vec.begin(), vec.end(), acc);
+// acc.counter contains the sum of all elements of the vector
+
+// Using a function pointer
+std::for_each(vec.begin(), vec.end(), print); // prints all elements
+
+
+Concerning your question about operator() overloading, well yes it is possible. You can perfectly write a functor that has several parentheses operator, as long as you respect the basic rules of method overloading (e.g. overloading only on the return type is not possible).
+
+The use of operator() to form functors in C++ is related to functional programming paradigms that usually make use of a similar concept: closures.
+
+One strength I can see, however this can be discussed, is that the signature of operator() looks and behaves the same across different types. If we had a class Reporter which had a member method report(..), and then another class Writer, which had a member method write(..), we would have to write adapters if we would like to use both classes as perhaps a template component of some other system. All it would care about is to pass on strings or what have you. Without the use of operator() overloading or writing special type adapters, you couldn't do stuff like 
+T t;
+t.write("Hello world");
+
+because T has a requirement that there is a member function called write which accepts anything implicitly castable to const char* (or rather const char[]). The Reporter class in this example doesn't have that, so having T (a template parameter) being Reporter would fail to compile.
+However, as far I can see this would work with different types
+T t;
+t("Hello world");
+
+though, it still explicitly requires that the type T has such an operator defined, so we still have a requirement on T. Personally, I don't think it's too wierd with functors as they are commonly used but I would rather see other mechanisms for this behavior. In languages like C# you could just pass in a delegate. I am not too familiar with member function pointers in C++ but I could imagine you could achieve the same behaviour there aswell.
+Other than syntatic sugar behaviour I don't really see the strengths of operator overloading to perform such tasks.
+I am sure there are more knowingly people who have better reasons than I have but I thought I'd lay out my opinion for the rest of you to share.
+
+Other posts have done a good job describing how operator() works and why it can be useful.  
+I've recently been using some code that makes very extensive use of operator().  A disadvantage of overloading this operator is that some IDEs become less effective tools as a result.  In Visual Studio, you can usually right-click on a method call to go to the method definition and/or declaration.  Unfortunately, VS isn't smart enough to index operator() calls.  Especially in complex code with overridden operator() definitions all over the place, it can be very difficult to figure out what piece of code is executing where.  In several cases, I found I had to run the code and trace through it to find what was actually running.  

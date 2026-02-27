@@ -1,0 +1,82 @@
+How can I call a .NET DLL from an Inno Setup script?
+.net installation inno-setup
+I want to call a function from a .NET DLL (coded in C#) from an Inno Setup script.
+I have:
+
+marked the Register for COM interop option in the project properties,
+changed the ComVisible setting in the AssemblyInfo.cs file,
+added these lines to the ISS script:
+
+
+[Files]
+Source: c:\temp\1\MyDLL.dll; Flags: dontcopy
+[Code]
+function MyFunction(): string;
+external 'MyFunction@files:MyDLL.dll stdcall setuponly';
+
+but I still get the following error:
+
+Runtime Error (at -1:0):
+Cannot Import dll:C:\DOCUME~1\foo\LOCALS~1\Temp\is-LRL3E.tmp\MyDLL.dll.
+
+What am I doing wrong?
+
+
+You're trying to import a C-style function from your .NET dll - this doesn't really have anything to do with COM interop. COM interop allows you to activate your .NET objects as COM objects, it doesn't expose them as C/C++ exported functions/types.
+If your function doesn't need to return any data, why not make a simple .exe that calls your function and just run that from your setup?
+Also: See the innosetup support newsgroups where you might get better support.
+
+Oops, my bad, it's been too long since I've read pascal! So, if you need to get the value then there are a couple of possibilities:
+
+Write the functionality in C/C++ and export the function, that's definitely supported.
+Use a Managed C++ dll to shim to your .NET dll, and expose the call as a C interface point (this should work, but it's getting messy)
+Use an .exe to store the result of your code in a .INI file or the registry or in a temp file and read the result in the setup code section (this is now properly nasty)
+
+When I last worked with InnoSetup it didn't support your scenario directly (calling .NET code from setup).
+
+I read a little bit more about it - now I can see the difference between importing a C-style function and creating an OLE object.
+Something like this would work for me:
+[Code]
+procedure MyFunction();
+var
+  oleObject: Variant;
+begin
+  oleObject := CreateOleObject('MyDLL.MyDLL');
+
+  MsgBox(oleObject.MyFunction, mbInformation, mb_Ok);
+end;
+
+but it requires registering the DLL file.
+I guess I will have to create a command-line application to call the functions from the DLL.
+
+A .NET dll can be best called from any other programming language by exposing it as a COM object. Take a look at this example: http://support.microsoft.com/kb/828736. This shows how to call a ".NET dll" from "unmanaged C++". You can replace the "unamanged C++" by any other programming language, that can be used as a COM client.
+
+Innosetup script to detect dotnet framework and old version might be of some use.
+
+Intenta de esta manera (Try this way):
+Var
+ obj: Variant
+ va: MyVariableType;
+Begin
+ //Starting
+ ExtractTemporaryFile('MyDll.dll');
+ RegisterServer(False, ExpandConstant('{tmp}\MyDll.dll'), False);
+ obj := CreateOleObject('MyDll.MyClass');
+ //Using
+ va := obj.MyFunction();
+ //Finishing
+ UnregisterServer(False, ExpandConstant('{tmp}\MyDll.dll'), False);
+ DeleteFile('{tmp}\MyDll.dll');
+End;
+
+Suerte (good luck)
+
+Try using delayload, it is used for a dll that may not exist at runtime. This solve the problem.
+For example:
+[Files]
+Source: odbccp32.dll; Flags: dontcopy
+
+[Code]
+procedure SQLConfigDataSource(hwndParent: Integer; Frequest: Integer; LpszDriver: String; lpszAttributes: String);
+external 'SQLConfigDataSource@files:odbccp32.dll stdcall delayload';
+

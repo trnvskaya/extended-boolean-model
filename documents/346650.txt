@@ -1,0 +1,23 @@
+Is there a "nice" way to deal with reassembling multicasts from multiple sources?
+c++ boost boost-asio multicast
+I'm currently reworking our existing proprietary socket wrapper code to use boost asio so that it can do some of the heavy lifting for us.  Perhaps the most complex area of our existing code is the multicast handling code.   The code allows our middle-tier servers (of which there can me many in one system) to send multicasts to client boxes, which use these to present updates to the users of the system.
+The reason the code is complex and error-prone is that it uses a number of raw buffers to reassemble the multicast streams according to where they have come from.  It appears that even with Boost.Asio I'm going to have to deal with this same issue, so before I get stuck in I thought it would be worth asking how other people have dealt with this situation.
+It seems like a very common use-case. Is there anything out there that can help me do this job without the kind of code I have now?  Or is there an established C++ template (Boost or otherwise) that can do this kind of work?
+Obviously I could make things easier on myself and use STL containers to buffer the packets instead of raw arrays, but this code needs to be really high performance.  On large installs there are a huge number of packets flying around and it needs to respond as near to real time as possible.
+Thanks in advance for any thoughts on this matter.
+Jamie
+
+
+It doesn't sound like you've given enough information for detailed answers, but there are a few general pointers to consider for realtime handling of multicast data.
+
+If you're using raw UDP multicast, you're probably doing some sort of protocol sequencing in userspace in order to deal with lost or duplicated packets.  Whatever optimizations you want to do, resist the temptation to break the layering between your application and your protocol layer.
+std::vector, for most purposes, is identical to a raw dynamically-allocated character buffer.  Don't shy away from using it just because it's an abstraction layer.  There are two cases where you should avoid it, however:
+
+If you can get away with statically-allocated buffers
+If you need to transfer ownership of the buffer downstream (though if you design carefuly, swap() may be sufficient)
+
+Preallocation is your friend.  If you can have a set of buffers available for usage when data comes in, you can remove most dynamic allocation from the fast path of execution.
+Minimize memory copies.  If you can process data in a single call stack, you have a chance to avoid copies.  If you have to pass data off to a different thread, you may be forced to copy data.
+If your application can handle chunked buffers (rather than aggregating all data into a single buffer), look into writev and readv.
+
+I don't believe any canned solution will solve your problems.  Boost ASIO, libevent, etc. will all handle socket abstractions for you, but what you do with your data is still your responsibility, once it's been delivered.

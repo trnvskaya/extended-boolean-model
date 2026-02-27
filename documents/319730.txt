@@ -1,0 +1,103 @@
+Escaping Bracket [ in a CONTAINS() clause?
+sql-server tsql
+How can I escape a bracket in a full-text SQL Server contains() query? I've tried all the following, none of which work:
+CONTAINS(crev.RawText, 'arg[0]')
+CONTAINS(crev.RawText, 'arg[[0]]')
+CONTAINS(crev.RawText, 'arg\[0\]')
+
+Using double quotes does work, but it forces the entire search to be a phrase, which is a showstopper for multiple word queries. 
+CONTAINS(crev.RawText, '"arg[0]"')
+
+All I really want to do is escape the bracket, but I can't seem to do that..
+
+
+Not in the spirit of fulltext indexing apparently.
+
+word
+Is a string of characters without
+  spaces or punctuation.
+phrase
+Is one or more words with spaces
+  between each word.
+
+And
+
+Punctuation is ignored. Therefore,
+  CONTAINS(testing, "computer failure")
+  matches a row with the value, "Where
+  is my computer? Failure to find it
+  would be expensive."
+
+I'm not sure what your options are.
+Obviously LIKE works fine:
+SELECT *
+FROM dbo.stackoverflow_319730
+WHERE txtcol LIKE 'arg[ [ ]0]'
+
+But
+SELECT *
+FROM dbo.stackoverflow_319730
+WHERE CONTAINS(txtcol, '"arg[0]"')
+
+Even matches a column with 'arg[1]' in it, for instance:
+CREATE TABLE [dbo].[stackoverflow_319730](
+    [id] [int] IDENTITY(1,1) NOT NULL,
+    [txtcol] [text] NOT NULL,
+ CONSTRAINT [PK_stackoverflow_319730] PRIMARY KEY CLUSTERED 
+(
+    [id] ASC
+)WITH (PAD_INDEX  = OFF, STATISTICS_NORECOMPUTE  = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS  = ON, ALLOW_PAGE_LOCKS  = ON) ON [PRIMARY]
+) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
+
+INSERT INTO [dbo].[stackoverflow_319730] (txtcol) VALUES ('arg[0]')
+INSERT INTO [dbo].[stackoverflow_319730] (txtcol) VALUES ('arg[1]')
+INSERT INTO [dbo].[stackoverflow_319730] (txtcol) VALUES ('some other text')
+INSERT INTO [dbo].[stackoverflow_319730] (txtcol) VALUES ('arg[0], arg[1]')
+
+EXEC sp_fulltext_catalog   'FTCatalog','create'
+EXEC sp_fulltext_table     'stackoverflow_319730', 'create', 'FTCatalog', 'pk_stackoverflow_319730' 
+EXEC sp_fulltext_column    'stackoverflow_319730', 'txtcol', 'add' 
+EXEC sp_fulltext_table     'stackoverflow_319730','activate' 
+EXEC sp_fulltext_catalog   'FTCatalog', 'start_full' 
+
+SELECT *
+FROM dbo.stackoverflow_319730
+WHERE txtcol LIKE 'arg[ [ ]0]'
+
+SELECT *
+FROM dbo.stackoverflow_319730
+WHERE CONTAINS(txtcol, '"arg[0]"')
+
+With results which hint at the problem with punctuation:
+id          txtcol
+----------- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+1           arg[0]
+
+(1 row(s) affected)
+
+id          txtcol
+----------- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+1           arg[0]
+2           arg[1]
+4           arg[0], arg[1]
+Informational: The full-text search condition contained noise word(s).
+
+
+You don't have to escape the [ as it has no special meaning in Full Text Search. If you do need to search for an exact match though, you can use "" marks. 
+Further, you can use multiple "" inside the single quotes:
+CONTAINS('"word1" or "word2" or "word3"')
+
+This also works:
+CONTAINS('"word1" and "word2" and "word3"')
+
+Anything put inside the double quotes is treated as exact text. Thus if I were to do a search of the Description field of the Production.ProductDescription table in AdventureWorks, I could use
+CONTAINS('shifting and "on or off-road"')
+
+and it would find matches for the word shifting that also had the phrase "on or off-road". 
+The only special symbol is the ~, it can be used in place of the NEAR command. 
+CONTAINS('shifting ~ smooth')
+
+is the same as 
+CONTAINS('shifting NEAR smooth')
+
+and will find matches where the words shifting and smooth are near each other. 

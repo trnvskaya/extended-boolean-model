@@ -1,0 +1,34 @@
+Class design for serialization - ideas or patterns?
+design serialization oop
+Let me begin with an illustrative example (assume the implementation is in a statically typed language such as Java or C#).
+Assume that you are building a content management system (CMS) or something similar. The data is hierarchically organised into Folders. Each folder has a collection of children; a child may be a Page or a Folder. All items are stored within a root folder. No cycles are allowed. We have an acyclic graph.
+The system will have a remote API and instances of Folder and Page must be serialized / de-serialized across the network. With a typical implementation of folder, in which a folder's children are a List, serialization of the root node would send the entire graph. This is unacceptable for obvious reasons.
+I am interested to hear people have solved this problem in the past.
+I have two potential suggestions:
+
+Navigation by query: Change the domain model so that the folder class contains only a list of IDs for each child. To access a child we must query for it. Serialisation is now trivial since the graph ends at a well defined point. The major downside is that we lose type safety - the ID could be for something other than a folder/child.
+Stop and re-attach: During serialization stop whenever we detect a reference to a folder or page, send the ID instead. When de-serializing we must then look up the corresponding object for each ID and re-attach it at the relevant position in the nascent object.
+
+
+
+I don't know what kind of API you are trying to build, but your suggestion #1 sounds like it is close to what is recommended for REST style services and APIs. Basically, a Folder object would contain a list of URLs to its children.
+
+Suppose You model the whole tree with every element being a Node, specialisations of Node being Folder and, umm, Leaf. You have a "root" Node. Nodes have a methods 
+canHaveChildren() 
+getChildren() 
+
+Leaf nodes have the obvious behaviours (never even need to hit the network)
+Folders getChildren() get the next set of nodes.
+I did devise a system with Restful services along these lines. Seemed to be reasonably easy to program to.
+
+The Navigation by query solution was used for NFS. By reading through your question, it looks to me, as if you're trying to implements kind of a file system yourself. 
+If you're looking specifically into sending objects over the network there is always CORBA. Aside from that there is DCOM and the newer WCF. But wait there is more like RMI. Furthermore there are Web Services. I'll stop here now.
+
+I would not do it by the Navigation by query method. Simply because I would like to stick with the domain model where folders contains folders or pages.
+Customizing the serialization might also be tricky, bug prone and difficult to change\understand.
+I would suggest that you introduce and object like FolderBowser in your model which takes an id and gives you a list of contents of the folder. That will make your service operations simpler.
+Cheers,
+Unmesh
+
+The classical solution is probably to use a proxy pattern, where some of the graph is sent over the network and some of the folders are replaced by proxies that will not have their lists of children populated until they are queried. A round trip to the server takes a significant amount of time and it will probably result in too many requests if all folders are proxies (this would yield a new request each time the contents of a folder is inspected), so you want to go for some trade off between the size of each chunk of data and the number of server requests needed in a typical scenario. This is of course application specific, but sending the contents of all child folders in for instance depth 2 might be a useful strategy...
+Long story short: What will probably work best is your solution #1 with the exception that you want to send more than one folder at a time because of the overhead of a round trip to the server...

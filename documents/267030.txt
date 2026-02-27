@@ -1,0 +1,71 @@
+Why doesn't MSBuild copy as I would expect
+.net msbuild
+I'm needing to script my build. I'm using MSBUILD because of it's integration with VS.net.  I am trying to copy some files from the build environment to the deployment folder. I'm using the copy task of MSBuild. But instead of copying the directory tree as I would expect. it copies all the contents into a single folder. I repeat all the files from the directory tree end up in one folder. I need it to copy the tree of folders and directories into the destination folder. Is there something I'm missing?
+Here is the relavant parts of my build script:
+<PropertyGroup>
+    <TargetFrameworkVersion>v2.0</TargetFrameworkVersion>
+    <Source>outputfolder</Source>
+    <DestEnv>x</DestEnv>
+    <DeployPath>\\networkpath\$(DestEnv)</DeployPath>
+</PropertyGroup>
+<ItemGroup>
+    <TargetDir Include="$(DeployPath)\**\*" Exclude="**\web.config"></TargetDir>
+    <SourceDir Include="$(Source)\**\*" />
+</ItemGroup>    
+<Target Name="Clean" >
+    <!-- clean detail ... -->
+</Target>
+<Target Name="migrate" DependsOnTargets="Clean">
+    <Copy DestinationFolder="$(DeployPath)" SourceFiles="@(SourceDir)" />
+</Target>
+
+
+
+I found the example in one of the examples in MSDN I don't understand it but will leave an example for my fellow travlers here in stackoverflow. Here is the fixed version of the migrate target from above:
+<Target Name="migrate" DependsOnTargets="Clean">
+    <Copy DestinationFiles="@(SourceDir->'$(DeployPath)\%(RecursiveDir)%(Filename)%(Extension)')" SourceFiles="@(SourceDir)" />
+</Target>
+
+If someone actually understands this example please explain. Good Luck!
+
+When you specify the DestinationFolder for the Copy task, it takes all items from the SourceFiles collection and copies them to the DestinationFolder. This is expected, as there is no way for the Copy task to figure out what part of each item's path needs to be replaced with the DestinationFolder in order to keep the tree structure. For example, if your SourceDir collection is defined like this:
+<ItemGroup>
+    <SourceDir Include="$(Source)\**\*" />
+    <SourceDir Include="E:\ExternalDependencies\**\*" />
+    <SourceDir Include="\\sharedlibraries\gdiplus\*.h" />
+</ItemGroup>
+
+What would you expect the destination folder tree look like?
+To preserve the tree, you need to do identity transformation and generate one destination item for each item in the SourceFiles collection. Here's an example:
+<Copy SourceFiles="@(Compile)" DestinationFiles="@(Compile->'$(DropPath)%(Identity)')" />
+
+The Copy task will take the each item in the SourceFiles collection, and will transform its path by replacing the part before the ** in the source item specification with $(DropPath).
+One could argue that the DestinationFolder property should have been written as a shortcut to the following transformation:
+<Copy SourceFiles="@(Compile)" DestinationFiles="@(Compile->'$(DestinationFolder)%(Identity)')" />
+
+Alas, that would prevent the deep copy to flat folder scenario that you are trying to avoid, but other people might using in their build process.
+
+Very simple example that copies a directory contents and structure recursively:
+<Copy SourceFiles="@(Compile)" DestinationFolder="c:\foocopy\%(Compile.RecursiveDir)"></Copy>
+
+@(Compile) is an ItemGroup of all files that you want to copy. Could be something like:
+   <ItemGroup>
+      <Compile Include=".\**\*.dll" /> 
+   </ItemGroup>
+
+The Copy task will copy all the files into c:\foocopy just like xcopy.
+
+Just a gem we found as we were debugging MSBuild issues around copying:
+http://blog.scrappydog.com/2008/06/subtle-msbuild-bug-feature.html
+ItemGroups are parsed before Targets, so any Targets that create new files (e.g. compiles!) won't be picked up when an ItemGroup is referenced further along the script.
+Eric Bowen also describes a work-around for this "feature", the CreateItem task:
+<Target Name="Copy" >
+    <CreateItem Include="..\Source\**\bin\**\*.exe"
+        Exclude="..\Source\**\bin\**\*.vshost.exe">
+        <Output TaskParameter="Include" ItemName="CompileOutput" />
+    </CreateItem>
+    <Copy SourceFiles="@(CompileOutput)" 
+        DestinationFolder="$(OutputDirectory)"></Copy>
+</Target>
+
+Many kudos to him!

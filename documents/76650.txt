@@ -1,0 +1,65 @@
+Perl: Use of uninitialized value in numeric lt (<) at /Date/Manip.pm
+perl date module warnings
+This has me puzzled. This code worked on another server, but it's failing on Perl v5.8.8 with Date::Manip loaded from CPAN today.
+Warning:
+Use of uninitialized value in numeric lt (<) at /home/downside/lib/Date/Manip.pm line 3327.
+at dailyupdate.pl line 13
+        main::__ANON__('Use of uninitialized value in numeric lt (<) at
+/home/downsid...') called at
+/home/downside/lib/Date/Manip.pm line 3327
+        Date::Manip::Date_SecsSince1970GMT(09, 16, 2008, 00, 21, 22) called at
+/home/downside/lib/Date/Manip.pm line 1905
+        Date::Manip::UnixDate('today', '%Y-%m-%d') called at
+TICKER/SYMBOLS/updatesymbols.pm line 122
+        TICKER::SYMBOLS::updatesymbols::getdate() called at
+TICKER/SYMBOLS/updatesymbols.pm line 439
+        TICKER::SYMBOLS::updatesymbols::updatesymbol('DBI::db=HASH(0x87fcc34)',
+'TICKER::SYMBOLS::symbol=HASH(0x8a43540)') called at
+TICKER/SYMBOLS/updatesymbols.pm line 565
+TICKER::SYMBOLS::updatesymbols::updatesymbols('DBI::db=HASH(0x87fcc34)', 1, 0, -1) called at
+dailyupdate.pl line 149
+        EDGAR::updatesymbols('DBI::db=HASH(0x87fcc34)', 1, 0, -1) called at
+dailyupdate.pl line 180
+        EDGAR::dailyupdate() called at dailyupdate.pl line 193
+
+The code that's failing is simply:
+sub getdate()
+{    my $err;                ## today
+    &Date::Manip::Date_Init('TZ=EST5EDT');       
+    my $today = Date::Manip::UnixDate('today','%Y-%m-%d'); ## today's date
+    ####print "Today is ",$today,"\n";        ## ***TEMP***
+    return($today);
+}
+
+That's right; Date::Manip is failing for "today".
+The line in Date::Manip that is failing is:
+  my($tz)=$Cnf{"ConvTZ"};  
+  $tz=$Cnf{"TZ"}  if (! $tz);  
+  $tz=$Zone{"n2o"}{lc($tz)}  if ($tz !~ /^[+-]\d{4}$/);  
+
+  my($tzs)=1;  
+  $tzs=-1 if ($tz<0); ### ERROR OCCURS HERE
+
+So Date::Manip is assuming that $Cnf has been initialized with elements "ConvTZ" or "TZ".  Those are initialized in Date_Init, so that should have been taken care of.
+It's only failing in my large program.  If I just extract "getdate()" above
+and run it standalone, there's no error.  So there's something about the
+global environment that affects this.
+This seems to be a known, but not understood problem.  If you search Google for
+"Use of uninitialized value date manip" there are about 2400 hits.
+This error has been reported with MythTV and grepmail.
+
+
+It's almost certain that your host doesn't have a definition for the timezone you're specifying, which is what's causing a value to be undefined.
+Have you checked to make sure a TZ definition file of the same name actually exists on the host?
+
+Date::Manip is supposed to be self-contained. It has a list of all its time zones in its own source, following "$zonesrfc=".
+
+Can you try single-stepping through the debugger to see what exactly is going wrong? It could easily be %Zone that is wrong - %tz may be set correctly on line 1 or 2, but then the lookup on line 3 fails, ending up with undef.
+Edit: %Date::Manip::Cnf and %Date::Manip::Zone are global variables, so you should be able to take a dump of them before and after the call to Date::Manip::Date_Init. If I read the source correctly %Cnf should contain a basic skeleton of configuration options before the call to Date_Init, and %Zone should be empty; after Date_Init, TZ should have your chosen value, and %Zone should be populated by a lookup table of time zones.
+I see a reference to .DateManip.cnf in %Cnf, which might be something to look at - is it possible that you have such a file in your home directory, or the current working directory, which is overriding the default settings?
+
+It is a bug in Date::Manip version 5.48-5.54 for Win32. I've had difficulty with using standard/daylight variants of a timezones, e.g. 'EST5EDT', 'US/Eastern'. The only timezones that appear to work are those without daylight savings, e.g. 'EST'.
+It is possible to turn off timezone conversion processing in the Date::Manip module:
+Date::Manip::Date_Init("ConvTZ=IGNORE");
+
+This will have undesired side-effects if you treat dates correctly. I would not use this workaround unless you are confident you will be never be processing dates from different timezones.

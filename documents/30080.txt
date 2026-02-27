@@ -1,0 +1,297 @@
+How to know if a line intersects a plane in C#? - Basic 2D geometry
+c# 2d
+my school maths are very rusty and I think this is a good opportunity to take advance of this community :D
+I have two points (a line) and a rectangle, I would like to know how to calculate if the line intersects the rectangle, my first approach had so many "if" statements that the compiler sent me a link to this site.
+Thanks for your time!
+
+
+Do http://mathworld.wolfram.com/Line-LineIntersection.html for the line and each side of the rectangle.
+Or: http://mathworld.wolfram.com/Line-PlaneIntersection.html
+
+From my "Geometry" class:
+public struct Line
+{
+    public static Line Empty;
+
+    private PointF p1;
+    private PointF p2;
+
+    public Line(PointF p1, PointF p2)
+    {
+        this.p1 = p1;
+        this.p2 = p2;
+    }
+
+    public PointF P1
+    {
+        get { return p1; }
+        set { p1 = value; }
+    }
+
+    public PointF P2
+    {
+        get { return p2; }
+        set { p2 = value; }
+    }
+
+    public float X1
+    {
+        get { return p1.X; }
+        set { p1.X = value; }
+    }
+
+    public float X2
+    {
+        get { return p2.X; }
+        set { p2.X = value; }
+    }
+
+    public float Y1
+    {
+        get { return p1.Y; }
+        set { p1.Y = value; }
+    }
+
+    public float Y2
+    {
+        get { return p2.Y; }
+        set { p2.Y = value; }
+    }
+}
+
+public struct Polygon: IEnumerable<PointF>
+{
+    private PointF[] points;
+
+    public Polygon(PointF[] points)
+    {
+        this.points = points;
+    }
+
+    public PointF[] Points
+    {
+        get { return points; }
+        set { points = value; }
+    }
+
+    public int Length
+    {
+        get { return points.Length; }
+    }
+
+    public PointF this[int index]
+    {
+        get { return points[index]; }
+        set { points[index] = value; }
+    }
+
+    public static implicit operator PointF[](Polygon polygon)
+    {
+        return polygon.points;
+    }
+
+    public static implicit operator Polygon(PointF[] points)
+    {
+        return new Polygon(points);
+    }
+
+    IEnumerator<PointF> IEnumerable<PointF>.GetEnumerator()
+    {
+        return (IEnumerator<PointF>)points.GetEnumerator();
+    }
+
+    public IEnumerator GetEnumerator()
+    {
+        return points.GetEnumerator();
+    }
+}
+
+public enum Intersection
+{
+    None,
+    Tangent,
+    Intersection,
+    Containment
+}
+
+public static class Geometry
+{
+
+    public static Intersection IntersectionOf(Line line, Polygon polygon)
+    {
+        if (polygon.Length == 0)
+        {
+            return Intersection.None;
+        }
+        if (polygon.Length == 1)
+        {
+            return IntersectionOf(polygon[0], line);
+        }
+        bool tangent = false;
+        for (int index = 0; index < polygon.Length; index++)
+        {
+            int index2 = (index + 1)%polygon.Length;
+            Intersection intersection = IntersectionOf(line, new Line(polygon[index], polygon[index2]));
+            if (intersection == Intersection.Intersection)
+            {
+                return intersection;
+            }
+            if (intersection == Intersection.Tangent)
+            {
+                tangent = true;
+            }
+        }
+        return tangent ? Intersection.Tangent : IntersectionOf(line.P1, polygon);
+    }
+
+    public static Intersection IntersectionOf(PointF point, Polygon polygon)
+    {
+        switch (polygon.Length)
+        {
+            case 0:
+                return Intersection.None;
+            case 1:
+                if (polygon[0].X == point.X && polygon[0].Y == point.Y)
+                {
+                    return Intersection.Tangent;
+                }
+                else
+                {
+                    return Intersection.None;
+                }
+            case 2:
+                return IntersectionOf(point, new Line(polygon[0], polygon[1]));
+        }
+
+        int counter = 0;
+        int i;
+        PointF p1;
+        int n = polygon.Length;
+        p1 = polygon[0];
+        if (point == p1)
+        {
+            return Intersection.Tangent;
+        }
+
+        for (i = 1; i <= n; i++)
+        {
+            PointF p2 = polygon[i % n];
+            if (point == p2)
+            {
+                return Intersection.Tangent;
+            }
+            if (point.Y > Math.Min(p1.Y, p2.Y))
+            {
+                if (point.Y <= Math.Max(p1.Y, p2.Y))
+                {
+                    if (point.X <= Math.Max(p1.X, p2.X))
+                    {
+                        if (p1.Y != p2.Y)
+                        {
+                            double xinters = (point.Y - p1.Y) * (p2.X - p1.X) / (p2.Y - p1.Y) + p1.X;
+                            if (p1.X == p2.X || point.X <= xinters)
+                                counter++;
+                        }
+                    }
+                }
+            }
+            p1 = p2;
+        }
+
+        return (counter % 2 == 1) ? Intersection.Containment : Intersection.None;
+    }
+
+    public static Intersection IntersectionOf(PointF point, Line line)
+    {
+        float bottomY = Math.Min(line.Y1, line.Y2);
+        float topY = Math.Max(line.Y1, line.Y2);
+        bool heightIsRight = point.Y >= bottomY &&
+                             point.Y <= topY;
+        //Vertical line, slope is divideByZero error!
+        if (line.X1 == line.X2)
+        {
+            if (point.X == line.X1 && heightIsRight)
+            {
+                return Intersection.Tangent;
+            }
+            else
+            {
+                return Intersection.None;
+            }
+        }
+        float slope = (line.X2 - line.X1)/(line.Y2 - line.Y1);
+        bool onLine = (line.Y1 - point.Y) == (slope*(line.X1 - point.X));
+        if (onLine && heightIsRight)
+        {
+            return Intersection.Tangent;
+        }
+        else
+        {
+            return Intersection.None;
+        }
+    }
+
+}
+
+
+well, if it's 2-D, then all lines are on the only plane.
+So this is basic 3-D geometry.  You should be able to do this with a straightforward equation.
+Check out this page: http://local.wasp.uwa.edu.au/~pbourke/geometry/planeline/  The second solution should be easy to implement in code, as long as you translate the coordinates of your rectangle into the equation of a plane.  
+Check that your denominator isn't zero (line doesn't intersect or is contained in the plane) and you'll be good to go.
+
+I hate browsing the MSDN docs (they're awfully slow and weird :-s) but I think they should have something similar to this Java method... and if they haven't, bad for them! XD (btw, it works for segments, not lines).
+In any case, you can peek the open source Java SDK to see how is it implemented, maybe you'll learn some new trick (I'm always surprised when I look other people's code)
+
+since it is missing i'll just add it for completeness
+public static Intersection IntersectionOf(Line line1, Line line2)
+    {
+        //  Fail if either line segment is zero-length.
+        if (line1.X1 == line1.X2 && line1.Y1 == line1.Y2 || line2.X1 == line2.X2 && line2.Y1 == line2.Y2)
+            return Intersection.None;
+
+        if (line1.X1 == line2.X1 && line1.Y1 == line2.Y1 || line1.X2 == line2.X1 && line1.Y2 == line2.Y1)
+            return Intersection.Intersection;
+        if (line1.X1 == line2.X2 && line1.Y1 == line2.Y2 || line1.X2 == line2.X2 && line1.Y2 == line2.Y2)
+            return Intersection.Intersection;
+
+        //  (1) Translate the system so that point A is on the origin.
+        line1.X2 -= line1.X1; line1.Y2 -= line1.Y1;
+        line2.X1 -= line1.X1; line2.Y1 -= line1.Y1;
+        line2.X2 -= line1.X1; line2.Y2 -= line1.Y1;
+
+        //  Discover the length of segment A-B.
+        double distAB = Math.Sqrt(line1.X2 * line1.X2 + line1.Y2 * line1.Y2);
+
+        //  (2) Rotate the system so that point B is on the positive X axis.
+        double theCos = line1.X2 / distAB;
+        double theSin = line1.Y2 / distAB;
+        double newX = line2.X1 * theCos + line2.Y1 * theSin;
+        line2.Y1 = line2.Y1 * theCos - line2.X1 * theSin; line2.X1 = newX;
+        newX = line2.X2 * theCos + line2.Y2 * theSin;
+        line2.Y2 = line2.Y2 * theCos - line2.X2 * theSin; line2.X2 = newX;
+
+        //  Fail if segment C-D doesn't cross line A-B.
+        if (line2.Y1 < 0 && line2.Y2 < 0 || line2.Y1 >= 0 && line2.Y2 >= 0)
+            return Intersection.None;
+
+        //  (3) Discover the position of the intersection point along line A-B.
+        double posAB = line2.X2 + (line2.X1 - line2.X2) * line2.Y2 / (line2.Y2 - line2.Y1);
+
+        //  Fail if segment C-D crosses line A-B outside of segment A-B.
+        if (posAB < 0 || posAB > distAB)
+            return Intersection.None;
+
+        //  (4) Apply the discovered position to line A-B in the original coordinate system.
+        return Intersection.Intersection;
+    }
+
+note that the method rotates the line segments so as to avoid direction-related problems
+
+Isn't it possible to check the line against each side of the rectangle using simple line segment formula.
+
+Use class:
+System.Drawing.Rectangle
+
+Method:
+IntersectsWith();
+

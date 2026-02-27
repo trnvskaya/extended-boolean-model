@@ -1,0 +1,101 @@
+How do I get a string type of a hex value that represents an upper ascii value character
+c# rtf
+Part of our app parses RTF documents and we've come across a special character that is not translating well.  When viewed in Word the character is an elipsis (...), and it's encoded in the RTF as ('85).
+In our vb code we converted the hex (85) to int(133) and then did Chr(133) to return (...)
+Here's the code in C# - problem is this doesn't work for values above 127.  Any ideas?
+Calling code :
+// S is Hex number!!!
+return Convert.ToChar(HexStringToInt(s)).ToString();
+
+Helper method:
+private static int HexStringToInt(string hexString)
+{
+    int i;
+
+    try
+    {
+        i = Int32.Parse(hexString, NumberStyles.HexNumber);
+    }
+    catch (Exception ex)
+    {
+        throw new ApplicationException("Error trying to convert hex value: " + hexString, ex);
+    }
+
+    return i;
+}
+
+
+
+private static int HexStringToInt(string hexString)
+{
+    try
+    {
+        return Convert.ToChar(hexString);
+    }
+    catch (FormatException ex)
+    {
+        throw new ArgumentException("Is not a valid hex character.", "hexString", ex);
+    }
+    // Convert.ToChar() will throw an ArgumentException also
+    // if hexString is bad
+}
+
+
+My guess would be that a Char in .NET is actually two bytes (16 bits), as they are UTF-16 encoded. Maybe you are only catching/writing the first byte of the value?
+Basically, are you doing something with the char value afterwards that assumes it is 8-bits instead of 16, and is therefore truncating it?
+
+You are probably using the default character encoding when reading in the RTF file, which is UTF-8, when the RTF file is actually stored using the "windows-1252" extended ASCII latin encoding.
+C# strings use a 16 unicode bit wide character format. Translating windows-1252 character 0x85 to its unicode equivalent involves a complicated mapping, since the the code points (character numbers) are very different. Luckily Windows can do the work for you.
+You can change the way the characters are converted when reading in the text by explicitly specifying the source encoding when opening the stream.
+using System.IO;
+using System.Text.Encoding;
+
+using (TextReader tr = new StreamReader(path_to_RTF_file, Encoding.GetEncoding(1252)))
+{
+    // Read from the file as usual.
+}
+
+
+Your original code works prefectly fine for me. It is able to convert any Hex from 00 to FF into the appropriate character. Using vs2008.
+
+This looks like a character encoding issue to me. Unicode doesn't include any characters with numbers in the upper-ASCII 128-255 range, so trying to convert character 133 will fail.
+Need to convert it first to a character using the proper decoding, Convert.toChar appears to be using UTF-16.
+Sometimes there's a manual bit manipulation hack to convert the character from upper ASCII to the appropriate unicode char, but since the ellipsis wasn't in most of the widely used extended ASCII codepages, that's unlikely to work here.
+What you really want to do is use the Encoding.GetString(Byte[]) method, with the proper encoding. Put your value into a byte array, then GetString to get the C# native string for the character.
+You can learn more about RTF character encodings on the RTF Wikipedia page.
+FYI: The horizontal ellipsis is character U+2026 (pdf).
+
+Here's some rough code that should work for you:
+// Convert hex number, which represents an RTF code-page escaped character, 
+// to the desired character (uses '85' from your example as a literal):
+var number = int.Parse("85", System.Globalization.NumberStyles.HexNumber);
+Debug.Assert(number <= byte.MaxValue);  
+
+byte[] bytes = new byte[1] { (byte)number };
+char[] chars = Encoding.GetEncoding(1252).GetString(bytes).ToCharArray();
+// or, use:
+// char[] chars = Encoding.Default.GetString(bytes).ToCharArray();  
+
+string result = new string(chars);
+
+
+Just use this function I modified (very slightly) from Chris' website:
+    private static string charScrubber(string content)
+    {
+        StringBuilder sbTemp = new StringBuilder(content.Length);
+        foreach (char currentChar in content)
+        {
+            if ((currentChar != 127 && currentChar > 1))
+            {
+                sbTemp.Append(currentChar);
+            }
+        }
+
+        content = sbTemp.ToString();
+        return content;
+    }
+
+You can modify the "current Char" condition to remove whatever character is needed to be eliminated (as appearing here, you will not get any 0x00 characters, or the (char)127, or 0x57 character).
+ASCII/Hex table here:  http://www.cs.mun.ca/~michael/c/ascii-table.html
+Chris' site:  http://seattlesoftware.wordpress.com/2008/09/11/hexadecimal-value-0-is-an-invalid-character/
+-Tom

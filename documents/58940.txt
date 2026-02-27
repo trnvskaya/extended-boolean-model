@@ -1,0 +1,79 @@
+Access to Result sets from within Stored procedures Transact-SQL SQL Server
+sql sql-server tsql
+I'm using SQL Server 2005, and I would like to know how to access different result sets from within transact-sql. The following stored procedure returns two result sets, how do I access them from, for example, another stored procedure?
+CREATE PROCEDURE getOrder (@orderId as numeric) AS
+BEGIN   
+    select order_address, order_number from order_table where order_id = @orderId
+    select item, number_of_items, cost from order_line where order_id = @orderId
+END
+
+I need to be able to iterate through both result sets individually.
+EDIT: Just to clarify the question, I want to test the stored procedures. I have a set of stored procedures which are used from a VB.NET client, which return multiple result sets. These are not going to be changed to a table valued function, I can't in fact change the procedures at all. Changing the procedure is not an option.
+The result sets returned by the procedures are not the same data types or number of columns.
+
+
+You could select them into temp tables or write table valued functions to return result sets. Are asking how to iterate through the result sets?
+
+There are two ways to do this easily. Either stick the results in a temp table and then reference the temp table from your sproc. The other alternative is to put the results into an XML variable that is used as an OUTPUT variable.
+There are, however, pros and cons to both of these options. With a temporary table, you'll need to add code to the script that creates the calling procedure to create the temporary table before modifying the procedure. Also, you should clean up the temp table at the end of the procedure.
+With the XML, it can be memory intensive and slow.
+
+The short answer is: you can't do it.
+From T-SQL there is no way to access multiple results of a nested stored procedure call, without changing the stored procedure as others have suggested.
+To be complete, if the procedure were returning a single result, you could insert it into a temp table or table variable with the following syntax:
+INSERT INTO #Table (...columns...)
+EXEC MySproc ...parameters...
+
+You can use the same syntax for a procedure that returns multiple results, but it will only process the first result, the rest will be discarded.
+
+Note that there's an extra, undocumented limitation to the INSERT INTO ... EXEC statement: it cannot be nested. That is, the stored proc that the EXEC calls (or any that it calls in turn) cannot itself do an INSERT INTO ... EXEC. It appears that there's a single scratchpad per process that accumulates the result, and if they're nested you'll get an error when the caller opens this up, and then the callee tries to open it again.
+Matthieu, you'd need to maintain separate temp tables for each "type" of result. Also, if you're executing the same one multiple times, you might need to add an extra column to that result to indicate which call it resulted from.
+
+Sadly it is impossible to do this. The problem is, of course, that there is no SQL Syntax to allow it. It happens 'beneath the hood' of course, but you can't get at these other results in TSQL, only from the application via ODBC or whatever. 
+There is a way round it, as with most things. The trick is to use ole automation in TSQL to create an ADODB object which opens each resultset in turn and write the results to the tables you nominate (or do whatever you want with the resultsets). you can also do it in DMO if you enjoy pain. 
+
+I was easily able to do this by creating a SQL2005 CLR stored procedure which contained an internal dataset.
+You see, a new SqlDataAdapter will .Fill a multiple-result-set sproc into a multiple-table dataset by default.  The data in these tables can in turn be inserted into #Temp tables in the calling sproc you wish to write.  dataset.ReadXmlSchema will show you the schema of each result set.
+Step 1: Begin writing the sproc which will read the data from the multi-result-set sproc
+a. Create a separate table for each result set according to the schema.
+CREATE PROCEDURE [dbo].[usp_SF_Read] AS
+SET NOCOUNT ON;
+CREATE TABLE #Table01 (Document_ID VARCHAR(100)
+  , Document_status_definition_uid INT
+  , Document_status_Code VARCHAR(100) 
+  , Attachment_count INT
+  , PRIMARY KEY (Document_ID));
+
+b. At this point you may need to declare a cursor to repetitively call the CLR sproc you will create here:
+Step 2: Make the CLR Sproc
+Partial Public Class StoredProcedures
+    <Microsoft.SqlServer.Server.SqlProcedure()> _
+    Public Shared Sub usp_SF_ReadSFIntoTables()
+
+    End Sub
+End Class
+
+a. Connect using New SqlConnection("context connection=true").
+b. Set up a command object (cmd) to contain the multiple-result-set sproc. 
+c. Get all the data using the following:
+    Dim dataset As DataSet = New DataSet
+    With New SqlDataAdapter(cmd)
+        .Fill(dataset) ' get all the data.
+    End With
+'you can use dataset.ReadXmlSchema at this point...
+
+d. Iterate over each table and insert every row into the appropriate temp table (which you created in step one above).
+Final note:
+In my experience, you may wish to enforce some relationships between your tables so you know which batch each record came from.
+That's all there was to it!
+~ Shaun, Near Seattle
+
+There is a kludge that you can do as well.  Add an optional parameter N int to your sproc.  Default the value of N to -1.  If the value of N is -1, then do every one of your selects.  Otherwise, do the Nth select and only the Nth select.
+For example,
+if (N = -1 or N = 0)
+    select ...
+
+if (N = -1 or N = 1)
+    select ...
+
+The callers of your sproc who do not specify N will get a result set with more than one tables.  If you need to extract one or more of these tables from another sproc, simply call your sproc specifying a value for N.  You'll have to call the sproc one time for each table you wish to extract.  Inefficient if you need more than one table from the result set, but it does work in pure TSQL.

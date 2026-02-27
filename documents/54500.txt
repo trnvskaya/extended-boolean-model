@@ -1,0 +1,55 @@
+Storing Images in PostgreSQL
+postgresql image
+Alright, so I'm working on an application which will use a Linux back-end running PostgreSQL to serve up images to a Windows box with the front end written in C#.NET, though the front-end should hardly matter.  My question is:
+
+What is the best way to deal with storing images in Postgres?
+
+The images are around 4-6 megapixels each, and we're storing upwards of 3000.  It might also be good to note: this is not a web application, there will at most be about two front-ends accessing the database at once.
+
+
+In the database, there are two options:
+
+bytea.  Stores the data in a column, exported as part of a backup.  Uses standard database functions to save and retrieve.  Recommended for your needs.
+blobs.  Stores the data externally, not normally exported as part of a backup.  Requires special database functions to save and retrieve.
+
+I've used bytea columns with great success in the past storing 10+gb of images with thousands of rows.  PG's TOAST functionality pretty much negates any advantage that blobs have.  You'll need to include metadata columns in either case for filename, content-type, dimensions, etc.
+
+Try this.  I've use the Large Object Binary (LOB) format for storing generated PDF documents, some of which were 10+ MB in size, in a database and it worked wonderfully.
+
+Don't store in images in the database unless you absolutely have to.  I understand that this is not a web application, but if there isn't a shared file location that you can point to save the location of the file in the database.
+//linuxserver/images/imagexxx.jpg
+
+then perhaps you can quickly set up a webserver and store the web urls in the database (as well as the local path).  While databases can handle LOB's and 3000 images (4-6 Megapixels, assuming 500K an image) 1.5 Gigs isn't a lot of space file systems are much better designed for storing large files than a database is.
+
+Re jcoby's answer:
+bytea being a "normal" column also means the value being read completely into memory when you fetch it. Blobs, in contrast, you can stream into stdout. That helps in reducing the server memory footprint. Especially, when you store 4-6 MPix images.
+No problem with backing up blobs. pg_dump provides "-b" option to include the large objects into the backup.
+So, I prefer using pg_lo_*, you may guess.
+Re Kris Erickson's answer:
+I'd say the opposite :). When images are not the only data you store, don't store them on the file system unless you absolutely have to. It's such a benefit to be always sure about your data consistency, and to have the data "in one piece" (the DB). BTW, PostgreSQL is great in preserving consistency.
+However, true, reality is often too performance-demanding ;-), and it pushes you to serve the binary files from the file system. But even then I tend to use the DB as the "master" storage for binaries, with all the other relations consistently linked, while providing some file system-based caching mechanism for performance optimization.  
+
+Updating to 2012, when we see that image sizes, and number of images, are growing and growing, in all applications... 
+We need some distinction between "original image" and "processed image", like thumbnail.
+As Jcoby's answer say, there are two options, then, I recommend:
+
+use blob (Binary Large OBject): for original image store, at your table.   See Ivan's answer (no problem with backing up blobs!), PostgreSQL additional supplied modules, How-tos etc.
+use a separate database with DBlink: for original image store, at another (unified/specialized) database. In this case, I preffer bytea, but blob  is near the same. Separating database is the best way for a "unified image webservice".
+use bytea (BYTE Array): for caching thumbnail images. Cache the little images to send it fast to the web-browser (avoiding renderization problems) and reduce server processing. Cache also essential metadata, like width and height. Database caching is the easiest way, but check your needs and server configs (ex. Apache modules): store thumbnails at file system may be better, compare performances. Remember that it is a (unified) web-service, then can be stored at a separete database (with no backups), serving many tables.   See also PostgreSQL binary data types manual, tests with bytea column, etc.
+
+NOTE1: today the use of "dual solutions" (database+filesystem) is deprecated (!). There are many advantages to using "only database" instead dual.  PostgreSQL have comparable performance and good tools for export/import/input/output.
+NOTE2: remember that PostgreSQL have only bytea, not have a default Oracle's BLOB: "The SQL standard defines (...) BLOB. The input format is different from bytea, but the provided functions and operators are mostly the same",Manual.
+
+EDIT 2014: I not changed the original text above today (my answer was Apr 22 '12, now with 14 votes), I am opening the answer for your changes  (see "Wiki mode", you can edit!), for proofreading and for updates. The question is stable (@Ivans's '08 answer with 19 votes), please, help to improve this text.
+
+Quick update to mid 2015:
+You can use the Postgres Foreign Data interface, to store the files in more suitable database. For example put the files in a GridFS which is part of MongoDB. Then use
+https://github.com/citusdata/mongo_fdw
+to access it in Postgres.
+That has the advantages, that you can access/read/write/backup it in Postrgres and MongoDB, depending on what gives you more flexiblity.
+There are also foreign data wrappers for file systems:
+https://wiki.postgresql.org/wiki/Foreign_data_wrappers#File_Wrappers
+As an example you can use this one:
+https://multicorn.readthedocs.org/en/latest/foreign-data-wrappers/fsfdw.html
+(see here for brief usage example)
+That gives you the advantage of the consistency (all linked files are definitely there) and all the other ACIDs, while there are still on the actual file system, which means you can use any file system you want and the webserver can serve them directly (OS caching applies too).

@@ -1,0 +1,201 @@
+Generating random numbers in Objective-C
+objective-c random
+I'm a Java head mainly, and I want a way to generate a pseudo-random number between 0 and 74. In Java I would use the method:
+Random.nextInt(74)
+
+I'm not interested in a discussion about seeds or true randomness, just how you accomplish the same task in Objective-C. I've scoured Google, and there just seems to be lots of different and conflicting bits of information.
+
+
+Same as C, you would do
+#include <time.h>
+#include <stdlib.h>
+...
+srand(time(NULL));
+int r = rand() % 74;
+
+(assuming you meant including 0 but excluding 74, which is what your Java example does)
+Edit: Feel free to substitute random() or arc4random() for rand() (which is, as others have pointed out, quite sucky).
+
+According to the manual page for rand(3), the rand family of functions have been obsoleted by random(3). This is due to the fact that the lower 12 bits of rand() go through a cyclic pattern. To get a random number, just seed the generator by calling srandom() with an unsigned seed, and then call random(). So, the equivalent of the code above would be
+#import <stdlib.h>
+#import <time.h>
+
+srandom(time(NULL));
+random() % 74;
+
+You'll only need to call srandom() once in your program unless you want to change your seed. Although you said you didn't want a discussion of truly random values, rand() is a pretty bad random number generator, and random() still suffers from modulo bias, as it will generate a number between 0 and RAND_MAX. So, e.g. if RAND_MAX is 3, and you want a random number between 0 and 2, you're twice as likely to get a 0 than a 1 or a 2.
+
+You should use the arc4random_uniform() function. It uses a superior algorithm to rand. You don't even need to set a seed.
+#include <stdlib.h>
+// ...
+// ...
+int r = arc4random_uniform(74);
+
+The arc4random man page:
+
+NAME
+     arc4random, arc4random_stir, arc4random_addrandom -- arc4 random number generator
+
+LIBRARY
+     Standard C Library (libc, -lc)
+
+SYNOPSIS
+     #include <stdlib.h>
+
+     u_int32_t
+     arc4random(void);
+
+     void
+     arc4random_stir(void);
+
+     void
+     arc4random_addrandom(unsigned char *dat, int datlen);
+
+DESCRIPTION
+     The arc4random() function uses the key stream generator employed by the arc4 cipher, which uses 8*8 8
+     bit S-Boxes.  The S-Boxes can be in about (2**1700) states.  The arc4random() function returns pseudo-
+     random numbers in the range of 0 to (2**32)-1, and therefore has twice the range of rand(3) and
+     random(3).
+
+     The arc4random_stir() function reads data from /dev/urandom and uses it to permute the S-Boxes via
+     arc4random_addrandom().
+
+     There is no need to call arc4random_stir() before using arc4random(), since arc4random() automatically
+     initializes itself.
+
+EXAMPLES
+     The following produces a drop-in replacement for the traditional rand() and random() functions using
+     arc4random():
+
+           #define foo4random() (arc4random() % ((unsigned)RAND_MAX + 1))
+
+
+
+I wrote my own random number utility class just so that I would have something that functioned a bit more like Math.random() in Java. It has just two functions, and it's all made in C.
+Header file:
+//Random.h
+void initRandomSeed(long firstSeed);
+float nextRandomFloat();
+
+Implementation file:
+//Random.m
+static unsigned long seed;
+
+void initRandomSeed(long firstSeed)
+{ 
+    seed = firstSeed;
+}
+
+float nextRandomFloat()
+{
+    return (((seed= 1664525*seed + 1013904223)>>16) / (float)0x10000);
+}
+
+It's a pretty classic way of generating pseudo-randoms. In my app delegate I call:
+#import "Random.h"
+
+- (void)applicationDidFinishLaunching:(UIApplication *)application
+{
+    initRandomSeed( (long) [[NSDate date] timeIntervalSince1970] );
+    //Do other initialization junk.
+}
+
+Then later I just say:
+float myRandomNumber = nextRandomFloat() * 74;
+
+Note that this method returns a random number between 0.0f (inclusive) and 1.0f (exclusive).
+
+Use the arc4random_uniform(upper_bound) function to generate a random number within a range.   The following will generate a number between 0 and 73 inclusive.
+arc4random_uniform(74)
+
+arc4random_uniform(upper_bound) avoids modulo bias as described in the man page:
+
+arc4random_uniform() will return a uniformly distributed random number less than upper_bound.  arc4random_uniform() is recommended over constructions like ``arc4random() % upper_bound'' as it avoids "modulo bias" when the upper bound is not a power of two.
+
+
+This will give you a floating point number between 0 and 47
+float low_bound = 0;      
+float high_bound = 47;
+float rndValue = (((float)arc4random()/0x100000000)*(high_bound-low_bound)+low_bound);
+
+Or just simply
+float rndValue = (((float)arc4random()/0x100000000)*47);
+
+Both lower and upper bound can be negative as well. The example code below gives you a random number between -35.76 and +12.09
+float low_bound = -35.76;      
+float high_bound = 12.09;
+float rndValue = (((float)arc4random()/0x100000000)*(high_bound-low_bound)+low_bound);
+
+Convert result to a rounder Integer value:
+int intRndValue = (int)(rndValue + 0.5);
+
+
+Better to use arc4random_uniform. However, this isn't available below iOS 4.3. Luckily iOS will bind this symbol at runtime, not at compile time (so don't use the #if preprocessor directive to check if it's available).
+The best way to determine if arc4random_uniform is available is to do something like this:
+#include <stdlib.h>
+
+int r = 0;
+if (arc4random_uniform != NULL)
+    r = arc4random_uniform (74);
+else
+    r = (arc4random() % 74);
+
+
+I thought I could add a method I use in many projects.
+- (NSInteger)randomValueBetween:(NSInteger)min and:(NSInteger)max {
+    return (NSInteger)(min + arc4random_uniform(max - min + 1));
+}
+
+If I end up using it in many files I usually declare a macro as
+#define RAND_FROM_TO(min, max) (min + arc4random_uniform(max - min + 1))
+
+E.g.
+NSInteger myInteger = RAND_FROM_TO(0, 74) // 0, 1, 2,..., 73, 74
+
+Note: Only for iOS 4.3/OS X v10.7 (Lion) and later
+
+Generate random number between 0 to 99:
+int x = arc4random()%100;
+
+Generate random number between 500 and 1000:
+int x = (arc4random()%501) + 500;
+
+
+There are some great, articulate answers already, but the question asks for a random number between 0 and 74. Use:
+arc4random_uniform(75)
+
+//The following example is going to generate a number between 0 and 73.
+int value;
+value = (arc4random() % 74);
+NSLog(@"random number: %i ", value);
+
+//In order to generate 1 to 73, do the following:
+int value1;
+value1 = (arc4random() % 73) + 1;
+NSLog(@"random number step 2: %i ", value1);
+
+Output:
+
+random number: 72 
+random number step 2: 52 
+
+
+As of iOS 9 and OS X 10.11, you can use the new GameplayKit classes to generate random numbers in a variety of ways.
+You have four source types to choose from: a general random source (unnamed, down to the system to choose what it does), linear congruential, ARC4 and Mersenne Twister. These can generate random ints, floats and bools.
+At the simplest level, you can generate a random number from the system's built-in random source like this:
+NSInteger rand = [[GKRandomSource sharedRandom] nextInt];
+
+That generates a number between -2,147,483,648 and 2,147,483,647. If you want a number between 0 and an upper bound (exclusive) you'd use this:
+NSInteger rand6 = [[GKRandomSource sharedRandom] nextIntWithUpperBound:6];
+
+GameplayKit has some convenience constructors built in to work with dice. For example, you can roll a six-sided die like this:
+GKRandomDistribution *d6 = [GKRandomDistribution d6];
+[d6 nextInt];
+
+Plus you can shape the random distribution by using things like GKShuffledDistribution.
+
+For game dev use random() to generate randoms. Probably at least 5x faster than using arc4random(). Modulo bias is not an issue, especially for games, when generating randoms using the full range of random(). Be sure to seed first. Call srandomdev() in AppDelegate. Here's some helper functions:
+static inline int random_range(int low, int high){ return (random()%(high-low+1))+low;}
+static inline CGFloat frandom(){ return (CGFloat)random()/UINT32_C(0x7FFFFFFF);}
+static inline CGFloat frandom_range(CGFloat low, CGFloat high){ return (high-low)*frandom()+low;}
+

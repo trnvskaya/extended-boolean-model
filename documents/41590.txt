@@ -1,0 +1,217 @@
+How do you properly use namespaces in C++?
+c++ namespaces
+I come from a Java background, where packages are used, not namespaces. I'm used to putting classes that work together to form a complete object into packages, and then reusing them later from that package. But now I'm working in C++.
+How do you use namespaces in C++? Do you create a single namespace for the entire application, or do you create namespaces for the major components? If so, how do you create objects from classes in other namespaces?
+
+
+Namespaces are packages essentially. They can be used like this:
+namespace MyNamespace
+{
+  class MyClass
+  {
+  };
+}
+
+Then in code:
+MyNamespace::MyClass* pClass = new MyNamespace::MyClass();
+
+Hope that helps.
+Or, if you want to always use a specific namespace, you can do this:
+using namespace MyNamespace;
+
+MyClass* pClass = new MyClass();
+
+Edit: Following what bernhardrusch has said, I tend not to use the "using namespace x" syntax at all, I usually explicitly specify the namespace when instantiating my objects (i.e. the first example I showed).
+And as you asked below, you can use as many namespaces as you like.
+
+Generally speaking, I create a namespace for a body of code if I believe there might possibly be function or type name conflicts with other libraries. It also helps to brand code, ala boost:: .
+
+I prefer using a top-level namespace for the application and sub namespaces for the components.
+The way you can use classes from other namespaces is surprisingly very similar to the way in java.
+You can either use "use NAMESPACE" which is similar to an "import PACKAGE" statement, e.g. use std. Or you specify the package as prefix of the class separated with "::", e.g. std::string. This is similar to "java.lang.String" in Java.
+
+@marius
+Yes, you can use several namespaces at a time, eg:
+using namespace boost;   
+using namespace std;  
+
+shared_ptr<int> p(new int(1));   // shared_ptr belongs to boost   
+cout << "cout belongs to std::" << endl;   // cout and endl are in std
+
+[Feb. 2014 -- (Has it really been that long?): This particular example is now ambiguous, as Joey points out below. Boost and std:: now each have a shared_ptr.]
+
+In Java:
+package somepackage;
+class SomeClass {}
+
+In C++:
+namespace somenamespace {
+    class SomeClass {}
+}
+
+And using them, Java:
+import somepackage;
+
+And C++:
+using namespace somenamespace;
+
+Also, full names are "somepackge.SomeClass" for Java and "somenamespace::SomeClass" for C++. Using those conventions, you can organize like you are used to in Java, including making matching folder names for namespaces. The folder->package and file->class requirements aren't there though, so you can name your folders and classes independently off packages and namespaces.
+
+To avoid saying everything Mark Ingram already said a little tip for using namespaces:
+Avoid the "using namespace" directive in header files - this opens the namespace for all parts of the program which import this header file. In implementation files (*.cpp) this is normally no big problem - altough I prefer to use the "using namespace" directive on the function level.
+I think namespaces are mostly used to avoid naming conflicts - not necessarily to organize your code structure. I'd organize C++ programs mainly with header files / the file structure.
+Sometimes namespaces are used in bigger C++ projects to hide implementation details.
+Additional note to the using directive:
+Some people prefer using "using" just for single elements:    
+using std::cout;  
+using std::endl;
+
+
+Also, note that you can add to a namespace. This is clearer with an example, what I mean is that you can have:
+namespace MyNamespace
+{
+    double square(double x) { return x * x; }
+}
+
+in a file square.h, and
+namespace MyNamespace
+{
+    double cube(double x) { return x * x * x; }
+}
+
+in a file cube.h. This defines a single namespace MyNamespace (that is, you can define a single namespace across multiple files).
+
+Note that a namespace in C++ really is just a name space.  They don't provide any of the encapsulation that packages do in Java, so you probably won't use them as much.
+
+I've used C++ namespaces the same way I do in C#, Perl, etc.  It's just a semantic separation of symbols between standard library stuff, third party stuff, and my own code.  I would place my own app in one namespace, then a reusable library component in another namespace for separation.
+
+Another difference between java and C++, is that in C++, the namespace hierarchy does not need to mach the filesystem layout.  So I tend to put an entire reusable library in a single namespace, and subsystems within the library in subdirectories:
+#include "lib/module1.h"
+#include "lib/module2.h"
+
+lib::class1 *v = new lib::class1();
+
+I would only put the subsystems in nested namespaces if there was a possibility of a name conflict.
+
+You can also contain "using namespace ..." inside a function for example:
+void test(const std::string& s) {
+    using namespace std;
+    cout << s;
+}
+
+
+
+Bigger C++ projects I've seen hardly used more than one namespace (e.g. boost library).
+
+Actually boost uses tons of namespaces, typically every part of boost has its own namespace for the inner workings and then may put only the public interface in the top-level namespace boost.
+Personally I think that the larger a code-base becomes, the more important namespaces become, even within a single application (or library). At work we put each module of our application in its own namespace.
+Another use (no pun intended) of namespaces that I use a lot is the anonymous namespace:
+namespace {
+  const int CONSTANT = 42;
+}
+
+This is basically the same as:
+static const int CONSTANT = 42;
+
+Using an anonymous namespace (instead of static) is however the recommended way for code and data to be visible only within the current compilation unit in C++.
+
+Don't listen to every people telling you that namespaces are just name-spaces.
+They are important because they are considered by the compiler to apply the interface principle. Basically, it can be explained by an example:
+namespace ns {
+
+class A
+{
+};
+
+void print(A a)
+{
+}
+
+}
+
+If you wanted to print an A object, the code would be this one:
+ns::A a;
+print(a);
+
+Note that we didn't explicitly mention the namespace when calling the function. This is the interface principle: C++ consider a function taking a type as an argument as being part of the interface for that type, so no need to specify the namespace because the parameter already implied the namespace.
+Now why this principle is important? Imagine that the class A author did not provide a print() function for this class. You will have to provide one yourself. As you are a good programmer, you will define this function in your own namespace, or maybe in the global namespace.
+namespace ns {
+
+class A
+{
+};
+
+}
+
+void print(A a)
+{
+}
+
+And your code can start calling the print(a) function wherever you want. Now imagine that years later, the author decides to provide a print() function, better than yours because he knows the internals of his class and can make a better version than yours.
+Then C++ authors decided that his version of the print() function should be used instead of the one provided in another namespace, to respect the interface principle. And that this "upgrade" of the print() function should be as easy as possible, which means that you won't have to change every call to the print() function. That's why "interface functions" (function in the same namespace as a class) can be called without specifying the namespace in C++.
+And that's why you should consider a C++ namespace as an "interface" when you use one and keep in mind the interface principle.
+If you want better explanation of this behavior, you can refer to the book Exceptional C++ from Herb Sutter
+
+Vincent Robert is right in his comment http://stackoverflow.com/questions/41590/how-do-you-properly-use-namespaces-in-c#48008.
+Using namespace
+Namespaces are used at the very least to help avoid name collision. In Java, this is enforced through the "org.domain" idiom (because it is supposed one won't use anything else than his/her own domain name).
+In C++, you could give a namespace to all the code in your module. For example, for a module MyModule.dll, you could give its code the namespace MyModule. I've see elsewhere someone using MyCompany::MyProject::MyModule. I guess this is overkill, but all in all, it seems correct to me.
+Using "using"
+Using should be used with great care because it effectively import one (or all) symbols from a namespace into your current namespace.
+This is evil to do it in a header file because your header will pollute every source including it (it reminds me of macros...), and even in a source file, bad style outside a function scope because it will import at global scope the symbols from the namespace.
+The most secure way to use "using" is to  import select symbols:
+void doSomething()
+{
+   using std::string ; // string is now "imported", at least,
+                       // until the end of the function
+   string a("Hello World") ;
+   std::cout << a << endl ;
+}
+
+void doSomethingElse()
+{
+   using namespace std ; // everything from std is now "imported", at least,
+                       // until the end of the function
+   string a("Hello World") ;
+   cout << a << endl ;
+}
+
+You'll see a lot of "using namespace std ;" in tutorial or example codes. The reason is to reduce the number of symbols to make the reading easier, not because it is a good idea.
+"using namespace std ;" is discouraged by Scott Meyers (I don't remember exactly which book, but I can find it if necessary).
+Namespace Composition
+Namespaces are more than packages. Another example can be found in Bjarne Stroustrup's "The C++ Programming Language".
+In the "Special Edition", at 8.2.8 Namespace Composition, he describes how you can merge two namespaces AAA and BBB into another one called CCC. Thus CCC becomes an alias for both AAA and BBB:
+namespace AAA
+{
+   void doSomething() ;
+}
+
+namespace BBB
+{
+   void doSomethingElse() ;
+}
+
+namespace CCC
+{
+   using namespace AAA ;
+   using namespace BBB ;
+}
+
+void doSomethingAgain()
+{
+   CCC::doSomething() ;
+   CCC::doSomethingElse() ;
+}
+
+You could even import select symbols from different namespaces, to build your own custom namespace interface. I have yet to find a practical use of this, but in theory, it is cool.
+
+I did not see any mention of it in the other answers, so here are my 2 Canadian cents:
+On the "using namespace" topic, a useful statement is the namespace alias, allowing you to "rename" a namespace, normally to give it a shorter name. For example, instead of:
+Some::Impossibly::Annoyingly::Long:Name::For::Namespace::Finally::TheClassName foo;
+Some::Impossibly::Annoyingly::Long:Name::For::Namespace::Finally::AnotherClassName bar;
+
+you can write:
+namespace Shorter = Some::Impossibly::Annoyingly::Long:Name::For::Namespace::Finally;
+Shorter::TheClassName foo;
+Shorter::AnotherClassName bar;
+

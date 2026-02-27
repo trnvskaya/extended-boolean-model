@@ -1,0 +1,51 @@
+Java: Serializing unknown Arraysize
+java serialization objectsize
+If I safe an Array and reload it, is there a possibility to get the size if its unknown? 
+Thanks
+
+
+What do you mean by "unknown"? You can get the length of any java array with the length field.
+int[] myArray = deserializeSomeArray();
+int size = myArray.length;
+
+
+I think you need to supply some more information. How are you saving the array? Using an ObjectOutputStream?
+
+No because the length of the array is just the size of memory allocated divided by the size of the object stored in it, and since no objects have a size of 0 you will always have a proper length, (which could be 0)
+
+If you use ObjectInputStream.readObject() to read the saved array, it will be reconstituted with the proper length and you can just read the size with array.length.  
+
+Attempting to read between the lines...
+If you are actually reading array, then (unlike C) all arrays know their length. Java is a safe language, so the length is necessary for bounds checking.
+MyType[] things = (MyType[])in.readObject();
+int len = things.length;
+
+Perhaps your difficulty is that you are doing custom (de)serialisation and are writing out individual elements of the array (hint: don't - use an array). In the case you need to catch OptionDataException to detect the end of the enclosing object's custom data:
+private static final MyType[] NOTHING = new MyType[0];
+
+private transient MyType[] things = NOTHING;
+
+private void writeObject(ObjectOutputStream out) throws IOException {
+    out.defaultWriteObject(); // Do not forget this call!
+    for (MyType thing : things) {
+        out.writeObject(thing);
+    }
+}
+private void readObject(
+    ObjectInputStream in
+) throws IOException, ClassNotFoundException {
+    in.defaultReadObject(); // Do not forget this call!
+    List<MyType> things = new ArrayList<MyType>();
+    try {
+        for (;;) {
+            things.add((MyType)in.readObject();
+        }
+    } catch (OptionalDataException exc) {
+        // Okay - end of custom data.
+    }
+    this.things = things.toArray(NOTHING);
+}
+
+If you are going to do that sort of thing, it's much better to write out the number of objects you are going to read as an int before the actual data.
+
+It sounds like you're serializing and storing the individual objects in the array (after much reading between the lines).  Use the ObjectOutputStream to store the array itself.  If the objects stored in the array are serializable, they'll be stored too.  When you deserialize you'll get the entire array back intact.

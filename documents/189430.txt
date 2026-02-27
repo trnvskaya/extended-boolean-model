@@ -1,0 +1,184 @@
+Detect that the Internet connection is offline?
+javascript ajax offline connectivity
+How to detect that the Internet connection is offline in JavaScript?
+
+
+You can determine that the connection is lost by making failed XHR requests.
+The standard approach is to retry the request a few times.  If it doesn't go through, alert the user to check the connection, and fail gracefully.
+Sidenote: To put the entire application in an "offline" state may lead to a lot of error-prone work of handling state.. wireless connections may come and go, etc.  So your best bet may be to just fail gracefully, preserve the data, and alert the user.. allowing them to eventually fix the connection problem if there is one, and to continue using your app with a fair amount of forgiveness.
+Sidenote: You could check a reliable site like google for connectivity, but this may not be entirely useful as just trying to make your own request, because while google may be available, your own application may not be, and you're still going to have to handle your own connection problem.  Trying to send a ping to google would be a good way to confirm that the internet connection itself is down, so if that information is useful to you, then it might be worth the trouble.
+Sidenote: Sending a Ping could be achieved in the same way that you would make any kind of two-way ajax request, but sending a ping to google in this case would pose some challenges.  First, we'd have the same cross-domain issues that are typically encountered in making ajax communications.  One option is to set up a server-side proxy, wherein we actually ping google (or whatever site), and return the results of the ping to the app.. This is a catch-22, because if the internet connection is actually the problem, we won't be able to get to the server, and if the connection problem is only on our own domain, we won't be able to tell the difference. Other cross-domain techniques could be tried, for example, embedding an iframe in your page which points to google.com, and then polling the iframe for success/failure (examine the contents, etc).  Embedding an image may not really tell us anything, because we need a useful response from the communication mechanism in order to draw a good conclusion about what's going on.  So again, determining the state of the internet connection as a whole may be more trouble than it's worth.  You'll have to weight these options out for your specific app.
+
+There are a number of ways to do this:
+
+AJAX request to your own website. If that request fails, there's a good chance it's the connection at fault. The JQuery documentation has a section on handling failed AJAX requests. Beware of the Same Origin Policy when doing this, which may stop you from accessing sites outside your domain.
+You could put an onerror in an img, like
+<img src='http://www.example.com/singlepixel.gif' 
+      onerror='alert("Connection dead");' />
+
+This method could also fail if the source image is moved / renamed, and would generally be an inferior choice to the ajax option.
+
+So there are several different ways to try and detect this, none perfect, but in the absence of the ability to jump out of the browser sandbox and access the user's net connection status directly, they seem to be the best options.
+
+IE 8 will support the window.navigator.onLine property.
+But of course that doesn't help with other browsers or operating systems. I predict other browser vendors will decide to provide that property as well given the importance of knowing online/offline status in Ajax applications.
+Until that happens, either XHR or an Image() or <img> request can provide something close to the functionality you want.
+Update (2014/11/16)
+Major browsers now support this property, but your results will vary.
+Quote from Mozilla Documentation:
+
+In Chrome and Safari, if the browser is not able to connect to a local area network (LAN) or a router, it is offline; all other conditions return true. So while you can assume that the browser is offline when it returns a false value, you cannot assume that a true value necessarily means that the browser can access the internet. You could be getting false positives, such as in cases where the computer is running a virtualization software that has virtual ethernet adapters that are always "connected." Therefore, if you really want to determine the online status of the browser, you should develop additional means for checking.
+In Firefox and Internet Explorer, switching the browser to offline mode sends a false value. All other conditions return a true value.
+
+
+The HTML5 Application Cache API specifies navigator.onLine, which is currently available in the IE8 betas, WebKit (eg. Safari) nightlies, and is already supported in Firefox 3
+
+You can use $.ajax()'s error callback, which fires if the request fails. If textStatus equals the string "timeout" it probably means connection is broken:
+function (XMLHttpRequest, textStatus, errorThrown) {
+  // typically only one of textStatus or errorThrown 
+  // will have info
+  this; // the options for this ajax request
+}
+
+From the doc:
+
+Error: A function to be called if the request
+  fails. The function is passed three
+  arguments: The XMLHttpRequest object,
+  a string describing the type of error
+  that occurred and an optional
+  exception object, if one occurred.
+  Possible values for the second
+  argument (besides null) are "timeout",
+  "error", "notmodified" and
+  "parsererror". This is an Ajax Event
+
+So for example:
+ $.ajax({
+   type: "GET",
+   url: "keepalive.php",
+   success: function(msg){
+     alert("Connection active!")
+   },
+   error: function(XMLHttpRequest, textStatus, errorThrown) {
+       if(textStatus == 'timeout') {
+           alert('Connection seems dead!');
+       }
+   }
+ });
+
+
+Very interesting script that resumes a lot of above:
+http://www.codeproject.com/KB/scripting/InternetConnectionTest.aspx
+It is very useful, and because it is Ajax based, is asyncronous, so you can check if the Internet is conected without leaving the original page. Using this with a timer you can also have a component in the page checking every n minutes.
+
+As olliej said, using the navigator.onLine browser property is preferable than sending network requests and, accordingly with developer.mozilla.org/En/Online_and_offline_events, it is even supported by old versions of Firefox and IE.
+Recently, the WHATWG has specified the addition of the online and offline events, in case you need to react on navigator.onLine changes.
+Please also pay attention to the link posted by Daniel Silveira which points out that relying on those signal/property for syncing with the server is not always a good idea.
+
+Here is a snippet of a helper utility I have. This is namespaced javascript:
+network: function() {
+    var state = navigator.onLine ? "online" : "offline";
+    return state;
+}
+
+You should use this with method detection else fire off an 'alternative' way of doing this. The time is fast approaching when this will be all that is needed. The other methods are hacks.
+
+My way.
+<!-- the file named "tt.jpg" should exist in the same directory -->
+
+<script>
+function testConnection(callBack)
+{
+    document.getElementsByTagName('body')[0].innerHTML +=
+        '<img id="testImage" style="display: none;" ' +
+        'src="tt.jpg?' + Math.random() + '" ' +
+        'onerror="testConnectionCallback(false);" ' +
+        'onload="testConnectionCallback(true);">';
+
+    testConnectionCallback = function(result){
+        callBack(result);
+
+        var element = document.getElementById('testImage');
+        element.parentNode.removeChild(element);
+    }    
+}
+</script>
+
+<!-- usage example -->
+
+<script>
+function myCallBack(result)
+{
+    alert(result);
+}
+</script>
+
+<a href=# onclick=testConnection(myCallBack);>Am I online?</a>
+
+
+ if(navigator.onLine){
+  alert('online');
+ } else {
+  alert('offline');
+ }
+
+
+I had to make a web app (ajax based) for a customer who works a lot with schools, these schools have often a bad internet connection I use this simple function to detect if there is a connection, works very well!
+I use CodeIgniter and Jquery:
+    function checkOnline(){
+    setTimeout("doOnlineCheck()", 20000);
+}
+
+function doOnlineCheck(){
+    var submitURL = $("#base_path").val() + "index.php/menu/online";//if the server can be reached it returns 1, other wise it times out
+    $.ajax({
+        url     : submitURL     ,
+        type    : 'post'        ,
+        dataType: 'msg'         ,
+        timeout : 5000          ,
+        success : function(msg){
+            if(msg==1){
+                $("#online").addClass("online");
+                $("#online").removeClass("offline");
+            }else{
+                $("#online").addClass("offline");
+                $("#online").removeClass("online");
+            }
+            checkOnline();
+        }   ,
+        error   : function(){
+            $("#online").addClass("offline");
+            $("#online").removeClass("online");
+            checkOnline();
+        }
+    });
+}
+
+
+an ajax call to your domain is the easiest way to detect if you are offline
+$.ajax({
+      type: "HEAD",
+      url: document.location.pathname + "?param=" + new Date(),
+      error: function() { return false; },
+      success: function() { return true; }
+   });
+
+
+I was looking for a client-side solution to detect if the internet was down or my server was down. The other solutions I found always seemed to be dependent on a 3rd party script file or image, which to me didn't seem like it would stand the test of time. An external hosted script or image could change in the future and cause the detection code to fail.
+I've found a way to detect it by looking for an xhrStatus with a 404 code. In addition, I use JSONP to bypass the CORS restriction. A status code other than 404 shows the internet connection isn't working.
+$.ajax({
+    url:      'https://www.bing.com/aJyfYidjSlA' + new Date().getTime() + '.html',
+    dataType: 'jsonp',
+    timeout:  5000,
+
+    error: function(xhr) {
+        if (xhr.status == 404) {
+            //internet connection working
+        }
+        else {
+            //internet is down (xhr.status == 0)
+        }
+    }
+});
+

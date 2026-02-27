@@ -1,0 +1,93 @@
+Ruby and duck typing: design by contract impossible?
+java ruby oop interface design-by-contract
+Method signature in Java:
+public List<String> getFilesIn(List<File> directories)
+
+similar one in ruby
+def get_files_in(directories)
+
+In the case of Java, the type system gives me information about what the method expects and delivers.  In Ruby's case, I have no clue what I'm supposed to pass in, or what I'll expect to receive.
+In Java, the object must formally implement the interface.  In Ruby, the object being passed in must respond to whatever methods are called in the method defined here.  
+This seems highly problematic:
+
+Even with 100% accurate, up-to-date documentation, the Ruby code has to essentially expose its implementation, breaking encapsulation.  "OO purity" aside, this would seem to be a maintenance nightmare.
+The Ruby code gives me no clue what's being returned; I would have to essentially experiment, or read the code to find out what methods the returned object would respond to.
+
+Not looking to debate static typing vs duck typing, but looking to understand how you maintain a production system where you have almost no ability to design by contract.
+Update
+No one has really addressed the exposure of a method's internal implementation via documentation that this approach requires.  Since there are no interfaces, if I'm not expecting a particular type, don't I have to itemize every method I might call so that the caller knows what can be passed in?  Or is this just an edge case that doesn't really come up?
+
+
+It's by no means a maintenance nightmare, just another way of working, that calls for consistence in the API and good documentation. 
+Your concern seems related to the fact that any dynamic language is a dangerous tool, that cannot enforce API input/output contracts. The fact is, while chosing static may seem safer, the better thing you can do in both worlds is to keep a good set of tests that verify not only the type of the data returned (which is the only thing the Java compiler can verify and enforce), but also it's correctness and inner workings(Black box/white box testing).
+As a side note, I don't know about Ruby, but in PHP you can use @phpdoc tags to hint the IDE (Eclipse PDT) about the data types returned by a certain method.
+
+Method Validation via duck-typing:
+i = {}
+=> {}
+i.methods.sort
+=> ["==", "===", "=~", "[]", "[]=", "__id__", "__send__", "all?", "any?", "class", "clear", "clone", "collect", "default", "default=", "default_proc", "delete", "delete_if", "detect", "display", "dup", "each", "each_key", "each_pair", "each_value", "each_with_index", "empty?", "entries", "eql?", "equal?", "extend", "fetch", "find", "find_all", "freeze", "frozen?", "gem", "grep", "has_key?", "has_value?", "hash", "id", "include?", "index", "indexes", "indices", "inject", "inspect", "instance_eval", "instance_of?", "instance_variable_defined?", "instance_variable_get", "instance_variable_set", "instance_variables", "invert", "is_a?", "key?", "keys", "kind_of?", "length", "map", "max", "member?", "merge", "merge!", "method", "methods", "min", "nil?", "object_id", "partition", "private_methods", "protected_methods", "public_methods", "rehash", "reject", "reject!", "replace", "require", "respond_to?", "select", "send", "shift", "singleton_methods", "size", "sort", "sort_by", "store", "taint", "tainted?", "to_a", "to_hash", "to_s", "type", "untaint", "update", "value?", "values", "values_at", "zip"]
+i.respond_to?('keys')
+=> true
+i.respond_to?('get_files_in')  
+=> false
+
+Once you've got that reasoning down, method signatures are moot because you can test them in the function dynamically. ( this is partially due to not being able do do signature-match-based-function-dispatch, but this is more flexible because you can define unlimited combinations of signatures ) 
+ def get_files_in(directories)
+    fail "Not a List" unless directories.instance_of?('List')
+ end
+
+ def example2( *params ) 
+    lists = params.map{|x| (x.instance_of?(List))?x:nil }.compact 
+    fail "No list" unless lists.length > 0
+    p lists[0] 
+ end
+
+x = List.new
+get_files_in(x)
+example2( 'this', 'should', 'still' , 1,2,3,4,5,'work' , x )
+
+If you want a more assurable test, you can try RSpec for Behaviour driven developement. 
+
+While I love static typing when I'm writing Java code, there's no reason that you can't insist upon thoughtful preconditions in Ruby code (or any kind of code for that matter). When I really need to insist upon preconditions for method params (in Ruby), I'm happy to write a condition that could throw a runtime exception to warn of programmer errors. I even give myself a semblance of static typing by writing:
+def get_files_in(directories)
+   unless File.directory? directories
+      raise ArgumentError, "directories should be a file directory, you bozo :)"
+   end
+   # rest of my block
+end
+
+It doesn't seem to me that the language prevents you from doing design-by-contract. Rather, it seems to me that this is up to the developers.
+(BTW, "bozo" refers to yours truly :)
+
+What it comes down to is that get_files_in is a bad name in Ruby - let me explain.
+In java/C#/C++, and especially in objective C, the function arguments are part of the name. In ruby they are not.
+The fancy term for this is Method Overloading, and it's enforced by the compiler.
+Thinking of it in those terms, you're just defining a method called get_files_in and you're not actually saying what it should get files in. The arguments are not part of the name so you can't rely on them to identify it.
+Should it get files in a directory? a drive? a network share? This opens up the possibility for it to work in all of the above situations.
+If you wanted to limit it to a directory, then to take this information into account, you should call the method get_files_in_directory. Alternatively you could make it a method on the Directory class, which Ruby already does for you.
+As for the return type, it's implied from get_files that you are returning an array of files. You don't have to worry about it being a List<File> or an ArrayList<File>, or so on, because everyone just uses arrays (and if they've written a custom one, they'll write it to inherit from the built in array).
+If you only wanted to get one file, you'd call it get_file or get_first_file or so on. If you are doing something more complex such as returning FileWrapper objects rather than just strings, then there is a really good solution:
+# returns a list of FileWrapper objects
+def get_files_in_directory( dir )
+end
+
+At any rate. You can't enforce contracts in ruby like you can in java, but this is a subset of the wider point, which is that you can't enforce anything in ruby like you can in java. Because of ruby's more expressive syntax, you instead get to more clearly write english-like code which tells other people what your contract is (therein saving you several thousand angle brackets).
+I for one believe that this is a net win. You can use your newfound spare time to write some specs and tests and come out with a much better product at the end of the day.
+
+Short answer: Automated unit tests and good naming practices.
+The proper naming of methods is essential. By giving the name get_files_in(directory) to a method, you are also giving a hint to the users on what the method expects to get and what it will give back in return. For example, I would not expect a Potato object coming out of get_files_in() - it just doesn't make sense. It only makes sense to get a list of filenames or more appropriately, a list of File instances from that method. As for the concrete type of the list, depending on what you wanted to do, the actual type of List returned is not really important. What's important is that you can somehow enumerate the items on that list.
+Finally, you make that explicit by writing unit tests against that method - showing examples on how it should work. So that if get_files_in suddenly returns a Potato, the test will raise an error and you'll know that the initial assumptions are now wrong.
+
+I would argue that although the Java method gives you more information, it doesn't give you enough information to comfortably program against.
+For example, is that List of Strings just filenames or fully-qualified paths?
+Given that, your argument that Ruby doesn't give you enough information also applies to Java.
+You're still relying on reading documentation, looking at the source code, or calling the method and looking at its output (and decent testing of course).
+
+I made a half-baked attempt at something like dbc for Ruby a few years ago, may give folks some ideas about how to move forward with a more comprehensive solution:
+https://github.com/justinwiley/higher-expectations
+
+Design by contract is a much subtler principle than just specifying the argument type an return type. Other answers here concentrate much on good naming, which is important. I could go on an on about the many ways in which the name get_files_in is ambiguous. But good naming is just an outward consequence of a deeper principle of having good contracts and designing by them. Names are always a bit ambiguous, and good pragmatic linguistics is a product of good thinking. 
+You can consider contracts the design principles, and they are frequently hard and boring to state in an abstract form. An untyped language requires that the programmer thinks about contracts for real, that she understands them a deeper level than just as type constraints. If there is a team, the team members must all mean and abide by the same contracts. They must be dedicated thinkers and must spend time together discussing concrete examples in order to establish shared understanding of contracts. 
+The same requirements apply to the API user: The user must first memorize the documentation, and then she is able to gradually understand the contracts, and start loving the API if the contracts are thoughtfully crafted (or hating it if otherwise).
+This is connected to duck typing. A contract must give clue as to what happens regardless of the type of the method inputs. So the contract must be understood in a deeper, more generalized way. This answer itself might seem a bit inconcrete, or even haughty, for which I apologize. I am simply trying to say that the duck is not a lie, the duck means that one thinks about one's problem on a higher level of abstraction. The designers, the programmers, the mathematicians are all different names for the same capability, and mathematicians know that there are many levels of aptitude in mathematics, where mathematicians on a next higher level easily solve problems which those on lower levels find too hard to solve. The duck means that your programming has to be good mathematics, and it restricts the successful developers and users to only those, who are able to do so.

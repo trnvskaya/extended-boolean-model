@@ -1,0 +1,86 @@
+Is VARCHAR like totally 1990s?
+sql-server nvarchar
+
+VARCHAR does not store Unicode characters.
+NVARCHAR does store Unicode characters.
+Today's applications should always be Unicode compatible.
+NVARCHAR takes twice the amount of space to store it.
+Point 4 doesn't matter because storage space is extremely inexpensive.
+
+Ergo: When designing SQL Server databases today, one should always use NVARCHAR.
+Is this sound reasoning? Does anyone disagree with any of the premises?
+Are there any reasons to choose VARCHAR over NVARCHAR today?
+
+
+I'm no expert on the subject. But any reason why you couldn't use UTF-8 to get a combination of small space and unicode?
+
+I'd say that there are still valid reasons to not use nvarchar. 
+
+Storage space is at a premium, such as on a shared host or the database is
+really huge.  
+Performance is critical.   
+Brownfield development (i.e. the database has existing tables that use varchar).  
+You are integrating with another older system that only understands single byte characters and/or varchar.
+
+However new development should probably use nvarchar esp. since 64-bit systems are becoming the norm. Also, companies (even small ones) are now more commonly global.  
+
+Storage is less expensive than it's ever been historically, but still if you can store twice as much data on a given hard drive, that's attractive, isn't it?
+Also there's RAM for caching, and solid-state drives, which are both a lot more expensive than hard drives.  It's beneficial to use more compact data formats when you have millions of rows.
+
+Your point 3 is invalid.  Systems that are designed only for a single country's use don't have to worry about unicode, and some languages/products in use don't support unicode either at all or only partially.  For example, TurboTax is only for the U.S. (and even with a Canadian version with French is still just LATIN-1), so they wouldn't need or have to worry about unicode and probably don't support it (I don't know if they do or not, but even if they do, it's just an example).
+"Today's applications should always be Unicode compatible."
+is probably more valid expressed as:
+"Today's applications should always be Unicode compatible if nothing special needs to occur to handle Unicode properly, and a previously existing codebase or any other piece of the application does not need to be updated specifically to support it"
+
+
+Point 4 doesn't matter because storage space is extremely inexpensive.
+
+it is not just storage, but bandwidth - cpu, memory, backup, recovery, transfer.  Conserve.
+
+You match the datatype with the data that will be stored in the column. By a similar argument you could say why not store all data in NVARCHAR columns, because numbers and dates can be represented as strings of digits.
+If the best match for the data that will be stored in the column is VARCHAR, then use it.
+
+Is there a way for your database server to use UTF-8 as an encoding?  You then get the benefits of low storage for mostly ASCII loads, and the ability to store anything in the range of Unicode so that expansion is possible.
+I would ask your database vendor to support UTF-8 as an encoding for the VARCHAR SQL type, as well.  I don't know how other DB servers do it, but I do know that you can use UTF-8 in VARCHAR and TEXT fields in at least MySQL and PostgreSQL.
+All that having been said though, the only reason to not use a UTF-16 encoded field is if you have to interact with applications which will break on UTF-16 input.  This would be most legacy applications which were designed to handle ASCII or ISO-8815 text encodings, which would be better off processing UTF-8.
+
+As others have pointed out, it's not just the cost of the storage.
+The length of a column will affect the number of rows per page. Having fewer rows per page means that fewer can fit into your caches, which drops performance. I am assuming that in MSSQL, a NVARCHAR column which is indexed will use up more space in the index. Which means fewer index entries per block, therefore more blocks in the index, therefore more seeks when scanning (or searching) indexes, which slows down indexed access too.
+So it loses you performance on every single front. If you genuinely don't care (or can measure the performance and are happy with it, of course), then that's fine. But if you have a genuine requirement to store unicode characters, of course, use NVARCHAR.
+I may be that the maintainability gained by using NVARCHAR throughout your database outweighs any performance cost.
+
+I believe that comparison of nvarchars is more costly than varchars so it's perfectly valid and even preferred in places where you really don't need unicode capabilities, i.e., for some internal IDs.
+And storage cost still does matter. If you have billions of rows then those "small" differences get big pretty fast.
+
+These sorts of questions always have the same answer: it depends.  There is no magical rule that you should follow blindly.  Even the use of GOTO in modern programming languages can be justified: http://stackoverflow.com/questions/24451/goto-usage
+So the answer is: use your head and think about the particular situation.  In this particular instance keep in mind that you can always convert from varchar to nvarchar in the database if it turns out your requirements change.
+
+I have seen nvarchar columns converted to varchar for two reasons:
+
+Application is using MSSQL Express
+Edition, which has 4GB database size
+limit. Switching to MSSQL Standard
+Edition would be too expensive if
+there are many database deployments,
+as would be in single-tenant webapps
+or applications with embedded DBMS.
+The cheaper SQL2008 Web Edition
+could help here.
+nvarchar(4000) is not enough but you
+    don't want an ntext column. So you
+    convert to varchar(8000). However,
+    in most cases you probably should convert to nvarchar(max).
+
+
+You should choose VARCHAR over NVARCHAR for many different types of columns, and the choice would be on a per-column basis.
+Typical columns which would not require the extra overhead NVARCHAR incurs would be:
+ID-type columns: License plates, SSNs, Patient Chart identifiers etc.
+Code columns: International currency codes (USD, UKP, etc.), ISO country codes (US, UK, etc), Language codes (en-us, etc), accounting segment codes, etc
+Postal code and zip code columns.
+
+I've seen some database where the indices (indexes?...different debate) have been larger than the data. If one can get away with half the storage demands (varchar) within the index then one assumes that equates to twice the hit density of a given page and more efficient fill-factoring leading to faster data retrieval/writing/locking & less storage requirements (already mentioned).
+
+My leaning is "use NVARCHAR" as a default... but @CadeRoux has a good point: if you are SURE the data will never hold anything but ASCII -- like a US license plate -- VARCHAR might save you a tiny bit of cost.
+I'd say the flip side of his well-put statement is "DO use NVARCHAR" for anything that will have names (people, streets, places) or natural language text (email, chat, articles, blog postings, photo captions).  Otherwise, your "firstname" column will not be able to encode "FranÃ§ois" or "JosÃ©" correctly, and your text columns will not allow text with "foreign" diacritcal marks, or -- for that matter -- very common US characters like cent-mark "Â¢", paragraph mark "Â¶", a bullet "â¢". (Because none of those are ASCII characters, and there is no good, standard way to put them in to a VARCHAR field.  Trust me: you'll hurt yourself.)
+On ANY project I've worked on, I've NEVER been scolded for using NVARCHAR because I was "squandering too much company money on disk space".  And if I had to rework code or the DB schema (especially on a live, production system), the cost spent in the re-fit would EASILY outweigh the "savings" from buying a disk that was 50% smaller.
+To really understand this question you really have to understand ASCII, Unicode, and Unicode's typical encodings (like UCS-2 and UTF-8).

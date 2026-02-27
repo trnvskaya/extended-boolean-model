@@ -1,0 +1,77 @@
+iPhone app crashing with NSUnknownKeyException setValue:forUndefinedKey:
+iphone xib key-value-coding
+I'm writing my first iPhone app, so I haven't gotten around to figuring out much in the way of debugging.
+Essentially my app displays an image and when touched plays a short sound.
+When compiling and building the project in XCode, everything builds successfully, but when the app is run in the iPhone simulator, it crashes.
+I get the following error:
+Application Specific Information:
+iPhone Simulator 1.0 (70), iPhone OS 2.0 (5A331)
+*** Terminating app due to uncaught exception 'NSUnknownKeyException', 
+reason: '[<UIView 0x34efd0> setValue:forUndefinedKey:]: this class is not key value 
+coding-compliant for the key kramerImage.'
+
+kramerImage here is the image I'm using for the background.
+I'm not sure what NSUnknownKeyException means or why the class is not key value coding-compliant for the key.
+
+
+(This isn't really iPhone specific - the same thing will happen in regular Cocoa).
+NSUnknownKeyException is a common error when using Key-Value Coding to access a key that the object doesn't have.
+The properties of most Cocoa objects can be accessing directly:
+[@"hello world" length]    // Objective-C 1.0
+@"hello world".length      // Objective-C 2.0
+
+Or via Key-Value Coding:
+[@"hello world" valueForKey:@"length"]
+
+I would get an NSUnknownKeyException if I used the following line:
+[@"hello world" valueForKey:@"purpleMonkeyDishwasher"]
+
+because NSString does not have a property (key) called 'purpleMonkeyDishwasher'.
+Something in your code is trying to set a value for the key 'kramerImage' on an UIView, which (apparently) doesn't support that key.  If you're using Interface Builder, it might be something in your nib.
+Find where 'kramerImage' is being used, and try to track it down from there.
+
+Also when you rename a view, don't forget to delete the reference on File's Owner. It may also raise this error.
+
+Here's one where you'll get this error - and how to fix it.  I was getting it when loading a nib that just had a custom TableViewCell.  I used IB to build a xib that just had the File's Owner, First Responder, and the TableViewCell. The TableViewCell just had 4 UILabels which matched up to a class with 4 IBOutlet UILabels called rootCell.  I changed the class of the TableViewCell to be rootCell.  It worked fine until a made a couple of changes and suddenly I was getting the setValue:forUndefinedKey: when I was just instantiating the class after loading it from a nib:
+    NSArray * nib = [[NSBundle mainBundle] loadNibNamed:@"rootCell-iPad" owner:self options:nil];
+
+    cell = [nib objectAtIndex:0];
+
+It failed at the first line, when the nib was trying to load.  After a while, I noticed that it was trying to match the IBOutlet Labels to the root controller, NOT the rootCell class!  That was my tipoff.  What I did wrong was to inadvertently change the File's Owner to rootCell class.  When I changed it back to NSObject, then it didn't try to match up to the delegate (rootController) when loading.  So, if you're doing the above, make File's Owner an NSObject, but make the UITableCell your desired class.
+
+It seems you are doing
+@interface MyFirstIphoneAppViewController : UIViewController<> {
+    UIImageView *InitialkramerImage;
+}
+@property(nonatomic,retain) IBOutlet UIImageView *InitialkramerImage;
+
+Then after synthesizing that imageview, When you open "MyFirstIphoneAppViewController.xib" in Interface Builder, you are taking an Image View from Tool(menu)/Library den linking that outlet to the 'InitialkramerImage' from the Files Owner of "MyFirstIphoneAppViewController.xib". Then you saved the project. But after that you might change the name of the outlet variable "InitialkramerImage" to "kramerImage". So, after doing this 
+@interface MyFirstIphoneAppViewController : UIViewController<> {
+    UIImageView *kramerImage;
+}
+@property(nonatomic,retain) IBOutlet UIImageView *kramerImage;
+
+and saving the project when you run it, There is no existance of the outlet of "InitialkramerImage" in the "MyFirstIphoneAppViewController.xib". So, when you run the project there will be no outlet referencing from Imageview to the 'kramerImage' and 
+
+"For displaying the view,
+  UIViewController will try to find the
+  outlet to "InitialkramerImage" which
+  is not existing."
+
+So, It will throw the "NSUnknownKeyException". 
+
+You can check the missing outlet by
+  opening the nib(.xib) file then right
+  clicking on the 'Files Owner' of that.
+
+
+I had this same problem today.  I didn't have the right class specified for the View Controller in my Navigation Controller.  This will happen often if you fail to specify the correct class for your views in Interface Builder.
+You'll also get invalid selector issues as well.  Always check your Interface Builder classes and connections!
+
+If you have done this code somewhere else and had a zip/compressed file, try to extract it again. It may work I dont know why but I feel like it is an extraction issue.
+or you can try to change the IBOutlet to kramerImage and bind it again in NIB.
+
+I had this situation and it turns out even after finding all instances of the variable and deleting them my app still crashed.  Heres what happened... I created another instance of a variable from a textfield from my  XIB into my viewController.h but I realized I didnt need it anymore and deleted it.  It turns out my program saw that and kept trying to use it in the program so in the future if this happens to anywhere else just go into you XIB right-click on the button or textfield etc and delete any extra unused variables.
+
+This is how i solved mine, in Interface builder right-click the View Controller, there should be an exclamation mark on the missing outlet or action method. Find and remove all the references and that solved it.
+This happened because i deleted the action method in the .m file.

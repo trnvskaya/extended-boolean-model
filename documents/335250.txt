@@ -1,0 +1,78 @@
+Parsing XML with REGEX in Java
+java xml regex
+Given the below XML snippet I need to get a list of name/value pairs for each child under DataElements. XPath or an XML parser cannot be used for reasons beyond my control so I am using regex.
+<?xml version="1.0"?>
+<StandardDataObject xmlns="myns">
+  <DataElements>
+    <EmpStatus>2.0</EmpStatus>
+    <Expenditure>95465.00</Expenditure>
+    <StaffType>11.A</StaffType>
+    <Industry>13</Industry>
+  </DataElements>
+  <InteractionElements>
+    <TargetCenter>92f4-MPA</TargetCenter>
+    <Trace>7.19879</Trace>
+  </InteractionElements>
+</StandardDataObject>
+
+The output I need is: 
+    [{EmpStatus:2.0},  {Expenditure:95465.00}, {StaffType:11.A}, {Industry:13}]  
+The tag names under DataElements are dynamic and so cannot be expressed literally in the regex. The tag names TargetCenter and Trace are static and could be in the regex but if there is a way to avoid hardcoding that would be preferable. 
+"<([A-Za-z0-9]+?)>([A-Za-z0-9.]*?)</"
+
+This is the regex I have constructed and it has the problem that it erroneously includes {Trace:719879} in the results.  Relying on new-lines within the XML or any other apparent formatting is not an option.
+Below is an approximation of the Java code I am using:
+private static final Pattern PATTERN_1 = Pattern.compile(..REGEX..);
+private List<DataElement> listDataElements(CharSequence cs) {
+    List<DataElement> list = new ArrayList<DataElement>();
+    Matcher matcher = PATTERN_1.matcher(cs);
+    while (matcher.find()) {
+        list.add(new DataElement(matcher.group(1), matcher.group(2)));
+    }
+    return list;
+}
+
+How can I change my regex to only include data elements and ignore the rest?
+
+
+Is there any reason you're not using a proper XML parser instead of regex's?  This would be trivial with the right library.
+
+Use XPath instead!
+
+You really should be using an XML library for this.
+If you have to use RE, why not do it in two stages?  DataElements>.*?</DataElements  then what you have now.
+
+Sorry to give you yet another "Don't use regex" answer, but seriously. Please use Commons-Digester, JAXP (bundled with Java 5+) or JAXB (bundled with Java 6+) as it will save you from a boatload of hurt. 
+
+XML is not a regular language. You cannot parse it using a regular expression. An expression you think will work will break when you get nested tags, then when you fix that it will break on XML comments, then CDATA sections, then processor directives, then namespaces, ... It cannot work, use an XML parser.
+
+You should listen to everyone.  A lightweight parser is a bad idea.
+However, if you are really that hard headed about it, you should be able to tweak your code to exclude the tags outside of the DataElements tag.
+private static final Pattern PATTERN_1 = Pattern.compile(..REGEX..);
+private static final String START_TAG = "<DataElements>";
+private static final String END_TAG = "</DataElements>";
+private List<DataElement> listDataElements(String input) {
+    String cs = input.substring(input.indexOf(START_TAG) + START_TAG.length(), input.indexOf(END_TAG);
+    List<DataElement> list = new ArrayList<DataElement>();
+    Matcher matcher = PATTERN_1.matcher(cs);
+    while (matcher.find()) {
+        list.add(new DataElement(matcher.group(1), matcher.group(2)));
+    }
+    return list;
+}
+
+This will fail horribly if the dataelements tag does not exist.
+Once again, this is a bad idea, and you will likely be revisiting this piece of code some time in the future in the form of a bug report.
+
+This should work in Java, if you can assume that between the DataElements tags, everything has the form value.  I.e. no attributes, and no nested elements.
+Pattern regex = Pattern.compile("<DataElements>(.*?)</DataElements>", Pattern.DOTALL);
+Matcher matcher = regex.matcher(subjectString);
+Pattern regex2 = Pattern.compile("<([^<>]+)>([^<>]+)</\\1>");
+if (matcher.find()) {
+    String DataElements = matcher.group(1);
+    Matcher matcher2 = regex2.matcher(DataElements);
+    while (matcher2.find()) {
+        list.add(new DataElement(matcher2.group(1), matcher2.group(2)));
+    } 
+}
+

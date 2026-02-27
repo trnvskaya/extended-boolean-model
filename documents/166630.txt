@@ -1,0 +1,97 @@
+How to repeat a string a variable number of times in C++?
+c++
+I want to insert 'n' spaces (or any string) at the beginning of a string in C++. Is there any direct way to do this using either std::strings or char* strings?
+E.g. in Python you could simply do
+>>> "." * 5 + "lolcat"
+'.....lolcat'
+
+
+
+std::string foo = std::string(5, '.') + "lolcat";
+
+Check out std::string's constructors.
+
+You should write your own stream manipulator
+
+http://www.two-sdg.demon.co.uk/curbralan/papers/WritingStreamManipulators.html
+
+
+cout << multi(5) << "whatever" <<
+  "lolcat";
+
+
+Use one of the forms of string::insert:
+std::string str("lolcat");
+str.insert(0, 5, '.');
+
+This will insert "....." (five dots) at the start of the string (position 0).
+
+There's no direct idiomatic way to repeat strings in C++ equivalent to the * operator in Python or the x operator in Perl. If you're repeating a single character, the two-argument constructor (as suggested by previous answers) works well:
+std::string(5, '.')
+
+This is a contrived example of how you might use an ostringstream to repeat a string n times:
+#include <sstream>
+
+std::string repeat(int n) {
+    std::ostringstream os;
+    for(int i = 0; i < n; i++)
+        os << "repeat";
+    return os.str();
+}
+
+Depending on the implementation, this may be slightly more efficient than simply concatenating the string n times.
+
+I know this is an old question, but I was looking to do the same thing and have found what I think is a simpler solution. It appears that cout has this function built in with cout.fill(), see the link for a 'full' explanation
+http://www.java-samples.com/showtutorial.php?tutorialid=458
+cout.width(11);
+cout.fill('.');
+cout << "lolcat" << endl;
+
+outputs
+.....lolcat
+
+
+As Commodore Jaeger alluded to, I don't think any of the other answers actually answer this question; the question asks how to repeat a string, not a character.
+While the answer given by Commodore is correct, it is incredibly inefficient. Here is a better implementation, the idea is to minimise copying and memory allocations by first exponentially growing the string:
+#include <string>
+#include <cstddef> // std::size_t
+
+std::string repeat(std::string str, const std::size_t n)
+{
+    if (n == 0) {
+        str.clear();
+        str.shrink_to_fit();
+        return str;
+    }
+
+    if (n == 1 || str.empty()) return str;
+
+    const auto period = str.size();
+
+    if (period == 1) {
+        str.append(n - 1, str.front());
+        return str;
+    }
+
+    str.reserve(period * n);
+
+    std::size_t m {2};
+
+    for (; m < n; m *= 2) str += str;
+
+    str.append(str.c_str(), (n - (m / 2)) * period);
+
+    return str;
+}
+
+We can also define an operator* to get something closer to the Python version:
+#include <type_traits> // std::enable_if_t, std::is_integral
+#include <utility>     // std::move
+
+template <typename T, typename = std::enable_if_t<std::is_integral<T>::value>>
+std::string operator*(std::string str, const T n)
+{
+    return repeat(std::move(str), static_cast<std::size_t>(n));
+}
+
+On my machine this is around 10x faster than the implementation given by Commodore, and about 2x faster than a naive 'append n - 1 times' solution.

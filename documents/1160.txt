@@ -1,0 +1,255 @@
+Use SVN Revision to label build in CCNET
+svn msbuild cruisecontrol.net
+I am using CCNET on a sample project with SVN as my source control. CCNET is configured to create a build on every check in. CCNET uses MSBuild to build the source code.
+I would like to use the latest revision number to generate AssemblyInfo.cs while compiling.
+How can I retrieve the latest revision from subversion and use the value in CCNET?
+Edit: I'm not using NAnt - only MSBuild.
+
+I am currently "manually" doing it through a prebuild-exec Task, using my cmdnetsvnrev tool, but if someone knows a better ccnet-integrated way of doing it, i'd be happy to hear :-)
+I found this project on google code. This is CCNET plugin to generate the label in CCNET.
+The DLL is tested with CCNET 1.3 but it works with CCNET 1.4 for me. I'm successfully using this plugin to label my build.
+Now onto passing it to MSBuild...
+
+You have basically two options. Either you write a simple script that will start and parse output from
+svn.exe info --revision HEAD
+to obtain revision number (then generating AssemblyInfo.cs is pretty much straight forward) or just use plugin for CCNET. Here it is:
+
+SVN Revision Labeller is a plugin for
+  CruiseControl.NET that allows you to
+  generate CruiseControl labels for your
+  builds, based upon the revision number
+  of your Subversion working copy. This
+  can be customised with a prefix and/or
+  major/minor version numbers.
+http://code.google.com/p/svnrevisionlabeller/
+
+I prefer the first option because it's only roughly 20 lines of code:
+using System;
+using System.Diagnostics;
+
+namespace SvnRevisionNumberParserSample
+{
+    class Program
+    {
+        static void Main()
+        {
+            Process p = Process.Start(new ProcessStartInfo()
+                {
+                    FileName = @"C:\Program Files\SlikSvn\bin\svn.exe", // path to your svn.exe
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    Arguments = "info --revision HEAD",
+                    WorkingDirectory = @"C:\MyProject" // path to your svn working copy
+                });
+
+            // command "svn.exe info --revision HEAD" will produce a few lines of output
+            p.WaitForExit();
+
+            // our line starts with "Revision: "
+            while (!p.StandardOutput.EndOfStream)
+            {
+                string line = p.StandardOutput.ReadLine();
+                if (line.StartsWith("Revision: "))
+                {
+                    string revision = line.Substring("Revision: ".Length);
+                    Console.WriteLine(revision); // show revision number on screen                       
+                    break;
+                }
+            }
+
+            Console.Read();
+        }
+    }
+}
+
+
+If you prefer doing it on the MSBuild side over the CCNet config, looks like the MSBuild Community Tasks extension's SvnVersion task might do the trick.
+
+
+Customizing csproj files to autogenerate AssemblyInfo.cs 
+http://www.codeproject.com/KB/dotnet/Customizing_csproj_files.aspx
+Every time we create a new C# project,
+  Visual Studio puts there the
+  AssemblyInfo.cs file for us. The file
+  defines the assembly meta-data like
+  its version, configuration, or
+  producer.
+
+Found the above technique to auto-gen AssemblyInfo.cs using MSBuild. Will post sample shortly.
+I have written a NAnt build file that handles parsing SVN information and creating properties. I then use those property values for a variety of build tasks, including setting the label on the build. I use this target combined with the SVN Revision Labeller mentioned by lubos hasko with great results.
+<target name="svninfo" description="get the svn checkout information">    <property name="svn.infotempfile" value="${build.directory}\svninfo.txt" />    <exec program="${svn.executable}" output="${svn.infotempfile}">        <arg value="info" />    </exec>    <loadfile file="${svn.infotempfile}" property="svn.info" />    <delete file="${svn.infotempfile}" />    <property name="match" value="" />    <regex pattern="URL: (?'match'.*)" input="${svn.info}" />    <property name="svn.info.url" value="${match}"/>    <regex pattern="Repository Root: (?'match'.*)" input="${svn.info}" />    <property name="svn.info.repositoryroot" value="${match}"/>    <regex pattern="Revision: (?'match'\d+)" input="${svn.info}" />    <property name="svn.info.revision" value="${match}"/>    <regex pattern="Last Changed Author: (?'match'\w+)" input="${svn.info}" />    <property name="svn.info.lastchangedauthor" value="${match}"/>    <echo message="URL: ${svn.info.url}" />    <echo message="Repository Root: ${svn.info.repositoryroot}" />    <echo message="Revision: ${svn.info.revision}" />    <echo message="Last Changed Author: ${svn.info.lastchangedauthor}" /></target>
+My approach is to use the aforementioned plugin for ccnet and a nant echo task to generate a VersionInfo.cs file containing nothing but the version attributes. I only have to include the VersionInfo.cs file into the build
+The echo task simply outputs the string I give it to a file.
+If there is a similar MSBuild task, you can use the same approach. Here's the small nant task I use:
+<target name="version" description="outputs version number to VersionInfo.cs">
+  <echo file="${projectdir}/Properties/VersionInfo.cs">
+    [assembly: System.Reflection.AssemblyVersion("$(CCNetLabel)")]
+    [assembly: System.Reflection.AssemblyFileVersion("$(CCNetLabel)")]
+  </echo>
+</target>
+
+Try this:
+<ItemGroup>
+    <VersionInfoFile Include="VersionInfo.cs"/>
+    <VersionAttributes>
+        [assembly: System.Reflection.AssemblyVersion("${CCNetLabel}")]
+        [assembly: System.Reflection.AssemblyFileVersion("${CCNetLabel}")]
+    </VersionAttributes>
+</ItemGroup>
+<Target Name="WriteToFile">
+    <WriteLinesToFile
+        File="@(VersionInfoFile)"
+        Lines="@(VersionAttributes)"
+        Overwrite="true"/>
+</Target>
+
+Please note that I'm not very intimate with MSBuild, so my script will probably not work out-of-the-box and need corrections...
+
+Be careful.  The structure used for build numbers is only a short so you have a ceiling on how high your revision can go.
+In our case, we've already exceeded the limit.
+If you attempt to put in the build number 99.99.99.599999, the file version property will actually come out as 99.99.99.10175.
+
+CruiseControl.Net 1.4.4 has now an Assembly Version Labeller, which generates version numbers compatible with .Net assembly properties.
+In my project I have it configured as:
+<labeller type="assemblyVersionLabeller" incrementOnFailure="true" major="1" minor="2"/>
+
+(Caveat: assemblyVersionLabeller won't start generating svn revision based labels until an actual commit-triggered build occurs.)
+and then consume this from my MSBuild projects with MSBuildCommunityTasks.AssemblyInfo :
+<Import Project="$(MSBuildExtensionsPath)\MSBuildCommunityTasks\MSBuild.Community.Tasks.Targets"/>
+<Target Name="BeforeBuild">
+  <AssemblyInfo Condition="'$(CCNetLabel)' != ''" CodeLanguage="CS" OutputFile="Properties\AssemblyInfo.cs" 
+  AssemblyTitle="MyTitle" AssemblyCompany="MyCompany" AssemblyProduct="MyProduct"
+  AssemblyCopyright="Copyright Â©  2009" ComVisible="false" Guid="some-random-guid"
+  AssemblyVersion="$(CCNetLabel)" AssemblyFileVersion="$(CCNetLabel)"/>
+</Target>
+
+For sake of completness, it's just as easy for projects using NAnt instead of MSBuild:
+<target name="setversion" description="Sets the version number to CruiseControl.Net label.">
+    <script language="C#">
+        <references>
+            <include name="System.dll" />
+        </references>
+        <imports>
+            <import namespace="System.Text.RegularExpressions" />
+        </imports>
+        <code><![CDATA[
+             [TaskName("setversion-task")]
+             public class SetVersionTask : Task
+             {
+              protected override void ExecuteTask()
+              {
+               StreamReader reader = new StreamReader(Project.Properties["filename"]);
+               string contents = reader.ReadToEnd();
+               reader.Close();
+               string replacement = "[assembly: AssemblyVersion(\"" + Project.Properties["CCNetLabel"] + "\")]";
+               string newText = Regex.Replace(contents, @"\[assembly: AssemblyVersion\("".*""\)\]", replacement);
+               StreamWriter writer = new StreamWriter(Project.Properties["filename"], false);
+               writer.Write(newText);
+               writer.Close();
+              }
+             }
+             ]]>
+        </code>
+    </script>
+    <foreach item="File" property="filename">
+        <in>
+            <items basedir="..">
+                <include name="**\AssemblyInfo.cs"></include>
+            </items>
+        </in>
+        <do>
+            <setversion-task />
+        </do>
+    </foreach>
+</target>
+
+
+Based on skolimas solution I updated the NAnt script to also update the AssemblyFileVersion. Thanks to skolima for the code!
+<target name="setversion" description="Sets the version number to current label.">
+    	<script language="C#">
+    		<references>
+    				<include name="System.dll" />
+    		</references>
+    		<imports>
+    				<import namespace="System.Text.RegularExpressions" />
+    		</imports>
+    		<code><![CDATA[
+    				 [TaskName("setversion-task")]
+    				 public class SetVersionTask : Task
+    				 {
+    				  protected override void ExecuteTask()
+    				  {
+    				   StreamReader reader = new StreamReader(Project.Properties["filename"]);
+    				   string contents = reader.ReadToEnd();
+    				   reader.Close();					   
+    				   // replace assembly version
+    				   string replacement = "[assembly: AssemblyVersion(\"" + Project.Properties["label"] + "\")]";
+    				   contents = Regex.Replace(contents, @"\[assembly: AssemblyVersion\("".*""\)\]", replacement);					   					   
+    				   // replace assembly file version
+    				   replacement = "[assembly: AssemblyFileVersion(\"" + Project.Properties["label"] + "\")]";
+    				   contents = Regex.Replace(contents, @"\[assembly: AssemblyFileVersion\("".*""\)\]", replacement);					   					   
+    				   StreamWriter writer = new StreamWriter(Project.Properties["filename"], false);
+    				   writer.Write(contents);
+    				   writer.Close();
+    				  }
+    				 }
+    				 ]]>
+    		</code>
+    	</script>
+    	<foreach item="File" property="filename">
+    		<in>
+    				<items basedir="${srcDir}">
+    						<include name="**\AssemblyInfo.cs"></include>
+    				</items>
+    		</in>
+    		<do>
+    				<setversion-task />
+    		</do>
+    	</foreach>
+    </target>
+
+
+I'm not sure if this work with CCNET or not, but I've created an SVN version plug-in for the Build Version Increment project on CodePlex.  This tool is pretty flexible and can be set to automatically create a version number for you using the svn revision.  It doesn't require writing any code or editing xml, so yay!
+I hope this is helps!
+
+No idea where I found this.  But I found this on the internet "somewhere".
+This updates all the AssemblyInfo.cs files before the build takes place.
+Works like a charm.  All my exe's and dll's show up as 1.2.3.333 (If "333" were the SVN revision at the time.) (And the original version in the AssemblyInfo.cs file was listed as "1.2.3.0")
+
+$(ProjectDir)   (Where my .sln file resides)
+$(SVNToolPath)  (points to svn.exe)
+are my custom variables, their declarations/definitions are not defined below.
+
+http://msbuildtasks.tigris.org/
+and/or
+https://github.com/loresoft/msbuildtasks
+has the ( FileUpdate and SvnVersion ) tasks.
+
+  <Target Name="SubVersionBeforeBuildVersionTagItUp">
+
+    <ItemGroup>
+      <AssemblyInfoFiles Include="$(ProjectDir)\**\*AssemblyInfo.cs" />
+    </ItemGroup>
+
+    <SvnVersion LocalPath="$(MSBuildProjectDirectory)" ToolPath="$(SVNToolPath)">
+      <Output TaskParameter="Revision" PropertyName="MySubVersionRevision" />
+    </SvnVersion>
+
+    <FileUpdate Files="@(AssemblyInfoFiles)"
+            Regex="(\d+)\.(\d+)\.(\d+)\.(\d+)"
+            ReplacementText="$1.$2.$3.$(MySubVersionRevision)" />
+  </Target>
+
+EDIT --------------------------------------------------
+The above may start failing after your SVN revision number reaches 65534 or higher.
+See:
+Turn off warning CS1607
+Here is the workaround.
+<FileUpdate Files="@(AssemblyInfoFiles)"
+Regex="AssemblyFileVersion\(&quot;(\d+)\.(\d+)\.(\d+)\.(\d+)"
+ReplacementText="AssemblyFileVersion(&quot;$1.$2.$3.$(SubVersionRevision)" />
+
+The result of this should be:
+In Windows/Explorer//File/Propertiesâ¦â¦.
+Assembly Version will be 1.0.0.0.  
+File Version will be 1.0.0.333 if 333 is the SVN revision.

@@ -1,0 +1,198 @@
+Nullable type as a generic parameter possible?
+c# generics
+I want to do something like this :
+myYear = record.GetValueOrNull<int?>("myYear"),
+
+Notice the nullable type as the generic parameter. 
+Since the GetValueOrNull function could return null my first attempt was this: 
+public static T GetValueOrNull<T>(this DbDataRecord reader, string columnName)
+  where T : class
+{
+    object columnValue = reader[columnName];
+
+    if (!(columnValue is DBNull))
+    {
+        return (T)columnValue;
+    }
+    return null;
+}
+
+But the error I'm getting now is:
+
+The type 'int?' must be a reference type in order to use it as parameter 'T' in the generic type or method
+
+Right! Nullable<int> is a struct! So I tried changing the class constraint to a struct constraint (and as a side effect can't return null any more):
+public static T GetValueOrNull<T>(this DbDataRecord reader, string columnName)
+  where T : struct
+
+Now the assignment:
+myYear = record.GetValueOrNull<int?>("myYear");
+
+Gives the following error:
+
+The type 'int?' must be a non-nullable value type in order to use it as parameter 'T' in the generic type or method
+
+Is specifying a nullable type as a generic parameter at all possible?
+
+
+Change the return type to Nullable, and call the method with the non nullable parameter
+static void Main(string[] args)
+{
+    int? i = GetValueOrNull<int>(null, string.Empty);
+}
+
+
+public static Nullable<T> GetValueOrNull<T>(DbDataRecord reader, string columnName) where T : struct
+{
+    object columnValue = reader[columnName];
+
+    if (!(columnValue is DBNull))
+    	return (T)columnValue;
+
+    return null;
+}
+
+
+Just do two things to your original code. Remove the where constraint, and change the last return from return null to return default(T). This way you can return whatever type you want.
+By the way, you can avoid the use of "is" by changing your if statement to if (columnValue != DBNull.Value).
+
+Just had to do something incredible similar to this. My code:
+public T IsNull<T>(this object value, T nullAlterative)
+{
+    if(value != DBNull.Value)
+    {
+        Type type = typeof(T);
+        if (type.IsGenericType && 
+            type.GetGenericTypeDefinition() == typeof(Nullable<>).GetGenericTypeDefinition())
+        {
+            type = Nullable.GetUnderlyingType(type);
+        }
+
+        return (T)(type.IsEnum ? Enum.ToObject(type, Convert.ToInt32(value)) :
+            Convert.ChangeType(value, type));
+    }
+    else 
+        return nullAlternative;
+}
+
+
+public static T GetValueOrDefault<T>(this IDataRecord rdr, int index)
+{
+    object val = rdr[index];
+
+    if (!(val is DBNull))
+        return (T)val;
+
+    return default(T);
+}
+
+Just use it like this:
+decimal? Quantity = rdr.GetValueOrDefault<decimal?>(1);
+string Unit = rdr.GetValueOrDefault<string>(2);
+
+
+I think you want to handle Reference types and struct types.
+I use it to convert XML Element strings to a more typed type.
+You can remove the nullAlternative with reflection.
+The formatprovider is to handle the culture dependent '.' or ',' separator in e.g. decimals or ints and doubles.
+This may work:
+public T GetValueOrNull<T>(string strElementNameToSearchFor, IFormatProvider provider = null ) 
+    {
+        IFormatProvider theProvider = provider == null ? Provider : provider;
+        XElement elm = GetUniqueXElement(strElementNameToSearchFor);
+
+        if (elm == null)
+        {
+            object o =  Activator.CreateInstance(typeof(T));
+            return (T)o; 
+        }
+        else
+        {
+            try
+            {
+                Type type = typeof(T);
+                if (type.IsGenericType &&
+                type.GetGenericTypeDefinition() == typeof(Nullable<>).GetGenericTypeDefinition())
+                {
+                    type = Nullable.GetUnderlyingType(type);
+                }
+                return (T)Convert.ChangeType(elm.Value, type, theProvider); 
+            }
+            catch (Exception)
+            {
+                object o = Activator.CreateInstance(typeof(T));
+                return (T)o; 
+            }
+        }
+    }
+
+You can use it like this:
+iRes = helper.GetValueOrNull<int?>("top_overrun_length");
+Assert.AreEqual(100, iRes);
+
+
+
+decimal? dRes = helper.GetValueOrNull<decimal?>("top_overrun_bend_degrees");
+Assert.AreEqual(new Decimal(10.1), dRes);
+
+String strRes = helper.GetValueOrNull<String>("top_overrun_bend_degrees");
+Assert.AreEqual("10.1", strRes);
+
+
+Disclaimer: This answer works, but is intended for educational purposes only. :) James Jones' solution is probably the best here and certainly the one I'd go with.
+C# 4.0's dynamic keyword makes this even easier, if less safe:
+public static dynamic GetNullableValue(this IDataRecord record, string columnName)
+{
+  var val = reader[columnName];
+
+  return (val == DBNull.Value ? null : val);
+}
+
+Now you don't need the explicit type hinting on the RHS:
+int? value = myDataReader.GetNullableValue("MyColumnName");
+
+In fact, you don't even need it at all!
+var value = myDataReader.GetNullableValue("MyColumnName");
+
+value will now be an int, or a string, or whatever type was returned from the DB.
+The only problem is that this does not prevent you from using non-nullable types on the LHS, in which case you'll get a rather nasty runtime exception like:
+Microsoft.CSharp.RuntimeBinder.RuntimeBinderException: Cannot convert null to 'int' because it is a non-nullable value type
+
+As with all code that uses dynamic: caveat coder.
+
+This may be a dead thread, but I tend to use the following:
+public static T? GetValueOrNull<T>(this DbDataRecord reader, string columnName)
+where T : struct 
+{
+    return reader[columnName] as T?;
+}
+
+
+I know this is old, but here is another solution:
+public static bool GetValueOrDefault<T>(this SqlDataReader rdr, string columnName, out T Result)
+{
+    try
+    {
+        object columnValue = reader[columnName];
+
+        Result = (columnValue!=null && columnValue != DBNull.Value) ? (T)columnValue : default(T);
+
+        return columnValue!=null && columnValue != DBNull.Value;
+    }
+    catch
+    {
+        // Possibly an invalid cast?
+        return false;
+    }
+}
+
+Now, you don't care if T was value or reference type. Only if the function returns true, you have a reasonable value from the database.
+Usage:
+...
+decimal Quantity;
+if (rdr.GetValueOrDefault<decimal>("yourColumnName", out Quantity))
+{
+    // Do something with Quantity
+}
+
+This approach is very similar to int.TryParse("123", out myInt);

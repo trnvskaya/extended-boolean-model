@@ -1,0 +1,321 @@
+How can I get a list of the differences between two JavaScript object graphs?
+javascript json data-structures diff
+I want to be able to get a list of all differences between two JavaScript object graphs, with the property names and values where the deltas occur. 
+For what it is worth, these objects are usually retrieved from the server as JSON and typically are no more than a handful of layers deep (i.e. it may be an array of objects that themselves have data and then arrays with other data objects).
+I want to not only see the changes to basic properties, but differences in the number of members of an array, etc. etc.
+If I don't get an answer, I will probably end up writing this myself, but hope someone has already done this work or know of someone who has.
+
+EDIT: These objects will typically be very close in structure to one another, so we are not talking about objects that are utterly different from one another, but may have 3 or 4 deltas.
+
+
+Here is a partial, naÃ¯ve solution to my problem - I will update this as I further develop it.
+function findDifferences(objectA, objectB) {
+   var propertyChanges = [];
+   var objectGraphPath = ["this"];
+   (function(a, b) {
+      if(a.constructor == Array) {
+         // BIG assumptions here: That both arrays are same length, that
+         // the members of those arrays are _essentially_ the same, and 
+         // that those array members are in the same order...
+         for(var i = 0; i < a.length; i++) {
+            objectGraphPath.push("[" + i.toString() + "]");
+            arguments.callee(a[i], b[i]);
+            objectGraphPath.pop();
+         }
+      } else if(a.constructor == Object || (a.constructor != Number && 
+                a.constructor != String && a.constructor != Date && 
+                a.constructor != RegExp && a.constructor != Function &&
+                a.constructor != Boolean)) {
+         // we can safely assume that the objects have the 
+         // same property lists, else why compare them?
+         for(var property in a) {
+            objectGraphPath.push(("." + property));
+            if(a[property].constructor != Function) {
+               arguments.callee(a[property], b[property]);
+            }
+            objectGraphPath.pop();
+         }
+      } else if(a.constructor != Function) { // filter out functions
+         if(a != b) {
+            propertyChanges.push({ "Property": objectGraphPath.join(""), "ObjectA": a, "ObjectB": b });
+         }
+      }
+   })(objectA, objectB);
+   return propertyChanges;
+}
+
+And here is a sample of how it would be used and the data it would provide (please excuse the long example, but I want to use something relatively non-trivial):
+var person1 = { 
+   FirstName : "John", 
+   LastName : "Doh", 
+   Age : 30, 
+   EMailAddresses : [
+      "john.doe@gmail.com", 
+      "jd@initials.com"
+   ], 
+   Children : [ 
+      { 
+         FirstName : "Sara", 
+         LastName : "Doe", 
+         Age : 2 
+      }, { 
+         FirstName : "Beth", 
+         LastName : "Doe", 
+         Age : 5 
+      } 
+   ] 
+};
+
+var person2 = { 
+   FirstName : "John", 
+   LastName : "Doe", 
+   Age : 33, 
+   EMailAddresses : [
+      "john.doe@gmail.com", 
+      "jdoe@hotmail.com"
+   ], 
+   Children : [ 
+      { 
+         FirstName : "Sara", 
+         LastName : "Doe", 
+         Age : 3 
+      }, { 
+         FirstName : "Bethany", 
+         LastName : "Doe", 
+         Age : 5 
+      } 
+   ] 
+};
+
+var differences = findDifferences(person1, person2);
+
+At this point, here is what the differences array would look like if you serialized it to JSON:
+[
+   {
+      "Property":"this.LastName", 
+      "ObjectA":"Doh", 
+      "ObjectB":"Doe"
+   }, {
+      "Property":"this.Age", 
+      "ObjectA":30, 
+      "ObjectB":33
+   }, {
+      "Property":"this.EMailAddresses[1]", 
+      "ObjectA":"jd@initials.com", 
+      "ObjectB":"jdoe@hotmail.com"
+   }, {
+      "Property":"this.Children[0].Age", 
+      "ObjectA":2, 
+      "ObjectB":3
+   }, {
+      "Property":"this.Children[1].FirstName", 
+      "ObjectA":"Beth", 
+      "ObjectB":"Bethany"
+   }
+]
+
+The this in the Property value refers to the root of the object that was compared. So, this solution is not yet exactly what I need, but it is pretty darn close. 
+Hope this is useful to someone out there, and if you have any suggestions for improvement, I am all-ears; I wrote this very late last night (i.e. early this morning) and there may be things I am completely overlooking.
+Thanks.
+
+Solution 1
+Use JSON.stringify(obj) to get a string representation of the objects you want to compare. Save the string to a file. Use any diff viewer to compare the text files.
+Note: JSON.stringify will ignore properties that point to function definitions.
+Solution 2
+This could do what you want with some modification, it is a modified version of the function _.isEqual (http://documentcloud.github.com/underscore/). Please feel free to suggest any modifications! I wrote it to figure out where the first difference between two objects occur.
+// Given two objects find the first key or value not matching, algorithm is a
+// inspired by of _.isEqual.
+function diffObjects(a, b) {
+  console.info("---> diffObjects", {"a": a, "b": b});
+  // Check object identity.
+  if (a === b) return true;
+  // Different types?
+  var atype = typeof(a), btype = typeof(b);
+  if (atype != btype) {
+    console.info("Type mismatch:", {"a": a, "b": b});
+    return false;
+  };
+  // Basic equality test (watch out for coercions).
+  if (a == b) return true;
+  // One is falsy and the other truthy.
+  if ((!a && b) || (a && !b)) {
+    console.info("One is falsy and the other truthy:", {"a": a, "b": b});
+    return false;
+  }
+  // Unwrap any wrapped objects.
+  if (a._chain) a = a._wrapped;
+  if (b._chain) b = b._wrapped;
+  // One of them implements an isEqual()?
+  if (a.isEqual) return a.isEqual(b);
+  // Check dates' integer values.
+  if (_.isDate(a) && _.isDate(b)) return a.getTime() === b.getTime();
+  // Both are NaN?
+  if (_.isNaN(a) && _.isNaN(b)) {
+    console.info("Both are NaN?:", {"a": a, "b": b});
+    return false;
+  }
+  // Compare regular expressions.
+  if (_.isRegExp(a) && _.isRegExp(b))
+    return a.source     === b.source &&
+           a.global     === b.global &&
+           a.ignoreCase === b.ignoreCase &&
+           a.multiline  === b.multiline;
+  // If a is not an object by this point, we can't handle it.
+  if (atype !== 'object') {
+    console.info("a is not an object:", {"a": a});
+    return false;
+  }
+  // Check for different array lengths before comparing contents.
+  if (a.length && (a.length !== b.length)) {
+    console.info("Arrays are of different length:", {"a": a, "b": b});
+    return false;
+  }
+  // Nothing else worked, deep compare the contents.
+  var aKeys = _.keys(a), bKeys = _.keys(b);
+  // Different object sizes?
+  if (aKeys.length != bKeys.length) {
+    console.info("Different object sizes:", {"a": a, "b": b});
+    return false;
+  }
+  // Recursive comparison of contents.
+  for (var key in a) if (!(key in b) || !diffObjects(a[key], b[key])) return false;
+  return true;
+};
+
+
+There is a library github.com/NV/objectDiff.js which allows you to do that. On its demo page you can see a difference between two javascript objects.
+
+This script has a NPM version as well, if you are using NodeJS. https://github.com/NV/objectDiff.js
+Rejoice.
+
+You can also try rus-diff https://github.com/mirek/node-rus-diff which generates MongoDB compatible (rename/unset/set) diff.
+For your example objects:
+var person1 = {
+  FirstName: "John",
+  LastName: "Doh",
+  Age: 30,
+  EMailAddresses: ["john.doe@gmail.com", "jd@initials.com"],
+  Children: [
+    {
+      FirstName: "Sara",
+      LastName: "Doe",
+      Age: 2
+    }, {
+      FirstName: "Beth",
+      LastName: "Doe",
+      Age: 5
+    }
+  ]
+};
+
+var person2 = {
+  FirstName: "John",
+  LastName: "Doe",
+  Age: 33,
+  EMailAddresses: ["john.doe@gmail.com", "jdoe@hotmail.com"],
+  Children: [
+    {
+      FirstName: "Sara",
+      LastName: "Doe",
+      Age: 3
+    }, {
+      FirstName: "Bethany",
+      LastName: "Doe",
+      Age: 5
+    }
+  ]
+};
+
+var rusDiff = require('rus-diff').rusDiff
+
+console.log(rusDiff(person1, person2))
+
+It generates a list of sets:
+{ '$set': 
+   { 'Age': 33,
+     'Children.0.Age': 3,
+     'Children.1.FirstName': 'Bethany',
+     'EMailAddresses.1': 'jdoe@hotmail.com',
+     'LastName': 'Doe' } }
+
+
+I recently wrote a module to do this, because I wasn't satisfied with the numerous diffing modules I found (I listed a bunch of the most popular modules and why they weren't acceptable in the readme of my module). Its called odiff: https://github.com/Tixit/odiff . Here's an example:
+var a = [{a:1,b:2,c:3},              {x:1,y: 2, z:3},              {w:9,q:8,r:7}]
+var b = [{a:1,b:2,c:3},{t:4,y:5,u:6},{x:1,y:'3',z:3},{t:9,y:9,u:9},{w:9,q:8,r:7}]
+
+var diffs = odiff(a,b)
+
+/* diffs now contains:
+[{type: 'add', path:[], index: 2, vals: [{t:9,y:9,u:9}]},
+ {type: 'set', path:[1,'y'], val: '3'},
+ {type: 'add', path:[], index: 1, vals: [{t:4,y:5,u:6}]}
+]
+*/
+
+
+After reviewing the existing answers, I noticed that the https://github.com/flitbit/diff library was not yet listed as a solution.
+From my research, this library seems to be the best in terms of active development, contributions and forks for solving the challenge of diffing objects.  This is very handy for creating a diff on the server side and passing the client only the changed bits.
+
+None of the libraries I found were sufficient so I wrote my own AngularJS factory. It compares the objects in both ways and returns only the difference within the same structure.
+/**
+ * Diff
+ * Original author: Danny Coulombe
+ * Creation date: 2016-05-18
+ * 
+ * Work with objects to find their differences.
+ */
+controllers.factory('diff', [function() {
+
+    var factory = {
+
+        /**
+         * Compare the original object with the modified one and return their differences.
+         * 
+         * @param original: Object
+         * @param modified: Object
+         * 
+         * @return Object
+         */
+        getDifferences: function(original, modified) {
+
+            var type = modified.constructor === Array ? [] : {};
+            var result = angular.copy(type);
+            var comparisons = [[original, modified, 1], [modified, original, 0]];
+
+            comparisons.forEach(function(comparison) {
+
+                angular.forEach(comparison[0], function(value, key) {
+
+                    if(result[key] === undefined) {
+
+                        if(comparison[1][key] !== undefined && value !==    null && comparison[1][key] !== null && [Object, Array].indexOf(comparison[1][key].constructor) !== -1) {
+
+                            result[key] = factory.getDifferences(value, comparison[1][key]);
+                        }
+                        else if(comparison[1][key] !== value) {
+
+                            result[key] = comparison[comparison[2]][key];
+                        }
+
+                        if(angular.equals(type, result[key])
+                        || result[key] === undefined
+                        || (
+                            comparison[0][key] !== undefined
+                            && result[key] !== null
+                            && comparison[0][key] !== null
+                            && comparison[0][key].length === comparison[1][key].length
+                            && result[key].length === 0
+                        )) {
+                            delete result[key];
+                        }
+                    }
+                });
+            });
+
+            return result;
+        }
+    };
+
+    return factory;
+}]);
+

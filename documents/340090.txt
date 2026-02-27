@@ -1,0 +1,58 @@
+Make C# algorithm more efficient
+c# algorithm performance
+I have a C# method that projects the value of a number from an interval to a target interval.
+For example: we have an interval of -1000 and 9000 and a value of 5000; if we want to project this value to an interval of 0..100 we get 60.
+Here is the method: 
+/// <summary>  
+/// Projects a value to an interval
+/// </summary>
+/// <param name="val">The value that needs to be projected</param>  
+/// <param name="min">The minimum of the interval the value comes from</param>  
+/// <param name="max">The maximum of the interval the value comes from</param>  
+/// <param name="intervalTop">The minimum of the interval the value will 
+/// be projected to</param>  
+/// <param name="intervalBottom">The maximum of the interval the value will 
+/// be projected to</param>  
+/// <returns>Projected value</returns> 
+public decimal ProjectValueToInterval(decimal val,  
+                                      decimal min,  
+                                      decimal max,  
+                                      decimal intervalBottom, 
+                                      decimal intervalTop)  
+{  
+    decimal newMin = Math.Min(0, min);
+    decimal valueIntervalSize = Math.Abs(max - newMin);
+    decimal targetIntervalSize = Math.Abs(intervalTop - intervalBottom);
+
+    decimal projectionUnit = targetIntervalSize / valueIntervalSize;
+
+    return (val * projectionUnit) + Math.Abs((newMin * projectionUnit));
+}
+
+This method needs to be called for thousands of values.
+I was wondering if there is a more efficient way to do this in C#? If yes, what changes do you suggest?
+
+
+The answers is: Do NOT use decimal for fast operations. 
+Is there any reason why float or double does not work for you?
+
+In addition to not using Decimal as has already been suggested, you could santise your max/min values somewhere else, so that you didn't need all those Abs calls all over the place.
+I suspect that only part of this you need to do repeatedly is a floating point multiply followed (or proceeded) by a floating point add.   Everything else can be pre-checked & pre-calculated.
+
+Only thousands of values? Do you really need to optimise this further? I can't imagine it's actually a bottleneck at the moment. Have you profiled the app to check that this is really an issue?
+Given that the method is O(1), you're not going to make the most drastic kind of optimisation you normally aim at - improving the complexity.
+Having said that - when you call this thousands of times, do any of the values stay constant? For example, are you using the same min and max repeatedly? If so, you could create a class which takes those values in the constructors and precomputes what it can, then has a method taking the rest of the parameters. This will improve things slightly, but I go back to my original point - only worry about this if it's actually causing problems.
+
+You code appears more complex than it really needs to be. The formula is:
+intervalTop + (intervalBottom - intervalTop) * (val - min) / (max - min);
+
+which is much simpler than your version (and works for integral types). There's no conditional branches in there (the Math.Min call) or method calls. OK, it assumes that intervalTop < intervalBottom and min < max. If intervalTop, intervalBottom, min and max are constant for a set of values then you can precompute (intervalBottom - intervalTop) and (max - min) and use those results for all calls to the function. Another overhead you can eliminate is to inline the function into the calling loop. I don't know what C# (or rather the JIT compiler) does about inlining methods so this might already be happening under the hood. 
+If you can live with ints or float data types, one possible solution is to use SIMD but this would mean writing native assembler code which might break your requirements.
+
+Just maths. What you're "projecting" is a normalisation of ranges A-B and A'-B' such that:
+ratio r = (x-A) / (B-A) = (y-A') / (B'-A')
+which using your terms is:
+(val-min) / (max-min) = (returnValue-intervalBottom) / (intervalTop-intervalBottom)
+which solves for returnValue as:
+returnValue =  ((intervalTop-intervalBottom) * (val-min) / (max-min)) + intervalBottom
+

@@ -1,0 +1,188 @@
+class with valueTypes fields and boxing
+c# data-structures t4
+I'm experimenting with generics and I'm trying to create structure similar to Dataset class.
+I have following code
+public struct Column<T>
+{
+    T value;
+    T originalValue;
+
+    public bool HasChanges
+    {
+        get { return !value.Equals(originalValue); }
+    }
+
+    public void AcceptChanges()
+    {
+        originalValue = value;
+    }
+}
+
+public class Record
+{
+    Column<int> id;
+    Column<string> name;
+    Column<DateTime?> someDate;
+    Column<int?> someInt;
+
+    public bool HasChanges
+    {
+        get
+        {
+            return id.HasChanges | name.HasChanges | someDate.HasChanges | someInt.HasChanges;
+        }
+    }
+
+    public void AcceptChanges()
+    {
+        id.AcceptChanges();
+        name.AcceptChanges();
+        someDate.AcceptChanges();
+        someInt.AcceptChanges();
+    }
+}
+
+Problem I have is that when I add new column I need to add it also in HasChanges property and AcceptChanges() method. This just asks for some refactoring.
+So first solution that cames to my mind was something like this:
+public interface IColumn
+{
+    bool HasChanges { get; }
+    void AcceptChanges();
+}
+
+public struct Column<T> : IColumn {...}
+public class Record
+{
+    Column<int> id;
+    Column<string> name;
+    Column<DateTime?> someDate;
+    Column<int?> someInt;
+
+    IColumn[] Columns { get { return new IColumn[] {id, name, someDate, someInt}; }}
+
+    public bool HasChanges
+    {
+        get
+        {
+            bool has = false;
+            IColumn[] columns = Columns;            //clone and boxing
+            for (int i = 0; i < columns.Length; i++)
+                has |= columns[i].HasChanges;
+            return has;
+        }
+    }
+
+    public void AcceptChanges()
+    {
+        IColumn[] columns = Columns;            //clone and boxing
+        for (int i = 0; i < columns.Length; i++)
+            columns[i].AcceptChanges();         //Here we are changing clone
+    }
+}
+
+As you can see from comments we have few problems here with struct cloning. Simple solution to this is to change Column to class, but from my tests it seems that it increases memory usage by ~40% (because of each object metadata) which is not acceptable for me.
+
+
+So my question is: does anyone have any other ideas how to create methods that can work on different structured objects/records? Maybe someone from F# community can suggest how such problems are solved in functional languages and how it impacts performance and memory usage.
+
+
+Edit:
+sfg thanks for suggestion about macros.
+In Visual Studio 2008 there is built-in (but not so known) template engine called T4. Tha whole point is to add '.tt' file to my project and create a template that will search all my classes, recognize somehow the ones that are records (for example by some interface they implement) and produce partial classes with HasChanges and AcceptChanges() that will call only Columns the class contain.
+Some usefull links:
+T4 Editor for VS
+Blog with links and tutorials about T4
+Blog entry with example that uses EnvDTE to read project files
+
+
+You could use reflection to iterate over the members and invoke HasChanges and AcceptChanges.  The Record class could store the reflection metadata as a static so there is no per-instance memory overhead.  However, the performance cost at runtime is going to be huge -- you might also end up boxing and unboxing the column which would add even more to the cost.
+
+As you asked for examples from functional languages; in lisp you could prevent the writing of all that code upon each addition of a column by using a macro to crank the code out for you. Sadly, I do not think that is possible in C#. 
+In terms of performance: the macro would be evaluated at compile time (thus slowing compilation a tiny amount), but would cause no slow-down at run-time as the run-time code would be the same as what you would write manually.
+I think you might have to accept your original AcceptChanges() as you need to access the structs directly by their identifiers if you want to avoid writing to cloned versions.
+In other words: you need a program to write the program for you, and I do not know how to do that in C# without going to extraordinary lengths or losing more in performance than you ever would by switching the structs to classes (e.g. reflection).
+
+Honestly, it sounds like you really want these Columns to be classes, but don't want to pay the runtime cost associated with classes, so you're trying to make them be structs.  I don't think you're going to find an elegant way to do what you want.  Structs are supposed to be value types, and you want to make them behave like reference types.
+You cannot efficiently store your Columns in an array of IColumns, so no array approach is going to work well.  The compiler has no way to know that the IColumn array will only hold structs, and indeed, it wouldn't help if it did, because there are still different types of structs you are trying to jam in there.  Every time someone calls AcceptChanges() or HasChanges(), you're going to end up boxing and cloning your structs anyway, so I seriously doubt that making your Column a struct instead of a class is going to save you much memory.
+However, you could probably store your Columns directly in an array and index them with an enum.  E.g:
+public class Record
+{
+    public enum ColumnNames { ID = 0, Name, Date, Int, NumCols };
+
+    private IColumn [] columns;
+
+    public Record()
+    {
+        columns = new IColumn[ColumnNames.NumCols];
+        columns[ID] = ...
+    }
+
+    public bool HasChanges
+    {
+        get
+        {
+            bool has = false;
+            for (int i = 0; i < columns.Length; i++)
+                has |= columns[i].HasChanges;
+            return has;
+        }
+    }
+
+    public void AcceptChanges()
+    {
+        for (int i = 0; i < columns.Length; i++)
+            columns[i].AcceptChanges();
+    }
+}
+
+I don't have a C# compiler handy, so I can't check to see if that will work or not, but the basic idea should work, even if I didn't get all the details right.  However, I'd just go ahead and make them classes.  You're paying for it anyway.
+
+The only way I can think of to do what you really want to do is to use Reflection.  This would still box/unbox, but it would allow you to store the clone back into the field, effectively making it the real value.
+public void AcceptChanges()
+{
+    foreach (FieldInfo field in GetType().GetFields()) {
+        if (!typeof(IColumn).IsAssignableFrom(field.FieldType))
+            continue; // ignore all non-IColumn fields
+        IColumn col = (IColumn)field.GetValue(this); // Boxes storage -> clone
+        col.AcceptChanges(); // Works on clone
+        field.SetValue(this, col); // Unboxes clone -> storage
+    }
+}
+
+
+How about this:
+public interface IColumn<T>
+{
+    T Value { get; set; }
+    T OriginalValue { get; set; }
+}
+
+public struct Column<T> : IColumn<T>
+{
+    public T Value { get; set; }
+    public T OriginalValue { get; set; }
+}
+
+public static class ColumnService
+{
+    public static bool HasChanges<T, S>(T column) where T : IColumn<S>
+    {
+        return !(column.Value.Equals(column.OriginalValue));
+    }
+
+    public static void AcceptChanges<T, S>(T column) where T : IColumn<S>
+    {
+        column.Value = column.OriginalValue;
+    }
+}
+
+The client code is then:
+Column<int> age = new Column<int>();
+age.Value = 35;
+age.OriginalValue = 34;
+
+if (ColumnService.HasChanges<Column<int>, int>(age))
+{
+    ColumnService.AcceptChanges<Column<int>, int>(age);
+}
+

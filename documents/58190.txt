@@ -1,0 +1,84 @@
+Are CLR stored procedures preferred over TSQL stored procedures in SQL 2005+?
+.net sql-server tsql sqlclr
+My current view is no, prefer Transact SQL stored procedures because they are a lighter weight and (possibly) higher performing option, while CLR procedures allow developers to get up to all sorts of mischief.
+However recently I have needed to debug some very poorly written TSQL stored procs.  As usual I found many of the problems due to the original developer developer having no real TSQL experience, they were  ASP.NET / C# focused.
+So, using CLR procedures would firstly provide a much more familiar toolset to this type of developer, and secondly, the debugging and testing facilities are more powerful (ie Visual Studio instead of SQL Management Studio).  
+I'd be very interested in hearing your experience as it's seems it is not a simple choice. 
+
+
+In general you use the CLR if you have something that doesn't need to interface with the database much.  So let's say you are parsing, or decoding a value. This is easier to do in the CLR and then return the value.
+Trying to do a compelx query in the CLR is just not the way to go.
+BTW this didn't change in 2008 either.
+
+CLR stored procedures are not meant to replace set-based queries.  If you need to query the database, you are still going to need to put SQL into your CLR code, just as if it was embedded in regular code.  This would be a waste of effort.
+CLR stored procedures are for two main things: 1) interaction with the OS, such as reading from a file or dropping a message in MSMQ, and 2) performing complex calculations, especially when you already have the code written in a .NET language to do the calculation.
+
+There are places for both well-written, well-thought-out T-SQL and CLR. If some function is not called frequently and if it required extended procedures in SQL Server 2000, CLR may be an option. Also running things like calculation right next to the data may be appealing. But solving bad programmers by throwing in new technology sounds like a bad idea.
+
+It always comes down to the right tool for the job, so it really depends on what you are trying to accomplish.  
+However, as a general rule, you're right that CLR procs have a greater overhead and will never perform on set operations like T-SQL. My guideline is do it all in T-SQL unless what you need becomes overly complicated in T-SQL. Then, try harder to get the T-SQL approach to work.  :-)  
+CLR procs are great and do have their place, but their use should be the exception, not the rule.
+
+Hosting the CLR within SQL Server is meant to give database developers more flexible options in how they sought to accomplish tasks. Like others have mentioned, SQL is great for operations and modifications on sets of data. Anybody who has done extensive large application development with complex business/domain rules would likely tell you - trying to enforce some of these rules using pure SQL (some times into a single macro query) can get truly nightmarish.
+There are just certain tasks that are better handled in a procedural or OO fashion. By having the choice of using .NET code to break down the sequence of logic, query operations can get easier to read and debug. Having used CLR stored procs I can tell you stepping through with the debugger really makes it easier to follow through with what is happening at the database level.
+Just one example, we frequently use CLR stored procs here as a "gateway" for dynamic search queries. Say a search request that can have up to 30 different search parameters. Users obviously don't use all 30 of them, so the data structure passed in will have 30 parameters but mostly DBNULL. The client side has no option to generate a dynamic statement, for obvious security reasons. The resulting dynamic statement is generated internally without fear of external "extras".
+
+The SQL Server Books Online's page on the subject lists these benefits:
+
+A better programming model. The .NET Framework languages are in many respects richer than Transact-SQL, offering constructs and capabilities previously not available to SQL Server developers. Developers may also leverage the power of the .NET Framework Library, which provides an extensive set of classes that can be used to quickly and efficiently solve programming problems.
+Improved safety and security. Managed code runs in a common language run-time environment, hosted by the Database Engine. SQL Server leverages this to provide a safer and more secure alternative to the extended stored procedures available in earlier versions of SQL Server.
+Ability to define data types and aggregate functions. User defined types and user defined aggregates are two new managed database objects which expand the storage and querying capabilities of SQL Server.
+Streamlined development through a standardized environment. Database development is integrated into future releases of the Microsoft Visual Studio .NET development environment. Developers use the same tools for developing and debugging database objects and scripts as they use to write middle-tier or client-tier .NET Framework components and services.
+Potential for improved performance and scalability. In many situations, the .NET Framework language compilation and execution models deliver improved performance over Transact-SQL.
+
+
+I believe those two aren't equivalent... fit to square off against each other.
+CLR Integration is supposed to phase out "extended stored procedures" of yore. We have some of these in our workplace... essentially blocks of processing/logic over SQL data that was too hard/impossible to do via conventional DB Stored procedures/T SQL. So they wrote it up as extended stored procedures in C++ DLLs that can be invoked similarly. 
+Now they have been phased out and CLR integration is the replacement
+
+DB Stored procedures: if it can be done in T SQL Stored procs, do it.
+CLR Stored procedures: if the logic is too complex or tedious to do via T SQL... if its something that will take fewer lines of CLR code to tackle it (string manipulation, complex/custom sorting or filtering, etc.) use this approach.
+
+
+Aside from the file system access (where CLR procs has a very pronounced advantage) I would use T-SQL procs.  If you have especially complex calculations you could possibly put that piece into a CLR function and call this from within your proc (udf's are where I've found the CLR integration really shines).  Then you get the benefits of the CLR integration for that particular part of your task but keep as much of your stored proc logic in the DB as you can.
+
+Given what you said, I would rather you get the deveopers properly trained in t-SQl and databases in general than allow them to create posssibly much more damage to performance by allowing them to do t-sql tasks in CLRs. Developers who don't understand databases use that as an excuse to avoid doing things the way that is best for database performance because they want to take what they see as the easier route. 
+
+We ran into a situation with a CLR function that was called thousands of times in a regular SQL proc.  This was a proc for importing data from another system. The function validated the data and handled nulls nicely.  
+If we did the operation in TSQL, the proc finished in about 15 seconds.  If we used the CLR function, the proc finished in 20 - 40 minutes. The CLR function looked more elegant, but as far as we could tell, there was a startup hit for each use of the CLR function.  So if you have a large operation done using one CLR function, that's fine since the startup time is small compared to the time for the operation.  Or if you a calling the CLR function a modest number of times, the total startup time for all invocations of the function would be small.  But be careful of loops.  
+Also, for maintainability, it's nicer not to have more languages than you really need.
+
+I would add a couple of reasons to use CLR that may not have been mentioned.
+
+Replace and extend basic query, non-query, and scalar sql functions.
+A) Error reporting and alerts can be integrated based upon defined requirements.
+B) Easily define debugging levels.
+C) Enable an easier way to interact with foreign SQL servers  
+Move legacy code to a managed environment.
+
+
+I posted the following answer to a similar question: Advantage of SQL SERVER CLR.
+I will add here though, that C# / VB.net / etc being a language someone is more comfortable with than T-SQL should not be a reason to use SQLCLR over T-SQL.  If someone doesn't know how to accomplish something in T-SQL, first ask for help in finding a T-SQL solution. If one does not exist, then go the CLR route.
+
+SQLCLR / CLR Integration within SQL Server is just another tool to help solve certain (not all) problems.  There are a few things that it does better than what can be done in pure T-SQL, and there are some things that can only be done via SQLCLR.  I wrote an article for SQL Server Central, Stairway to SQLCLR Level 1: What is SQLCLR? (free registration is required to read articles there), that addresses this question. The basics are (see the linked article for details):
+
+Streaming Table-Valued Functions (sTVF)
+Dynamic SQL (within Functions)
+Better Access to External Resources / Replace xp_cmdshell
+
+Passing data in is easier
+Getting multiple columns of a result set back is easier
+No external dependencies (e.g. 7zip.exe)
+Better security via Impersonation
+
+Ability to Multi-thread
+Error Handling (within Functions)
+Custom Aggregates
+Custom Types
+Modify State (within a Function and without OPENQUERY / OPENROWSET)
+Execute a Stored Procedure (read-only; within a Function and without OPENQUERY / OPENROWSET)
+Performance (note: this is not meaning in all cases, but definitely in some cases depending on the type and complexity of the operation)
+Can capture output (i.e. what is sent to the Messages tab in SSMS) (e.g. PRINT and RAISERROR with a severity = 0 to 10) -- I forgot to mention this one in the article ;-).
+
+One other thing to consider is, sometimes it is beneficial to be able to share code between the app and the DB so that the DB has insight into certain business logic without having to build custom, internal-only screens just to access that app code. For example, I have worked on a system that imported data files from customers and use a custom hash of most of the fields and saved that value to the row in the DB. This allowed for easily skipping rows when importing their data again as the app would hash the values from the input file and compare to the hash value stored on the row. If they were the same then we knew instantly that none of the fields had changed so we went onto the next row, and it was a simple INT comparison. But that algorithm for doing the hash was only in the app code so whether for debugging a customer case or looking for ways to offload some processing to back-end services by flagging rows that had at least one field with changes (changes coming from our app as opposed to looking for changes within a newer import file), there was nothing I could do. That would have been a great opportunity to have a rather simple bit of business logic in the DB, even if not for normal processing; having what amounts to an encoded value in the DB with no ability to understand its meaning makes it much hard to solve problems.
+If interested in seeing some of these capabilities in action without having to write any code, the Free version of SQL# (of which I am the author) has RegEx functions, custom Aggregates (UDAs), custom Types (UDTs), etc.

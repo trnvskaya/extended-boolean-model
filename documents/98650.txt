@@ -1,0 +1,228 @@
+What is the strict aliasing rule?
+c undefined-behavior c++-faq strict-aliasing type-punning
+When asking about common undefined behavior in C, souls more enlightened than I referred to the strict aliasing rule.
+What are they talking about?
+
+
+Strict aliasing is not allowing different pointer types to the same data.
+This article should help you understand the issue in full detail.
+
+Type punning via pointer casts (as opposed to using a union) is a major example of breaking strict aliasing.
+
+The best explanation I have found is by Mike Acton, Understanding Strict Aliasing. It's focused a little on PS3 development, but that's basically just GCC.
+From the article:
+
+"Strict aliasing is an assumption, made by the C (or C++) compiler, that dereferencing pointers to objects of different types will never refer to the same memory location (i.e. alias each other.)"
+
+So basically if you have an int* pointing to some memory containing an int and then you point a float* to that memory and use it as a float you break the rule. If your code does not respect this, then the compiler's optimizer will most likely break your code.
+The exception to the rule is a char*, which is allowed to point to any type.
+
+A typical situation you encounter strict aliasing problems is when overlaying a struct (like a device/network msg) onto a buffer of the word size of your system (like a pointer to uint32_ts or uint16_ts). When you overlay a struct onto such a buffer, or a buffer onto such a struct through pointer casting you can easily violate strict aliasing rules.
+So in this kind of setup, if I want to send a message to something I'd have to have two incompatible pointers pointing to the same chunk of memory. I might then naively code something like this:
+struct Msg
+{
+   unsigned int a;
+   unsigned int b;
+};
+
+void SendWord(uint32_t*);
+
+int main()
+{
+   // Get a 32-bit buffer from the system
+   uint32_t* buff = malloc(sizeof(Msg));
+
+   // Alias that buffer through message
+   Msg* msg = (Msg*)(buff);
+
+   // Send a bunch of messages    
+   for (int i =0; i < 10; ++i)
+   {
+      msg->a = i;
+      msg->b = i+1;
+      SendWord(buff[0] );
+      SendWord(buff[1] );   
+   }
+}
+
+The strict aliasing rule makes this setup illegal: dereferencing a pointer that aliases another of an incompatible type is undefined behavior. Unfortunately, you can still code this way, maybe* get some warnings, have it compile fine, only to have weird unexpected behavior when you run the code. 
+*(gcc appears pretty inconsistent in its ability to give aliasing warnings, giving us a friendly warning here but not here)
+To see why this behavior is undefined, we have to think about what the strict aliasing rule buys the compiler. Basically, with this rule, it doesn't have to think about inserting instructions to refresh the contents of buff every run of the loop. Instead, when optimizing, with some annoyingly unenforced assumptions about aliasing, it can omit those instructions, load buff[0] and buff[1] once before the loop is run, and speed up the body of the loop. Before strict aliasing was introduced, the compiler had to live in a state of paranoia that the contents of buff could change at anytime from anywhere by anybody. So to get an extra performance edge, and assuming most people don't type-pun pointers, the strict aliasing rule was introduced.
+Keep in mind, if you think the example is contrived, this might even happen if you're passing a buffer to another function doing the sending for you, if instead you have.
+ void SendMessage(uint32_t* buff, size_t size32)
+ {
+    for (int i = 0; i < size32; ++i) 
+    {
+       SendWord(buff[i]);
+    }
+ }
+
+And rewrote our earlier loop to take advantage of this convenient function
+   for (int i =0; i < 10; ++i)
+   {
+      msg->a = i;
+      msg->b = i+1;
+      SendMessage(buff, 2);
+   }
+
+The compiler may or may not be able to or smart enough to try to inline SendMessage and it may or may not decide to load or not load buff again. If SendMessage is part of another API that's compiled separately, it probably has instructions to load buff's contents. Then again, maybe you're in C++ and this is some templated header only implementation that the compiler thinks it can inline. Or maybe it's just something you wrote in your .c file for your own convenience. Anyway undefined behavior might still ensue. Even when we know some of what's happening under the hood, it's still a violation of the rule so no well defined behavior is guaranteed. So just by wrapping in a function that takes our word delimited buffer doesn't necessarily help.
+So how do I get around this?
+
+Use a union. Most compilers support this without complaining about strict aliasing. This is allowed in C99 and explicitly allowed in C11.
+
+
+    union {
+        Msg msg;
+        unsigned int asBuffer[sizeof(Msg)/sizeof(unsigned int)];
+    };
+
+
+You can disable strict aliasing in your compiler (f[no-]strict-aliasing in gcc)) 
+You can use char* for aliasing instead of your system's word. The rules allow an exception for char* (including signed char and unsigned char). It's always assumed that char* aliases other types. However this won't work the other way: there's no assumption that your struct aliases a buffer of chars.
+
+Beginner beware
+This is only one potential minefield when overlaying two types onto each other. You should also learn about endianness, word alignment, and how to deal with alignment issues through packing structs correctly.
+
+Strict aliasing doesn't refer only to pointers, it affects references as well, I wrote a paper about it for the boost developer wiki and it was so well received that I turned it into a page on my consulting web site.  It explains completely what it is, why it confuses people so much and what to do about it. Strict Aliasing White Paper.  In particular it explains why unions are risky behavior for C++, and why using memcpy is the only fix portable across both C and C++.  Hope this is helpful.
+
+This is the strict aliasing rule, found in section 3.10 of the C++03 standard (other answers provide good explanation, but none provided the rule itself):
+
+If a program attempts to access the stored value of an object through an lvalue of other than one of the following types the behavior is undefined:
+
+the dynamic type of the object,
+a cv-qualified version of the dynamic type of the object,
+a type that is the signed or unsigned type corresponding to the dynamic type of the object,
+a type that is the signed or unsigned type corresponding to a cv-qualified version of the dynamic type of the object,
+an aggregate or union type that includes one of the aforementioned types among its members (including, recursively, a member of a subaggregate or contained union),
+a type that is a (possibly cv-qualified) base class type of the dynamic type of the object,
+a char or unsigned char type.
+
+
+New C++11 wording (changes emphasized):
+
+If a program attempts to access the stored value of an object through a glvalue of other than one of the following types the behavior is undefined:
+
+the dynamic type of the object,
+a cv-qualified version of the dynamic type of the object,
+a type similar (as defined in 4.4) to the dynamic type of the object,
+a type that is the signed or unsigned type corresponding to the dynamic type of the object,
+a type that is the signed or unsigned type corresponding to a cv-qualified version of the dynamic type of the object,
+an aggregate or union type that includes one of the aforementioned types among its elements or non-static data members (including, recursively, an element or non-static data member of a subaggregate or contained union),
+a type that is a (possibly cv-qualified) base class type of the dynamic type of the object,
+a char or unsigned char type.
+
+
+Two changes were small: glvalue instead of lvalue, and clarification of the aggregate/union case.
+The third change makes a stronger guarantee (relaxes the strong aliasing rule): The new concept of similar types that are now safe to alias.
+
+Also the C wording (C99; ISO/IEC 9899:1999 6.5/7; the exact same wording is used in ISO/IEC 9899:2011 Â§6.5 Â¶7):
+
+An object shall have its stored value accessed only by an lvalue
+  expression that has one of the following types  73) or 88):
+
+a type compatible with the effective type of the object,
+a qualiï¬ed version of a type compatible with the effective type of
+  the object,
+a type that is the signed or unsigned type corresponding to the
+  effective type of the object,
+a type that is the signed or unsigned type corresponding to a
+  qualiï¬ed version of the effective type of the object,
+an aggregate or union type that includes one of the aforementioned
+  types among its members (including, recursively, a member of a
+  subaggregate or contained union), or
+a character type.
+
+ 73) or 88) The intent of this list is to specify those circumstances in which an object may or may not be aliased.
+
+
+As addendum to what Doug T. already wrote, here
+is a simple test case which probably triggers it with gcc :
+check.c
+#include <stdio.h>
+
+void check(short *h,long *k)
+{
+    *h=5;
+    *k=6;
+    if (*h == 5)
+        printf("strict aliasing problem\n");
+}
+
+int main(void)
+{
+    long      k[1];
+    check((short *)k,k);
+    return 0;
+}
+
+Compile with gcc -O2 -o check check.c .
+Usually (with most gcc versions I tried) this outputs "strict aliasing problem", because the compiler assumes that "h" cannot be the same address as "k" in the "check" function. Because of that the compiler optimizes the if (*h == 5) away and always calls the printf.
+For those who are interested here is the x64 assembler code, produced by gcc 4.6.3, running on ubuntu 12.04.2 for x64:
+movw    $5, (%rdi)
+movq    $6, (%rsi)
+movl    $.LC0, %edi
+jmp puts
+
+So the if condition is completely gone from the assembler code.
+
+You can always get around it by casting through void*, but don't do it unless you are sure you know what you want:
+// Get a 32-bit buffer from the system
+uint32_t* buff = malloc(sizeof(Msg));
+void* vbuff = (void*) buff;
+// Alias that buffer through message
+Msg* msg = (Msg*)(vbuff);
+
+I found myself on this page after getting the type-punning warning writing Python/C code when calling Py_INCREF on a PyTypeObject*. I had this code giving me a warning:
+PyTypeObject t;
+...
+Py_INCREF(&t); // Gives a warning, although this is straight from the example at http://docs.python.org/2/extending/newtypes.html.
+
+To be cautious, I wrote this function:
+inline PyObject* cast_to_PyObject(PyTypeObject* p) { 
+    return reinterpret_cast<PyObject*>(static_cast<void*>(p)); 
+}
+
+to keep the dubious casting all in one place, and then the problematic code became
+PyTypeObject t;
+...
+Py_INCREF(cast_to_PyObject(&t));
+
+
+In C programming languange we have two(2) pointer types.
+First operator ' & ' when this operator is used on some l-valuable object that is stored in memory he returns the adress of that object.
+Example:
+int a=2, n[10];
+printf("%p \n", &a); // %p is used to print the adress 
+printf("%p \n, &n[2]); 
+
+Second operator ' * ' is used to give as the the content of an object.
+To see how this work please watch the code:
+ #include <stdio.h>
+
+    main(){
+
+    int a=10, *ptr; // a is integer, but *ptr is a pointer! They are not the same
+    ptr = &a;
+    *ptr = 12; // *ptr will give us the content of a so a is now 12
+
+    printf("%d %d \n", a, *ptr);
+    return 0; // now i will explain the code 
+    }
+
+Integer 'a' is declared and he is stored somewhere in memory.
+On his adress number 10 is indiscribed.
+The second valuable is not an integer it is a pointer to an integer.
+In line ' ptr = &a ' adress of valuable 'a' is now stored in our pointer valuable.
+So the adress of 'a' is now stored in our pointer 'ptr' and number 10 is stored in adress of 'a'. Now we can gain access to number'10' using the integer 'a' and our pointer '*ptr'.If we change the '*ptr' that will also effect on our integer 'a'.I have changed the 'ptr' and now the output of our programm is: 12 12
+Operator '' will give us the contect of the pointed object!!!
+So our pointer '*ptr' is considered as the alias(second name) of integer a.
+If we have a code like this:
+int a = 10;
+double *ptr;
+ptr = &a; // this is wrong !!!
+
+For every type in 'C' programming languange we have a pointer type.
+So the rules of the 'strict aliasing' are simple.We cannot have the two pointers
+with different types pointing to the same object.For int(integer) number we use '*int' and that pointer is considered as the alias(second name!) for that valuable.Integer number and double number cannot be stored in the same memory location at the same time and they cannot point to the same memory location.
+In 'C'.We can use the conversion but that is out of the 'strict alias' reach.
+If something is not clear please contact me on this post and I will gladly explain! :D

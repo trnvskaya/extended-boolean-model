@@ -1,0 +1,117 @@
+How do you automate a Visual Studio build?
+visual-studio build-automation
+How do you turn a Visual Studio build that you'd perform in the IDE into a script that you can run from the command line?
+
+
+Look into  build tool NAnt or MSBuild. I believe MSBuild is the build tool for Visual Studio 2005 and later. I am, however, a fan of NAnt...
+
+Simplest way: navigate to the directory containing the solution or project file, and run msbuild (assuming you have Visual Studio 2005 or newer).
+More flexible ways:
+
+Read up on the MSBuild
+reference. There are tons of
+customization, especially once
+you've installed the MSBuild Community Tasks Project.  
+Use NAnt. It has existed
+for longer than MSBuild and has more
+community support, but requires you
+to start a project file from
+scratch, rather than extending the
+existing, Visual Studio-created one.
+
+
+\Windows\Microsoft.NET\Framework\[YOUR .NET VERSION]\msbuild.exe
+
+Lots of command line parameters, but the simplest is just:
+msbuild.exe yoursln.sln
+
+
+NAnt and MSBuild are the most popular tools to automate your build in .NET, and you can find a discussion on there of the pros/cons of each in the Stack Overflow question Best .NET build tool.
+
+I had to do this for a C++ project in Visual Studio 2003 so I don't know how relevant this is to later version of visual studio:
+In the directory where your executable is created there will be a BuildLog.htm file. Open that file in your browser and then for each section such as:
+Creating temporary file "c:\some\path\RSP00003C.rsp" with contents
+[
+/D "WIN32" /D "_WINDOWS" /D "STRICT" /D "NDEBUG" ..... (lots of other switches)
+.\Project.cpp
+.\Another.cpp
+.\AndAnother.cpp
+".\And Yet Another.cpp"
+]
+Creating command line "cl.exe @c:\some\path\RSP00003C.rsp /nologo"
+
+create a .rsp file with the content between the square brackets (but not including the square brackets) and call it whatever you like. I seem to remember having problems with absolute paths so you may have to make sure all the paths are relative.
+Then in your build script add the command line from the BuildLog.htm file but with your .rsp filename:
+cl.exe @autobuild01.rsp /nologo
+
+(note there will also be a link.exe section as well as cl.exe)
+
+As of Visual Studio 2005, all of the project files (at least for .NET based projects) are actual MSBuild files, so you can call MSBuild on the command line and pass it the project file.
+The bottom line is that you need to use a "build scripting language" like NAnt or MSBuild (there are others, but these are the mainstream ones right now) if you want to have any real control over your build process.
+
+With VS2008 you can do this:
+devenv solution.sln /build configuration
+
+
+Take a look at UppercuT. It has a lot of bang for your buck and it does what you are looking for and much more.
+UppercuT uses NAnt to build and it is the insanely easy to use Build Framework.
+Automated Builds as easy as (1) solution name, (2) source control path, (3) company name for most projects!
+http://projectuppercut.org/
+Some good explanations here: UppercuT
+
+Here is my batch file using msbuild for VS 2010 Debug configuration:
+"C:\Windows\Microsoft.NET\Framework\v4.0.30319\msbuild.exe" 
+iTegra.Web.sln /p:Configuration=Debug /clp:Summary /nologo
+
+
+Here is the script I'm using to completely automate the command line build of x86 AND x64 configurations for the same solution through batch scripts.
+This is based on DevEnv.exe as it works if you have a Setup project in your build (msbuild doesn't support building Setup projects).
+I'm assuming your setup is 32bit Windows 7 with Visual Studio 2010 setup using the x86 native compiler and x64 cross compiler.
+If you're running 64bit windows you may need to change x86_amd64 to amd64 in the batch script depending on your setup.
+This is assuming Visual Studio is installed in Program Files and your solution is located in D:\MySoln
+Create a file called buildall.bat and add this to it:
+D:
+cd "D:\MySoln"
+
+if "%1" == "" goto all
+if %1 == x86 goto x86
+if %1 == x64 goto x64
+
+:x86
+%comspec% /k ""C:\Program Files\Microsoft Visual Studio 10.0\VC\vcvarsall.bat"" x86 < crosscompilex86.bat
+goto eof
+
+:x64
+%comspec% /k ""C:\Program Files\Microsoft Visual Studio 10.0\VC\vcvarsall.bat"" x86_amd64 < crosscompilex64.bat
+goto eof
+
+:all
+%comspec% /k ""C:\Program Files\Microsoft Visual Studio 10.0\VC\vcvarsall.bat"" x86 < crosscompilex86.bat
+if %ERRORLEVEL% NEQ 0 goto eof
+%comspec% /k ""C:\Program Files\Microsoft Visual Studio 10.0\VC\vcvarsall.bat"" x86_amd64 < crosscompilex64.bat
+goto eof
+
+:eof
+pause
+
+Now create 2 more batch scripts:
+crosscompilex86.bat to build the Release version of a x86 build and include this
+devenv MySoln.sln /clean "Release|x86"
+IF %ERRORLEVEL% NEQ 0 EXIT /B %ERRORLEVEL%
+devenv MySoln.sln /rebuild "Release|x86"
+IF %ERRORLEVEL% NEQ 0 EXIT /B %ERRORLEVEL%
+
+crosscompilex64.bat to build the Release version of the x64 build and include this
+devenv MySoln.sln /clean "Release|x64"
+IF %ERRORLEVEL% NEQ 0 EXIT /B %ERRORLEVEL%
+devenv MySoln.sln /rebuild "Release|x64"
+IF %ERRORLEVEL% NEQ 0 EXIT /B %ERRORLEVEL%
+
+Now place all 3 batch files along in your solution folder along with MySoln.sln.
+You can build both x86 and x64 Release versions by creating a Shortcut on your desktop which run the following commands:
+
+Build All -> D:\MySoln\buildall.bat
+Build x86 Release Only -> D:\MySoln\buildall.bat x86
+Build x64 Release Only -> D:\MySoln\buildall.bat x64
+
+If you're using another configuration like AnyCPU etc you would need to customize the above scripts accordingly.

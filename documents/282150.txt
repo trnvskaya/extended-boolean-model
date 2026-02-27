@@ -1,0 +1,336 @@
+How do I write unit tests in PHP?
+php unit-testing testing tdd
+I've read everywhere about how great they are, but for some reason I can't seem to figure out how exactly I'm supposed to test something. Could someone perhaps post a piece of example code and how they would test it? If it's not too much trouble :)
+
+
+There are two frameworks you can use for unit testing. Simpletest and PHPUnit, which I prefer. Read the tutorials on how to write and run tests on the homepage of PHPUnit. It is quite easy and well described.
+
+There is a 3rd "framework", which is by far easier to learn - even easier than SimpleTest, it's called phpt.
+A primer can be found here:
+http://qa.php.net/write-test.php
+Edit: Just saw your request for sample code.
+Let's assume you have the following function in a file called lib.php:
+<?php
+function foo($bar)
+{
+  return $bar;
+}
+?>
+
+Really simple and straight forward, the parameter you pass in, is returned. So let's look at a test for this function, we'll call the test file foo.phpt:
+--TEST--
+foo() function - A basic test to see if it works. :)
+--FILE--
+<?php
+include 'lib.php'; // might need to adjust path if not in the same dir
+$bar = 'Hello World';
+var_dump(foo($bar));
+?>
+--EXPECT--
+string(11) "Hello World"
+
+In a nutshell, we provide the parameter $bar with value "Hello World" and we var_dump() the response of the function call to foo().
+To run this test, use: pear run-test path/to/foo.phpt
+This requires a working install of PEAR on your system, which is pretty common in most circumstances. If you need to install it, I recommend to install the latest version available. In case you need help to set it up, feel free to ask (but provide OS, etc.).
+
+You can make unit testing more effective by changing your coding style to accommodate it. 
+I recommend browsing the Google Testing Blog, in particular the post on Writing Testable Code.
+
+I rolled my own because i didnt have time to learn someone elses way of doing things, this took about 20 minutes to write up, 10 to adapt it for posting here. 
+Unittesting is very usefull to me.
+this is kinda long but it explains itself and there is an example at the bottom.
+/**
+ * Provides Assertions
+ **/
+class Assert
+{
+    public static function AreEqual( $a, $b )
+    {
+    	if ( $a != $b )
+    	{
+    		throw new Exception( 'Subjects are not equal.' );
+    	}
+    }
+}
+
+/**
+ * Provides a loggable entity with information on a test and how it executed
+ **/
+class TestResult
+{
+    protected $_testableInstance = null;
+
+    protected $_isSuccess = false;
+    public function getSuccess()
+    {
+    	return $this->_isSuccess;
+    }
+
+    protected $_output = '';
+    public function getOutput()
+    {
+    	return $_output;
+    }
+    public function setOutput( $value )
+    {
+    	$_output = $value;
+    }
+
+    protected $_test = null;
+    public function getTest()
+    {
+    	return $this->_test;
+    }
+
+    public function getName()
+    {
+    	return $this->_test->getName();
+    }
+    public function getComment()
+    {
+    	return $this->ParseComment( $this->_test->getDocComment() );
+    }
+
+    private function ParseComment( $comment )
+    {
+    	$lines = explode( "\n", $comment );
+    	for( $i = 0; $i < count( $lines ); $i ++ )
+    	{
+    		$lines[$i] = trim( $lines[ $i ] );
+    	}
+    	return implode( "\n", $lines );
+    }
+
+    protected $_exception = null;
+    public function getException()
+    {
+    	return $this->_exception;
+    }
+
+    static public function CreateFailure( Testable $object, ReflectionMethod $test, Exception $exception )
+    {
+    	$result = new self();
+    	$result->_isSuccess = false;
+    	$result->testableInstance = $object;
+    	$result->_test = $test;
+    	$result->_exception = $exception;
+
+    	return $result;
+    }
+    static public function CreateSuccess( Testable $object, ReflectionMethod $test )
+    {
+    	$result = new self();
+    	$result->_isSuccess = true;
+    	$result->testableInstance = $object;
+    	$result->_test = $test;
+
+    	return $result;
+    }
+}
+
+/**
+ * Provides a base class to derive tests from
+ **/
+abstract class Testable
+{
+    protected $test_log = array();
+
+    /**
+     * Logs the result of a test. keeps track of results for later inspection, Overridable to log elsewhere.
+     **/
+    protected function Log( TestResult $result )
+    {
+    	$this->test_log[] = $result;
+
+    	printf( "Test: %s was a %s %s\n"
+    		,$result->getName()
+    		,$result->getSuccess() ? 'success' : 'failure'
+    		,$result->getSuccess() ? '' : sprintf( "\n%s (lines:%d-%d; file:%s)"
+    			,$result->getComment()
+    			,$result->getTest()->getStartLine()
+    			,$result->getTest()->getEndLine()
+    			,$result->getTest()->getFileName()
+    			)
+    		);
+
+    }
+    final public function RunTests()
+    {
+    	$class = new ReflectionClass( $this );
+    	foreach( $class->GetMethods() as $method )
+    	{
+    		$methodname = $method->getName();
+    		if ( strlen( $methodname ) > 4 && substr( $methodname, 0, 4 ) == 'Test' )
+    		{
+    			ob_start();
+    			try
+    			{
+    				$this->$methodname();
+    				$result = TestResult::CreateSuccess( $this, $method );
+    			}
+    			catch( Exception $ex )
+    			{
+    				$result = TestResult::CreateFailure( $this, $method, $ex );
+    			}
+    			$output = ob_get_clean();
+    			$result->setOutput( $output );
+    			$this->Log( $result );
+    		}
+    	}
+    }
+}
+
+/**
+ * a simple Test suite with two tests
+ **/
+class MyTest extends Testable
+{
+    /**
+     * This test is designed to fail
+     **/
+    public function TestOne()
+    {
+    	Assert::AreEqual( 1, 2 );
+    }
+
+    /**
+     * This test is designed to succeed
+     **/
+    public function TestTwo()
+    {
+    	Assert::AreEqual( 1, 1 );
+    }
+}
+
+// this is how to use it.
+$test = new MyTest();
+$test->RunTests();
+
+This outputs:
+Test: TestOne was a failure 
+/**
+* This test is designed to fail
+**/ (lines:149-152; file:/Users/kris/Desktop/Testable.php)
+Test: TestTwo was a success 
+
+Besides the excellent suggestions about test frameworks already given, are you building your application with one of the PHP web frameworks that has automated testing built in, such as Symfony or CakePHP?  Sometimes having a place to just drop in your test methods reduces the start-up friction some people associate with automated testing and TDD.
+
+For simple tests AND documentation, php-doctest is quite nice and it's a really easy way to get started since you don't have to open a separate file. Imagine the function below:
+/**
+* Sums 2 numbers
+* <code>
+* //doctest: add
+* echo add(5,2);
+* //expects:
+* 7
+* </code>
+*/
+function add($a,$b){
+    return $a + $b;   
+}
+
+If you now run this file through phpdt (command-line runner of php-doctest) 1 test will be run. The doctest is contained inside the < code > block. Doctest originated in python and is fine for giving useful & runnable examples on how the code is supposed to work. You can't use it exclusively because the code itself would litter up with test cases but I've found that it's useful alongside a more formal tdd library - i use phpunit. 
+This 1st answer here sums it up nicely (it's not unit vs doctest ).
+
+Get PHPUnit. It is very easy to use.
+Then start with very simple assertions. You can do alot with AssertEquals before you get into anything else. That's a good way to get your feet wet.
+You may also want to try writing your test first (since you gave your question the TDD tag) and then write your code. If you haven't done this before it is an eye-opener.
+require_once 'ClassYouWantToTest';
+require_once 'PHPUnit...blah,blah,whatever';
+
+class ClassYouWantToTest extends PHPUnit...blah,blah,whatever
+{
+    private $ClassYouWantToTest;
+
+   protected function setUp ()
+    {
+        parent::setUp();
+        $this->ClassYouWantToTest = new ClassYouWantToTest(/* parameters */);
+    }
+
+    protected function tearDown ()
+    {
+        $this->ClassYouWantToTest = null;
+        parent::tearDown();
+    }
+
+    public function __construct ()
+    {   
+    	// not really needed
+    }
+
+    /**
+     * Tests ClassYouWantToTest->methodFoo()
+     */
+    public function testMethodFoo ()
+    {
+        $this->assertEquals(
+            $this->ClassYouWantToTest->methodFoo('putValueOfParamHere), 'expectedOutputHere);
+
+    /**
+     * Tests ClassYouWantToTest->methodBar()
+     */
+    public function testMethodFoo ()
+    {
+        $this->assertEquals(
+            $this->ClassYouWantToTest->methodBar('putValueOfParamHere), 'expectedOutputHere);
+}
+
+
+phpunit is pretty much the defacto unit testing framework for php. there is also DocTest (available as a PEAR package) and a few others.
+php itself is tested for regressions and the like via phpt tests which can also be run via pear.
+
+Codeception tests are much like common unit tests but are much powerful in things where you need mocking and stubbing. 
+Here is the sample controller test. Notice how easily stubs are created. How easily you check the method was invoked.
+<?php
+use Codeception\Util\Stub as Stub;
+
+const VALID_USER_ID = 1;
+const INVALID_USER_ID = 0;
+
+class UserControllerCest {
+public $class = 'UserController';
+
+
+public function show(CodeGuy $I) {
+    // prepare environment
+    $I->haveFakeClass($controller = Stub::makeEmptyExcept($this->class, 'show'));
+    $I->haveFakeClass($db = Stub::make('DbConnector', array('find' => function($id) { return $id == VALID_USER_ID ? new User() : null ))); };
+    $I->setProperty($controller, 'db', $db);
+
+    $I->executeTestedMethodOn($controller, VALID_USER_ID)
+        ->seeResultEquals(true)
+        ->seeMethodInvoked($controller, 'render');
+
+    $I->expect('it will render 404 page for non existent user')
+        ->executeTestedMethodOn($controller, INVALID_USER_ID)
+        ->seeResultNotEquals(true)
+        ->seeMethodInvoked($controller, 'render404','User not found')
+        ->seeMethodNotInvoked($controller, 'render');
+}
+}
+
+Also there are other cool things. You can test database state, filesystem, etc.
+
+Way too much to re-post here, but here is a great article on using phpt. It covers a number of aspects around phpt that are often overlooked, so it could be worth a read to expand your knowledge of php beyond just writing a test. Fortunately the article also discusses writing tests!
+The main points of discussion
+
+Discover how marginally documented aspects of PHP work (or pretty much any part for that matter)
+Write simple unit tests for your own PHP code
+Write tests as part of an extension or to convey a potential bug to the internals or QA groups
+
+
+I know there is a lot of info here already, but since this still shows up on Google searches i might as well add Chinook Test Suite to the list. It is a simple and small test framework. 
+You can easily test your classes with it and also create mock objects. You run the tests through a web browser and (not yet) through a console.
+In the browser you can specify what test class or even what test method to run. Or you can simply run all tests.
+A screenshot from the github page:
+
+What i like about it is the way you assert tests. This is done with so called "fluent assertions". Example:
+$this->Assert($datetime)->Should()->BeAfter($someDatetime);
+
+And creating mock objects is a breeze too (with a fluent like syntax):
+$mock = new CFMock::Create(new DummyClass());
+$mock->ACallTo('SomeMethod')->Returns('some value');
+
+Anyway, more info can be found on the github page with a code example as well:
+https://github.com/w00/Chinook-TestSuite

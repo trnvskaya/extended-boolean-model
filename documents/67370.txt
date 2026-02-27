@@ -1,0 +1,48 @@
+Dynamically Create a generic type for template
+c# generics
+I'm programming WCF using the ChannelFactory which expects a type in order to call the CreateChannel method. For example: 
+IProxy proxy = ChannelFactory<IProxy>.CreateChannel(...);
+
+In my case I'm doing routing so I don't know what type my channel factory will be using. I can parse a message header to determine the type but I hit a brick wall there because even if I have an instance of Type I can't pass that where ChannelFactory expects a generic type. 
+Another way of restating this problem in very simple terms would be that I'm attempting to do something like this:
+string listtype = Console.ReadLine(); // say "System.Int32"
+Type t = Type.GetType( listtype);
+List<t> myIntegers = new List<>(); // does not compile, expects a "type"
+List<typeof(t)> myIntegers = new List<typeof(t)>(); // interesting - type must resolve at compile time?
+
+Is there an approach to this I can leverage within C#?
+
+
+What you are looking for is MakeGenericType
+string elementTypeName = Console.ReadLine();
+Type elementType = Type.GetType(elementTypeName);
+Type[] types = new Type[] { elementType };
+
+Type listType = typeof(List<>);
+Type genericType = listType.MakeGenericType(types);
+IProxy  proxy = (IProxy)Activator.CreateInstance(genericType);
+
+So what you are doing is getting the type-definition of the generic "template" class, then  building a specialization of the type using your runtime-driving types.
+
+Here's a question: Do you really need to create a channel with the exact contract type in your specific case?
+Since you're doing routing, there's a very good chance you could simply deal with the generic channel shapes. For example, if you're routing a one-way only message, then you could create a channel to send the message out like this:
+ChannelFactory<IOutputChannel> factory = new ChannelFactory<IOutputChannel>(binding, endpoint);
+IOutputChannel channel = factory.CreateChannel();
+...
+channel.SendMessage(myRawMessage);
+
+If you needed to send to a two-way service, just use IRequestChannel instead.
+If you're doing routing, it is, in general, a lot easier to just deal with generic channel shapes (with a generic catch-all service contract to the outside) and just make sure the message you're sending has all the right headers and properties.
+
+You should look at this post from Ayende: WCF, Mocking and IoC: Oh MY!.  Somewhere near the bottom is a method called GetCreationDelegate which should help.  It basically does this:
+string typeName = ...;
+Type proxyType = Type.GetType(typeName);
+
+Type type = typeof (ChannelFactory<>).MakeGenericType(proxyType);
+
+object target = Activator.CreateInstance(type);
+
+MethodInfo methodInfo = type.GetMethod("CreateChannel", new Type[] {});
+
+return methodInfo.Invoke(target, new object[0]);
+

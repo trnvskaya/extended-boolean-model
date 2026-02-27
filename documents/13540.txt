@@ -1,0 +1,122 @@
+Insert Update stored proc on SQL Server
+sql sql-server stored-procedures upsert
+I've written a stored proc that will do an update if a record exists, otherwise it will do an insert. It looks something like this:
+update myTable set Col1=@col1, Col2=@col2 where ID=@ID
+if @@rowcount = 0
+insert into myTable (Col1, Col2) values (@col1, @col2)
+
+My logic behind writing it in this way is that the update will perform an implicit select using the where clause and if that returns 0 then the insert will take place.
+The alternative to doing it this way would be to do a select and then based on the number of rows returned either do an update or insert. This I considered inefficient because if you are to do an update it will cause 2 selects (the first explicit select call and the second implicit in the where of the update). If the proc were to do an insert then there'd be no difference in efficiency.
+Is my logic sound here?
+Is this how you would combine an insert and update into a stored proc?
+
+
+Your assumption is right, this is the optimal way to do it and it's called upsert/merge.
+Importance of UPSERT - from sqlservercentral.com: 
+
+For every update in the case mentioned above we are removing one
+  additional read from the table if we
+  use the UPSERT instead of EXISTS.
+  Unfortunately for an Insert, both the
+  UPSERT and IF EXISTS methods use the
+  same number of reads on the table.
+  Therefore the check for existence
+  should only be done when there is a
+  very valid reason to justify the
+  additional I/O. The optimized way to
+  do things is to make sure that you
+  have little reads as possible on the
+  DB.
+The best strategy is to attempt the
+  update. If no rows are affected by the
+  update then insert. In most
+  circumstances, the row will already
+  exist and only one I/O will be
+  required.
+
+Edit: 
+Please check out this answer and the linked blog post to learn about the problems with this pattern and how to make it work safe.
+
+MERGE is one of the new features in SQL Server 2008, by the way.
+
+If to be used with SQL Server 2000/2005 the original code needs to be enclosed in transaction to make sure that data remain consistent in concurrent scenario.
+BEGIN TRANSACTION Upsert
+update myTable set Col1=@col1, Col2=@col2 where ID=@ID
+if @@rowcount = 0
+insert into myTable (Col1, Col2) values (@col1, @col2)
+COMMIT TRANSACTION Upsert
+
+This will incur additional performance cost, but will ensure data integrity.
+Add, as already suggested, MERGE should be used where available.
+
+Big fan of the UPSERT, really cuts down on the code to manage.  Here is another way I do it:  One of the input parameters is ID, if the ID is NULL or 0, you know it's an INSERT, otherwise it's an update.  Assumes the application knows if there is an ID, so wont work in all situations, but will cut the executes in half if you do.
+
+Your logic seems sound, but you might want to consider adding some code to prevent the insert if you had passed in a specific primary key.
+Otherwise, if you're always doing an insert if the update didn't affect any records, what happens when someone deletes the record before you "UPSERT" runs?  Now the record you were trying to update doesn't exist, so it'll create a record instead.  That probably isn't the behavior you were looking for.
+
+If you are not doing a merge in SQL 2008 you must change it to:
+if @@rowcount = 0 and @@error=0
+otherwise if the update fails for some reason then it will try and to an insert afterwards because the rowcount on a failed statement is 0
+
+You not only need to run it in transaction, it also needs high isolation level. I fact default isolation level is Read Commited and this code need Serializable. 
+SET transaction isolation level SERIALIZABLE
+BEGIN TRANSACTION Upsert
+UPDATE myTable set Col1=@col1, Col2=@col2 where ID=@ID
+if @@rowcount = 0
+  begin
+    INSERT into myTable (ID, Col1, Col2) values (@ID @col1, @col2)
+  end
+COMMIT TRANSACTION Upsert
+
+Mayne adding also the @@error check and rollback could be good idea.
+
+Please read the post on my blog for a good, safe pattern you can use. There are a lot of considerations, and the accepted answer on this question is far from safe. 
+For a quick answer try the following pattern. It will work fine on SQL 2000 and above. SQL 2005 gives you error handling which opens up other options and SQL 2008 gives you a MERGE command. 
+begin tran
+   update t with (serializable)
+   set hitCount = hitCount + 1
+   where pk = @id
+   if @@rowcount = 0
+   begin
+      insert t (pk, hitCount)
+      values (@id,1)
+   end
+commit tran
+
+
+Modified Dima Malenko post:
+SET TRANSACTION ISOLATION LEVEL SERIALIZABLE 
+
+BEGIN TRANSACTION UPSERT 
+
+UPDATE MYTABLE 
+SET    COL1 = @col1, 
+       COL2 = @col2 
+WHERE  ID = @ID 
+
+IF @@rowcount = 0 
+  BEGIN 
+      INSERT INTO MYTABLE 
+                  (ID, 
+                   COL1, 
+                   COL2) 
+      VALUES      (@ID, 
+                   @col1, 
+                   @col2) 
+  END 
+
+IF @@Error > 0 
+  BEGIN 
+      INSERT INTO MYERRORTABLE 
+                  (ID, 
+                   COL1, 
+                   COL2) 
+      VALUES      (@ID, 
+                   @col1, 
+                   @col2) 
+  END 
+
+COMMIT TRANSACTION UPSERT 
+
+You can trap the error and send the record to a failed insert table. 
+I needed to do this because we are taking whatever data is send via WSDL and if possible fixing it internally. 

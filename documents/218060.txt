@@ -1,0 +1,186 @@
+Random Gaussian Variables
+c# .net random gaussian normal-distribution
+Is there a class in the standard library of .NET that gives me the functionality to create random variables that follow Gaussian distribution? 
+
+
+I don't think there is. And I really hope there isn't, as the framework is already bloated enough, without such specialised functionality filling it even more.
+Take a look at http://www.extremeoptimization.com/Statistics/UsersGuide/ContinuousDistributions/NormalDistribution.aspx and http://www.vbforums.com/showthread.php?t=488959 for a third party .NET solutions though.
+
+http://mathworld.wolfram.com/Box-MullerTransformation.html
+Using two random variables, you can generate random values along a Gaussian distribution. It's not a difficult task at all.
+
+Jarrett's suggestion of using a Box-Muller transform is good for a quick-and-dirty solution.  A simple implementation:
+Random rand = new Random(); //reuse this if you are generating many
+double u1 = rand.NextDouble(); //these are uniform(0,1) random doubles
+double u2 = rand.NextDouble();
+double randStdNormal = Math.Sqrt(-2.0 * Math.Log(u1)) *
+             Math.Sin(2.0 * Math.PI * u2); //random normal(0,1)
+double randNormal =
+             mean + stdDev * randStdNormal; //random normal(mean,stdDev^2)
+
+
+Math.NET Iridium also claims to implement "non-uniform random generators (normal, poisson, binomial, ...)".
+
+I created a request for such a feature on Microsoft Connect.  If this is something you're looking for, please vote for it and increase its visibility.
+https://connect.microsoft.com/VisualStudio/feedback/details/634346/guassian-normal-distribution-random-numbers
+This feature is included in the Java SDK.  Its implementation is available as part of the documentation and is easily ported to C# or other .NET languages.
+If you're looking for pure speed, then the Zigorat Algorithm is generally recognised as the fastest approach.
+I'm not an expert on this topic though -- I came across the need for this while implementing a particle filter for my RoboCup 3D simulated robotic soccer library and was surprised when this wasn't included in the framework.
+
+In the meanwhile, here's a wrapper for Random that provides an efficient implementation of the Box Muller polar method:
+public sealed class GaussianRandom
+{
+    private bool _hasDeviate;
+    private double _storedDeviate;
+    private readonly Random _random;
+
+    public GaussianRandom(Random random = null)
+    {
+        _random = random ?? new Random();
+    }
+
+    /// <summary>
+    /// Obtains normally (Gaussian) distributed random numbers, using the Box-Muller
+    /// transformation.  This transformation takes two uniformly distributed deviates
+    /// within the unit circle, and transforms them into two independently
+    /// distributed normal deviates.
+    /// </summary>
+    /// <param name="mu">The mean of the distribution.  Default is zero.</param>
+    /// <param name="sigma">The standard deviation of the distribution.  Default is one.</param>
+    /// <returns></returns>
+    public double NextGaussian(double mu = 0, double sigma = 1)
+    {
+        if (sigma <= 0)
+            throw new ArgumentOutOfRangeException("sigma", "Must be greater than zero.");
+
+        if (_hasDeviate)
+        {
+            _hasDeviate = false;
+            return _storedDeviate*sigma + mu;
+        }
+
+        double v1, v2, rSquared;
+        do
+        {
+            // two random values between -1.0 and 1.0
+            v1 = 2*_random.NextDouble() - 1;
+            v2 = 2*_random.NextDouble() - 1;
+            rSquared = v1*v1 + v2*v2;
+            // ensure within the unit circle
+        } while (rSquared >= 1 || rSquared == 0);
+
+        // calculate polar tranformation for each deviate
+        var polar = Math.Sqrt(-2*Math.Log(rSquared)/rSquared);
+        // store first deviate
+        _storedDeviate = v2*polar;
+        _hasDeviate = true;
+        // return second deviate
+        return v1*polar*sigma + mu;
+    }
+}
+
+
+You could try Infer.NET.  It's not commercial licensed yet though.  Here is there link
+It is a probabilistic framework for .NET developed my Microsoft research.  They have .NET types for distributions of Bernoulli, Beta, Gamma, Gaussian, Poisson, and probably some more I left out.
+It may accomplish what you want.  Thanks.
+
+Math.NET provides this functionality. Here's how:
+double mean = 100;
+double stdDev = 10;
+
+MathNet.Numerics.Distributions.Normal normalDist = new Normal(mean, stdDev);
+double randomGaussianValue=   normalDist.Sample();
+
+You can find documentation here:
+http://numerics.mathdotnet.com/api/MathNet.Numerics.Distributions/Normal.htm
+
+This question appears to have moved on top of Google for .NET Gaussian generation, so I figured I'd post an answer.
+I've made some extension methods for the .NET Random class, including an implementation of the Box-Muller transform. Since they're extensions, so long as the project is included (or you reference the compiled DLL), you can still do
+var r = new Random();
+var x = r.NextGaussian();
+
+Hope nobody minds the shameless plug.
+Sample histogram of results (a demo app for drawing this is included):
+
+
+I'd like to expand upon @yoyoyoyosef's answer by making it even faster, and writing a wrapper class. The overhead incurred may not mean twice as fast, but I think it should be almost twice as fast. It isn't thread-safe, though.
+public class Gaussian
+{
+     private bool _available;
+     private double _nextGauss;
+     private Random _rng;
+
+     public Gaussian()
+     {
+         _rng = new Random();
+     }
+
+     public double RandomGauss()
+     {
+        if (_available)
+        {
+            _available = false;
+            return _nextGauss;
+        }
+
+        double u1 = _rng.NextDouble();
+        double u2 = _rng.NextDouble();
+        double temp1 = Math.Sqrt(-2.0*Math.Log(u1));
+        double temp2 = 2.0*Math.PI*u2;
+
+        _nextGauss = temp1 * Math.Sin(temp2);
+        _available = true;
+        return temp1*Math.Cos(temp2);
+     }
+
+    public double RandomGauss(double mu, double sigma)
+    {
+        return mu + sigma*RandomGauss();
+    }
+
+    public double RandomGauss(double sigma)
+    {
+        return sigma*RandomGauss();
+    }
+}
+
+
+This is my simple Box Muller inspired implementation. You can increase the resolution to fit your needs. Although this works great for me, this is a limited range approximation, so keep in mind the tails are closed and finite, but certainly you can expand them as needed.
+    //
+    // by Dan
+    // islandTraderFX
+    // copyright 2015
+    // Siesta Key, FL
+    //    
+// 0.0  3231 ********************************
+// 0.1  1981 *******************
+// 0.2  1411 **************
+// 0.3  1048 **********
+// 0.4  810 ********
+// 0.5  573 *****
+// 0.6  464 ****
+// 0.7  262 **
+// 0.8  161 *
+// 0.9  59 
+//Total: 10000
+
+double g()
+{
+   double res = 1000000;
+   return random.Next(0, (int)(res * random.NextDouble()) + 1) / res;
+}
+
+public static class RandomProvider
+{
+   public static int seed = Environment.TickCount;
+
+   private static ThreadLocal<Random> randomWrapper = new ThreadLocal<Random>(() =>
+       new Random(Interlocked.Increment(ref seed))
+   );
+
+   public static Random GetThreadRandom()
+   {
+       return randomWrapper.Value;
+   }
+} 
+

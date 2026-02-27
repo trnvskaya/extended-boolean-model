@@ -1,0 +1,87 @@
+How to use the SharePoint MultipleLookupField control?
+sharepoint
+I want to use the  MultipleLookupField control in a web page that will run in the context of SharePoint. I was wondering if anyone would help me with an example, which shows step by step how to use the control two display two SPField Collections.
+
+
+I'm not entirely sure I understand your question, especially the bit about displaying two SPField collections. Sorry if this turns out to be the answer to a completely different question!
+Anyway here's a quick demo walkthrough of using the MultipleLookupField in a web part.
+Create a team site. Add a few tasks to the task list. Also put a document in the Shared Documents library. Create a new column in the Shared Documents library; call it "Related", have it be a Lookup into the Title field of the Tasks list, and allow multiple values.
+Now create a web part, do all the usual boilerplate and then add this:
+Label l;
+MultipleLookupField mlf;
+
+protected override void CreateChildControls()
+{
+    base.CreateChildControls();
+    SPList list = SPContext.Current.Web.Lists["Shared Documents"];
+    if (list != null && list.Items.Count > 0)
+    {
+        LiteralControl lit = new LiteralControl("Associate tasks to " + 
+                             list.Items[0].Name);
+        this.Controls.Add(lit);
+
+        mlf = new MultipleLookupField();
+        mlf.ControlMode = SPControlMode.Edit;
+        mlf.FieldName = "Related";
+        mlf.ItemId = list.Items[0].ID;
+        mlf.ListId = list.ID;
+        mlf.ID = "Related";
+        this.Controls.Add(mlf);
+
+        Button b = new Button();
+        b.Text = "Change";
+        b.Click += new EventHandler(bClick);
+        this.Controls.Add(b);
+
+        l = new Label();
+        this.Controls.Add(l);
+    }
+
+}
+
+void bClick(object sender, EventArgs e)
+{
+    l.Text = "";
+    foreach (SPFieldLookupValue val in (SPFieldLookupValueCollection)mlf.Value)
+    {
+        l.Text += val.LookupValue.ToString() + " ";
+    }
+    SPListItem listitem = mlf.List.Items[0];
+    listitem["Related"] = mlf.Value;
+    listitem.Update();
+    mlf.Value = listitem["Related"];
+}
+
+protected override void OnInit(EventArgs e)
+{
+    base.OnInit(e);
+    EnsureChildControls();
+}
+
+Granted, this is borderline ridiculous -- everything is hard-coded, there is no error-handling at all, and it serves no useful purpose -- but it's only meant as a quick demo. Now build and deploy this web part and add an instance of it to your team site's homepage; it should allow you to get and set the tasks which are associated with the first document in the library.
+The strange bit towards the end of the button Click handler, where we read a value from mlf.Value and then write it back again, appears to be required if you want the UI to stay in sync with the actual list values. Try omitting the last line of bClick to see what I mean. This has been driving me nuts for the last hour or so, and I'm hoping another commenter can come up with a better approach...
+
+Hm. Works fine on mine, so let's see if we can work out how your setup is different...
+It looks as though it's having trouble populating the control; my first guess would be that this is because the code makes so many assumptions about the lists it's talking to. Can you check that you've got a plain vanilla Team site, with (assume these names are case-sensitive): 
+
+A list called Tasks, with several items in it
+A library called Shared Documents with at least one document
+A column called Related in the Shared Documents library
+The Related column is a Lookup field into the Title column of Tasks, and allows multiple values.
+The first document in Shared Documents has a value for Related
+
+Then add the webpart. Fingers crossed...
+
+Hm. OK, I'm still trying to break mine... so I went to the layouts directory and created a file foo.aspx. Here it is:
+<%@ Page Language="C#" Inherits="System.Web.UI.Page" MasterPageFile="~/_layouts/simple.master" %> 
+<%@ Register Tagprefix="foo" Namespace="Foople" Assembly="Foople, Version=1.0.0.0, Culture=neutral, PublicKeyToken=9f4da00116c38ec5"%>
+<asp:Content ContentPlaceHolderId="PlaceHolderMain" runat="server">
+<foo:WebPart1 id="fred" runat="server" />
+<foo:WebPart1a id="barney" runat="server" />
+</asp:Content>
+
+WebPart1 is the webpart from before. WebPart1a is the exact same code, but in a class that inherits directly from WebControl rather than from WebPart.
+It works fine, apart from a security validation problem on the postback that I can't be bothered to debug.
+Changing the masterpage to ~masterurl/default.master, I uploaded foo.aspx to the Shared Documents library, and it works fine from there too -- both the WebControl and the WebPart behave properly, and the security problem is gone too.
+So I'm at a loss. Although I did notice this page with an obscure might-be-bug which is also in SPFolder.get_ContentTypeOrder(): http://forums.msdn.microsoft.com/en-US/sharepointdevelopment/thread/63baf273-7f36-453e-8293-26417759e2e1/
+Any chance you could post your code?

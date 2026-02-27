@@ -1,0 +1,112 @@
+Dealing with C++ "initialized but not referenced" warning for destruction of scope helpers?
+c++ visual-studio-2005 warnings
+In Visual Studio, I often use objects only for RAII purposes.  For example:
+ScopeGuard close_guard = MakeGuard( &close_file, file );
+
+The whole purpose of *close_guard* is to make sure that the file will be close on function exit, it is not used anywhere else.  However, Visual Studio gives me a warning that a "local variable is initialized but not referenced".  I want to turn this warning off for this specific case.
+How do you deal with this kind of situation?  Visual Studio thinks that this object is useless, but this is wrong since it has a non-trivial destructor.
+I wouldn't want to use a #pragma warning directive for this since it would turn off this warning even for legitimate reasons.
+
+
+Try adding 'volatile' to the ScopeGuard declaration.
+
+Method 1: Use the #pragma warning directive.
+#pragma warning allows selective modification of the behavior of compiler warning messages.
+#pragma warning( push )
+#pragma warning( disable : 4705 ) // replace 4705 with warning number
+
+ScopeGuard close_guard = MakeGuard( &close_file, file );
+
+#pragma warning( pop )
+
+This code saves the current warning state, then it disables the warning for a specific warning code and then restores the last saved warning state.
+Method 2: Use a workaround like the following. Visual Studio will be happy and so will you. This workaround is used in many Microsoft samples and also in other projects.
+ScopeGuard close_guard = MakeGuard( &close_file, file );
+close_guard;
+
+Or you can create a #define to workaround the warning.
+#define UNUSED_VAR(VAR) VAR
+...
+ScopeGuard close_guard = MakeGuard( &close_file, file );
+UNUSED_VAR(close_guard);
+
+
+Some users stated that the code presented will not work because ScopeGuard is a typedef. This assumption is wrong.
+http://www.ddj.com/cpp/184403758
+
+According to the C++ Standard, a
+  reference initialized with a temporary
+  value makes that temporary value live
+  for the lifetime of the reference
+  itself.
+
+
+We use:
+static_cast<void>(close_guard);
+
+for variables that the compiler is complaining about.
+
+You can scope the #pragma warning around that line of code only by using
+#pragma warning(push)
+#pragma warning(disable:XXXX)
+your code here;
+#pragma warning(pop)
+
+or
+#pragma warning(disable:XXXX)
+your code here;
+#pragma warning(default:XXXX)
+
+You can also use UNREFERENCED_PARAMETER(close_guard); after the line of code above.
+
+In some of VC++ header files, MS defines a macro:
+#define UNUSED(x) x
+
+used like:
+ScopeGuard close_guard = MakeGuard( &close_file, file );
+UNUSED(close_guard);
+
+Which silences the warning, and documents it.
+
+If your object has a non-trivial destructor, Visual Studio should not be giving you that warning.  The following code does not generate any warnings in VS2005 with warnings turned all the way up (/W4):
+
+class Test
+{
+public:
+    ~Test(void) { printf("destructor\n"); }
+};
+
+Test foo(void) { return Test(); }
+
+int main(void)
+{
+    Test t = foo();
+    printf("moo\n");
+
+    return 0;
+}
+
+Commenting out the destructor gives a warning; the code as-is does not.
+
+I use smink's post above and have only to add that I stick a comment next to the #define saying // used to suppress warning [warning number] in visual studio
+
+The core issue here seems to really be that the compiler does not quite understand what you are going at... which seems to be to use scoping semantics in C++ to get some code called when a variable is deallocated even when it is not being used. Right?  That mechanism itself strikes me as borderline... a compiler should have the right to remove unused variables but the C++ construction semantics really messes these things up.  No other way to do this that is less sleight-of-hand?
+
+Well, in this case ScopeGuard is actually a typedef to a reference type. This wouldn't work unfortunately.
+Wouldn't that mean the whole ScopeGuard doesn't work, because in that case the destructor won't be called???
+
+I guess in practice, I would grudingly go with the #pragma disable... or 'UNUSED'. However, as a main rule, code should be kept clean of warnings even at the cost of some extra bulk.  It should compile in multiple different compilers on different platforms and operating systems without warnings.  If it does not, the code has be to fixed so that it does. Maintaining code that generates warnings at gcc -Wall level is not a good idea.
+Compiler warnings are your friend, and should be heeded as a matter or principle. Even when it means things have to be implemented in a bit bulkier and more verbose ways. Pays for itself in the long run as the code is ported, maintained, and lives on forever...
+
+You could explicitly create the ScopeGuardImpl1 object, provided that there aren't so many parameters in the cases you're using that the result is unreadable. That way you'd avoid the reference-initialized-with-temporary that the VS warning apparently fails to understand. The cost is having to spell things out longhand, rather than getting the MakeGuard template magic.
+
+I'd use macro all the way in this case:
+#define SCOPE_GUARD(guard, fn, param) \
+    ScopeGuard guard = MakeGuard(fn, param); \
+    static_cast<void>(guard)
+
+now your code is nice and short:
+SCOPE_GUARD(g1, &file_close, file1);
+SCOPE_GUARD(g2, &file_close, file2);
+
+One advantage of this approach is that later on you can add __LINE__, __func__ etc to log the guard actions later if needed.

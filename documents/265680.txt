@@ -1,0 +1,56 @@
+AspectJ: parameter in a pointcut
+aspectj
+I'm using AspectJ to advice all the public methods which do have an argument of a chosen class. I tried the following:
+pointcut permissionCheckMethods(Session sess) : 
+    (execution(public * *(.., Session)) && args(*, sess));
+
+This is working wonderfully for methods with at least 2 arguments:
+public void delete(Object item, Session currentSession);
+
+but it does not work with methods like:
+public List listAll(Session currentSession);
+
+How may I change my pointcut to advice both methods executions? In other words: I expected the ".." wildcard to represent "zero or more arguments", but it looks like it means instead "one or more"...
+
+
+Oh well... I worked that around with this nasty trick. Still waiting for someone to show up with an "official" pointcut definition.
+pointcut permissionCheckMethods(EhealthSession eheSess) : 
+    (execution(public * *(.., EhealthSession)) && args(*, eheSess))
+    && !within(it.___.security.PermissionsCheck);
+
+pointcut permissionCheckMethods2(EhealthSession eheSess) : 
+    (execution(public * *(EhealthSession)) && args(eheSess))
+    && !within(it.___.security.PermissionsCheck)
+    && !within(it.___.app.impl.EhealthApplicationImpl);
+
+before(EhealthSession eheSess) throws AuthorizationException : permissionCheckMethods(eheSess)
+{
+    Signature sig = thisJoinPointStaticPart.getSignature(); 
+    check(eheSess, sig);
+}
+
+before(EhealthSession eheSess) throws AuthorizationException : permissionCheckMethods2(eheSess)
+{
+    Signature sig = thisJoinPointStaticPart.getSignature(); 
+    check(eheSess, sig);
+}
+
+
+How about:
+pointcut permissionCheckMethods(Session sess) : 
+(execution(public * *(..)) && args(.., sess));
+
+I guess this will match if last (or only) argument is of type Session. By swapping the positions of args you can also match first-or-only. But i don't know if matching any arbitrary position is possible.   
+
+I cannot extend AspectJ syntax for you, but I can offer a workaround. But first let me explain why it is not possible to do what you want with an args definition in a pointcut: because if you would match your EhealthSession parameter anyplace within the method signature, how should AspectJ handle the case that the signature contains multiple parameters of that class? The meaning of eheSess would be ambiguous.
+Now the workaround: It might be slower - how much depends on your environment, just test it - but you could just have the pointcut match all potential methods regardless of their parameter list and then let the advice find the parameter you need by inspecting the parameter list:
+pointcut permissionCheckMethods() : execution(public * *(..));
+
+before() throws AuthorizationException : permissionCheckMethods() {
+    for (Object arg : thisJoinPoint.getArgs()) {
+        if (arg instanceof EhealthSession)
+            check(arg, thisJoinPointStaticPart.getSignature());
+    }
+}
+
+P.S.: Maybe you can narrow the focus via within(SomeBaseClass+) or within(*Postfix) or within(com.company.package..*) so as not to apply the advice to the whole universe.

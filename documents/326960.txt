@@ -1,0 +1,105 @@
+Comparing 2 XML docs and applying the changes to source document
+c# xml xslt merge
+Here's my problem.I have 2 xmlfiles with identical structure, with the second xml containing only few node compared to first.
+File1
+  <root>
+    <alpha>111</alpha>
+    <beta>22</beta>
+    <gamma></gamma>
+    <delta></delta>
+  </root>
+
+File2
+ <root>
+    <beta>XX</beta>
+    <delta>XX</delta>
+ </root>
+
+This's what the result should look like 
+ <root>
+    <alpha>111</alpha>
+    <beta>22</beta>
+    <gamma></gamma>
+    <delta>XX</delta>
+ </root>
+
+Basically if the node contents of any node in File1 is blank then it should read the values from File2(if it exists, that is).
+I did try my luck with Microsoft XmlDiff API but it didn't work out for me(the patch process didn't apply changes to the source doc). Also I'm a bit worried about the DOM approach that it uses, because of the size of the xml that I'll be dealing with.
+Can you please suggest a good way of doing this.
+I'm using C# 2 
+
+
+This merge seems very specific.
+If that is the case, just write some code to load both xml files and apply the changes as you described.
+
+In XSLT you can use the document() function to retrieve nodes from File2 if you encounter an empty node in File1. Something like:
+<?xml version="1.0" encoding="utf-8"?>
+<xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform" version="1.0">
+
+  <xsl:template match="root/*[.='']">
+    <xsl:variable name="file2node">
+        <xsl:copy-of select="document('File2.xml')/root/*[name()=name(current())]"/>
+    </xsl:variable>
+    <xsl:choose>
+      <xsl:when test="$file2node != ''">
+        <xsl:copy-of select="$file2node"/>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:copy/>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template match="*">
+    <xsl:copy>
+      <xsl:copy-of select="@*"/>
+      <xsl:apply-templates/>
+    </xsl:copy>
+  </xsl:template>
+
+</xsl:stylesheet>
+
+
+Here is a little bit simpler and more efficient solution that that proposed by Alastair (see my comment to his solution).
+This transformation:
+
+<xsl:stylesheet version="1.0"
+  xmlns:xsl="http://www.w3.org/1999/XSL/Transform" >
+  <xsl:output omit-xml-declaration="yes" indent="yes"/>
+
+    <xsl:variable name="vFile2"
+    	 select="document('File2.xml')"/>
+
+    <xsl:template match="*">
+      <xsl:copy>
+        <xsl:copy-of select="@*"/>
+    		<xsl:apply-templates/>
+    	</xsl:copy>
+    </xsl:template>
+
+    <xsl:template match="*[not(text())]">
+      <xsl:copy>
+    	<xsl:copy-of
+    	  select="$vFile2/*/*[name() = name(current())]/text()"/>
+    	</xsl:copy>
+    </xsl:template>
+</xsl:stylesheet>
+
+when applied on this XML document:
+
+<root>
+    <alpha>111</alpha>
+    <beta>22</beta>
+    <gamma></gamma>
+    <delta></delta>
+</root>
+
+produces the wanted result:
+
+<root>
+    <alpha>111</alpha>
+    <beta>22</beta>
+    <gamma></gamma>
+    <delta>XX</delta>
+</root>
+

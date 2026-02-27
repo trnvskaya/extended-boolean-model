@@ -1,0 +1,332 @@
+Stuck creating a "security trimmed" html.ActionLink extension method
+asp.net-mvc
+I'm trying to create an Extension Method for MVC's htmlHelper.
+The purpose is to enable or disable an ActionLink based on the AuthorizeAttribute set on the controller/action.
+Borrowing from the MVCSitemap
+code that Maarten Balliauw created, I wanted to validate the user's permissions against the controller/action before deciding how to render the actionlink.
+When I try to get the MvcHandler, I get a null value.
+Is there a better way to the the attributes for the controller/action?
+Here is the code for the extension method:
+public static class HtmlHelperExtensions
+{
+    public static string SecurityTrimmedActionLink(this HtmlHelper htmlHelper, string linkText, string action, string controller)
+    {
+        //simplified for brevity 
+        if (IsAccessibleToUser(action, controller))
+        {
+            return htmlHelper.ActionLink(linkText, action,controller);    
+        }
+        else
+        {
+            return String.Format("<span>{0}</span>",linkText);    
+        }
+    }
+
+    public static bool IsAccessibleToUser(string action, string controller)
+    {
+        HttpContext context = HttpContext.Current;
+
+        MvcHandler handler = context.Handler as MvcHandler;            
+
+        IController verifyController = 
+            ControllerBuilder
+            .Current
+            .GetControllerFactory()
+            .CreateController(handler.RequestContext, controller);
+
+        object[] controllerAttributes = verifyController.GetType().GetCustomAttributes(typeof(AuthorizeAttribute), true);
+        object[] actionAttributes = verifyController.GetType().GetMethod(action).GetCustomAttributes(typeof(AuthorizeAttribute), true);
+
+        if (controllerAttributes.Length == 0 && actionAttributes.Length == 0)
+            return true;
+
+        IPrincipal principal = handler.RequestContext.HttpContext.User;
+
+        string roles = "";
+        string users = "";
+        if (controllerAttributes.Length > 0)
+        {
+            AuthorizeAttribute attribute = controllerAttributes[0] as AuthorizeAttribute;
+            roles += attribute.Roles;
+            users += attribute.Users;
+        }
+        if (actionAttributes.Length > 0)
+        {
+            AuthorizeAttribute attribute = actionAttributes[0] as AuthorizeAttribute;
+            roles += attribute.Roles;
+            users += attribute.Users;
+        }
+
+        if (string.IsNullOrEmpty(roles) && string.IsNullOrEmpty(users) && principal.Identity.IsAuthenticated)
+            return true;
+
+        string[] roleArray = roles.Split(',');
+        string[] usersArray = users.Split(',');
+        foreach (string role in roleArray)
+        {
+            if (role != "*" && !principal.IsInRole(role)) return false;
+        }
+        foreach (string user in usersArray)
+        {
+            if (user != "*" && (principal.Identity.Name == "" || principal.Identity.Name != user)) return false;
+        }
+        return true;
+    }
+
+}
+
+
+
+Your ViewPage has a reference to the view context, so you could make it an extension method on that instead.
+Then you can just say if Request.IsAuthenticated or Request.User.IsInRole(...)
+usage would be like <%= this.SecurityLink(text, demandRole, controller, action, values) %>
+
+Here is the working code:
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+using System.Security.Principal;
+using System.Web.Routing;
+using System.Web.Mvc;
+using System.Collections;
+using System.Reflection;
+namespace System.Web.Mvc.Html
+{
+    public static class HtmlHelperExtensions
+    {
+        public static string SecurityTrimmedActionLink(
+        this HtmlHelper htmlHelper,
+        string linkText,
+        string action,
+        string controller)
+        {
+            return SecurityTrimmedActionLink(htmlHelper, linkText, action, controller, false);
+        }
+        public static string SecurityTrimmedActionLink(this HtmlHelper htmlHelper, string linkText, string action, string controller, bool showDisabled)
+        {
+            if (IsAccessibleToUser(action, controller))
+            {
+                return htmlHelper.ActionLink(linkText, action, controller);
+            }
+            else
+            {
+                return showDisabled ? String.Format("<span>{0}</span>", linkText) : "";
+            }
+        }
+        public static bool IsAccessibleToUser(string actionAuthorize, string controllerAuthorize)
+        {
+            Assembly assembly = Assembly.GetExecutingAssembly();
+            GetControllerType(controllerAuthorize);
+            Type controllerType = GetControllerType(controllerAuthorize);
+            var controller = (IController)Activator.CreateInstance(controllerType);
+            ArrayList controllerAttributes = new ArrayList(controller.GetType().GetCustomAttributes(typeof(AuthorizeAttribute), true));
+            ArrayList actionAttributes = new ArrayList();
+            MethodInfo[] methods = controller.GetType().GetMethods();
+            foreach (MethodInfo method in methods)
+            {
+                object[] attributes = method.GetCustomAttributes(typeof(ActionNameAttribute), true);
+                if ((attributes.Length == 0 && method.Name == actionAuthorize) || (attributes.Length > 0 && ((ActionNameAttribute)attributes[0]).Name == actionAuthorize))
+                {
+                    actionAttributes.AddRange(method.GetCustomAttributes(typeof(AuthorizeAttribute), true));
+                }
+            }
+            if (controllerAttributes.Count == 0 && actionAttributes.Count == 0)
+                return true;
+
+            IPrincipal principal = HttpContext.Current.User;
+            string roles = "";
+            string users = "";
+            if (controllerAttributes.Count > 0)
+            {
+                AuthorizeAttribute attribute = controllerAttributes[0] as AuthorizeAttribute;
+                roles += attribute.Roles;
+                users += attribute.Users;
+            }
+            if (actionAttributes.Count > 0)
+            {
+                AuthorizeAttribute attribute = actionAttributes[0] as AuthorizeAttribute;
+                roles += attribute.Roles;
+                users += attribute.Users;
+            }
+
+            if (string.IsNullOrEmpty(roles) && string.IsNullOrEmpty(users) && principal.Identity.IsAuthenticated)
+                return true;
+
+            string[] roleArray = roles.Split(',');
+            string[] usersArray = users.Split(',');
+            foreach (string role in roleArray)
+            {
+                if (role == "*" || principal.IsInRole(role))
+                    return true;
+            }
+            foreach (string user in usersArray)
+            {
+                if (user == "*" && (principal.Identity.Name == user))
+                    return true;
+            }
+            return false;
+        }
+
+        public static Type GetControllerType(string controllerName)
+        {
+            Assembly assembly = Assembly.GetExecutingAssembly();
+            foreach (Type type in assembly.GetTypes())
+            {
+                if (type.BaseType.Name == "Controller" && (type.Name.ToUpper() == (controllerName.ToUpper() + "Controller".ToUpper())))
+                {
+                    return type;
+                }
+            }
+            return null;
+        }
+    }
+}
+
+I don't like using reflection, but I can't get to the ControllerTypeCache. 
+
+I really liked the code from @Robert's post, but there were a few bugs and I wanted to cache the gathering of the roles and users because reflection can be a little time costly.
+Bugs fixed: if there is both a Controller attribute and an Action attribute, then when the roles get concatenated, an extra comma doesn't get inserted between the controller's roles and the action's roles which will not get analyzed correctly.
+[Authorize(Roles = "SuperAdmin,Executives")]
+public class SomeController() {
+    [Authorize(Roles = "Accounting")]    
+    public ActionResult Stuff() {
+    }
+}
+
+then the roles string ends up being SuperAdmin,ExecutivesAccounting, my version ensures that Executives and Accounting is separate. 
+My new code also ignores Auth on HttpPost actions because that could throw things off, albeit unlikely.
+Lastly, it returns MvcHtmlString instead of string for newer versions of MVC
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Web;
+using System.Reflection;
+using System.Collections;
+using System.Web.Mvc;
+using System.Web.Mvc.Html;
+using System.Security.Principal;
+
+
+public static class HtmlHelperExtensions
+{
+    /// <summary>
+    /// only show links the user has access to
+    /// </summary>
+    /// <returns></returns>
+    public static MvcHtmlString SecurityLink(this HtmlHelper htmlHelper, string linkText, string action, string controller, bool showDisabled = false)
+    {
+        if (IsAccessibleToUser(action, controller))
+        {
+            return htmlHelper.ActionLink(linkText, action, controller);
+        }
+        else
+        {
+            return new MvcHtmlString(showDisabled ? String.Format("<span>{0}</span>", linkText) : "");
+        }
+    }
+
+    /// <summary>
+    /// reflection can be kinda slow, lets cache auth info
+    /// </summary>
+    private static Dictionary<string, Tuple<string[], string[]>> _controllerAndActionToRolesAndUsers = new Dictionary<string, Tuple<string[], string[]>>();
+
+
+    private static Tuple<string[], string[]> GetAuthRolesAndUsers(string actionName, string controllerName)
+    {
+        var controllerAndAction = controllerName + "~~" + actionName;
+        if (_controllerAndActionToRolesAndUsers.ContainsKey(controllerAndAction))
+            return _controllerAndActionToRolesAndUsers[controllerAndAction];
+
+        Type controllerType = GetControllerType(controllerName);
+        MethodInfo matchingMethodInfo = null;
+
+        foreach (MethodInfo method in controllerType.GetMethods())
+        {
+            if (method.GetCustomAttributes(typeof(HttpPostAttribute), true).Any())
+                continue;
+            if (method.GetCustomAttributes(typeof(HttpPutAttribute), true).Any())
+                continue;
+            if (method.GetCustomAttributes(typeof(HttpDeleteAttribute), true).Any())
+                continue;
+
+            var actionNameAttr = method.GetCustomAttributes(typeof(ActionNameAttribute), true).Cast<ActionNameAttribute>().FirstOrDefault();
+            if ((actionNameAttr == null && method.Name == actionName) || (actionNameAttr != null && actionNameAttr.Name == actionName))
+            {
+                matchingMethodInfo = method;
+            }
+        }
+
+        if (matchingMethodInfo == null)
+            return new Tuple<string[], string[]>(new string[0], new string[0]);
+
+        var authAttrs = new List<AuthorizeAttribute>();
+        authAttrs.AddRange(controllerType.GetCustomAttributes(typeof(AuthorizeAttribute), true).Cast<AuthorizeAttribute>());
+
+        var roles = new List<string>();
+        var users = new List<string>();
+
+        foreach(var authAttr in authAttrs)
+        {
+            roles.AddRange(authAttr.Roles.Split(','));
+            users.AddRange(authAttr.Roles.Split(','));
+        }
+
+        var rolesAndUsers = new Tuple<string[], string[]>(roles.ToArray(), users.ToArray());
+        try
+        {
+            _controllerAndActionToRolesAndUsers.Add(controllerAndAction, rolesAndUsers);
+        }
+        catch (System.ArgumentException ex)
+        {
+            //possible but unlikely that two threads hit this code at the exact same time and enter a race condition
+            //instead of using a mutex, we'll just swallow the exception when the method gets added to dictionary 
+            //for the second time. mutex only allow single worker regardless of which action method they're getting
+            //auth for. doing it this way eliminates permanent bottleneck in favor of a once in a bluemoon time hit
+        }
+
+        return rolesAndUsers;
+    }
+
+    public static bool IsAccessibleToUser(string actionName, string controllerName)
+    {
+        var rolesAndUsers = GetAuthRolesAndUsers(actionName, controllerName);
+        var roles = rolesAndUsers.Item1;
+        var users = rolesAndUsers.Item2;
+
+        IPrincipal principal = HttpContext.Current.User;
+
+        if (!roles.Any() && !users.Any() && principal.Identity.IsAuthenticated)
+            return true;
+
+
+        foreach (string role in roles)
+        {
+            if (role == "*" || principal.IsInRole(role))
+                return true;
+        }
+        foreach (string user in users)
+        {
+            if (user == "*" && (principal.Identity.Name == user))
+                return true;
+        }
+
+        return false;
+    }
+
+    public static Type GetControllerType(string controllerName)
+    {
+        Assembly assembly = Assembly.GetExecutingAssembly();
+        foreach (Type type in assembly.GetTypes())
+        {
+            if (type.BaseType.Name == "Controller" && (type.Name.ToUpper() == (controllerName.ToUpper() + "Controller".ToUpper())))
+            {
+                return type;
+            }
+        }
+        return null;
+    }
+
+
+}
+

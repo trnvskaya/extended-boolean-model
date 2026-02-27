@@ -1,0 +1,178 @@
+Using pre-compiled headers with CMake
+c++ visual-studio gcc cmake precompiled-headers
+I have seen a few (old) posts on the 'net about hacking together some support for pre-compiled headers in CMake. They all seem a bit all-over the place and everyone has their own way of doing it. What is the best way of doing it currently?
+
+
+Don't even go there. Precompiled headers mean that whenever one of the headers changes, you have to rebuild everything. You're lucky if you have a build system that realizes this. More often than never, your build will just fail until you realize that you changed something that is being precompiled, and therefore you need to do a full rebuild. You can avoid this mostly by precompiling the headers that you are absolutely positive won't change, but then you're giving up a large part of the speed gain as well.
+The other problem is that your namespace gets polluted with all kinds of symbols that you don't know or care about in many places where you'd be using the precompiled headers.
+
+Here is a code snippet to allow you to use precompiled header for your project.
+Add the following to your CMakeLists.txt replacing myprecompiledheaders and myproject_SOURCE_FILES as appropriate:
+if (MSVC)
+
+    set_source_files_properties(myprecompiledheaders.cpp
+        PROPERTIES
+        COMPILE_FLAGS "/Ycmyprecompiledheaders.h"
+        )
+    foreach( src_file ${myproject_SOURCE_FILES} )
+        set_source_files_properties(
+            ${src_file}
+            PROPERTIES
+            COMPILE_FLAGS "/Yumyprecompiledheaders.h"
+            )
+    endforeach( src_file ${myproject_SOURCE_FILES} )
+    list(APPEND myproject_SOURCE_FILES myprecompiledheaders.cpp)
+endif (MSVC)
+
+
+Well when builds take 10+ minutes on a quad core machine every time you change a single line in any of the project files it tells you its time to add precompiled headers for windows. On *nux I would just use ccache and not worry about that. 
+I have implemented in my main application and a few of the libraries that it uses. It works great to this point. One thing that also is needed is you have to create the pch source and header file and in the  source file include all the headers that you want to be precompiled. I did this for 12 years with MFC but it took me a few minutes to recall that..
+
+Im using the following macro to generate and use precompiled headers:
+MACRO(ADD_MSVC_PRECOMPILED_HEADER PrecompiledHeader PrecompiledSource SourcesVar)
+  IF(MSVC)
+    GET_FILENAME_COMPONENT(PrecompiledBasename ${PrecompiledHeader} NAME_WE)
+    SET(PrecompiledBinary "${CMAKE_CURRENT_BINARY_DIR}/${PrecompiledBasename}.pch")
+    SET(Sources ${${SourcesVar}})
+
+    SET_SOURCE_FILES_PROPERTIES(${PrecompiledSource}
+                                PROPERTIES COMPILE_FLAGS "/Yc\"${PrecompiledHeader}\" /Fp\"${PrecompiledBinary}\""
+                                           OBJECT_OUTPUTS "${PrecompiledBinary}")
+    SET_SOURCE_FILES_PROPERTIES(${Sources}
+                                PROPERTIES COMPILE_FLAGS "/Yu\"${PrecompiledHeader}\" /FI\"${PrecompiledHeader}\" /Fp\"${PrecompiledBinary}\""
+                                           OBJECT_DEPENDS "${PrecompiledBinary}")  
+    # Add precompiled header to SourcesVar
+    LIST(APPEND ${SourcesVar} ${PrecompiledSource})
+  ENDIF(MSVC)
+ENDMACRO(ADD_MSVC_PRECOMPILED_HEADER)
+
+Lets say you have a variable ${MySources} with all your sourcefiles, the code you would want to use would be simply be
+ADD_MSVC_PRECOMPILED_HEADER("precompiled.h" "precompiled.cpp" MySources)
+ADD_LIBRARY(MyLibrary ${MySources})
+
+The code would still function just fine on non-MSVC platforms too. Pretty neat :)
+
+I ended up using an adapted version of larsm macro. Using $(IntDir) for pch path keeps precompiled headers for debug and release builds separate.
+MACRO(ADD_MSVC_PRECOMPILED_HEADER PrecompiledHeader PrecompiledSource SourcesVar)
+  IF(MSVC)
+    GET_FILENAME_COMPONENT(PrecompiledBasename ${PrecompiledHeader} NAME_WE)
+    SET(PrecompiledBinary "$(IntDir)/${PrecompiledBasename}.pch")
+    SET(Sources ${${SourcesVar}})
+
+    SET_SOURCE_FILES_PROPERTIES(${PrecompiledSource}
+                                PROPERTIES COMPILE_FLAGS "/Yc\"${PrecompiledHeader}\" /Fp\"${PrecompiledBinary}\""
+                                           OBJECT_OUTPUTS "${PrecompiledBinary}")
+    SET_SOURCE_FILES_PROPERTIES(${Sources}
+                                PROPERTIES COMPILE_FLAGS "/Yu\"${PrecompiledHeader}\" /FI\"${PrecompiledHeader}\" /Fp\"${PrecompiledBinary}\""
+                                           OBJECT_DEPENDS "${PrecompiledBinary}")  
+    # Add precompiled header to SourcesVar
+    LIST(APPEND ${SourcesVar} ${PrecompiledSource})
+  ENDIF(MSVC)
+ENDMACRO(ADD_MSVC_PRECOMPILED_HEADER)
+
+ADD_MSVC_PRECOMPILED_HEADER("stdafx.h" "stdafx.cpp" MY_SRCS)
+ADD_EXECUTABLE(MyApp ${MY_SRCS})
+
+
+Adapted from Dave, but more efficient (sets target properties, not for each file):
+if (MSVC)
+   set_target_properties(abc PROPERTIES COMPILE_FLAGS "/Yustd.h")
+   set_source_files_properties(std.cpp PROPERTIES COMPILE_FLAGS "/Ycstd.h")
+endif(MSVC)
+
+
+There is a third party CMake module which automates the use of precompiled headers for CMake based build systems and also supports unity builds.
+
+The cleanest way is to add the precompiled option as a global option. In the vcxproj file this will show up as <PrecompiledHeader>Use</PrecompiledHeader> and not do this for every individual file.
+Then you need to add the Create option to the StdAfx.cpp. The following is how I use it:
+MACRO(ADD_MSVC_PRECOMPILED_HEADER SourcesVar)
+    SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /YuStdAfx.h")
+    set_source_files_properties(StdAfx.cpp
+        PROPERTIES
+        COMPILE_FLAGS "/YcStdAfx.h"
+        )
+    list(APPEND ${${SourcesVar}} StdAfx.cpp)
+ENDMACRO(ADD_MSVC_PRECOMPILED_HEADER)
+
+file(GLOB_RECURSE MYDLL_SRC
+    "*.h"
+    "*.cpp"
+    "*.rc")
+
+ADD_MSVC_PRECOMPILED_HEADER(MYDLL_SRC)
+add_library(MyDll SHARED ${MYDLL_SRC})
+
+This is tested and works for MSVC 2010 and will create a MyDll.pch file, I am not bothered what file name is used so I didn't make any effort to specify it.
+
+IMHO the best way is to set PCH for whole project, as martjno suggested, combined with ability of ignoring PCH for some sources if needed (e.g. generated sources):
+# set PCH for VS project
+function(SET_TARGET_PRECOMPILED_HEADER Target PrecompiledHeader PrecompiledSource)
+  if(MSVC)
+     SET_TARGET_PROPERTIES(${Target} PROPERTIES COMPILE_FLAGS "/Yu${PrecompiledHeader}")
+     set_source_files_properties(${PrecompiledSource} PROPERTIES COMPILE_FLAGS "/Yc${PrecompiledHeader}")
+  endif(MSVC)
+endfunction(SET_TARGET_PRECOMPILED_HEADER)
+
+# ignore PCH for a specified list of files
+function(IGNORE_PRECOMPILED_HEADER SourcesVar)
+  if(MSVC)  
+    set_source_files_properties(${${SourcesVar}} PROPERTIES COMPILE_FLAGS "/Y-")
+  endif(MSVC)
+endfunction(IGNORE_PRECOMPILED_HEADER)
+
+So, if you have some target MY_TARGET, and list of generated sources IGNORE_PCH_SRC_LIST you'll simply do:
+SET_TARGET_PRECOMPILED_HEADER(MY_TARGET stdafx.h stdafx.cpp)
+IGNORE_PRECOMPILED_HEADER(IGNORE_PCH_SRC_LIST)
+
+This aproach is tested and works perfectly.
+
+An example of usage precompiled header with cmake and Visual Studio 2015
+"stdafx.h", "stdafx.cpp" - precompiled header name.
+Put the following below in the root cmake file.
+if (MSVC)
+    # For precompiled header.
+    # Set 
+    # "Precompiled Header" to "Use (/Yu)"
+    # "Precompiled Header File" to "stdafx.h"
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Yustdafx.h /FIstdafx.h")
+endif()
+
+
+Put the following below in the project cmake file.
+"src" - a folder with source files.
+set_source_files_properties(src/stdafx.cpp
+    PROPERTIES
+    COMPILE_FLAGS "/Ycstdafx.h"
+)
+
+
+As the precompiled header option doesnt work for rc files, i needed to adjust the macro supplied by jari.
+#######################################################################
+# Makro for precompiled header
+#######################################################################
+MACRO(ADD_MSVC_PRECOMPILED_HEADER PrecompiledHeader PrecompiledSource SourcesVar)
+  IF(MSVC)
+    GET_FILENAME_COMPONENT(PrecompiledBasename ${PrecompiledHeader} NAME_WE)
+    SET(PrecompiledBinary "$(IntDir)/${PrecompiledBasename}.pch")
+    SET(Sources ${${SourcesVar}})
+
+    # generate the precompiled header
+    SET_SOURCE_FILES_PROPERTIES(${PrecompiledSource}
+                                PROPERTIES COMPILE_FLAGS "/Zm500 /Yc\"${PrecompiledHeader}\" /Fp\"${PrecompiledBinary}\""
+                                            OBJECT_OUTPUTS "${PrecompiledBinary}")
+
+    # set the usage of this header only to the other files than rc
+    FOREACH(fname ${Sources})
+        IF ( NOT ${fname} MATCHES ".*rc$" )
+            SET_SOURCE_FILES_PROPERTIES(${fname}
+                                        PROPERTIES COMPILE_FLAGS "/Zm500 /Yu\"${PrecompiledHeader}\" /FI\"${PrecompiledHeader}\" /Fp\"${PrecompiledBinary}\""
+                                                    OBJECT_DEPENDS "${PrecompiledBinary}")
+        ENDIF( NOT ${fname} MATCHES ".*rc$" )
+    ENDFOREACH(fname)
+
+    # Add precompiled header to SourcesVar
+    LIST(APPEND ${SourcesVar} ${PrecompiledSource})
+  ENDIF(MSVC)
+ENDMACRO(ADD_MSVC_PRECOMPILED_HEADER)
+
+Edit: The usage of this precompiled headers reduced the Overall build time of my main Project from 4min 30s down to 1min 40s. This is for me a really good thing. In the precompile header are only headers like boost/stl/Windows/mfc.

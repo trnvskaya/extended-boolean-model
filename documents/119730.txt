@@ -1,0 +1,163 @@
+How do I sort a VARCHAR column in SQL server that contains numbers?
+sql tsql
+I have a VARCHAR column in a SQL Server 2000 database that can contain either letters or numbers. It depends on how the application is configured on the front-end for the customer. 
+When it does contain numbers, I want it to be sorted numerically, e.g. as "1", "2", "10" instead of "1", "10", "2". Fields containing just letters, or letters and numbers (such as 'A1') can be sorted alphabetically as normal. For example, this would be an acceptable sort order.
+1
+2
+10
+A
+B
+B1
+
+What is the best way to achieve this? 
+
+
+There are a few possible ways to do this.
+One would be
+SELECT
+ ...
+ORDER BY
+  CASE 
+    WHEN ISNUMERIC(value) = 1 THEN CONVERT(INT, value) 
+    ELSE 9999999 -- or something huge
+  END,
+  value
+
+the first part of the ORDER BY converts everything to an int (with a huge value for non-numerics, to sort last) then the last part takes care of alphabetics.
+Note that the performance of this query is probably at least moderately ghastly on large amounts of data.
+
+SELECT FIELD FROM TABLE
+ORDER BY 
+  isnumeric(FIELD) desc, 
+  CASE ISNUMERIC(test) 
+    WHEN 1 THEN CAST(CAST(test AS MONEY) AS INT)
+    ELSE NULL 
+  END,
+  FIELD
+
+As per this link you need to cast to MONEY then INT to avoid ordering '$' as a number.
+
+select
+  Field1, Field2...
+from
+  Table1
+order by
+  isnumeric(Field1) desc,
+  case when isnumeric(Field1) = 1 then cast(Field1 as int) else null end,
+  Field1
+
+This will return values in the order you gave in your question.
+Performance won't be too great with all that casting going on, so another approach is to add another column to the table in which you store an integer copy of the data and then sort by that first and then the column in question. This will obviously require some changes to the logic that inserts or updates data in the table, to populate both columns. Either that, or put a trigger on the table to populate the second column whenever data is inserted or updated.
+
+This seems to work:  
+select your_column  
+from your_table  
+order by   
+case when isnumeric(your_column) = 1 then your_column else 999999999 end,  
+your_column   
+
+
+One possible solution is to pad the numeric values with a character in front so that all are of the same string length.
+Here is an example using that approach:
+select MyColumn
+from MyTable
+order by 
+    case IsNumeric(MyColumn) 
+        when 1 then Replicate('0', 100 - Len(MyColumn)) + MyColumn
+        else MyColumn
+    end
+
+The 100 should be replaced with the actual length of that column.
+
+SELECT *, CONVERT(int, your_column) AS your_column_int
+FROM your_table
+ORDER BY your_column_int
+
+OR
+SELECT *, CAST(your_column AS int) AS your_column_int
+FROM your_table
+ORDER BY your_column_int
+
+Both are fairly portable I think.
+
+I solved it in a very simple way writing this in the "order" part
+ORDER BY (
+sr.codice +0
+)
+ASC
+
+This seems to work very well, in fact I had the following sorting:
+16079   Customer X 
+016082  Customer Y
+16413   Customer Z
+
+So the 0 in front of 16082 is considered correctly.
+
+you can always convert your varchar-column to bigint as integer might be too short...
+select cast([yourvarchar] as BIGINT)
+
+but you should always care for alpha characters
+where ISNUMERIC([yourvarchar] +'e0') = 1
+
+the +'e0' comes from http://blogs.lessthandot.com/index.php/DataMgmt/DataDesign/isnumeric-isint-isnumber
+this would lead to your statement
+SELECT
+  *
+FROM
+  Table
+ORDER BY
+   ISNUMERIC([yourvarchar] +'e0') DESC
+ , LEN([yourvarchar]) ASC
+
+the first sorting column will put numeric on top. 
+the second sorts by length, so 10 will preceed 0001 (which is stupid?!)
+this leads to the second version:  
+SELECT
+      *
+    FROM
+      Table
+    ORDER BY
+       ISNUMERIC([yourvarchar] +'e0') DESC
+     , RIGHT('00000000000000000000'+[yourvarchar], 20) ASC
+
+the second column now gets right padded with '0', so natural sorting puts integers with leading zeros (0,01,10,0100...) in correct order (correct!) - but all alphas would be enhanced with '0'-chars (performance)
+so third version:
+ SELECT
+          *
+        FROM
+          Table
+        ORDER BY
+           ISNUMERIC([yourvarchar] +'e0') DESC
+         , CASE WHEN ISNUMERIC([yourvarchar] +'e0') = 1
+                THEN RIGHT('00000000000000000000' + [yourvarchar], 20) ASC
+                ELSE LTRIM(RTRIM([yourvarchar]))
+           END ASC
+
+now numbers first get padded with '0'-chars (of course, the length 20 could be enhanced) - which sorts numbers right - and alphas only get trimmed
+
+ SELECT *,
+       ROW_NUMBER()OVER(ORDER BY CASE WHEN ISNUMERIC (ID)=1 THEN CONVERT(NUMERIC(20,2),SUBSTRING(Id, PATINDEX('%[0-9]%', Id), LEN(Id)))END DESC)Rn ---- numerical
+        FROM
+            (
+
+        SELECT '1'Id UNION ALL
+        SELECT '25.20' Id UNION ALL
+
+    SELECT 'A115' Id UNION ALL
+    SELECT '2541' Id UNION ALL
+    SELECT '571.50' Id UNION ALL
+    SELECT '67' Id UNION ALL
+    SELECT 'B48' Id UNION ALL
+    SELECT '500' Id UNION ALL
+    SELECT '147.54' Id UNION ALL
+    SELECT 'A-100' Id
+    )A
+
+    ORDER BY 
+    CASE WHEN ISNUMERIC (ID)=0                                /* alphabetical sort */ 
+         THEN CASE WHEN PATINDEX('%[0-9]%', Id)=0
+                   THEN LEFT(Id,PATINDEX('%[0-9]%',Id))
+                   ELSE LEFT(Id,PATINDEX('%[0-9]%',Id)-1)
+              END
+    END DESC
+

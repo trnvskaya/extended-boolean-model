@@ -1,0 +1,62 @@
+Give DROP PROCEDURE a parameter
+sql-server tsql
+I'm using SqlServer for the first time, and in every single one of our create procedure scripts there is a block of code like below to remove the procedure if it already exists:
+IF EXISTS (SELECT *
+           FROM information_schema.routines
+           WHERE routine_name = 'SomeProcedureName'
+           AND routine_type = 'PROCEDURE'
+
+BEGIN
+    DROP PROCEDURE SomeProcedureName
+END
+//then the procedure definition
+
+To stop cutting and pasting this boilerplate code in every file I would like to put this code in its own stored procedure so that instead the scripts would look like this:
+DropIfRequired('SomeProcedureName')
+//then the procedure definition
+
+My attempt at a solution is:
+CREATE PROCEDURE DropIfRequired
+(
+    @procedureName varchar
+)
+AS
+IF EXISTS (SELECT * FROM information_schema.routines 
+           WHERE routine_name = @procedureName 
+           AND routine_type = 'PROCEDURE') 
+BEGIN
+    DROP PROCEDURE @procedureName
+END
+
+But I then get the following error:
+Msg 102, Level 15, State 1, Procedure DeleteProcedure, Line 10
+Incorrect syntax near '@procedureName'.
+Any ideas how to do what I want?
+
+
+its missing quotes, try adding them in with an exec statement.
+EXEC( 'DROP PROCEDURE ''' + @procName + '''') ( all single quotes)
+
+
+The full answer is:
+
+DECLARE @SQL VARCHAR(8000)
+SELECT @SQL = 'USE ' + DB_NAME() + CHAR(10)
+SET @SQL = @SQL + 'DROP PROCEDURE ' + @procName
+--PRINT @SQL
+EXEC(@SQL)
+
+The one given by Andrew will only work if the default database for your login is set to the database you want.  When using dynamic sql you get a new database context.  So if you do not have a default database set you will execute the command from master.
+
+One thing to note is that in the DropIfRequired procedure, you have defined the procedure name as follows:
+CREATE PROCEDURE DropIfRequired
+(    
+   @procedureName varchar
+)
+
+You need to define a length of the varchar parameter, otherwise SQL will assume a length of one character. Instead, do something like as follows (1000 should be more than enough for most procedure names)
+CREATE PROCEDURE DropIfRequired
+(    
+   @procedureName varchar(1000)
+)
+

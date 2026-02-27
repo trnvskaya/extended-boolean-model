@@ -1,0 +1,422 @@
+How do I slice an array in Excel VBA?
+arrays excel vba excel-vba worksheet-function
+What function can I use in Excel VBA to slice an array?
+
+
+
+Application.WorksheetFunction.Index(array, row, column)
+
+If you specify a zero value for row or column, then you'll get the entire column or row that is specified.
+Example:
+
+Application.WorksheetFunction.Index(array, 0, 3)
+
+This will give you the entire 3rd column.
+If you specify both row and column as non-zero, then you'll get only the specific element.
+There is no easy way to get a smaller slice than a complete row or column.
+Limitation: There is a limit to the array size that WorksheetFunction.Index can handle if you're using a newer version of Excel. If array has more than 65,536 rows or 65,536 columns, then it throws a "Type mismatch" error. If this is an issue for you, then see this more complicated answer which is not subject to the same limitation.
+Here's the function I wrote to do all my 1D and 2D slicing:
+Public Function GetArraySlice2D(Sarray As Variant, Stype As String, Sindex As Integer, Sstart As Integer, Sfinish As Integer) As Variant
+
+' this function returns a slice of an array, Stype is either row or column
+' Sstart is beginning of slice, Sfinish is end of slice (Sfinish = 0 means entire
+' row or column is taken), Sindex is the row or column to be sliced
+' (NOTE: 1 is always the first row or first column)
+' an Sindex value of 0 means that the array is one dimensional 3/20/09 ljr
+
+Dim vtemp() As Variant
+Dim i As Integer
+
+On Err GoTo ErrHandler
+
+Select Case Sindex
+    Case 0
+        If Sfinish - Sstart = UBound(Sarray) - LBound(Sarray) Then
+            vtemp = Sarray
+        Else
+            ReDim vtemp(1 To Sfinish - Sstart + 1)
+            For i = 1 To Sfinish - Sstart + 1
+                vtemp(i) = Sarray(i + Sstart - 1)
+            Next i
+        End If
+    Case Else
+        Select Case Stype
+            Case "row"
+                If Sfinish = 0 Or (Sstart = LBound(Sarray, 2) And Sfinish = UBound(Sarray, 2)) Then
+                    vtemp = Application.WorksheetFunction.Index(Sarray, Sindex, 0)
+                Else
+                    ReDim vtemp(1 To Sfinish - Sstart + 1)
+                    For i = 1 To Sfinish - Sstart + 1
+                        vtemp(i) = Sarray(Sindex, i + Sstart - 1)
+                    Next i
+                End If
+            Case "column"
+                If Sfinish = 0 Or (Sstart = LBound(Sarray, 1) And Sfinish = UBound(Sarray, 1)) Then
+                    vtemp = Application.WorksheetFunction.Index(Sarray, 0, Sindex)
+                Else
+                    ReDim vtemp(1 To Sfinish - Sstart + 1)
+                    For i = 1 To Sfinish - Sstart + 1
+                        vtemp(i) = Sarray(i + Sstart - 1, Sindex)
+                    Next i
+                End If
+        End Select
+End Select
+GetArraySlice2D = vtemp
+Exit Function
+
+ErrHandler:
+    Dim M As Integer
+    M = MsgBox("Bad Array Input", vbOKOnly, "GetArraySlice2D")
+
+End Function
+
+
+You can use a combination of the Rows, Columns, Offset and Resize properties to get a subset of a range.
+For example if you have a range that is 5 columns by 3 rows:
+Set rng = Range("A1:E3")
+
+You can get any subset by appropriately combining the above properties.  For example, if you want to get the rightmost 3 cells on the second row (i.e. "C2:E2" in the above example), you could do something like:
+   Set rngSubset = rng.Rows(2).Offset(0, rng.Columns.Count - 3).Resize(1, 3)
+
+You could then wrap this up in a VBA function.
+
+How about
+Array = Split(variable)
+
+
+Two things, VBA doesn't support array slicing so whatever you use, you'll have to roll your own. But since this is just for Excel, you can use the build in worksheet function index for array slicing.
+Sub Test()
+    'All example return a 1 based 2D array.
+    Dim myArr As Variant 'This var must be generic to work.
+    'Get whole range:
+    myArr = ActiveSheet.UsedRange
+    'Get just column 1:
+    myArr = WorksheetFunction.Index(ActiveSheet.UsedRange, 0, 1)
+    'Get just row 5
+    myArr = WorksheetFunction.Index(ActiveSheet.UsedRange, 5, 0)
+End Sub
+
+
+Lance's solution has a bug in that it does not respect an offset start value with a sub-arry of unspecified length, I also found how it works quite confusing. I offer a (hopefully) more transparent solution below.
+Public Function GetSubTable(vIn As Variant, Optional ByVal iStartRow As Integer, Optional ByVal iStartCol As Integer, Optional ByVal iHeight As Integer, Optional ByVal iWidth As Integer) As Variant
+    Dim vReturn As Variant
+    Dim iInRowLower As Integer
+    Dim iInRowUpper As Integer
+    Dim iInColLower As Integer
+    Dim iInColUpper As Integer
+    Dim iEndRow As Integer
+    Dim iEndCol As Integer
+    Dim iRow As Integer
+    Dim iCol As Integer
+
+    iInRowLower = LBound(vIn, 1)
+    iInRowUpper = UBound(vIn, 1)
+    iInColLower = LBound(vIn, 2)
+    iInColUpper = UBound(vIn, 2)
+
+    If iStartRow = 0 Then
+        iStartRow = iInRowLower
+    End If
+    If iStartCol = 0 Then
+        iStartCol = iInColLower
+    End If
+
+    If iHeight = 0 Then
+        iHeight = iInRowUpper - iStartRow + 1
+    End If
+    If iWidth = 0 Then
+        iWidth = iInColUpper - iStartCol + 1
+    End If
+
+    iEndRow = iStartRow + iHeight - 1
+    iEndCol = iStartCol + iWidth - 1
+
+    ReDim vReturn(1 To iEndRow - iStartRow + 1, 1 To iEndCol - iStartCol + 1)
+
+    For iRow = iStartRow To iEndRow
+        For iCol = iStartCol To iEndCol
+            vReturn(iRow - iStartRow + 1, iCol - iStartCol + 1) = vIn(iRow, iCol)
+        Next
+    Next
+
+    GetSubTable = vReturn
+End Function
+
+
+Below is a fast method to slice Excel variant arrays. Most of this was put together using the info from this excellent site http://bytecomb.com/vba-reference/
+Essentially the destination array is pre-built as an empty 1d or 2d variant and passed to the sub with the source array and element index to be sliced. Due to the way arrays are stored in memory it's much faster to slice a column than a row as the memory layout allows a single block to be copied.
+The good thing about this is it scales well beyond the Excel row limit.
+
+Option Explicit
+
+#If Win64 Then
+    Public Const PTR_LENGTH As Long = 8
+    Public Declare PtrSafe Function GetTickCount Lib "kernel32" () As Long
+    Public Declare PtrSafe Sub Mem_Copy Lib "kernel32" Alias "RtlMoveMemory" (ByRef Destination As Any, ByRef Source As Any, ByVal Length As Long)
+    Private Declare PtrSafe Function VarPtrArray Lib "VBE7" Alias "VarPtr" (ByRef Var() As Any) As LongPtr
+    Private Declare PtrSafe Sub CopyMemory Lib "kernel32" Alias "RtlMoveMemory" (Destination As Any, Source As Any, ByVal Length As Long)
+    Private Declare PtrSafe Sub FillMemory Lib "kernel32" Alias "RtlFillMemory" (Destination As Any, ByVal Length As Long, ByVal Fill As Byte)
+#Else
+    Public Const PTR_LENGTH As Long = 4
+    Public Declare Function GetTickCount Lib "kernel32" () As Long
+    Public Declare Sub Mem_Copy Lib "kernel32" Alias "RtlMoveMemory" (ByRef Destination As Any, ByRef Source As Any, ByVal Length As Long)
+    Private Declare Function VarPtrArray Lib "VBE7" Alias "VarPtr" (ByRef Var() As Any) As LongPtr
+    Private Declare Sub CopyMemory Lib "kernel32" Alias "RtlMoveMemory" (Destination As Any, Source As Any, ByVal Length As Long)
+    Private Declare Sub FillMemory Lib "kernel32" Alias "RtlFillMemory" (Destination As Any, ByVal Length As Long, ByVal Fill As Byte)
+#End If
+
+Private Type SAFEARRAYBOUND
+    cElements    As Long
+    lLbound      As Long
+End Type
+
+Private Type SAFEARRAY_VECTOR
+    cDims        As Integer
+    fFeatures    As Integer
+    cbElements   As Long
+    cLocks       As Long
+    pvData       As LongPtr
+    rgsabound(0) As SAFEARRAYBOUND
+End Type
+
+Sub SliceColumn(ByVal idx As Long, ByRef arrayToSlice() As Variant, ByRef slicedArray As Variant)
+'slicedArray can be passed as a 1d or 2d array
+'sliceArray can also be part bound, eg  slicedArray(1 to 100) or slicedArray(10 to 100)
+Dim ptrToArrayVar As LongPtr
+Dim ptrToSafeArray As LongPtr
+Dim ptrToArrayData As LongPtr
+Dim ptrToArrayData2 As LongPtr
+Dim uSAFEARRAY As SAFEARRAY_VECTOR
+Dim ptrCursor As LongPtr
+Dim cbElements As Long
+Dim atsBound1 As Long
+Dim elSize As Long
+
+    'determine bound1 of source array (ie row Count)
+    atsBound1 = UBound(arrayToSlice, 1)
+    'get pointer to source array Safearray
+    ptrToArrayVar = VarPtrArray(arrayToSlice)
+    CopyMemory ptrToSafeArray, ByVal ptrToArrayVar, PTR_LENGTH
+    CopyMemory uSAFEARRAY, ByVal ptrToSafeArray, LenB(uSAFEARRAY)
+    ptrToArrayData = uSAFEARRAY.pvData
+    'determine byte size of source elements
+    cbElements = uSAFEARRAY.cbElements
+
+    'get pointer to destination array Safearray
+    ptrToArrayVar = VarPtr(slicedArray) + 8 'Variant reserves first 8bytes
+    CopyMemory ptrToSafeArray, ByVal ptrToArrayVar, PTR_LENGTH
+    CopyMemory uSAFEARRAY, ByVal ptrToSafeArray, LenB(uSAFEARRAY)
+    ptrToArrayData2 = uSAFEARRAY.pvData
+
+    'determine elements size
+    elSize = UBound(slicedArray, 1) - LBound(slicedArray, 1) + 1
+    'determine start position of data in source array
+    ptrCursor = ptrToArrayData + (((idx - 1) * atsBound1 + LBound(slicedArray, 1) - 1) * cbElements)
+    'Copy source array to destination array
+    CopyMemory ByVal ptrToArrayData2, ByVal ptrCursor, cbElements * elSize
+
+End Sub
+
+Sub SliceRow(ByVal idx As Long, ByRef arrayToSlice() As Variant, ByRef slicedArray As Variant)
+'slicedArray can be passed as a 1d or 2d array
+'sliceArray can also be part bound, eg  slicedArray(1 to 100) or slicedArray(10 to 100)
+Dim ptrToArrayVar As LongPtr
+Dim ptrToSafeArray As LongPtr
+Dim ptrToArrayData As LongPtr
+Dim ptrToArrayData2 As LongPtr
+Dim uSAFEARRAY As SAFEARRAY_VECTOR
+Dim ptrCursor As LongPtr
+Dim cbElements As Long
+Dim atsBound1 As Long
+Dim i As Long
+
+    'determine bound1 of source array (ie row Count)
+    atsBound1 = UBound(arrayToSlice, 1)
+    'get pointer to source array Safearray
+    ptrToArrayVar = VarPtrArray(arrayToSlice)
+    CopyMemory ptrToSafeArray, ByVal ptrToArrayVar, PTR_LENGTH
+    CopyMemory uSAFEARRAY, ByVal ptrToSafeArray, LenB(uSAFEARRAY)
+    ptrToArrayData = uSAFEARRAY.pvData
+    'determine byte size of source elements
+    cbElements = uSAFEARRAY.cbElements
+
+    'get pointer to destination array Safearray
+    ptrToArrayVar = VarPtr(slicedArray) + 8 'Variant reserves first 8bytes
+    CopyMemory ptrToSafeArray, ByVal ptrToArrayVar, PTR_LENGTH
+    CopyMemory uSAFEARRAY, ByVal ptrToSafeArray, LenB(uSAFEARRAY)
+    ptrToArrayData2 = uSAFEARRAY.pvData
+
+    ptrCursor = ptrToArrayData + ((idx - 1) * cbElements)
+    For i = LBound(slicedArray, 1) To UBound(slicedArray, 1)
+
+        CopyMemory ByVal ptrToArrayData2, ByVal ptrCursor, cbElements
+        ptrCursor = ptrCursor + (cbElements * atsBound1)
+        ptrToArrayData2 = ptrToArrayData2 + cbElements
+    Next i
+
+End Sub
+
+Example usage:
+Sub exampleUsage()
+Dim sourceArr() As Variant
+Dim destArr As Variant
+Dim sliceIndex As Long
+
+    On Error GoTo Err:
+
+    sourceArr = Sheet1.Range("A1:D10000").Value2
+    sliceIndex = 2 'Slice column 2 / slice row 2
+
+    'Build target array
+    ReDim destArr(20 To 10000) '1D array from row 20 to 10000
+'    ReDim destArr(1 To 10000) '1D array from row 1 to 10000
+'    ReDim destArr(20 To 10000, 1 To 1) '2D array from row 20 to 10000
+'    ReDim destArr(1 To 10000, 1 To 1) '2D array from row 1 to 10000
+
+    'Slice Column
+    SliceColumn sliceIndex, sourceArr, destArr
+
+    'Slice Row
+    ReDim destArr(1 To 4)
+    SliceRow sliceIndex, sourceArr, destArr
+
+Err:
+    'Tidy Up See ' http://stackoverflow.com/questions/16323776/copy-an-array-reference-in-vba/16343887#16343887
+    FillMemory destArr, 16, 0
+
+End Sub
+
+Timings were on an old dual core CPU using the following test
+Sub timeMethods()
+Const trials As Long = 10
+Const rowsToCopy As Long = 1048576
+Dim rng As Range
+Dim Arr() As Variant
+Dim newArr As Variant
+Dim newArr2 As Variant
+Dim t As Long, t1 As Long, t2 As Long, t3 As Long
+Dim i As Long
+
+    On Error GoTo Err
+
+    'Setup Conditions 1time only
+    Sheet1.Cells.Clear
+    Sheet1.Range("A1:D1").Value = Split("A1,B1,C1,D1", ",") 'Strings
+'    Sheet1.Range("A1:D1").Value = Split("1,1,1,1", ",") 'Longs
+    Sheet1.Range("A1:D1").AutoFill Destination:=Sheet1.Range("A1:D" & rowsToCopy), Type:=xlFillDefault
+
+    'Build source data
+    Arr = Sheet1.Range("A1:D" & rowsToCopy).Value
+    Set rng = Sheet1.Range("A1:D" & rowsToCopy)
+
+    'Build target container
+    ReDim newArr(1 To rowsToCopy)
+    Debug.Print "Trials=" & trials & " Rows=" & rowsToCopy
+    'Range
+    t3 = 0
+    For t = 1 To trials
+        t1 = GetTickCount
+
+            For i = LBound(newArr, 1) To UBound(newArr, 1)
+                newArr(i) = rng(i, 2).Value2
+            Next i
+
+        t2 = GetTickCount
+        t3 = t3 + (t2 - t1)
+        Debug.Print "Range: " & t2 - t1
+    Next t
+    Debug.Print "Range Avg ms: " & t3 / trials
+
+    'Array
+    t3 = 0
+    For t = 1 To trials
+        t1 = GetTickCount
+
+            For i = LBound(newArr, 1) To UBound(newArr, 1)
+                newArr(i) = Arr(i, 2)
+            Next i
+
+        t2 = GetTickCount
+        t3 = t3 + (t2 - t1)
+        Debug.Print "Array: " & t2 - t1
+    Next t
+    Debug.Print "Array Avg ms: " & t3 / trials
+
+    'Index
+    t3 = 0
+    For t = 1 To trials
+        t1 = GetTickCount
+
+            newArr2 = WorksheetFunction.Index(rng, 0, 2) 'newArr2 2d
+
+        t2 = GetTickCount
+        t3 = t3 + (t2 - t1)
+        Debug.Print "Index: " & t2 - t1
+    Next t
+    Debug.Print "Index Avg ms: " & t3 / trials
+
+    'CopyMemBlock
+    t3 = 0
+    For t = 1 To trials
+        t1 = GetTickCount
+
+            SliceColumn 2, Arr, newArr
+
+        t2 = GetTickCount
+        t3 = t3 + (t2 - t1)
+        Debug.Print "CopyMem: " & t2 - t1
+    Next t
+    Debug.Print "CopyMem Avg ms: " & t3 / trials
+
+Err:
+    'Tidy Up
+    FillMemory newArr, 16, 0
+
+
+End Sub
+
+
+Here is one other way.
+This is not multidimensional but would work single row and single column.
+f and t parameters are Zero based.
+Function slice(ByVal arr, ByVal f, ByVal t)
+    slice = Application.Index(arr, Evaluate("Transpose(Row(" & f + 1 & ":" & t + 1 & "))"))
+End Function
+
+
+Here's a nifty function I wrote to subset a 2d array
+Function Subset2D(arr As Variant, Optional rowStart As Long = 1, Optional rowStop As Long = -1, Optional colIndices As Variant) As Variant
+    'Subset a 2d array (arr)
+    'If rowStop = -1, all rows are returned
+    'colIndices can be provided as a variant array like Array(1,3)
+    'if colIndices is not provided, all columns are returned
+
+    Dim newarr() As Variant, newRows As Long, newCols As Long, i As Long, k As Long, refCol As Long
+
+    'Set the correct rowStop
+    If rowStop = -1 Then rowStop = UBound(arr, 1)
+
+    'Set the colIndices if they were not provided
+    If IsMissing(colIndices) Then
+        ReDim colIndices(1 To UBound(arr, 2))
+        For k = 1 To UBound(arr, 2)
+            colIndices(k) = k
+        Next k
+    End If
+
+    'Get the dimensions of newarr
+    newRows = rowStop - rowStart + 1
+    newCols = UBound(colIndices) + 1
+    ReDim newarr(1 To newRows, 1 To newCols)
+
+    'Loop through each empty element of newarr and set its value
+    For k = 1 To UBound(newarr, 2) 'Loop through each column
+        refCol = colIndices(k - 1) 'Get the corresponding reference column
+        For i = 1 To UBound(newarr, 1) 'Loop through each row
+            newarr(i, k) = arr(i + rowStart - 1, refCol) 'Set the value
+        Next i
+    Next k
+
+    Subset2D = newarr
+End Function
+

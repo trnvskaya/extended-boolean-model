@@ -1,0 +1,93 @@
+Search for text between delimiters in MySQL
+mysql
+I am trying to extract a certain part of a column that is between delimiters.
+e.g. find foo in the following
+test 'esf :foo: bar
+So in the above I'd want to return foo, but all the regexp functions only return true|false,
+is there a way to do this in MySQL
+
+
+A combination of LOCATE and MID would probably do the trick.
+If the value "test 'esf :foo: bar" was in the field fooField:
+MID( fooField, LOCATE('foo', fooField), 3);
+
+
+I don't know if you have this kind of authority, but if you have to do queries like this it might be time to renormalize your tables, and have these values in a lookup table.  
+
+select mid(col from locate(':',col) + 1 for 
+locate(':',col,locate(':',col)+1)-locate(':',col) - 1 ) 
+from table where col rlike ':.*:';
+
+
+Here ya go, bud:
+SELECT 
+  SUBSTR(column, 
+    LOCATE(':',column)+1, 
+      (CHAR_LENGTH(column) - LOCATE(':',REVERSE(column)) - LOCATE(':',column))) 
+FROM table
+
+Yea, no clue why you're doing this, but this will do the trick.
+By performing a LOCATE, we can find the first ':'. To find the last ':', there's no reverse LOCATE, so we have to do it manually by performing a LOCATE(':', REVERSE(column)).
+With the index of the first ':', the number of chars from the last ':' to the end of the string, and the CHAR_LENGTH (don't use LENGTH() for this), we can use a little math to discover the length of the string between the two instances of ':'.
+This way we can peform a SUBSTR and dynamically pluck out the characters between the two ':'.
+Again, it's gross, but to each his own.
+
+With only one set of delimeters, the following should work:
+SUBSTR(
+    SUBSTR(fooField,LOCATE(':',fooField)+1),
+    1,
+    LOCATE(':',SUBSTR(fooField,LOCATE(':',fooField)+1))-1
+ )
+
+
+If you know the position you want to extract from as opposed to what the data itself is:
+$colNumber = 2; //2nd position
+$sql = "REPLACE(SUBSTRING(SUBSTRING_INDEX(fooField, ':', $colNumber),
+							 LENGTH(SUBSTRING_INDEX(fooField, 
+													':', 
+													$colNumber - 1)) + 1)";
+
+
+This only allows for delimiters that are a single character in length, for a more variable approach to delimiters use the following article as a guide:
+http://www.electrictoolbox.com/mysql-select-locate-substring/
+
+you can use the substring / locate function in 1 command 
+here is a mice tutorial:
+http://infofreund.de/mysql-select-substring-2-different-delimiters/
+The command as describes their should look for u:
+**SELECT substr(text,Locate(' :', text )+2,Locate(': ', text )-(Locate(' :', text )+2)) FROM testtable**
+where text is the textfield which contains "test 'esf :foo: bar"
+So foo can be fooooo or fo - the length doesnt matter :).
+
+This should work if the two delimiters only appear twice in your column. I am doing something similar...
+substring_index(substring_index(column,':',-2),':',1)
+
+
+mid(col, 
+    locate('?m=',col) + char_length('?m='), 
+    locate('&o=',col) - locate('?m=',col) - char_length('?m=') 
+)
+
+A bit compact form by replacing char_length(.) with the number 3 
+mid(col, locate('?m=',col) + 3, locate('&o=',col) - locate('?m=',col) - 3)
+
+the patterns I have used are '?m=' and '&o'.
+
+This is what I am extracting from (mainly colon ':' as delimiter but some exceptions), as column theline255 in table loaddata255:
+23856.409:0023:trace:message:SPY_EnterMessage (0x2003a) L"{#32769}"      [0081] WM_NCCREATE sent from self wp=00000000 lp=0023f0b0
+
+This is the MySql code (It quickly did what I want, and is straight forward):
+select 
+time('2000-01-01 00:00:00' + interval substring_index(theline255, '.', 1) second) as hhmmss
+, substring_index(substring_index(theline255, ':', 1), '.', -1) as logMilli
+, substring_index(substring_index(theline255, ':', 2), ':', -1) as logTid
+, substring_index(substring_index(theline255, ':', 3), ':', -1) as logType
+, substring_index(substring_index(theline255, ':', 4), ':', -1) as logArea
+, substring_index(substring_index(theline255, ' ', 1), ':', -1) as logFunction
+, substring(theline255, length(substring_index(theline255, ' ', 1)) + 2) as logText
+from loaddata255
+
+and this is the result:
+# LogTime, LogTimeMilli, LogTid, LogType, LogArea, LogFunction, LogText
+'06:37:36', '409', '0023', 'trace', 'message', 'SPY_EnterMessage', '(0x2003a) L\"{#32769}\"      [0081] WM_NCCREATE sent from self wp=00000000 lp=0023f0b0'
+

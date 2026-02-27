@@ -1,0 +1,57 @@
+Printing from a .NET Service
+c# .net windows-services printing
+I am working on a project right now that involves receiving a message from another application, formatting the contents of that message, and sending it to a printer.  Technology of choice is C# windows service.  The output could be called a report, I suppose, but a reporting engine is not necessary.  A simple templating engine, like StringTemplate, or even XSLT outputting HTML would be fine.  The problem I'm having is finding a free way to print this kind of output from a service.  Since it seems that it will work, I'm working on a prototype using Microsoft's RDLC, populating a local report and then rendering it as an image to a memory stream, which I will then print.  Issues with that are:
+
+Multi-page printing will be a big headache.
+Still have to use PrintDocument to print the memory stream, which is unsupported in a Windows Service (though it may work - haven't gotten that far with the prototype yet)
+If the data coming across changes, I have to change the dataset, and the class that the data is being deserialized into.  bad bad bad.
+
+Has anyone had to do anything remotely like this?  Any advice?  I already posed a question about printing HTML without user input, and after wasting about 3 days on that, I have come to the conclusion that it cannot be done, at least not with any freely available tool.
+All help is appreciated.
+EDIT: We are on version 2.0 of the .NET framework.
+
+
+This may not be what you're looking for, but if I needed to do this quick&dirty, I would:
+
+Create a separate WPF application (so I could use the built-in document handling)
+Give the service the ability to interact with the desktop (note that you don't actually have to show anything on the desktop, or be logged in for this to work)
+Have the service run the application, and give it the data to print.
+
+You could probably also jigger this to print from a web browser that you run from the service (though I'd recommend building your own shell IE, rather than using a full browser).
+For a more detailed (also free) solution, your best bet is probably to manually format the document yourself (using GDI+ to do the layout for you). This is tedious, error prone, time consuming, and wastes a lot of paper during development, but also gives you the most control over what's going to the printer.
+
+Printing from a Windows service is really painful. It seems to work... sometimes... but finally it craches or throws an exception from time to time, without any clear reason. It's really hopeless. Officially, it's even not supported, without any explanation, nor any proposal for an alternate solution.
+Recently, I have been confronted to the problem and after several unsuccessful trials and experimentations, I came finally with two viable solutions:
+
+Write your own printing DLL using the Win32 API (in C/C++ for instance), then use it from your service with P/Invoke (works fine)
+Write your own printing COM+ component, then uses it from your service. I have chosen this solution with success recently (but it was third party COM+ component, not own written) It works absolutely fine too.
+
+
+Trust me, you will spend more money trying to search/develop a solution for this as compared to buying a third party component. Do not reinvent the wheel and go for the paid solution.
+Printing is a complex problem and I would love to see the day when better framework support is added for this.
+
+I think we are going to go the third party route.  I like the XSL -> HTML -> PDF -> Printer flow... Winnovative's HTML to PDF looks good for the first part, but I'm running into a block finding a good PDF printing solution... any suggestions?  Ideally the license would be on a developer basis, not on a deployed runtime basis.
+
+Printing from a service is a bad idea. Network printers are connected "per-user". You can mark the service to be run as a particular user, but I'd consider that a bad security practice. You might be able to connect to a local printer, but I'd still hesitate before going this route.
+The best option is to have the service store the data and have a user-launched application do the printing by asking the service for the data. Or a common location that the data is stored, like a database. 
+If you need to have the data printed as regular intervals, setup a Task event thru the Task Scheduler. Launching a process from a service will require knowing the user name and password, which again is bad security practice.
+As for the printing itself, use a third-party tool to generate the report will be the easiest.
+
+To answer your first question, this can be fairly straight forward depending on the data.  We have a variety of Service-based applications that do exactly what you are asking.  Typically, we parse the incoming file and wrap our own Postscript or PCL around it.  If you layout is fairly simple, then there are some very basic PCL codes you can wrap it with to provide the font/print layup you want (I'd be more then happy to give you some guidance here offline).
+One you have a print ready file you can send it to a UNC printer that is shared, directly to a locally installed printer, or even to the IP of the device (RAW or LPR type data).
+If, however, you are going down the PDF path, the simplest method is to send the PDF output to a printer that supports direct PDF printing (many do now). In this case you just send the PDF to the device and away it prints. 
+The other option is to launch Ghostscript which should be free for your needs (check the licensing as they have a few different version, some GNU, some GPL etc.) and either use it's built in print function or simply convert to Postscript and send to the device.  I've used Ghostscript many times in Service apps but not a huge fan as you will basically be shelling out and executing a command line app to do the conversion.  That being said, it's a stable app that does tend to fail gracefully
+
+I've done it.  It's a pain in the A*s.  The problem is that printing requires that GDI engine to be in place, which normally means that you have to have the desktop, which only loads when you're logged in.  If you're attempting to do this from a Service on a Server, then you normally aren't logged in.
+So first you can't run as the normal service user, but instead as a real user that has interactive login rights. Then you have to tweak the service registry entries (I forget how at the moment, would have to find the code which I can do tonight if you're really interested).  Finally, you have to pray.
+Your biggest long term headache will be with print drivers.  If you are running as a service without a logged in user, some print drivers like to pop up dialogs from time to time.  What happens when your printer is out of toner?  Or out of paper?  The driver may pop up a dialog that will never be seen, and hold up the printer queue because nobody is logged in!
+
+If you can output to post script some printers will print anything that gets FTPed to a certain directory on them.
+We used this to get past the print credits that our university exposed on us, but if your service outputs to a ps then you can just ftp the ps file to the printer.
+
+In answer to your question about PDF printing, I have not found an elegant solution. I was "shell" ing out to Adobe which was unreliable and required a user to be logged in at all times. To fix this specific problem, I requested that the files we process (invoices) be formatted as multi-page Tiff files instead which can be split apart and printed using native .NET printing functions. Adobe's position seems to be "get the user to view the file in Adobe Reader and they can click print". Useless.
+I am still keen to find a good way of producing quality reports which can be output from the web server...
+
+Printing using System.Drawing.Printing is not supported by MS, as per Yann Trevin's response.  However, you might be able to use the new, WPF-based, System.Printing (I think)
+
+We are using DevExpress' XtraReports to print from a service without any problems.  Their report model is similar to that of Windows Forms, so you could dynamically insert text elements and then issue the print command.

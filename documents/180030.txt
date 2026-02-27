@@ -1,0 +1,98 @@
+How can I find out when a picture was actually taken in C# running on Vista?
+c#
+In windows XP "FileInfo.LastWriteTime" will return the date a picture is taken - regardless of how many times the file is moved around in the filesystem.
+In Vista it instead returns the date that the picture is copied from the camera.
+How can I find out when a picture is taken in Vista? In windows explorer this field is referred to as "Date Taken".
+
+
+With WPF and C# you can get the Date Taken property using the BitmapMetadata class:
+MSDN - BitmapMetada
+WPF and BitmapMetadata
+
+you'll have to check the EXIF information from the picture. I don't think with regular .Net functions you'll know when the picture was taken.
+It might get a little complicated...
+
+There will be EXIF data embedded in the image.  There are a ton of examples on the web if you search for EXIF and C#.
+
+
+In windows XP "FileInfo.LastWriteTime"
+  will return the date a picture is
+  taken - regardless of how many times
+  the file is moved around in the
+  filesystem.
+
+I have great doubts XP was actually doing that.  More likely the tool you used to copy the image from the camera to you hard disk was reseting the File Modified Date to the image's Date Taken.
+
+        Image myImage = Image.FromFile(@"C:\temp\IMG_0325.JPG");
+        PropertyItem propItem = myImage.GetPropertyItem(306);
+        DateTime dtaken;
+
+        //Convert date taken metadata to a DateTime object
+        string sdate = Encoding.UTF8.GetString(propItem.Value).Trim();
+        string secondhalf = sdate.Substring(sdate.IndexOf(" "), (sdate.Length - sdate.IndexOf(" ")));
+        string firsthalf = sdate.Substring(0, 10);
+        firsthalf = firsthalf.Replace(":", "-");
+        sdate = firsthalf + secondhalf;
+        dtaken = DateTime.Parse(sdate);
+
+
+Here's as fast and clean as you can get it. By using FileStream, you can tell GDI+ not to load the whole image for verification.  It runs over 10x as fast on my machine.
+    //we init this once so that if the function is repeatedly called
+    //it isn't stressing the garbage man
+    private static Regex r = new Regex(":");
+
+    //retrieves the datetime WITHOUT loading the whole image
+    public static DateTime GetDateTakenFromImage(string path)
+    {
+        using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read))
+        using (Image myImage = Image.FromStream(fs, false, false))
+        {
+            PropertyItem propItem = myImage.GetPropertyItem(36867);
+            string dateTaken = r.Replace(Encoding.UTF8.GetString(propItem.Value), "-", 2);
+            return DateTime.Parse(dateTaken);
+        }
+    }
+
+And yes, the correct id is 36867, not 306.
+The other open source projects below should take note of this.  it is a HUGE perfprmance hit when processing thousands of files!
+
+    //retrieves the datetime WITHOUT loading the whole image
+    public static DateTime GetDateTakenFromImage(string path)
+    {
+        using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read))
+        using (Image myImage = Image.FromStream(fs, false, false))
+        {
+            PropertyItem propItem = null;
+            try
+            {
+                propItem = myImage.GetPropertyItem(36867);
+            }
+            catch { }
+            if (propItem != null)
+            {
+                string dateTaken = r.Replace(Encoding.UTF8.GetString(propItem.Value), "-", 2);
+                return DateTime.Parse(dateTaken);
+            }
+            else
+                return new FileInfo(path).LastWriteTime;
+        }
+    }
+
+
+I maintained a simple open-source library since 2002 for extracting metadata from image/video files.
+// Read all metadata from the image
+var directories = ImageMetadataReader.ReadMetadata(stream);
+
+// Find the so-called Exif "SubIFD" (which may be null)
+var subIfdDirectory = directories.OfType<ExifSubIfdDirectory>().FirstOrDefault();
+
+// Read the DateTime tag value
+var dateTime = subIfdDirectory?.GetDateTime(ExifDirectoryBase.TagDateTimeOriginal);
+
+In my benchmarks, this code runs over 12 times faster than Image.GetPropertyItem, and around 17 times faster than the WPF JpegBitmapDecoder/BitmapMetadata API.
+There's a tonne of extra information available from the library such as camera settings (F-stop, ISO, shutter speed, flash mode, focal length, ...), image properties (dimensions, pixel configurations) and other things such as GPS positions, keywords, copyright info, etc.
+If you're only interested in the metadata, then using this library is very fast as it doesn't decode the image (i.e. bitmap). You can scan thousands of images in a few seconds if you have fast enough storage.
+ImageMetadataReader understands many files types (JPEG, PNG, GIF, BMP, TIFF, PCX, WebP, ICO, ...). If you know that you're dealing with JPEG, and you only want Exif data, then you can make the process even faster with the following:
+var directories = JpegMetadataReader.ReadMetadata(stream, new[] { new ExifReader() });
+
+The metadata-extractor library is available via NuGet and the code's on GitHub. Thanks to all the amazing contributors who have improved the library and submitted test images over the years.

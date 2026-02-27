@@ -1,0 +1,98 @@
+How do I specify values in a properties file so they can be retrieved using ResourceBundle#getStringArray?
+java resourcebundle
+I am trying to use ResourceBundle#getStringArray to retrieve a String[] from a properties file. The description of this method in the documentation reads:
+
+Gets a string array for the given key from this resource bundle or one of its parents.
+
+However, I have attempted to store the values in the properties file as multiple individual key/value pairs:
+key=value1
+key=value2
+key=value3
+
+and as a comma-delimited list:
+key=value1,value2,value3
+
+but neither of these is retrievable using ResourceBundle#getStringArray.
+How do you represent a set of key/value pairs in a properties file such that they can be retrieved using ResourceBundle#getStringArray?
+
+
+Umm, looks like this is a common problem, from threads here and here.
+It seems either you don't use the method and parse the value for an array yourself or you write your own ResourceBundle implementation and do it yourself :(.  Maybe there is an apache commons project for this... 
+From the JDK source code, it seems the PropertyResourceBundle does not support it.
+
+A Properties object can hold Objects, not just Strings. That tends to be forgotten because they're overwhelmingly used to load .properties files, and so often will only contain Strings. The documentation indicates that calling bundle.getStringArray(key) is equivalent to calling (String[]) bundle.getObject(key). That's the problem: the value isn't a String[], it's a String.
+I'd suggest storing it in comma-delimited format and calling split() on the value.
+
+I don't believe this is possible with ResourceBundles loaded from a properties file.  The PropertyResourceBundle leverages the Properties class to load the properties file.  The Properties class loads a properties file as a set of String->String map entries and doesn't support pulling out String[] values.
+Calling ResourceBundle.getStringArray just calls ResourceBundle.getObject, casting the result to a String[].  Since the PropertyResourceBundle just hands this off to the Properties instance it loaded from the file, you'll never be able to get this to work with the current, stock PropertyResourceBundle.
+
+public String[] getPropertyStringArray(PropertyResourceBundle bundle, String keyPrefix) {
+    String[] result;
+    Enumeration<String> keys = bundle.getKeys();
+    ArrayList<String> temp = new ArrayList<String>();
+
+    for (Enumeration<String> e = keys; keys.hasMoreElements();) {
+    	String key = e.nextElement();
+    	if (key.startsWith(keyPrefix)) {
+    		temp.add(key);
+    	}
+    }
+    result = new String[temp.size()];
+
+    for (int i = 0; i < temp.size(); i++) {
+    	result[i] = bundle.getString(temp.get(i));
+    }
+
+    return result;
+}
+
+
+You can use Commons Configuration, which has methods getList and getStringArray that allow you to retrieve a list of comma separated strings.
+
+example:
+mail.ccEmailAddresses=he@anyserver.at, she@anotherserver.at
+
+..
+myBundle=PropertyResourceBundle.getBundle("mailTemplates/bundle-name", _locale);
+
+..
+public List<String> getCcEmailAddresses() 
+{
+    List<String> ccEmailAddresses=new ArrayList<String>();
+    if(this.myBundle.containsKey("mail.ccEmailAddresses"))
+    {
+        ccEmailAddresses.addAll(Arrays.asList(this.template.getString("mail.ccEmailAddresses").split("\\s*(,|\\s)\\s*")));// 1)Zero or more whitespaces (\\s*) 2) comma, or whitespace (,|\\s) 3) Zero or more whitespaces (\\s*)
+    }       
+    return ccEmailAddresses;
+}
+
+
+I have tried this and could find a way.
+One way is to define a subclass of ListresourceBundle, then define instance variable of type String[]
+and assign the value to the key.. here is the code
+@Override
+protected Object[][] getContents() {
+    // TODO Auto-generated method stub
+
+    String[] str1 = {"L1","L2"};
+
+    return new Object[][]{
+
+            {"name",str1},
+            {"country","UK"}                
+    };
+}
+
+
+just use spring - Spring .properties file - Get element as an Array
+relevant code:
+base.module.elementToSearch=1,2,3,4,5,6
+
+@Value("${base.module.elementToSearch}")
+  private String[] elementToSearch;
+
+
+key=value1;value2;value3
+
+String[] toArray = rs.getString("key").split(";");
+

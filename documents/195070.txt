@@ -1,0 +1,75 @@
+What is the quickest way to detect an unreachable host in Java?
+java networking sockets
+I would like the fastest and most accurate function boolean isReachable(String host, int port) that passes the following JUnit tests under the conditions below. Timeout values are specified by the JUnit test itself, and may be considered "unreachable."
+Please note: All answers must be platform-independent. This means that InetAddress.isReachable(int timeout) is not going to work, since it relies on port 7 to do a ping on Windows (ICMP ping being an undocumented function on Windows), and this port is blocked in this setup.
+LAN Setup:
+
+thisMachine (192.168.0.100)
+otherMachine (192.168.0.200)
+no machine is called noMachine or has the IP 192.168.0.222 (always unreachable)
+both machines are running Apache Tomcat on port 8080; all other ports are unreachable (including port 7)
+example.com (208.77.188.166) is running a webserver on port 80 and is only reachable when the LAN is connected to the Internet
+
+Occasionally, the LAN is disconnected from the Internet in which case only local machines called by IP address are reachable (all others are unreachable; there's no DNS).
+All tests are run on thisMachine.
+@Test(timeout=1600) // ~320ms per call (should be possible to do better)
+public void testLocalhost() {
+    // We can always reach ourselves.
+    assertTrue(isReachable("localhost", 8080));
+    assertTrue(isReachable("127.0.0.1", 8080));
+    assertTrue(isReachable("thisMachine", 8080)); // Even if there's no DNS!
+    assertTrue(isReachable("192.168.0.100", 8080));
+
+    assertFalse(isReachable("localhost", 80)); // Nothing on that port.
+}
+
+@Test(timeout=5500) // ~1867ms per call (should be able to do better)
+public void testLAN() {
+    assertTrue(isReachable("192.168.0.200", 8080)); // Always connected to the LAN.
+    assertFalse(isReachable("192.168.0.222", 8080)); // No such a machine.
+	assertFalse(isReachable("noMachine", 8080)); // No such machine.
+}
+
+The following test is only run when the LAN is disconnected from the Internet.
+@Test(timeout=5600) // ~1867ms per call (reasonable?)
+public void testNoDNS() {
+    assertFalse(isReachable("otherMachine", 8080)); // No DNS.
+    assertFalse(isReachable("example.com", 80)); // No DNS & no Internet.
+    assertFalse(isReachable("208.77.188.166", 80)); // No Internet.
+}
+
+The following test is only run when the LAN is connected to the Internet.
+@Test(timeout=5600) // ~1867ms per call (reasonable?)
+public void testHaveDNS() {
+    assertTrue(isReachable("otherMachine", 8080)); // DNS resolves local names.
+    assertTrue(isReachable("example.com", 80)); // DNS available.
+    assertTrue(isReachable("208.77.188.166", 80)); // Internet available.
+}
+
+
+
+My most recent solution depends using a TimedSocket (source code) with 3000ms timeout while performing a connect.
+Timings:
+
+1406ms : testLocalHost()
+5280ms : testLAN()
+
+Can't even get these to work properly:
+
+testNoDNS()
+testHaveDNS()
+
+
+Not sure how practical this is.
+How about doing the equivalent of traceroute(tracert on windows) and once you get a success, you can proceed.
+In corporate networks, I've seen ICMP(ping) blocked by admins BUT usually, tracert still works. If you can figure out a quick way to do what tracert does, that should do the trick ?
+Good luck!
+
+If you want to test whether you can connect to a web server you could also create a URL based on the host name and the port number and use that to create a URLConnection checking the result (including exceptions) of the connect method should tell you whether the webserver is reachable.
+
+Firstly you need to recognise that you have potentially conflicting requirements; IP sockets are not time deterministic.  The quickest you can ever detect unreachability is after your elapsed timeout.  You can only detect reachability quicker.
+Assuming reachability/isReachable is your real objective, you should just use a straightforward non-blocking socket IO as shown in the Java Ping simulator, the example connects to the time service but would work equally well on 8080.
+
+If you need to do this with a seriously large number of hosts in a very brief period of time, I'd consider using a tool like fping instead- shell out to exec it and parse the output when it comes back. fping runs a large number of parallel queries at once, so you could theoretically check a few thousand hosts in a minute (I think the limit is 4096?)
+
+The rate determining step for host availability is not within your own code, but in the netlag. You must wait for the host to respond, and this can take time. If your program blocks while waiting for a response it could be a problem. I got around this by creating each host as an object, each with its own threaded method for checking availability. In my own situation I have 40 hosts I keep track of. My main program loops through an array of 40 machine objects once every 20 seconds, calling the appropriate method on each to check availability. Since each machine object spawns its own thread to do this, all 40 machines are interrogated concurrently and the (up to 500ms) response time for each isn't a problem.

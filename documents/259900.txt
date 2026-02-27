@@ -1,0 +1,73 @@
+.NET bug when converting float to integer?
+.net floating-point
+Check it out: this little .NET Console Program yields interesting results...notice how I'm converting a float to an integer in two different ways:
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+
+namespace CastVsConvert
+{
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            int newWidth = 0;
+            CalculateResizeSizes(600, 500, out newWidth);
+        }
+
+        static void CalculateResizeSizes(int originalWidth, int maxWidth, out int newWidth)
+        {
+            float percentage = 1.0F;
+            percentage = maxWidth / (float)originalWidth;
+
+            newWidth = (int)((float)originalWidth * percentage);
+            int newWidthConvert = Convert.ToInt32((float)originalWidth * percentage);
+
+            Console.Write("Percentage: {0}\n", percentage.ToString());
+            Console.Write("Cast: {0}\n", newWidth.ToString());
+            Console.Write("Convert: {0}\n", newWidthConvert.ToString());
+        }
+    }
+}
+
+I would expect the output for "Cast" and "Convert" to be the same, but they're not...here's the output:
+C:\Documents and Settings\Scott\My Documents\Visual Studio 2008\Projects\CastVsC
+onvert\CastVsConvert\bin\Debug>CastVsConvert.exe
+Percentage: 0.8333333
+Cast: 499
+Convert: 500
+
+Does anybody know why .NET is returning different values here?  
+
+
+The cast is chopping off the portion of the number after the decimal point while the conversion is rounding.
+
+Its not a bug, cast truncates, convert rounds.
+See this
+
+From the docs for the return value of Convert.ToInt32:
+
+value rounded to the nearest 32-bit signed integer. If value is halfway
+  between two whole numbers, the even
+  number is returned; that is, 4.5 is
+  converted to 4, and 5.5 is converted
+  to 6.
+
+Casting doesn't round up - it just truncates. The result of the multiplication is very slightly under 500, so casting will truncate that to 499 whereas Convert.ToInt32 will round it up to 500.
+
+There's an extra, hidden cast that's probably causing this.  For example, if you use this instead of a recalculation:
+int newWidthConvert = Convert.ToInt32(newWidth);
+
+You'll get the same result.  What's happening becomes more clear when you use Reflector to peek at Convert.ToInt32(float):
+public static int ToInt32(float value)
+{
+    return ToInt32((double) value);
+}
+
+There's a hidden cast to Double.
+If you add a couple of lines to investigate, then use the debugger to take a look, you'll see what happens:
+float newWidth1 = ((float)originalWidth * percentage);
+double newWidth2 = ((float)originalWidth * percentage);
+
+double is more precise and saves the value as 499.999999 and a few more decimal digits.  float is less precise and stores 500.0.  The integer conversion truncates the decimal part, so you end up with 500 or 499 based on the intermediate cast.  When you call Convert.ToInt32(), the result is already cast to a float so you get the Double representation of 500.0.  Personally I prefer always using double when I can.

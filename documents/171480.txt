@@ -1,0 +1,152 @@
+RegEx: Grabbing values between quotation marks
+regex
+I have a value like this:
+"Foo Bar" "Another Value" something else
+
+What regex will return the values enclosed in the quotation marks (e.g. Foo Bar and Another Value)?
+
+
+In general, the following regular expression fragment is what you are looking for:
+"(.*?)"
+
+This uses the non-greedy *? operator to capture everything up to but not including the next double quote. Then, you use a language-specific mechanism to extract the matched text.
+In Python, you could do:
+>>> import re
+>>> string = '"Foo Bar" "Another Value"'
+>>> print re.findall(r'"(.*?)"', string)
+['Foo Bar', 'Another Value']
+
+
+I would go for:
+"([^"]*)"
+
+The [^"] is regex for any character except '"'
+The reason I use this over the non greedy many operator is that I have to keep looking that up just to make sure I get it correct.
+
+I've been using the following with great success:
+(["'])(?:(?=(\\?))\2.)*?\1
+
+It supports nested quotes as well.
+For those who want a deeper explanation of how this works, here's an explanation from user ephemient:
+
+([""']) match a quote; ((?=(\?))\2.) if backslash exists, gobble it, and whether or not that happens, match a character; *? match many times (non-greedily, as to not eat the closing quote); \1 match the same quote that was use for opening.
+
+
+echo 'junk "Foo Bar" not empty one "" this "but this" and this neither' | sed 's/[^\"]*\"\([^\"]*\)\"[^\"]*/>\1</g'
+
+This will result in: >Foo Bar<><>but this<
+Here I showed the result string between ><'s for clarity, also using the non-greedy version with this sed command we first throw out the junk before and after that ""'s and then replace this with the part between the ""'s and surround this by ><'s. 
+
+This version
+
+accounts for escaped quotes
+controls backtracking
+/(["'])((?:(?!\1)[^\\]|(?:\\\\)*\\[^\\])*)\1/
+
+
+
+For me worked this one: 
+|([\'"])(.*?)\1|i
+
+I've used in a sentence like this one:
+preg_match_all('|([\'"])(.*?)\1|i', $cont, $matches);
+
+and it worked great.
+
+From Greg H. I was able to create this regex to suit my needs.
+I needed to match a specific value that was qualified by being inside quotes.  It must be a full match, no partial matching could should trigger a hit 
+e.g. "test" could not match for "test2".
+reg = r"""(['"])(%s)\1"""
+if re.search(reg%(needle), haystack, re.IGNORECASE):
+    print "winning..."
+
+Hunter
+
+I liked Axeman's more expansive version, but had some trouble with it (it didn't match for example
+foo "string \\ string" bar
+
+or
+foo "string1"   bar   "string2"
+
+correctly, so I tried to fix it:
+    
+# opening quote
+(["'])
+   (
+     # repeat (non-greedy, so we don't span multiple strings)
+     (?:
+       # anything, except not the opening quote, and not 
+       # a backslash, which are handled separately.
+       (?!\1)[^\\]
+       |
+       # consume any double backslash (unnecessary?)
+       (?:\\\\)*       
+       |
+       # Allow backslash to escape characters
+       \\.
+     )*?
+   )
+# same character as opening quote
+\1
+
+
+string = "\" foo bar\" \"loloo\""
+print re.findall(r'"(.*?)"',string)
+
+just try this out , works like a charm !!!
+\ indicates skip character
+
+A very late answer, but like to answer
+(\"[\w\s]+\")
+
+http://regex101.com/r/cB0kB8/1
+
+Lets see two efficient ways that deal with escaped quotes. These patterns are not designed to be concise nor aesthetic, but to be efficient.
+These ways use the first character discrimination to quickly find quotes in the string without the cost of an alternation. (The idea is to discard quickly characters that are not quotes without to test the two branches of the alternation.)
+Content between quotes is described with an unrolled loop (instead of a repeated alternation) to be more efficient too: [^"\\]*(?:\\.[^"\\]*)*
+Obviously to deal with strings that haven't balanced quotes, you can use possessive quantifiers instead: [^"\\]*+(?:\\.[^"\\]*)*+ or a workaround to emulate them, to prevent too much backtracking. You can choose too that a quoted part can be an opening quote until the next (non-escaped) quote or the end of the string. In this case there is no need to use possessive quantifiers, you only need to make the last quote optional.
+Notice: sometimes quotes are not escaped with a backslash but by repeating the quote. In this case the content subpattern looks like this: [^"]*(?:""[^"]*)*
+The patterns avoid the use of a capture group and a backreference (I mean something like (["']).....\1) and use a simple alternation but with ["'] at the beginning, in factor.
+Perl like:
+["'](?:(?<=")[^"\\]*(?s:\\.[^"\\]*)*"|(?<=')[^'\\]*(?s:\\.[^'\\]*)*')
+
+(note that (?s:...) is a syntactic sugar to switch on the dotall/singleline mode inside the non-capturing group. If this syntax is not supported you can easily switch this mode on for all the pattern or replace the dot with [\s\S])
+(The way this pattern is written is totally "hand-driven" and doesn't take account of eventual engine internal optimizations)
+ECMA script:
+(?=["'])(?:"[^"\\]*(?:\\[\s\S][^"\\]*)*"|'[^'\\]*(?:\\[\s\S][^'\\]*)*')
+
+POSIX extended:
+"[^"\\]*(\\(.|\n)[^"\\]*)*"|'[^'\\]*(\\(.|\n)[^'\\]*)*'
+
+or simply:
+"([^"\\]|\\.|\\\n)*"|'([^'\\]|\\.|\\\n)*'
+
+
+Search:
+(?!\b)"\b([^"]+(\n[^"]+)*)(?!\s|^)"(?!\b)
+Replace:
+â$1â
+
+
+The pattern (["'])(?:(?=(\\?))\2.)*?\1 above does the job but I am concerned of its performances (it's not bad but could be better). Mine below it's ~20% faster.
+The pattern "(.*?)" is just incomplete. My advice for everyone reading this is just DON'T USE IT!!! 
+For instance it cannot capture many strings (if needed I can provide an exhaustive test-case) like the one below:
+
+$string = 'How are you? I\'m fine, thank you';
+
+The rest of them are just as "good" as the one above.
+If you really care both about performance and precision then start with the one below:
+/(['"])((\\\1|.)*?)\1/gm
+In my tests it covered every string I met but if you find something that doesn't work I would gladly update it for you.
+Check my pattern in an online regex tester.
+
+The RegEx of accepted answer returns the values including their sourrounding quotation marks: "Foo Bar" and "Another Value" as matches.
+Here are RegEx which return only the values between quotation marks (as the questioner was asking for):
+Double quotes only (use value of capture group #1):
+"(.*?[^\\])"
+Single quotes only (use value of capture group #1): 
+'(.*?[^\\])'
+Both (use value of capture group #2): 
+(["'])(.*?[^\\])\1
+-
+All support escaped and nested quotes.

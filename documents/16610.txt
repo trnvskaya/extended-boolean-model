@@ -1,0 +1,66 @@
+How do you deal with transport-level errors in SqlConnection?
+c# sql-server tsql ado.net sql-server-2000
+Every now and then in a high volume .NET application, you might see this exception when you try to execute a query:
+
+System.Data.SqlClient.SqlException:  A transport-level error has
+  occurred when sending the request to the server.
+
+According to my research, this is something that "just happens" and not much can be done to prevent it.  It does not happen as a result of a bad query, and generally cannot be duplicated.  It just crops up maybe once every few days in a busy OLTP system when the TCP connection to the database goes bad for some reason.
+I am forced to detect this error by parsing the exception message, and then retrying the entire operation from scratch, to include using a new connection.  None of that is pretty.
+Anybody have any alternate solutions?
+
+
+You should also check hardware connectivity to the database.
+Perhaps this thread will be helpful:
+http://channel9.msdn.com/forums/TechOff/234271-Conenction-forcibly-closed-SQL-2005/
+
+I'm using reliability layer around my DB commands (abstracted away in the repository interfaece). Basically that's just code that intercepts any expected exception (DbException and also InvalidOperationException, that happens to get thrown on connectivity issues), logs it, captures statistics and retries everything again.
+With that reliability layer present, the service has been able to survive stress-testing gracefully (constant dead-locks, network failures etc). Production is far less hostile than that.
+PS: There is more on that here (along with a simple way to define reliability with the interception DSL)
+
+To answer your original question:
+A more elegant way to detect this particular error, without parsing the error message, is to inspect the Number property of the SqlException.
+(This actually returns the error number from the first SqlError in the Errors collection, but in your case the transport error should be the only one in the collection.)
+
+I had the same problem. I asked my network geek friends, and all said what people have replied here: Its the connection between the computer and the database server. In my case it was my Internet Service Provider, or there router that was the problem. After a Router update, the problem went away. But do you have any other drop-outs of internet connection from you're computer or server? I had...
+
+I posted an answer on another question on another topic that might have some use here.  That answer involved SMB connections, not SQL.  However it was identical in that it involved a low-level transport error.
+What we found was that in a heavy load situation, it was fairly easy for the remote server to time out connections at the TCP layer simply because the server was busy.  Part of the reason was the defaults for how many times TCP will retransmit data on Windows weren't appropriate for our situation.
+Take a look at the registry settings for tuning TCP/IP on Windows.  In particular you want to look at TcpMaxDataRetransmissions and maybe TcpMaxConnectRetransmissions.  These default to 5 and 2 respectively, try upping them a little bit on the client system and duplicate the load situation.
+Don't go crazy!  TCP doubles the timeout with each successive retransmission, so the timeout behavior for bad connections can go exponential on you if you increase these too much.  As I recall upping TcpMaxDataRetransmissions to 6 or 7 solved our problem in the vast majority of cases.
+
+I have seen this happen in my own environment a number of times.  The client application in this case is installed on many machines.  Some of those machines happen to be laptops people were leaving the application open disconnecting it and then plugging it back in and attempting to use it.  This will then cause the error you have mentioned.
+My first point would be to look at the network and ensure that servers aren't on DHCP and renewing IP Addresses causing this error.  If that isn't the case then you have to start trawlling through your event logs looking for other network related.
+Unfortunately it is as stated above a network error.  The main thing you can do is just monitor the connections using a tool like netmon and work back from there.
+Good Luck.
+
+This blog post by Michael Aspengren explains the error message "A transport-level error has occurred when sending the request to the server."
+
+I had the same problem albeit it was with service requests to a SQL DB.
+This is what I had in my service error log:
+
+System.Data.SqlClient.SqlException: A transport-level error has occurred when sending the request to the server. (provider: TCP Provider, error: 0 - An existing connection was forcibly closed by the remote host.)
+
+I have a C# test suite that tests a service. The service and DB were both on external servers so I thought that might be the issue. So I deployed the service and DB locally to no avail. The issue continued. The test suite isn't even a hard pressing performance test at all, so I had no idea what was happening. The same test was failing each time, but when I disabled that test, another one would fail continuously. 
+I tried other methods suggested on the Internet that didn't work either:
+
+Increase the registry values of TcpMaxDataRetransmissions and TcpMaxConnectRetransmissions.
+Disable the "Shared Memory" option within SQL Server Configuration Manager under "Client Protocols" and sort TCP/IP to 1st in the list.
+This might occur when you are testing scalability with a large number of client connection attempts. To resolve this issue, use the regedit.exe utility to add a new DWORD value named SynAttackProtect to the registry key HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\ with value data of 00000000.
+
+My last resort was to use the old age saying "Try and try again". So I have nested try-catch statements to ensure that if the TCP/IP connection is lost in the lower communications protocol that it does't just give up there but tries again. This is now working for me, however it's not a very elegant solution.
+
+use Enterprise Services with transactional components
+
+As far as I can tell, class 20 is transport level.
+
+I experienced the transport error this morning in SSMS while connected to SQL 2008 R2 Express.
+I was trying to import a CSV with \r\n.  I coded my row terminator for 0x0d0x0a.  When I changed it to 0x0a, the error stopped.  I can change it back and forth and watch it happen/not happen.
+ BULK INSERT #t1 FROM 'C:\123\Import123.csv' WITH 
+      ( FIRSTROW = 1, FIELDTERMINATOR = ',', ROWTERMINATOR = '0x0d0x0a' )
+
+I suspect I am not writing my row terminator correctly because SQL parses one character at a time right while I'm trying to pass two characters.
+Anyhow, this error is 4 years old now, but it may provide a bit of information for the next user.
+
+I just wanted to post a fix here that worked for our company on new software we've installed. We were getting the following error since day 1 on the client log file: Server was unable to process request. ---> A transport-level error has occurred when receiving results from the server. (provider: TCP Provider, error: 0 - The semaphore timeout period has expired.) ---> The semaphore timeout period has expired.
+What completely fixed the problem was to set up a link aggregate (LAG) on our switch. Our Dell FX1 server has redundant fiber lines coming out of the back of it. We did not realize that the switch they're plugged into needed to have a LAG configured on those two ports. See details here: https://docs.meraki.com/display/MS/Switch+Ports#SwitchPorts-LinkAggregation

@@ -1,0 +1,233 @@
+When do function-level static variables get allocated/initialized?
+c++ c variables
+I'm quite confident that globally declared variables get allocated (and initialized, if applicable) at program start time.
+int globalgarbage;
+unsigned int anumber = 42;
+
+But what about static ones defined within a function?
+void doSomething()
+{
+  static bool globalish = true;
+  // ...
+}
+
+When is the space for globalish allocated? I'm guessing when the program starts. But does it get initialized then too? Or is it initialized when doSomething() is first called?
+
+
+Static variables are allocated inside a code segment -- they are part of the executable image, and so are mapped in already initialized.
+Static variables within function scope are treated the same, the scoping is purely a language level construct.
+For this reason you are guaranteed that a static variable will be initialized to 0 (unless you specify something else) rather than an undefined value.
+There are some other facets to initialization you can take advantage off -- for example shared segments allow different instances of your executable running at once to access the same static variables.
+In C++ (globally scoped) static objects have their constructors called as part of the program start up, under the control of the C runtime library.  Under Visual C++ at least the order that objects are initialized in can be controlled by the init_seg pragma.
+
+I was curious about this so I wrote the following test program and compiled it with g++ version 4.1.2.
+include <iostream>
+#include <string>
+
+using namespace std;
+
+class test
+{
+public:
+        test(const char *name)
+                : _name(name)
+        {
+                cout << _name << " created" << endl;
+        }
+
+        ~test()
+        {
+                cout << _name << " destroyed" << endl;
+        }
+
+        string _name;
+};
+
+test t("global variable");
+
+void f()
+{
+        static test t("static variable");
+
+        test t2("Local variable");
+
+        cout << "Function executed" << endl;
+}
+
+
+int main()
+{
+        test t("local to main");
+
+        cout << "Program start" << endl;
+
+        f();
+
+        cout << "Program end" << endl;
+        return 0;
+}
+
+The results were not what I expected. The constructor for the static object was not called until the first time the function was called. Here is the output:
+global variable created
+local to main created
+Program start
+static variable created
+Local variable created
+Function executed
+Local variable destroyed
+Program end
+local to main destroyed
+static variable destroyed
+global variable destroyed
+
+
+The memory for all static variables is allocated at program load. But local static variables are created and initialized the first time they are used, not at program start up. There's some good reading about that, and statics in general, here. In general I think some of these issues depend on the implementation, especially if you want to know where in memory this stuff will be located.
+
+The compiler will allocate static variable(s) defined in a function foo at program load, however the compiler will also add some additional instructions (machine code) to your function foo so that the first time it is invoked this additional code will initialize the static variable (e.g. invoking the constructor, if applicable).
+@Adam: This behind the scenes injection of code by the compiler is the reason for the result you saw.
+
+
+Or is it initialized when doSomething() is first called?
+
+Yes, it is. This, among other things, lets you initialize globally-accessed data structures when it is appropriate, for example inside try/catch blocks. E.g. instead of
+int foo = init(); // bad if init() throws something
+
+int main() {
+  try {
+    ...
+  }
+  catch(...){
+    ...
+  }
+}
+
+you can write
+int& foo() {
+  static int myfoo = init();
+  return myfoo;
+}
+
+and use it inside the try/catch block. On the first call, the variable will be initialized. Then, on the first and next calls, its value will be returned (by reference).
+
+Some relevant verbiage from C++ Standard:
+
+3.6.2  Initialization of non-local objects          [basic.start.init]
+1
+The   storage   for   objects    with    static    storage 
+  duration   (basic.stc.static) shall be zero-initialized (dcl.init)
+  before any   other   initialization  takes  place. Objects  of 
+  POD    types   (basic.types) with static storage duration
+  initialized with constant   expressions (expr.const) shall be 
+  initialized  before  any  dynamic   initialization  takes  place. 
+  Objects of namespace scope with static   storage duration defined in
+  the same translation unit and  dynamically   initialized  shall  be
+  initialized in the order in which their definition  appears  in 
+  the  translation  unit. [Note:  dcl.init.aggr  describes  the 
+  order in which aggregate members are initialized. The 
+  initialization of local static objects is described in stmt.dcl.  ]
+[more text below adding more liberties for compiler writers]
+6.7  Declaration statement                                  [stmt.dcl]
+...
+4
+The zero-initialization (dcl.init) of all local objects with 
+  static storage  duration  (basic.stc.static) is performed before
+  any other initialization  takes   place. A   local  object of 
+  POD type (basic.types)  with static  storage  duration
+  initialized with constant-expressions is initialized before its
+  block is first entered. An implementation  is  permitted to perform
+  early initialization of other local objects with static storage
+  duration under the same conditions that an implementation is
+  permitted to statically initialize an object with static storage
+  duration in namespace scope  (basic.start.init). Otherwise  such
+  an object is initialized the first time control passes through its
+  declaration; such an object is considered initialized upon the
+  completion of its initialization. If the initialization exits by 
+  throwing an exception, the initialization is not complete, so it will
+  be  tried again the next time control enters the declaration.  If control re-enters the declaration (recursively) while the object is being
+  initialized, the behavior is undefined.  [Example:
+      int foo(int i)
+      {
+          static int s = foo(2*i);  // recursive call - undefined
+          return i+1;
+      }
+
+--end example]
+5
+The destructor for a local object with static storage duration will
+  be   executed  if  and  only  if  the  variable  was  constructed. 
+  [Note:   basic.start.term  describes  the  order  in which local
+  objects with   static storage duration are destroyed.  ]
+
+
+I try to test again code from Adam Pierce and added two more cases: static variable in class and POD type. My compiler is g++ 4.8.1, in Windows OS(MinGW-32).
+Result is static variable in class is treated same with global variable. Its constructor will be called before enter main function.
+
+Conclusion (for g++, Windows environment):
+
+Global variable and static member in class: constructor is called before enter main function (1).
+Local static variable: constructor is only called when execution reaches its declaration at first time.
+If Local static variable is POD type, then it is also initialized before enter main function (1).
+Example for POD type: static int number = 10;
+
+
+(1): The correct state should be: "before any function from the same translation unit is called". However, for simple, as in example below, then it is main function.
+include < iostream>                
+#include < string>
+
+using namespace std;
+
+class test
+{
+public:
+   test(const char *name)
+            : _name(name)
+    {
+            cout << _name << " created" << endl;
+    }
+
+    ~test()
+    {
+            cout << _name << " destroyed" << endl;
+    }
+
+    string _name;
+    static test t; // static member
+ };
+test test::t("static in class");
+
+test t("global variable");
+
+void f()
+{
+    static  test t("static variable");
+    static int num = 10 ; // POD type, init before enter main function
+
+    test t2("Local variable");
+    cout << "Function executed" << endl;
+}
+
+int main()
+{
+    test t("local to main");
+    cout << "Program start" << endl;
+    f();
+    cout << "Program end" << endl;
+    return 0;
+ }
+
+result:
+static in class created
+global variable created
+local to main created
+Program start
+static variable created
+Local variable created
+Function executed
+Local variable destroyed
+Program end
+local to main destroyed
+static variable destroyed
+global variable destroyed
+static in class destroyed
+
+Anybody tested in Linux env ?

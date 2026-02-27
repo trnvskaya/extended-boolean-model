@@ -1,0 +1,90 @@
+C# little endian or big endian?
+c# hardware udp endianness
+In the documentation of hardware that allows us to control it via UDP/IP,
+I found the following fragment:
+
+In this communication protocol, DWORD is a 4 bytes data, WORD is a 2 bytes data,
+  BYTE is a single byte data. The storage format is little endian, namely 4 bytes (32bits) data is stored as: d7-d0, d15-d8, d23-d16, d31-d24; double bytes (16bits) data is stored as: d7-d0 , d15-d8.
+
+I am wondering how this translates to C#?
+Do I have to convert stuff before sending it over?
+For example, if I want to send over a 32 bit integer, or a 4 character string?
+
+
+Re little-endian, the short answer (to do I need to do anything) is "probably not, but it depends on your hardware". You can check with:
+bool le = BitConverter.IsLittleEndian;
+
+Depending on what this says, you might want to reverse portions of your buffers. Alternatively, Jon Skeet has specific-endian converters here (look for EndianBitConverter).
+Note that itaniums (for example) are big-endian. Most Intels are little-endian.
+Re the specific UDP/IP...?
+
+C# itself doesn't define the endianness. Whenever you convert to bytes, however, you're making a choice. The BitConverter class has an IsLittleEndian field to tell you how it will behave, but it doesn't give the choice. The same goes for BinaryReader/BinaryWriter.
+My MiscUtil library has an EndianBitConverter class which allows you to define the endianness; there are similar equivalents for BinaryReader/Writer. No online usage guide I'm afraid, but they're trivial :)
+(EndianBitConverter also has a piece of functionality which isn't present in the normal BitConverter, which is to do conversions in-place in a byte array.)
+
+You need to know about network byte order as well as CPU endian-ness.
+Typically for TCP/UDP comms, you always convert data to network byte order using the htons function (and ntohs, and their related functions).
+Normally network order is big-endian, but in this case (for some reason!) the comms is little endian, so those functions are not very useful. This is important as you cannot assume the UDP comms they have implemented follow any other standards, it also makes life difficult if you have a big-endian architecture as you just can't wrap everything with htons as you should :-(
+However, if you're coming from an intel x86 architecture, then you're already little-endian, so just send the data without conversion.
+
+You can also use
+IPAddress.NetworkToHostOrder(...)
+
+For short, int or long.
+
+If you're parsing and performance is not critical, consider this very simple code:
+private static byte[] NetworkToHostOrder (byte[] array, int offset, int length)
+{
+    return array.Skip (offset).Take (length).Reverse ().ToArray ();
+}
+
+int foo = BitConverter.ToInt64 (NetworkToHostOrder (queue, 14, 8), 0);
+
+
+Or you can use this code to switch the BitConverter to big endian:
+typeof (BitConverter).GetRuntimeField("IsLittleEndian").SetValue(null, false);
+
+And to switch back to little endian:
+typeof (BitConverter).GetRuntimeField("IsLittleEndian").SetValue(null, true);
+
+
+I'm playing around with packed data in UDP Multicast and I needed something to reorder UInt16 octets since I noticed an error in packet header (Wireshark), so I made this:
+    private UInt16 swapOctetsUInt16(UInt16 toSwap)
+    {
+        Int32 tmp = 0;
+        tmp = toSwap >> 8;
+        tmp = tmp | ((toSwap & 0xff) << 8);
+        return (UInt16) tmp;
+    }
+
+In case of UInt32,
+    private UInt32 swapOctetsUInt32(UInt32 toSwap)
+    {
+        UInt32 tmp = 0;
+        tmp = toSwap >> 24;
+        tmp = tmp | ((toSwap & 0xff0000) >> 8);
+        tmp = tmp | ((toSwap & 0xff00) << 8);
+        tmp = tmp | ((toSwap & 0xff) << 24);
+        return tmp;
+    }
+
+This is just for testing
+    private void testSwap() {
+        UInt16 tmp1 = 0x0a0b;
+        UInt32 tmp2 = 0x0a0b0c0d;
+        SoapHexBinary shb1 = new SoapHexBinary(BitConverter.GetBytes(tmp1));
+        SoapHexBinary shb2 = new SoapHexBinary(BitConverter.GetBytes(swapOctetsUInt16(tmp1)));
+        Debug.WriteLine("{0}", shb1.ToString());
+        Debug.WriteLine("{0}", shb2.ToString());
+        SoapHexBinary shb3 = new SoapHexBinary(BitConverter.GetBytes(tmp2));
+        SoapHexBinary shb4 = new SoapHexBinary(BitConverter.GetBytes(swapOctetsUInt32(tmp2)));
+        Debug.WriteLine("{0}", shb3.ToString());
+        Debug.WriteLine("{0}", shb4.ToString());
+    }
+
+from which output was this:
+    0B0A: {0}
+    0A0B: {0}
+    0D0C0B0A: {0}
+    0A0B0C0D: {0}
+

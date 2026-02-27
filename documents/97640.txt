@@ -1,0 +1,266 @@
+force Maven2 to copy dependencies into target/lib
+java maven-2 copy runtime dependencies
+How do I get my project's runtime dependencies copied into the target/lib folder?  
+As it is right now, after mvn clean install the target folder contains only my project's jar, but none of the runtime dependencies.
+
+
+If you make your project a war or ear type maven will copy the dependencies.
+
+You can use the the Shade Plugin to create an uber jar in which you can bundle all your 3rd party dependencies.
+
+Take a look at the Maven dependency plugin, specifically, the dependency:copy-dependencies goal.  Take a look at the example under the heading The dependency:copy-dependencies mojo.  Set the outputDirectory configuration property to ${basedir}/target/lib (I believe, you'll have to test).
+Hope this helps.
+
+The best approach depends on what you want to do:
+
+If you want to bundle your dependencies into a WAR or EAR file, then simply set the packaging type of your project to EAR or WAR. Maven will bundle the dependencies into the right location.
+If you want to create a JAR file that includes your code along with all your dependencies, then use the assembly plugin with the jar-with-dependencies descriptor. Maven will generate a complete JAR file with all your classes plus the classes from any dependencies.
+If you want to simply pull your dependencies into the target directory interactively, then use the dependency plugin to copy your files in.
+If you want to pull in the dependencies for some other type of processing, then you will probably need to generate your own plugin. There are APIs to get the list of dependencies, and their location on disk. You will have to take it from there...
+
+
+This works for me:
+<project>
+  ...
+  <profiles>
+    <profile>
+      <id>qa</id>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-dependency-plugin</artifactId>
+            <executions>
+              <execution>
+                <phase>install</phase>
+                <goals>
+                  <goal>copy-dependencies</goal>
+                </goals>
+                <configuration>
+                  <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>
+
+
+If you want to deliver a bundle of your application jar, together with all it's dependencies and some scripts to invoke the MainClass, look at the appassembler-maven-plugin.
+The following configuration will generate scripts for Window and Linux to launch the application (with a generated path referencing all the dependency jars, download all dependencies (into a lib folder below target/appassembler). The assembly plugin can then be used to package the whole appassembler directory to a zip which is installed/deployed along with the jar to the repository.
+  <plugin>
+    <groupId>org.codehaus.mojo</groupId>
+    <artifactId>appassembler-maven-plugin</artifactId>
+    <version>1.0</version>
+    <executions>
+      <execution>
+        <id>generate-jsw-scripts</id>
+        <phase>package</phase>
+        <goals>
+          <goal>generate-daemons</goal>
+        </goals>
+        <configuration>
+          <!--declare the JSW config -->
+          <daemons>
+            <daemon>
+              <id>myApp</id>
+              <mainClass>name.seller.rich.MyMainClass</mainClass>
+              <commandLineArguments>
+                <commandLineArgument>start</commandLineArgument>
+              </commandLineArguments>
+              <platforms>
+                <platform>jsw</platform>
+              </platforms>              
+            </daemon>
+          </daemons>
+          <target>${project.build.directory}/appassembler</target>
+        </configuration>
+      </execution>
+      <execution>
+        <id>assemble-standalone</id>
+        <phase>integration-test</phase>
+        <goals>
+          <goal>assemble</goal>
+        </goals>
+        <configuration>
+          <programs>
+            <program>
+              <mainClass>name.seller.rich.MyMainClass</mainClass>
+              <!-- the name of the bat/sh files to be generated -->
+              <name>mymain</name>
+            </program>
+          </programs>
+          <platforms>
+            <platform>windows</platform>
+            <platform>unix</platform>
+          </platforms>
+          <repositoryLayout>flat</repositoryLayout>
+          <repositoryName>lib</repositoryName>
+        </configuration>
+      </execution>
+    </executions>
+  </plugin>
+  <plugin>
+    <artifactId>maven-assembly-plugin</artifactId>
+    <version>2.2-beta-4</version>
+    <executions>
+      <execution>
+        <phase>integration-test</phase>
+        <goals>
+          <goal>single</goal>
+        </goals>
+        <configuration>
+          <descriptors>
+            <descriptor>src/main/assembly/archive.xml</descriptor>
+          </descriptors>
+        </configuration>
+      </execution>
+    </executions>
+  </plugin> 
+
+The assembly descriptor (in src/main/assembly) to package the direcotry as a zip would be:
+<assembly>
+  <id>archive</id>
+  <formats>
+    <format>zip</format>
+  </formats>
+  <fileSets>
+    <fileSet>
+     <directory>${project.build.directory}/appassembler</directory>
+     <outputDirectory>/</outputDirectory>
+    </fileSet>
+  </fileSets>
+</assembly>
+
+
+Just to spell out what has already been said in brief. I wanted to create an executable JAR file that included my dependencies along with my code. This worked for me:
+(1) In the pom, under <build><plugins>, I included:
+<plugin>
+    <artifactId>maven-assembly-plugin</artifactId>
+    <version>2.2-beta-5</version>
+    <configuration>
+        <archive>
+            <manifest>
+                <mainClass>dk.certifikat.oces2.some.package.MyMainClass</mainClass>
+            </manifest>
+        </archive>
+        <descriptorRefs>
+            <descriptorRef>jar-with-dependencies</descriptorRef>
+        </descriptorRefs>
+    </configuration>
+</plugin>
+
+(2) Running mvn compile assembly:assembly produced the desired my-project-0.1-SNAPSHOT-jar-with-dependencies.jar in the project's target directory.
+(3) I ran the JAR with java -jar my-project-0.1-SNAPSHOT-jar-with-dependencies.jar
+
+If you're having problems related to dependencies not appearing in the WEB-INF/lib file when running on a Tomcat server in Eclipse, take a look at this:
+ClassNotFoundException DispatcherServlet when launching Tomcat (Maven dependencies not copied to wtpwebapps)
+You simply had to add the Maven Dependencies in Project Properties > Deployment Assembly.
+
+A simple and elegant solution for the case where one needs to copy the dependencies to a target directory without using any other phases of maven (I found this very useful when working with Vaadin).
+Complete pom example:
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>groupId</groupId>
+    <artifactId>artifactId</artifactId>
+    <version>1.0</version>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.mybatis</groupId>
+            <artifactId>mybatis-spring</artifactId>
+            <version>1.1.1</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-dependency-plugin</artifactId>
+                    <executions>
+                        <execution>
+                            <phase>process-sources</phase>
+
+                            <goals>
+                                <goal>copy-dependencies</goal>
+                            </goals>
+
+                            <configuration>
+                                <outputDirectory>${targetdirectory}</outputDirectory>
+                            </configuration>
+                        </execution>
+                    </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+
+Then run mvn process-sources
+The jar file dependencies can be found in /target/dependency
+
+It's a heavy solution for embedding heavy dependencies, but Maven's Assembly Plugin does the trick for me.  
+@Rich Seller's answer should work, although for simpler cases you should only need this excerpt from the usage guide: 
+<project>
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>2.2.2</version>
+                <configuration>
+                    <descriptorRefs>
+                        <descriptorRef>jar-with-dependencies</descriptorRef>
+                    </descriptorRefs>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
+
+
+Try something like this:
+<plugin>
+<groupId>org.apache.maven.plugins</groupId>
+<artifactId>maven-jar-plugin</artifactId>
+<version>2.4</version>
+<configuration>
+    <archive>
+        <manifest>  
+            <addClasspath>true</addClasspath>
+            <classpathPrefix>lib/</classpathPrefix>
+            <mainClass>MainClass</mainClass>
+        </manifest>
+    </archive>
+    </configuration>
+</plugin>
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-dependency-plugin</artifactId>
+    <version>2.4</version>
+    <executions>
+        <execution>
+            <id>copy</id>
+            <phase>install</phase>
+            <goals>
+                <goal>copy-dependencies</goal>
+            </goals>
+            <configuration>
+                <outputDirectory>
+                    ${project.build.directory}/lib
+                </outputDirectory>
+            </configuration>
+        </execution>
+    </executions>
+</plugin>
+
+
+mvn install dependency:copy-dependencies 
+
+Works for me with dependencies directory created in target folder. Like it!
+
+If you want to do this on an occasional basis (and thus don't want to change your POM), try this command-line:
+mvn dependency:copy-dependencies -DoutputDirectory=${project.build.directory}/lib
+If you omit the last argument, the dependences are placed in target/dependencies.

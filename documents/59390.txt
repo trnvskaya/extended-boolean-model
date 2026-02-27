@@ -1,0 +1,117 @@
+ColdFusion: Is it safe to leave out the variables keyword in a CFC?
+coldfusion cfc
+In a ColdFusion Component (CFC), is it necessary to use fully qualified names for variables-scoped variables?
+Am I going to get myself into trouble if I change this:
+<cfcomponent>
+    <cfset variables.foo = "a private instance variable">
+
+    <cffunction name = "doSomething">
+    	<cfset var bar = "a function local variable">
+    	<cfreturn "I have #variables.foo# and #bar#.">
+    </cffunction>
+</cfcomponent>
+
+to this?
+<cfcomponent>
+    <cfset foo = "a private instance variable">
+
+    <cffunction name = "doSomething">
+    	<cfset var bar = "a function local variable">
+    	<cfreturn "I have #foo# and #bar#.">
+    </cffunction>
+</cfcomponent>
+
+
+
+It won't matter to specify "variables" when you create the variable, because foo will be placed in the variables scope by default; but it will matter when you access the variable.
+<cfcomponent>
+    <cfset foo = "a private instance variable">
+
+    <cffunction name="doSomething">
+    	<cfargument name="foo" required="yes"/>
+        <cfset var bar = "a function local variable">
+        <cfreturn "I have #foo# and #bar#.">
+    </cffunction>
+
+    <cffunction name="doAnotherThing">
+    	<cfargument name="foo" required="yes"/>
+        <cfset var bar = "a function local variable">
+        <cfreturn "I have #variables.foo# and #bar#.">
+    </cffunction>
+
+</cfcomponent>
+
+doSomething("args") returns "I have args and a function local variable"
+doAnotherThing("args") returns "I have a private instance of a variable and a function local variable."
+
+The short answer to your question is that no, you will probably not run into trouble attempting to do that. Outside the context of a UDF (even still inside a CFC), an un-scoped set statement implies the variables scope.
+In addition, in a CFC, the Variables scope is available to all of its functions; it is sort of the global scope within that CFC -- similar to the "this" scope, except variables scope is akin to "private" variables, whereas the this scope is akin to public variables.
+To test this, create test.cfc:
+<cfcomponent>
+    <cfset foo = "bar" />
+    <cffunction name="dumpit" output="true">
+        <cfdump var="#variables#" label="cfc variables scope">
+        <cfdump var="#this#" label="cfc this scope">
+    </cffunction>
+</cfcomponent>
+
+and a page to test it, test.cfm:
+<cfset createObject("component", "test").dumpit() />
+
+And the results will be:
+
+
+Now, to address another problem I see in your example code...
+In CF, all User Defined Functions have a special un-named scope commonly referred to as the "var" scope. If you do the following inside a UDF:
+<cfset foo = "bar" />
+
+Then you are telling CF to put that variable into the var scope.
+To compound things a bit, you can run into problems (variable values changing when you weren't expecting them to) when you are not using the var scope in your inline UDFs.
+So the rule of thumb is to always, Always, ALWAYS, ALWAYS var-scope your function-internal variables (including query names). There is a tool called varScoper that will assist you in finding variables that need to be var-scoped. Last I checked it wasn't perfect, but it's definitely a start.
+However, it is a bad idea to reference (display/use) variables without a scope (obviously excepting var-scoped variables, as you can't specify the scope to read from) in CFCs or even on your standard CFM pages. As of CF7, there were 9 scopes that were checked in a specific order when you read a variable without specifying the scope, first match wins. With CF8, there could be more scopes in that list, I haven't checked. When you do this, you run the risk of getting a value from one scope when you are expecting it from another; which is a nightmare to debug... I assure you. ;)
+So in short: implying a variable's scope (on set) is not a terrible idea (though I usually specify it anyway); but inferring variable's scope (on read) is asking for trouble.
+
+After reading your answers here's what I'm thinking:
+Yes, it's safe. In general, it's not necessary or useful to explicitly specify the variables scope. It just adds clutter to an already verbose language.
+Granted, there is one minor exception, as Soldarnal pointed out, where qualifying a variables-scoped variable is required. That is if you have a function local variable with the same name. (But you probably shouldn't do that anyway.)
+
+The simple answer to your question is:
+"NO, it isn't necessary"
+However, I think best practices would suggest that you do, in fact, use the variables indentifier when accessing those variables.  In my opinion anyone who comes upon your code in the future, and is looking in the middle of a function, will instantly know the scoping of the variable without having to scan the top of the function the local functions.
+In fact, I add a little extra verbosity to my CFC UDFs by creating one local struct:
+<cfset var local = structNew() />
+Then I put all my local vars in that struct and reference them that way so my code will look something like this:
+<cfset local.foo = variables.bar + 10 />
+
+Especially in CFCs, proper scoping is important. The extra 'verbosity' is worth the clarity. 
+Having variables slip out of their indended scope will cause severe problems and very hard to diagnose.
+Verbosity isn't always a bad thing. We name our functions and methods in descriptive manners like getAuthenticatedUser(), rather than gau(). Database columns and tables are best left descriptive like EmployeePayroll rather than empprl. Thus, being terse might be 'easier' when your short term memory is full of the project details, but being descriptive shows your intent and is helpful during the maintenance phase of an application, long after your short term memory has been filled with other stuff.
+
+Best practices aside, i believe it could also depend on how your going to access your cfc's i have not had any problems leaving them out when creating objects and accessing them from coldfusion.  However i think it might be needed when accessing and/or mapping them remotely via actionscript in flex/flash. 
+
+I'll say Yes. Is it explicitly necessary? Nope. Can you get away with not doing it? Sure. Are you asking for trouble? Absolutely. If you have the following inside a cffunction:
+<cfset foo = "bar" />
+
+That will not place that variable in the function local var scope, it will place it in the CFC's global VARIABLES scope, meaning that it is available to every method of that CFC. There are times when you may want to do this, but most of the time you'd be asking for a race condition.
+When any variable is being read by the server, if that variable is not explicity declared as part of a scope (REQUEST., SESSION., etc.) then ColdFusion will run ScopeCheck() to determine which scope the variable is in. Not only is this placing unnecessary overhead on your application server, it also introduces the ability for hijacking, whereby your variable is in one scope, but ScopeCheck() has found a variable of the same name higher in the precedence order.
+Always, always, ALWAYS, scope all variables. No matter how trivial. Even things like query names and looping indexes. Save yourself, and those that come behind you, from the pain.
+
+Here's a very good CFC scope reference from Raymond Camden.
+Personally, I prefer to make a 'self' hash to avoid all confusion (notice I don't use the 'variables' scope in the functions):
+<cfcomponent>
+  <cfset variables.self = structNew()>
+  <cfscript>
+    structInsert(variables.self, <key>, <value>);
+    ...
+  </cfscript>
+
+  <cffunction name="foo">
+    self.<key> = <value>
+    <cfreturn self.<key> />
+  </cffunction>
+
+  ...
+
+
+Not explicitly scoping in the variables scope may work, but it's not a good idea, and honestly the only reason not to is out of laziness IMO. If you explicitly scope everything 1) you avoid potential issues, and 2) it makes the code easier to read because there's no question which scope things are in.
+To me it doesn't make the code more verbose (and certainly not unnecessarily verbose)--it's actually easier to read, avoids confusion, and avoids weird side effects that may crop up if you don't explicitly scope.

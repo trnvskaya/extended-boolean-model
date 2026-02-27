@@ -1,0 +1,28 @@
+Can I trust PHP __destruct() method to be called?
+php garbage-collection
+In PHP5, is the __destruct() method guaranteed to be called for each object instance? Can exceptions in the program prevent this from happening?
+
+
+The destructor will be called when the all references are freed, or when the script terminates.  I assume this means when the script terminates properly.  I would say that critical exceptions would not guarantee the destructor to be called.
+The PHP documentation is a little bit thin, but it does say that Exceptions in the destructor will cause issues.
+
+It's also worth mentioning that, in the case of a subclass that has its own destructor, the parent destructor is not called automatically.
+You have to explicitly call parent::__destruct() from the subclass __destruct() method if the parent class does any required cleanup.
+
+There is a current bug with circular references that stops the destruct method being called implicitly. http://bugs.php.net/bug.php?id=33595
+It should be fixed in 5.3
+
+In my experience destructors will be always called in PHP 5.3, but we warned that if some piece of code calls exit() or if a fatal error occurs, PHP will call destructors in "any" order (I think the actual order is order in memory or the order the memory was reserved for the objects). This is referred as "shutdown sequence" in PHP documentation.
+PHP documentation of destructors says:
+
+PHP 5 introduces a destructor concept similar to that of other object-oriented languages, such as C++. The destructor method will be called as soon as there are no other references to a particular object, or in any order during the shutdown sequence.
+
+As a result if you have class X which holds a reference to Y, the destructor of X may be called AFTER the destructor of Y has already been called. Hopefully, the reference to Y was not that important... Officially this is not a bug because it has been documented. However, it's very hard to workaround this issue because officially PHP provides no way to know if destructor is called normally (destructors are called in correct order) or destructors are called in "any" order where you cannot use data from referenced objects because those might have been already destroyed. One could workaround this lack of detection using debug_backtrace() and examining the stack. Lack of normal stack seems to imply "shutdown sequence" with PHP 5.3 but this, too, is undefined. If you have circular references, the destructors of those objects will not be called at all with PHP 5.2 or lesser and will be called during "shutdown sequence" in PHP 5.3 or greater. For circular references, there does not exists a logical "correct" order so "any" order is good for those.
+There are some exceptions (this is PHP after all):
+
+if exit() is called in another destructor, any remaining destructors will not be called (http://php.net/manual/en/language.oop5.decon.php)
+if FATAL error occurs anywhere (many possible causes, e.g. trying to throw an exception out from any other destructor could be one cause)
+
+Of course, if the PHP engine hits segmentation fault or some other internal bug occurs, then all bets are off.
+
+Use a shutdown function if you want to go for sure: register_shutdown_function()

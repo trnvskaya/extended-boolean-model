@@ -1,0 +1,45 @@
+Best way to extract a timezone from a mail Date header in Java?
+java timezone javamail
+I need to store the timezone an email was sent from. Which is the best way to extract it from the email's 'Date:' header (an RFC822 date)? And what is the recommended format to store it in the database (I'm using hibernate)?
+
+
+Extract the data from the header using some sort of substring or regular expression. Parse the date with a SimpleDateFormatter to create a Date object.
+
+Probably easiest to parse with JodaTime as it supports ISO8601 see Date and Time Parsing and Formatting in Java with Joda Time.
+DateTimeFormatter parser2 = ISODateTimeFormat.dateTimeNoMillis();
+System.out.println(parser2.parseDateTime(your_date_string));
+
+Times must always be stored in UTC (GMT) with a timezone - i.e. after parsing convert from the timezone to GMT and remove daylight savings offset and save the original timezone.
+You must store the date with the timezone after converting to UTC.
+If you remove or don't handle the timezone it will cause problems when dealing with data that has come from a different timezone.
+
+The timezone in the email will not show in which timezone it was send. Some programs use ever UTC or GMT. Of course the time zone is part of the date time value and must also be parse.
+Why do you want know it. 
+  - Do you want normalize the timestamp? Then use a DateFormat for parsing it.
+  - Do you want detect the timezome of the user that send the email? This will not correctly work.
+
+It looks like you already mentioned this in one of your comments, but I think it's your best answer.  The JavaMail library contains RFC822 Date header parsing code in javax.mail.internet.MailDateFormat.  Unfortunately it doesn't expose the TimeZone parsing directly, so you will need to copy the necessary code directly from javax.mail.internet.MailDateParser, but it's worth taking advantage of the careful work already done.
+As for storing it, the parser will give you the date as an offset, so you should be able to store it just fine as an int (letting Hibernate translate that to your database for you).
+
+I recommend you use Mime4J. 
+The library is designed for parsing all kinds of email crap.
+For parsing dates you would use its DateTimeParser.
+int zone = new DateTimeParser(new StringReader("Fri, 27 Jul 2012 09:13:15 -0400")).zone();
+
+After that I usually convert the datetimes to Joda's DateTime. Don't use SimpleDateFormatter as will not cover all the cases for RFC822.
+Below will get you the Joda TimeZone (from the int zone above) which is superior to Java's TZ.
+// Stupid hack in case the zone is not in [-+]zzzz format
+final int hours;
+final int minutes;
+if (zone > 24 || zone < -24 ) {
+    hours = zone / 100;
+    minutes = minutes = Math.abs(zone % 100);
+}
+else {
+    hours = zone;
+    minutes = 0;
+}
+DateTimeZone.forOffsetHoursMinutes(hours, minutes);
+
+Now the only issue is that the Time Zone you will get always be a numeric time zone which may still not be the correct time zone of the user sending the email (assuming the mail app sent the users TZ and not just UTC).
+For example -0400 is not EDT (ie America/New_York) because it does not take Daylight savings into account. 

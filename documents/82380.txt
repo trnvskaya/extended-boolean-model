@@ -1,0 +1,126 @@
+Best way to handle URLs in a multilingual site in ASP.net
+asp.net internationalization multilingual
+I need to do a multilingual website, with urls like
+www.domain.com/en/home.aspx for english
+www.domain.com/es/home.aspx for spanish
+
+In the past, I would set up two virtual directories in IIS, and then detect the URL in global.aspx and change the language according to the URL
+Sub Application_BeginRequest(ByVal sender As Object, ByVal e As EventArgs)
+    Dim lang As String
+    If HttpContext.Current.Request.Path.Contains("/en/") Then
+        lang = "en"
+    Else
+        lang = "es"
+    End If
+    Thread.CurrentThread.CurrentUICulture = CultureInfo.GetCultureInfo(lang)
+    Thread.CurrentThread.CurrentCulture = CultureInfo.CreateSpecificCulture(lang)
+
+
+End Sub
+
+The solution is more like a hack.  I'm thinking about using Routing for a new website.  
+Do you know a better or more elegant way to do it?
+edit: The question is about the URL handling, not about resources, etc.
+
+
+I personnaly use the resources files.
+Very efficient, very simple.
+
+
+Use urlrewriteing.net for asp.net webforms, or routing with mvc. Rewrite www.site.com/en/something.aspx to url: page.aspx?lang=en.
+UrlRewriteing.net can be easily configured via regex in web.config. You can also use routing with webforms now, it's probably similar...
+with webforms, let every aspx page inherits from BasePage class, which then inherits from Page class.
+In BasePage class override "InitializeCulture()" and set culture info to thread, like you described in question.
+It's good to do that in this order: 1. check url for Lang param, 2. check cookie, 3. set default lang
+For static content (text, pics url) on pages use LocalResources,or Global if content is repeating across site. You can watch videocast on using global/local res. on www.asp.net
+Prepare db for multiple languages. But that's another story.  
+
+
+UrlRewriting is the way to go.
+There is a good article on MSDN on the best ways to do it.
+http://msdn.microsoft.com/en-us/library/ms972974.aspx
+
+I decided to go with the new ASP.net Routing.
+Why not urlRewriting? Because I don't want to change the clean URL that routing gives to you.
+Here is the code:
+Sub Application_Start(ByVal sender As Object, ByVal e As EventArgs)
+    ' Code that runs on application startup
+    RegisterRoutes(RouteTable.Routes)
+End Sub
+
+
+Public Sub RegisterRoutes(ByVal routes As RouteCollection)
+    Dim reportRoute As Route
+    Dim DefaultLang As String = "es"
+
+    reportRoute = New Route("{lang}/{page}", New LangRouteHandler)
+    '* if you want, you can contrain the values
+    'reportRoute.Constraints = New RouteValueDictionary(New With {.lang = "[a-z]{2}"})
+    reportRoute.Defaults = New RouteValueDictionary(New With {.lang = DefaultLang, .page = "home"})
+
+    routes.Add(reportRoute)
+End Sub
+
+Then LangRouteHandler.vb class:
+Public Class LangRouteHandler
+     Implements IRouteHandler
+
+  Public Function GetHttpHandler(ByVal requestContext As System.Web.Routing.RequestContext) As System.Web.IHttpHandler _
+      Implements System.Web.Routing.IRouteHandler.GetHttpHandler
+
+    'Fill the context with the route data, just in case some page needs it
+    For Each value In requestContext.RouteData.Values
+        HttpContext.Current.Items(value.Key) = value.Value
+    Next
+
+    Dim VirtualPath As String
+    VirtualPath = "~/" + requestContext.RouteData.Values("page") + ".aspx"
+
+    Dim redirectPage As IHttpHandler
+    redirectPage = BuildManager.CreateInstanceFromVirtualPath(VirtualPath, GetType(Page))
+    Return redirectPage
+
+  End Function
+End Class
+
+Finally I use the default.aspx in the root to redirect to the default lang used in the browser list.
+Maybe this can be done with the route.Defaults, but don't work inside Visual Studio (maybe it works in the server)
+Protected Sub Page_Load(ByVal sender As Object, ByVal e As System.EventArgs)
+    Dim DefaultLang As String = "es"
+    Dim SupportedLangs As String() = {"en", "es"}
+    Dim BrowserLang As String = Mid(Request.UserLanguages(0).ToString(), 1, 2).ToLower
+    If SupportedLangs.Contains(BrowserLang) Then DefaultLang = BrowserLang
+
+    Response.Redirect(DefaultLang + "/")
+End Sub
+
+Some sources:
+  * Mike Ormond's blog
+  * Chris Cavanaghâs Blog
+  * MSDN 
+
+Kind of a tangent, but I'd actually avoid doing this with different paths unless the different languages are completely content separate from each other.
+For Google rank, or for users sharing URLs (one of the big advantages of âcleanâ URLs), you want the address to stay as constant as possible.
+You can find usersâ language preferences from their browser settings:
+CultureInfo.CurrentUICulture
+
+Then your URL for English or Spanish:
+
+www.domain.com/products/newproduct
+
+Same address for any language, but the user gets the page in  their chosen language.
+We use this in Canada to provide systems in English and French at the same time.
+
+To do this with URL Routing, refer to this post:
+Friendly URLS with URL Routing
+
+Also, watch out new IIS 7.0 - URL Rewriting. Excellent article here http://learn.iis.net/page.aspx/496/iis-url-rewriting-and-aspnet-routing/
+I liked this part 
+Which Option Should You Use?
+
+If you are developing a new ASP.NET Web application that uses either ASP.NET MVC or ASP.NET Dynamic Data technologies, use ASP.NET routing. Your application will benefit from native support for clean URLs, including generation of clean URLs for the links in your Web pages. Note that ASP.NET routing does not support standard Web Forms applications yet, although there are plans to support it in the future.
+If you already have a legacy ASP.NET Web application and do not want to change it, use the URL-rewrite module. The URL-rewrite module allows you to translate search-engine-friendly URLs into a format that your application currently uses. Also, it allows you to create redirect rules that can be used to redirect search-engine crawlers to clean URLs. 
+http://learn.iis.net/page.aspx/496/iis-url-rewriting-and-aspnet-routing/
+
+Thanks,
+Maulik.

@@ -1,0 +1,75 @@
+Animation Extender Problems
+c# animationextender
+I have just started working with the AnimationExtender.  I am using it to show a new div with a list gathered from a database when a button is pressed.  The problem is the button needs to do a postback to get this list as I don't want to make the call to the database unless it's needed.  The postback however stops the animation mid flow and resets it.  The button is within an update panel.
+Ideally I would want the animation to start once the postback is complete and the list has been gathered.  I have looked into using the ScriptManager to detect when the postback is complete and have made some progress.  I have added two javascript methods to the page.
+function linkPostback() {
+
+        var prm = Sys.WebForms.PageRequestManager.getInstance();
+        prm.add_endRequest(playAnimation)
+    }
+
+    function playAnimation() {
+        var onclkBehavior = $find("ctl00_btnOpenList").get_OnClickBehavior().get_animation();
+        onclkBehavior.play();
+    }
+
+And Iâve changed the btnOpenList.OnClientClick=âlinkPostback();â
+This almost solves the problem.  Iâm still get some animation stutter.  The animation starts to play before the postback and then plays properly after postback.  Using the onclkBehavior.pause() has no effect.  I can get around this by setting the AnimationExtender.Enabled = false and setting it to true in the buttons postback event.  This however works only once as now the AnimationExtender is enabled again.  I have also tried disabling the AnimationExtender via javascript but this has no effect.
+Is there a way of playing the animations only via javascript calls?  I need to decouple the automatic link to the 
+buttons click event so I can control when the animation is fired.
+Hope that makes sense.
+Thanks
+DG
+
+
+The flow you are seeing is something like this:
+
+Click on button
+AnimationExtender catches action and call clickOn callback
+linkPostback starts asynchronous request for page and then returns flow to AnimationExtender
+Animation begins
+pageRequest returns and calls playAnimation, which starts the animation again
+
+I think there are at least two ways around this issue.  It seems you have almost all the javascript you need, you just need to work around AnimationExtender starting the animation on a click.
+Option 1: Hide the AnimationExtender button and add a new button of your own that plays the animation.  This should be as simple as setting the AE button's style to "display: none;" and having your own button call linkPostback().
+Option 2: Re-disable the Animation Extender once the animation has finished with.  This should work, as long as the playAnimation call is blocking, which it probably is:
+function linkPostback() {
+
+    var prm = Sys.WebForms.PageRequestManager.getInstance();
+    prm.add_endRequest(playAnimation)
+}
+
+function playAnimation() {
+
+    AnimationExtender.Enabled = true;
+    var onclkBehavior = $find("ctl00_btnOpenList").get_OnClickBehavior().get_animation();
+    onclkBehavior.play();
+    AnimationExtender.Enabled = false;
+}
+
+As an aside, it seems your general approach may face issues if there is a delay in receiving the pageRequest.  It may be a bit weird to click a button and several seconds later have the animation happen.  It may be better to either pre-load the data, or to pre-fill the div with some "Loading..." thing, make it about the right size, and then populate the actual contents when it arrives.
+
+With help from the answer given the final solution was as follows:
+Add another button and hide it.
+<input id="btnHdn" runat="server" type="button" value="button" style="display:none;" />
+
+Point the AnimationExtender to the hidden button so the firing of the unwanted click event never happens.
+<cc1:AnimationExtender ID="aniExt" runat="server" TargetControlID="btnHdn">
+
+Wire the javascript to the button you want to trigger the animation after the postback is complete.
+<asp:ImageButton ID="btnShowList" runat="server" OnClick="btnShowList_Click" OnClientClick="linkPostback();" />
+
+Add the required Javascript to the page.
+function linkPostback() {
+        var prm = Sys.WebForms.PageRequestManager.getInstance();
+        prm.add_endRequest(playOpenAnimation)
+}
+
+function playOpenAnimation() {
+    var onclkBehavior = ind("ctl00_aniExt").get_OnClickBehavior().get_animation();
+    onclkBehavior.play();         
+
+    var prm = Sys.WebForms.PageRequestManager.getInstance();
+    prm.remove_endRequest(playOpenAnimation) 
+}
+

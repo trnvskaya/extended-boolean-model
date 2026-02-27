@@ -1,0 +1,101 @@
+How to reference a custom field in SQL
+sql sql-server
+I am using mssql and am having trouble using a subquery. The real query is quite complicated, but it has the same structure as this:
+select 
+  customerName, 
+  customerId,
+  (
+    select count(*) 
+    from Purchases 
+    where Purchases.customerId=customerData.customerId
+  ) as numberTransactions
+from customerData
+
+And what I want to do is order the table by the number of transactions, but when I use
+order by numberTransactions
+
+It tells me there is no such field. Is it possible to do this? Should I be using some sort of special keyword, such as this, or self?
+
+
+use the field number, in this case:
+order by 3
+
+
+Do an inner join.  It's much easier and more readable.
+select 
+customerName,
+customerID,
+count(*) as numberTransactions
+from
+    customerdata c inner join purchases p on c.customerID = p.customerID
+group by customerName,customerID
+order by numberTransactions
+
+EDIT:  Hey Nathan,
+
+You realize you can inner join this whole table as a sub right?
+
+Select T.*, T2.*
+From T inner join 
+(select 
+customerName,
+customerID,
+count(*) as numberTransactions
+from
+    customerdata c inner join purchases p on c.customerID = p.customerID
+group by customerName,customerID
+) T2 on T.CustomerID = T2.CustomerID
+order by T2.numberTransactions
+
+Or if that's no good you can construct your queries using temporary tables (#T1 etc)
+
+You need to duplicate your logic. SQL Server isn't very smart at columns that you've named but aren't part of the dataset in your FROM statement.
+So use
+select 
+  customerName, 
+  customerId,
+  (
+    select count(*) 
+    from Purchases p
+    where p.customerId = c.customerId
+  ) as numberTransactions
+from customerData c
+order by (select count(*) from purchases p where p.customerID = c.customerid)
+
+Also, use aliases, they make your code easier to read and maintain. ;)
+
+The same thing could be achieved by using GROUP BY and a JOIN, and you'll be rid of the subquery. This might be faster too.
+
+I think you can do this in SQL2005, but not SQL2000. 
+
+Sometimes you have to wrestle with SQL's syntax (expected scope of clauses)
+SELECT *
+FROM
+(
+select
+  customerName,
+  customerId,
+  (
+    select count(*)
+    from Purchases
+    where Purchases.customerId=customerData.customerId
+  ) as numberTransactions
+from customerData
+) as sub
+order by sub.numberTransactions
+
+Also, a solution using JOIN is correct.  Look at the query plan, SQL Server should give identical plans for both solutions.
+
+There are better ways to get your result but just from your example query this will work on SQL2000 or better.
+If you wrap your alias in single ticks 'numberTransactions' and then call ORDER BY 'numberTransactions'
+select
+  customerName, 
+  customerId,
+  (
+    select count(*) 
+    from Purchases 
+    where Purchases.customerId=customerData.customerId
+  ) as 'numberTransactions'
+from customerData
+ORDER BY 'numberTransactions'
+

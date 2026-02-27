@@ -1,0 +1,256 @@
+How to get the RGB values for a pixel on an image on the iphone
+iphone cocoa-touch image bitmap
+I am writing an iPhone application and need to essentially implement something equivalent to the 'eyedropper' tool in photoshop, where you can touch a point on the image and capture the RGB values for the pixel in question to determine and match its color.  Getting the UIImage is the easy part, but is there a way to convert the UIImage data into a bitmap representation in which I could extract this information for a given pixel?  A working code sample would be most appreciated, and note that I am not concerned with the alpha value.
+
+
+You can't access the bitmap data of a UIImage directly.
+You need to get the CGImage representation of the UIImage. Then get the CGImage's data provider, from that a CFData representation of the bitmap. Make sure to release the CFData when done.
+CGImageRef cgImage = [image CGImage];
+CGDataProviderRef provider = CGImageGetDataProvider(cgImage);
+CFDataRef bitmapData = CGDataProviderCopyData(provider);
+
+You will probably want to look at the bitmap info of the CGImage to get pixel order, image dimensions, etc.
+
+To do something similar in my application, I created a small off-screen CGImageContext, and then rendered the UIImage into it. This allowed me a fast way to extract a number of pixels at once. This means that you can set up the target bitmap in a format you find easy to parse, and let CoreGraphics do the hard work of converting between color models or bitmap formats.
+
+Lajos's answer worked for me. To get the pixel data as an array of bytes, I did this:
+UInt8* data = CFDataGetBytePtr(bitmapData);
+More info: CFDataRef documentation.
+Also, remember to include CoreGraphics.framework
+
+
+I dont know how to index into image data correctly based on given X,Y cordination. Does anyone know?
+
+pixelPosition = (x+(y*((imagewidth)*BytesPerPixel)));  
+// pitch isn't an issue with this device as far as I know and can be let zero...
+// ( or pulled out of the math ).
+
+A little more detail...
+I posted earlier this evening with a consolidation and small addition to what had been said on this page - that can be found at the bottom of this post. I am editing the post at this point, however, to post what I propose is (at least for my requirements, which include modifying pixel data) a better method, as it provides writable data (whereas, as I understand it, the method provided by previous posts and at the bottom of this post provides a read-only reference to data). 
+Method 1: Writable Pixel Information
+
+I defined constants
+#define RGBA        4
+#define RGBA_8_BIT  8
+
+In my UIImage subclass I declared instance variables:
+size_t bytesPerRow;
+size_t byteCount;
+size_t pixelCount;
+
+CGContextRef context;
+CGColorSpaceRef colorSpace;
+
+UInt8 *pixelByteData;
+// A pointer to an array of RGBA bytes in memory
+RPVW_RGBAPixel *pixelData;
+
+The pixel struct (with alpha in this version)
+typedef struct RGBAPixel {
+    byte red;
+    byte green;
+    byte blue;
+    byte alpha;
+} RGBAPixel;
+
+Bitmap function (returns pre-calculated RGBA; divide RGB by A to get unmodified RGB):
+-(RGBAPixel*) bitmap {
+    NSLog( @"Returning bitmap representation of UIImage." );
+    // 8 bits each of red, green, blue, and alpha.
+    [self setBytesPerRow:self.size.width * RGBA];
+    [self setByteCount:bytesPerRow * self.size.height];
+    [self setPixelCount:self.size.width * self.size.height];
+
+    // Create RGB color space
+    [self setColorSpace:CGColorSpaceCreateDeviceRGB()];
+
+    if (!colorSpace)
+    {
+        NSLog(@"Error allocating color space.");
+        return nil;
+    }
+
+    [self setPixelData:malloc(byteCount)];
+
+    if (!pixelData)
+    {
+        NSLog(@"Error allocating bitmap memory. Releasing color space.");
+        CGColorSpaceRelease(colorSpace);
+
+        return nil;
+    }
+
+    // Create the bitmap context. 
+    // Pre-multiplied RGBA, 8-bits per component. 
+    // The source image format will be converted to the format specified here by CGBitmapContextCreate.
+    [self setContext:CGBitmapContextCreate(
+                                           (void*)pixelData,
+                                           self.size.width,
+                                           self.size.height,
+                                           RGBA_8_BIT,
+                                           bytesPerRow,
+                                           colorSpace,
+                                           kCGImageAlphaPremultipliedLast
+                                           )];
+
+    // Make sure we have our context
+    if (!context)   {
+        free(pixelData);
+        NSLog(@"Context not created!");
+    }
+
+    // Draw the image to the bitmap context. 
+    // The memory allocated for the context for rendering will then contain the raw image pixelData in the specified color space.
+    CGRect rect = { { 0 , 0 }, { self.size.width, self.size.height } };
+
+    CGContextDrawImage( context, rect, self.CGImage );
+
+    // Now we can get a pointer to the image pixelData associated with the bitmap context.
+    pixelData = (RGBAPixel*) CGBitmapContextGetData(context);
+
+    return pixelData;
+}
+
+
+
+Read-Only Data (Previous information) - method 2:
+
+Step 1. I declared a type for byte:
+typedef unsigned char byte;
+
+Step 2. I declared a struct to correspond to a pixel:
+typedef struct RGBPixel {
+
+byte    red;
+byte    green;
+byte    blue;
+
+}   RGBPixel;
+
+Step 3. I subclassed UIImageView and declared (with corresponding synthesized properties):
+//  Reference to Quartz CGImage for receiver (self)
+
+CFDataRef       bitmapData; 
+
+//  Buffer holding raw pixel data copied from Quartz CGImage held in receiver (self)
+
+UInt8*          pixelByteData;
+
+//  A pointer to the first pixel element in an array
+
+RGBPixel*           pixelData;
+
+Step 4. Subclass code I put in a method named bitmap (to return the bitmap pixel data):
+//  Get the bitmap data from the receiver's CGImage (see UIImage docs)
+
+[self   setBitmapData:  CGDataProviderCopyData( CGImageGetDataProvider( [self   CGImage] ) )];
+
+//  Create a buffer to store bitmap data (unitialized memory as long as the data)
+
+[self   setPixelBitData:    malloc( CFDataGetLength( bitmapData ) )];
+
+//  Copy image data into allocated buffer
+
+CFDataGetBytes( bitmapData, CFRangeMake( 0, CFDataGetLength( bitmapData ) ), pixelByteData );
+
+//  Cast a pointer to the first element of pixelByteData
+
+//  Essentially what we're doing is making a second pointer that divides the byteData's units differently - instead of dividing each unit as 1 byte we will divide each unit as 3 bytes (1 pixel).
+
+pixelData   = (RGBPixel*) pixelByteData;
+
+//  Now you can access pixels by index: pixelData[ index ]
+
+NSLog( @"Pixel data one red (%i), green (%i), blue (%i).", pixelData[0].red, pixelData[0].green, pixelData[0].blue );
+
+//  You can determine the desired index by multiplying row * column.
+
+return pixelData;
+
+Step 5. I made an accessor method:
+- (RGBPixel*)   pixelDataForRow:    (int)   row
+        column:         (int)   column  {
+
+    //  Return a pointer to the pixel data
+
+    return &pixelData[ row * column ];      
+
+}
+
+
+For those that couldn't get the above to work (me) there is this useful post:
+http://www.markj.net/iphone-uiimage-pixel-color/
+You can see the whole implementation there.
+
+Use ANImageBitmapRep which gives pixel-level access (read/write). 
+
+Thanks everyone! Putting a few of these answers together I get:
+- (UIColor*)colorFromImage:(UIImage*)image sampledAtPoint:(CGPoint)p {
+    CGImageRef cgImage = [image CGImage];
+    CGDataProviderRef provider = CGImageGetDataProvider(cgImage);
+    CFDataRef bitmapData = CGDataProviderCopyData(provider);
+    const UInt8* data = CFDataGetBytePtr(bitmapData);
+    size_t bytesPerRow = CGImageGetBytesPerRow(cgImage);
+    size_t width = CGImageGetWidth(cgImage);
+    size_t height = CGImageGetHeight(cgImage);
+    int col = p.x*(width-1);
+    int row = p.y*(height-1);
+    const UInt8* pixel = data + row*bytesPerRow+col*4;
+    UIColor* returnColor = [UIColor colorWithRed:pixel[0]/255. green:pixel[1]/255. blue:pixel[2]/255. alpha:1.0];
+    CFRelease(bitmapData);
+    return returnColor;
+}
+
+This just takes a point range 0.0-1.0 for both x and y. Example:
+UIColor* sampledColor = [self colorFromImage:image
+         sampledAtPoint:CGPointMake(p.x/imageView.frame.size.width,
+                                    p.y/imageView.frame.size.height)];
+
+This works great for me. I am making a couple assumptions like bits per pixel and RGBA colorspace, but this should work for most cases. 
+Another note - it is working on both Simulator and device for me - I have had problems with that in the past because of the PNG optimization that happened when it went on the device.
+
+Here is my solution for sampling color of an UIImage.
+This approach renders the requested pixel into a 1px large RGBA buffer and returns the resulting color values as an UIColor object. This is much faster than most other approaches I've seen and uses only very little memory. 
+This should work pretty well for something like a color picker, where you typically only need the value of one specific pixel at a any given time. 
+Uiimage+Picker.h
+#import <UIKit/UIKit.h>
+
+
+@interface UIImage (Picker)
+
+- (UIColor *)colorAtPosition:(CGPoint)position;
+
+@end
+
+Uiimage+Picker.m
+#import "UIImage+Picker.h"
+
+
+@implementation UIImage (Picker)
+
+- (UIColor *)colorAtPosition:(CGPoint)position {
+
+    CGRect sourceRect = CGRectMake(position.x, position.y, 1.f, 1.f);
+    CGImageRef imageRef = CGImageCreateWithImageInRect(self.CGImage, sourceRect);
+
+    CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+    unsigned char *buffer = malloc(4);
+    CGBitmapInfo bitmapInfo = kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big;
+    CGContextRef context = CGBitmapContextCreate(buffer, 1, 1, 8, 4, colorSpace, bitmapInfo);
+    CGColorSpaceRelease(colorSpace);
+    CGContextDrawImage(context, CGRectMake(0.f, 0.f, 1.f, 1.f), imageRef);
+    CGImageRelease(imageRef);
+    CGContextRelease(context);
+
+    CGFloat r = buffer[0] / 255.f;
+    CGFloat g = buffer[1] / 255.f;
+    CGFloat b = buffer[2] / 255.f;
+    CGFloat a = buffer[3] / 255.f;
+
+    free(buffer);
+
+    return [UIColor colorWithRed:r green:g blue:b alpha:a];
+}
+
+@end 
+

@@ -1,0 +1,38 @@
+Where do you put program scope variables in UI driven application?
+global-variables application-design
+Ok, so I know that global variables are considered bad, and the singleton pattern is overused.  And I have read in many places that a class should do only one task and contain only those variables that allow it to accomplish that one task. However, while working on my latest project, I actually thought about these rules before writing any code and have noticed that I tend to break them at the very beginning of the program.  
+I'm currently working on an MFC dialog based application, but this question could be applied to any UI driven application.  I have separate classes that handle state machines, file reading/writing, and hardware interfacing.  All of these objects will need some type of UI control or property display/editing.  In the MFC dialog applications, the dialog is the program, so it must exist until the program is closed.  I've usually just put the objects in the main dialog class for the application and had the dialog class serve double duty; as both the main UI and the home for all other objects in the application.  In other applications, I've created these objects globally and referenced them from wherever they were needed.  Neither of these ways seem correct.  The first option breaks the one class, one task rule, and the second relies on globals and also creates hidden dependencies.  I could institute some type of dependency injection, but where would all these variables that I would inject reside?
+I'm just wondering what others do to organize their programs without breaking the rules?
+
+
+If I am understanding you correctly, it sounds like the lifetime of your dialog objects is too long. Rather than maintaining the dialogs for the duration of your program, you should consider creating and destroying them as they are needed.
+Also, global variables (or singletons) are OK so long as the thing that the variable represents is truly a global thing that persists for the lifetime of the program, rather than just a place-holder for an object of lesser duration. Using globals for the wrong things for simplicity sake will come back to bite you eventually, even if the globals are stored on the main dialog.
+
+I find that storing singletons as public data attributes of the main dialog class of an MFC dialog application works OK for a quick and dirty program.  However, as the program becomes larger and more complex, things begin to get untidy.
+The point where storing singletons in the dialog class needs to be refactored is probably when you start passing pointers to the dialog around, so that other classes can access the singletons it contains.
+The singletons can be moved into the global namespace.  This is still a bit untidy, especially when there are a large number of them.  Since you have to write a separate extern for each one in a header file then define each one somewhere, you soon end up with something that looks a lot like an old fashioned C program.
+A neat thing to do is to make use of the singleton that the framework has already defined for you.- the application object which is always called theApp, a specialization of CWinApp.  If you place your singletons as public data members of this, then any code can get easily get access to them .
+Suppose that you called your application âsolverâ.  The dialog application creation wizard will create a class CsolverApp.  Now suppose you have a singleton called âtheDataâ an instance of the class âcDataâ.
+Place your singleton in the theApp
+class CsolverApp : public CWinApp
+{
+public:
+
+cData theData;
+
+â¦
+
+Now to access this from anywhere in your code
+#include âsolver.hâ
+
+theApp.theData.somepublicmethod();
+
+
+It does make sense to look at this from the MVC (Model - View - Controller) viewpoint.  (That the naming of MFC is an homage to MVC is another sick joke on Microsoft's part; it is hard and unintuitive (but by no means impossible) to manage the types of abstractions that are necessary in "true" MVC within MFC.)
+Specifically, it sounds like you've thought out the basis for MVC design; you have the classes that do the underlying business logic work (the Model), and you know they should be separated from the UI components (the View).  The issue that comes in now is the third part of the MVC trinity; the Controller.
+MFC makes this stuff tough by apparently purposefully obfuscating the MVC process, by making you start with a Dialog.  In your instance, the Dialog that MFC is starting you off with should be the Controller, and NOT the View.  What your Dialog (Controller) is doing for you is managing your UI components (View) and allowing them to interact with your "work" classes (Model).  What makes this tough again is that your UI components, to be visible, most likely need to be attached to your Dialog to be visible.
+To get this sort of thing right, you really have to basically implement your Controller as a high-level object that gets instantiated from your Dialog; your Dialog is where the initial control flow comes in, your Controller gets control flow, and from there, it should treat the Dialog as just another UI component (albeit one with special status).
+This allows you to have the proper level of encapsulation; your Controller invokes your business logic (Model) classes, which can communicate with each other or with the Controller as appropriate; they are segregated from the View by the Controller, instead of being embedded in the UI components and (likely) taking the "easy way" of over-privileged access  to UI elements ("Hmm, I need this object to get some input from the user; I could refactor, but it'll be so much easier to just throw a dialog box up, since I have the top-level window handle...").
+Once your Controller object is the home to all of the business logic objects, things become easier; you can use the Controller to provide cross-object access for any objects that need other objects.  Think about which classes need to be Singletons, and use them sparingly.  Resources that need contention management (such as hardware resources) are great examples of "natural singletons"; things which lend themselves to a singleton approach.  You may also choose to make your Controller a singleton; depending on the requirements for access to it.  Specifically, in your Dependency Injection scenario, the Controller is where you'd instantiate the objects and manage the dependencies.
+This is the basic MVC approach; but, like I say, MFC makes it unusually hard and unintuitive, because of the fundamental design of MFC.  I learned MUCH more about MVC AFTER an initial VERY negative impression about it due to MFC; if you can, I recommend looking into what MVC implementations look like in other languages.
+Good luck!

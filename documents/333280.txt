@@ -1,0 +1,40 @@
+Parallelization: What causes Java threads to block other than synchronization & I/O?
+java multithreading parallel-processing
+Short version is in the title.
+Long version:
+I am working on a program for scientific optimization using Java.  The workload of the program can be divided into parallel and serial phases -- parallel phases meaning that highly parallelizable work is being performed.  To speed up the program (it runs for hours/days) I create a number of threads equal to the number of CPU cores on the machine I'm using -- typically 4 or 8 -- and divide the work between them.  I then start these threads and join() them before proceeding to a serial phase.
+So far so good.  What's bothering me is that the CPU utilization and speedup of the parallel phases is nowhere near the "theoretical maximum" -- e.g. if I have 4 cores, I expect to see somewhere between 350-400% "utilization" (as reported by top) but instead it bounces around between 180 and about 310. Using only a single thread, I get 100% CPU utilization.
+The only reasons I know of for threads not to run at full speed are:
+    -blocking due to I/O
+    -blocking due to synchronization
+No I/O whatsoever is going on in my parallel threads, nor any synchronization -- the only data structures shared by the threads are read-only, and are either basic types or (non-concurrent) collections.  So I'm looking for other explanations.  One possibility would be that several threads are repeatedly blocking for garbage collection, but that would only seem to make sense in a situation with memory pressure, and I am allocating well above the required maximum heap space.  
+Any suggestions would be appreciated.
+Update: Just in case anyone is curious, after some more investigation I tweaked the code for general performance and am seeing better utilization, even though nothing I changed has to do with synchronization.  However, some of the changes should have resulted in fewer new heap allocations in particular I got rid of some use of iterators and termporary boxed numbers (The CERN "Colt" library for high-performance Java computing was useful here: it provides collections like IntArrayList, DoubleArrayList etc for basic types.).  So I think garbage collection was probably the culprit.  
+
+
+All graphics operations run on a single thread in swing. If they are rendering to the screen they will effectively be contending for access to this thread.
+If you are running on Windows, all graphics operations run on a single thread no matter what. Other operating systems have similar limitations.
+It's actually fairly difficult to get the proper granularity of threaded workers sometimes, and sometimes it's easy to make them too big or too small, which will typically give you  less than 100% usage of all cores.
+If you're not rendering much gui, the most likely culprit is that you're contending more than you think for some shared resource. This is easily seen with profiler tools like jprofiler. Some VM's like bea's jrockit can even tell you this straight out of the box.
+This is one of those places where you dont want to act on guesswork. Get a profiler!
+
+First of all, GC will not happen only "in situation with memory pressure", but at any time the JVM sees fit (unpredictable, as far as I know).
+Second, if your threads allocate memory in the heap (you mention they use Collections so I guess they do assign memory in the heap), you can never be sure if this memory is currently in RAM or on a Virtual Memory page (the OS decides), and thus access to "memory" may generate blocking I/O access!
+Finally, as suggested in a prior answer, you may find it useful to check what happens by using a profiler (or even JMX monitoring might give some hints there).
+I believe it will be difficult to get further hints on your problem unless you provide more concrete (code) information.
+
+You try to use the full CPU capability for your calculations but the OS itself uses resources as well. So be aware that the OS will block some of your execution in order to satisfy its needs.
+
+Firstly, I assume you're not doing any other significant work on the box. If you are, that's clearly going to mess with things.
+It does sound very odd if you're really not sharing anything. Can you give us more idea of what the code is really doing?
+What happens if you run n copies of the program as different Java processes, with each only using a single thread? If that uses each CPU completely, then at least we know that it can't be a problem with the OS. Speaking of the OS, which one is this running on, and which JVM? If you can try different JVMs and different OSes, the results might give you a hint as to what's wrong.
+
+Also an important point: Which Hardware do you use?
+E.g. 4-8 Cores could mean you work on one of Suns Niagara CPUs. And despite having 4-8 Cores  they have less FPUs. When computing scientific stuff it could happen, that the FPU is the bottleneck.
+
+You are doing synchronization at some level.
+Perhaps only in the memory allocation system, including garbage collection.  While the JVM vendor has worked to keep blocking in these areas to a minimum, they can't reduce it to zero.  Perhaps something about your application is pushing at a weak point in this area.
+The accepted wisdom is "don't build your own memory reclaiming pool, let the GC work for you".  This is true most of the time but not in at least one piece of code I maintain (proven with profiling).  Perhaps you need to rework your Object allocation in some major way.
+
+Try the latency analyzer that comes with JRockit Mission Control. It will show you what the CPU is doing when it's not doing anything, if the application is waiting for file I/O, TLA-fetches, object allocations, thread suspension, JVM-locks, gc-pauses etc. You can also see transitions, e.g. when one thread wakes up another. The overhead is negligible, 1% or so.
+See this blog for more info. The tool is free to use for development and you can download it here

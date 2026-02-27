@@ -1,0 +1,49 @@
+Swing: Is there a way to differentiate between a user-caused ItemEvent and an application-caused one?
+java swing events combobox listeners
+I'm working with a combobox in a Swing-based application, and I'm having a hard time figuring out what to do to differentiate between an ItemEvent that is generated from a user event vs one caused by the application. 
+For instance, Lets say I have a combobox, 'combo' and I'm listening for itemStateChanged events with my ItemListener, 'listener'. When either a user changes the selection to item 2 or I execute the line (pseudocode):
+combo.setSelection(2)
+.. it seems like I'm not able to tell these events apart. 
+That said, I'm no Swing expert by any means, so I thought I would ask. 
+Thanks!
+
+
+You can set a flag in your code before you set the selection, and then check for this flag in the listener (and unset the flag if it is set)...
+There may be a better way since Java 6, but this is the way I always used to do it...
+[Edit]:  As David points out, you will need to set the flag (and update the combo) in the EDT using SwingUtilities.invokeLater or similar (you should do this anyway, as you are changing a UI control)
+
+Whether the user selects Item 2, or the API calls setSelection(2), the event will appear the same.
+The solution to your problem might be in re-thinking what you want the itemStateChanged code to do when the selection changes.  Why would your app work differently under each condition?  Maybe there are similarities that you can use to your advantage.
+Be careful when using flags.  The itemStateChanged event will occur on the Event Dispatch Thread, which is a different thread than the one on which you'd set the state of the flag.  This would mean that using a flag may not be 100% reliable.
+
+If you need to tell the events apart, then there is probably something about your design that needs a rethink.  The whole point of MVC is to decouple changes to the model from the actual mouse clicks of the user.
+Perhaps you should restate the question in terms of why you would ever want to differentiate between these two situations.  We could then provide some guidance on a different way of achieving the goal.
+
+The Action and Reaction law is quite clear :). If you try to react on change there is no need to distinguish between user and application. I can imagine only one use case where you need to "distinguish". The case where application is displaying some data. In this case you have, probably, data model for your application. And also there are some change listener in this model and application GUI will react by setting values to components. And also. If user selects anything into GUI component. The data model will react by changing value. In this case it is easy to set up some sort of read-only state on data model which will notify model to ignore ANY event coming from observed objects. This notification set should run in EDT and there is no problem with flagging. Small example:
+class ApplicationDataModel {
+
+    private Flag current = Flag.RW;
+
+    public void setData(ApplicationData data) {
+        current = Flag.RO;
+        setDataImpl(data);
+        notifyObservers();
+        current = Flag.RW;
+    }
+
+    public void reaction(Event e) {
+        if (flag = Flag.RO) return;
+        ...
+    }
+
+}
+
+Be careful with flagging and don't forget about threading. If you are calling setData from another thread then EDT you are going into trouble. Of course. The extraction of ApplicationData object has to be run in different thread ;). In general, rethink design of your application.
+
+So I'm guessing you want the user selection to perform some action rather than just a plain old direct state change. This is an issue caused by limited flexibility (flexibility is always going to be limited, particularly if you have flexibility in other directions).
+My suggestion:
+Firstly, always go straight to using model in Swing. The widgets are way to complicated and you want different concerns to be split up. Fortunately Swing is already there with its models.
+A common pattern is to have delegation between models. So in this case you have the "real" default model that holds your data. Insert between the JComboBox and real ComboBoxModel and delegating ComboBoxModel that performs actions on state change instructions. Your application code should ignore the JComboBox and go straight for the real ComboBoxModel bypassing the delegating model. So in a diagram:
+
+User -- JComboBox -- ActionComboBoxModel -- DefaultComboBoxModel -- Application code
+

@@ -1,0 +1,342 @@
+How do I convert a string to an enum in C#?
+c# string enums
+What's the best way to convert a string to an enumeration value in C#?
+I have an HTML select tag containing the values of an enumeration. When the page is posted, I want to pick up the value (which will be in the form of a string) and convert it to the enumeration value.
+In an ideal world, I could do something like this:
+StatusEnum MyStatus = StatusEnum.Parse("Active");
+
+but that isn't valid code.
+
+
+You're looking for Enum.Parse.
+SomeEnum enum = (SomeEnum)Enum.Parse(typeof(SomeEnum), "EnumValue");
+
+
+It's rather ugly:
+StatusEnum MyStatus = (StatusEnum) Enum.Parse(typeof(StatusEnum), "Active", true);
+
+I tend to simplify this with:
+public static T ParseEnum<T>(string value)
+{
+    return (T) Enum.Parse(typeof(T), value, true);
+}
+
+Then I can do:
+StatusEnum MyStatus = EnumUtil.ParseEnum<StatusEnum>("Active");
+
+One option suggested in the comments is to add an extension, which is simple enough:
+public static T ToEnum<T>(this string value)
+{
+    return (T) Enum.Parse(typeof(T), value, true);
+}
+
+StatusEnum MyStatus = "Active".ToEnum<StatusEnum>();
+
+Finally, you may want to have a default enum to use if the string cannot be parsed:
+public static T ToEnum<T>(this string value, T defaultValue) 
+{
+    if (string.IsNullOrEmpty(value))
+    {
+        return defaultValue;
+    }
+
+    T result;
+    return Enum.TryParse<T>(value, true, out result) ? result : defaultValue;
+}
+
+Which makes this the call:
+StatusEnum MyStatus = "Active".ToEnum(StatusEnum.None);
+
+However, I would be careful adding an extension method like this to string as (without namespace control) it will appear on all instances of string whether they hold an enum or not (so 1234.ToString().ToEnum(StatusEnum.None) would be valid but nonsensical) . It's often be best to avoid cluttering Microsoft's core classes with extra methods that only apply in very specific contexts unless your entire development team has a very good understanding of what those extensions do. 
+
+Enum.Parse is your friend:
+StatusEnum MyStatus = (StatusEnum)Enum.Parse(typeof(StatusEnum), "Active");
+
+
+object Enum.Parse(System.Type enumType, string value, bool ignoreCase);
+
+So if you had an enum named mood it would look like this:
+   enum Mood
+   {
+      Angry,
+      Happy,
+      Sad
+   } 
+
+   // ...
+   Mood m = (Mood) Enum.Parse(typeof(Mood), "Happy", true);
+   Console.WriteLine("My mood is: {0}", m.ToString());
+
+// str.ToEnum<EnumType>()
+T static ToEnum<T>(this string str) 
+{ 
+    return (T) Enum.Parse(typeof(T), str);
+}
+
+
+Note that the performance of Enum.Parse() is awful, because it is implemented via reflection. (The same is true of Enum.ToString, which goes the other way.) 
+If you need to convert strings to Enums in performance-sensitive code, your best bet is to create a Dictionary<String,YourEnum> at startup and use that to do your conversions. 
+
+We couldn't assume perfectly valid input, and went with this variation of @Keith's answer:
+public static TEnum ParseEnum<TEnum>(string value) where TEnum : struct
+{
+    TEnum tmp; 
+    if (!Enum.TryParse<TEnum>(value, true, out tmp))
+    {
+        tmp = new TEnum();
+    }
+    return tmp;
+}
+
+
+Parses string to TEnum without try/catch and without TryParse() method from .NET 4.5
+/// <summary>
+/// Parses string to TEnum without try/catch and .NET 4.5 TryParse()
+/// </summary>
+public static bool TryParseToEnum<TEnum>(string probablyEnumAsString_, out TEnum enumValue_) where TEnum : struct
+{
+    enumValue_ = (TEnum)Enum.GetValues(typeof(TEnum)).GetValue(0);
+    if(!Enum.IsDefined(typeof(TEnum), probablyEnumAsString_))
+        return false;
+
+    enumValue_ = (TEnum) Enum.Parse(typeof(TEnum), probablyEnumAsString_);
+    return true;
+}
+
+
+Use Enum.TryParse() (>= .NET 4.0):
+StatusEnum myStatus;
+Enum.TryParse("Active", out myStatus);
+
+
+You can use extension methods now:
+public static T ToEnum<T>(this string value, bool ignoreCase = true)
+{
+    return (T) Enum.Parse(typeof (T), value, ignoreCase);
+}
+
+And you can call them by the below code (here, FilterType is an enum type):
+FilterType filterType = type.ToEnum<FilterType>();
+
+
+You can extend the accepted answer with a default value to avoid exceptions:
+public static T ParseEnum<T>(string value, T defaultValue) where T : struct
+{
+    try
+    {
+        T enumValue;
+        if (!Enum.TryParse(value, true, out enumValue))
+        {
+            return defaultValue;
+        }
+        return enumValue;
+    }
+    catch (Exception)
+    {
+        return defaultValue;
+    }
+}
+
+Then you call it like:
+StatusEnum MyStatus = EnumUtil.ParseEnum("Active", StatusEnum.None);
+
+
+I used class (strongly-typed version of Enum with parsing and performance improvements). I found it on GitHub, and it should work for .NET 3.5 too. It has some memory overhead since it buffers a dictionary.
+StatusEnum MyStatus = Enum<StatusEnum>.Parse("Active");
+
+The blogpost is Enums â Better syntax, improved performance and TryParse in NET 3.5.
+And code:
+https://github.com/damieng/DamienGKit/blob/master/CSharp/DamienG.Library/System/EnumT.cs
+
+public static T ParseEnum<T>(string value)            //function declaration  
+{
+    return (T) Enum.Parse(typeof(T), value);
+}
+
+Importance imp = EnumUtil.ParseEnum<Importance>("Active");   //function call
+
+====================A Complete Program====================
+using System;
+
+class Program
+{
+    enum PetType
+    {
+    None,
+    Cat = 1,
+    Dog = 2
+    }
+
+    static void Main()
+    {
+
+    // Possible user input:
+    string value = "Dog";
+
+    // Try to convert the string to an enum:
+    PetType pet = (PetType)Enum.Parse(typeof(PetType), value);
+
+    // See if the conversion succeeded:
+    if (pet == PetType.Dog)
+    {
+        Console.WriteLine("Equals dog.");
+    }
+    }
+}
+-------------
+Output
+
+Equals dog.
+
+
+I like the extension method solution..
+namespace System
+{
+    public static class StringExtensions
+    {
+
+        public static bool TryParseAsEnum<T>(this string value, out T output) where T : struct
+        {
+            T result;
+
+            var isEnum = Enum.TryParse(value, out result);
+
+            output = isEnum ? result : default(T);
+
+            return isEnum;
+        }
+    }
+}
+
+Here below my implementation with tests.
+using static Microsoft.VisualStudio.TestTools.UnitTesting.Assert;
+using static System.Console;
+
+private enum Countries
+    {
+        NorthAmerica,
+        Europe,
+        Rusia,
+        Brasil,
+        China,
+        Asia,
+        Australia
+    }
+
+   [TestMethod]
+        public void StringExtensions_On_TryParseAsEnum()
+        {
+            var countryName = "Rusia";
+
+            Countries country;
+            var isCountry = countryName.TryParseAsEnum(out country);
+
+            WriteLine(country);
+
+            IsTrue(isCountry);
+            AreEqual(Countries.Rusia, country);
+
+            countryName = "Don't exist";
+
+            isCountry = countryName.TryParseAsEnum(out country);
+
+            WriteLine(country);
+
+            IsFalse(isCountry);
+            AreEqual(Countries.NorthAmerica, country); // the 1rst one in the enumeration
+        }
+
+
+BEWARE:
+enum Example
+{
+    One = 1,
+    Two = 2,
+    Three = 3
+}
+
+Enum.(Try)Parse() accepts multiple, comma-separated arguments, and combines them with binary 'or' |. You cannot disable this and in my opinion you almost never want it.
+var x = Enum.Parse("One,Two"); // x is now Three
+
+Even if Three was not defined, x would still get int value 3. That's even worse: Enum.Parse() can give you a value that is not even defined for the enum!
+I would not want to experience the consequences of users, willingly or unwillingly, triggering this behavior.
+Additionally, as mentioned by others, performance is less than ideal for large enums, namely linear in the number of possible values.
+I suggest the following:
+    public static bool TryParse<T>(string value, out T result)
+        where T : struct
+    {
+        var cacheKey = "Enum_" + typeof(T).FullName;
+
+        // [Use MemoryCache to retrieve or create&store a dictionary for this enum, permanently or temporarily.
+        // [Implementation off-topic.]
+        var enumDictionary = CacheHelper.GetCacheItem(cacheKey, CreateEnumDictionary<T>, EnumCacheExpiration);
+
+        return enumDictionary.TryGetValue(value.Trim(), out result);
+    }
+
+    private static Dictionary<string, T> CreateEnumDictionary<T>()
+    {
+        return Enum.GetValues(typeof(T))
+            .Cast<T>()
+            .ToDictionary(value => value.ToString(), value => value, StringComparer.OrdinalIgnoreCase);
+    }
+
+
+For performance this might help:
+    private static Dictionary<Type, Dictionary<string, object>> dicEnum = new Dictionary<Type, Dictionary<string, object>>();
+    public static T ToEnum<T>(this string value, T defaultValue)
+    {
+        var t = typeof(T);
+        Dictionary<string, object> dic;
+        if (!dicEnum.ContainsKey(t))
+        {
+            dic = new Dictionary<string, object>();
+            dicEnum.Add(t, dic);
+            foreach (var en in Enum.GetValues(t))
+                dic.Add(en.ToString(), en);
+        }
+        else
+            dic = dicEnum[t];
+        if (!dic.ContainsKey(value))
+            return defaultValue;
+        else
+            return (T)dic[value];
+    }
+
+
+I found that here the case with enum values that have EnumMember value was not considered. So here we go:
+using System.Runtime.Serialization;
+
+public static TEnum ToEnum<TEnum>(this string value, TEnum defaultValue) where TEnum : struct
+{
+    if (string.IsNullOrEmpty(value))
+    {
+        return defaultValue;
+    }
+
+    TEnum result;
+    var enumType = typeof(TEnum);
+    foreach (var enumName in Enum.GetNames(enumType))
+    {
+        var fieldInfo = enumType.GetField(enumName);
+        var enumMemberAttribute = ((EnumMemberAttribute[]) fieldInfo.GetCustomAttributes(typeof(EnumMemberAttribute), true)).FirstOrDefault();
+        if (enumMemberAttribute?.Value == value)
+        {
+            return Enum.TryParse(enumName, true, out result) ? result : defaultValue;
+        }
+    }
+
+    return Enum.TryParse(value, true, out result) ? result : defaultValue;
+}
+
+And example of that enum:
+public enum OracleInstanceStatus
+{
+    Unknown = -1,
+    Started = 1,
+    Mounted = 2,
+    Open = 3,
+    [EnumMember(Value = "OPEN MIGRATE")]
+    OpenMigrate = 4
+}
+

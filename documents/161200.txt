@@ -1,0 +1,185 @@
+FTP File Upload with HTTP Proxy
+c# proxy ftp
+Is there a way to upload a file to a FTP server when behind an HTTP proxy ?
+It seems that uploading a file is not supported behind an HTTP Proxy using .Net Webclient. (http://msdn.microsoft.com/en-us/library/system.net.ftpwebrequest.proxy.aspx).
+If there is no workaround ? If not, do you know a good and free FTP library I can use ?
+Edit: Unfortunately, I don't have any FTP proxy to connect to.
+
+
+Id don't really see the connection between a http proxy and uploading to an ftp server. If you use the http proxy class thats for accessing http resources trough a http proxy. ftp is another protocol and the ftp proxies use a different protocol.
+
+In active FTP mode, the server initiates a data connection to the client. If the client is behind an HTTP proxy, this obviously won't work. In passive FTP mode it is the client who initiates both the initial and the data connections. Since HTTP proxies can tunnel arbitrary outgoing TCP connections (using the CONNECT method), it should be possible to access an FTP server in passive mode via an HTTP proxy.
+The FtpWebRequest seems to support passive mode. However, I don't understand why file download and directory listings are supported, whereas file upload, which also uses the same data connection, is not.
+Have you confirmed that FtpWebRequest configured for passive mode does not work via an HTTP proxy through which directory listings/file download work just fine?
+
+most FTP proxies do their thing on the connection, so if you had NO proxy, you do this:
+
+server: myftpserver.com
+user: me
+password: pwd
+
+using an FTP proxy, you do:
+
+server: ftpproxy.mydomain.com
+user: me@myftpserver.com
+password: pwd
+
+and it just works it out from there. I'm using this RIGHT THIS SECOND (trying to debug something) thru a squid proxy.
+... but as you dont have an FTP proxy.... 
+Do you have a SOCKS proxy? That might work, but I dont know if .NET can do it. Otherwise, to be honest, I think you are stuck! FTP is an "odd" protocol, when compared to HTTP, as it has a control channel (port 21) and a data channel (or more than one, on a random port), so going via proxies is.... fun to say the least!
+
+If there's a way for you to upload a file via FTP without C# then it should also be possible in C#. Does uploading via browser or an FTP client work? 
+The one FTP library I like the most is .NET FTP Client library.
+
+As Alexander says, HTTP proxies can proxy arbitrary traffic.  What you need is an FTP Client that has support for using a HTTP Proxy.  Alexander is also correct that this would only work in passive mode.
+My employer sells such an FTP client, but it is a enterprise level tool that only comes as part of a very large system.
+I'm certain that there are others available that would better fit your needs.
+
+One solution is to try Mono's implementation of FtpWebRequest. I had a look at its source code and it appears it'll be easy to modify so that all connections (control and data) are tunneled via an HTTP proxy.
+You establish a TCP connection to your HTTP proxy instead of the actual FTP server. Then you send CONNECT myserver:21 HTTP/1.0 followed by two CRLFs (CRLF = \r\n). If the proxy needs authentication, you need to use HTTP/1.1 and also send a proxy authentication header with the credentials. Then you need to read the first line of the response. If it starts with "HTTP/1.0 200 " or "HTTP/1.1 200 ", then you (the rest of the code) can continue using the connection as though it's connected directly to the FTP server.
+
+Our Rebex FTP/SSL can use HTTP proxy. It's not free, though... 
+// initialize FTP client 
+Ftp client = new Ftp();
+
+// setup proxy details  
+client.Proxy.ProxyType = FtpProxyType.HttpConnect;
+client.Proxy.Host = proxyHostname;
+client.Proxy.Port = proxyPort;
+
+// add proxy username and password when needed 
+client.Proxy.UserName = proxyUsername;
+client.Proxy.Password = proxyPassword;
+
+// connect, login 
+client.Connect(hostname, port);
+client.Login(username, password);
+
+// do some work 
+// ... 
+
+// disconnect 
+client.Disconnect();
+
+
+It's not free ($149), but edtFTPnet/Express supports FTP via HTTP proxies.
+
+I've just had the same problem.
+My primary goal was to upload a file to an ftp. And I didn't care if my traffic would go through proxy or not.
+So I've just set FTPWebRequest.Proxy property to null right after FTPWebRequest.Create(uri).
+And it worked. Yes, I know this solution is not the greatest one. And more of that, I don't get why did it work. But the goal is complete, anyway.
+
+The standard way of uploading content to an ftp:// URL via an HTTP proxy would be using an HTTP PUT request. An HTTP proxy acts as an HTTP<->FTP gateway when dealing with ftp:// URLs, speaking HTTP to the requesting client and FTP to the requested FTP server.
+At least the Squid HTTP Proxy supports PUT to ftp:// URLs, not sure what other proxies do.
+The more common way is by abusing the CONNECT method to esablish tunnels over the proxy. But this is often not allowed due to security implications of allowing bidirectional tunnels over the proxy.
+
+Hi I had the same issue - the resolution was to create the proxy object and derive the defaultcredentials - this should be fine provided your application is been run with a network account - 
+FtpWebRequest reqFTP = (FtpWebRequest)FtpWebRequest.Create(new Uri(uri));
+
+System.Net.WebProxy proxy = System.Net.WebProxy.GetDefaultProxy();
+proxy.Credentials = System.Net.CredentialCache.DefaultCredentials;
+
+// set the ftpWebRequest proxy
+reqFTP.Proxy = proxy;
+
+This resolved the issue for me.
+
+I'm not sure if all HTTP proxies work in the same way, but I managed to cheat ours by simply creating an HTTP request to access resource on URI ftp://user:pass@your.server.com/path.
+Sadly, to create an instance of HttpWebRequest you should use WebRequest.Create. And if you do that you can't create an HTTP request for ftp:// schema. 
+So I used a bit of reflection to invoke a non-public constructor which does that:
+var ctor = typeof(HttpWebRequest).GetConstructor(
+    BindingFlags.NonPublic | BindingFlags.Instance, 
+    null, 
+    new Type[] { typeof(Uri), typeof(ServicePoint) }, 
+    null);
+var req = (WebRequest)ctor.Invoke(new object[] { new Uri("ftp://user:pass@host/test.txt"), null });
+req.Proxy = new WebProxy("myproxy", 8080);
+req.Method = WebRequestMethods.Http.Put;
+
+using (var inStream = req.GetRequestStream())
+{
+    var buffer = Encoding.ASCII.GetBytes("test upload");
+    inStream.Write(buffer, 0, buffer.Length);
+}
+
+using (req.GetResponse())
+{
+}
+
+You can also use other methods like "DELETE" for other tasks.
+In my case, it worked like a charm.
+
+Damn these unfree applications and components!!!
+Here is my open source C# code that can uploads file to FTP via HTTP proxy.
+        public bool UploadFile(string localFilePath, string remoteDirectory)
+    {
+        var fileName = Path.GetFileName(localFilePath);
+        string content;
+        using (var reader = new StreamReader(localFilePath))
+            content = reader.ReadToEnd();
+
+        var proxyAuthB64Str = Convert.ToBase64String(Encoding.ASCII.GetBytes(_proxyUserName + ":" + _proxyPassword));
+        var sendStr = "PUT ftp://" + _ftpLogin + ":" + _ftpPassword
+            + "@" + _ftpHost + remoteDirectory + fileName + " HTTP/1.1\n"
+            + "Host: " + _ftpHost + "\n"
+            + "User-Agent: Mozilla/4.0 (compatible; Eradicator; dotNetClient)\n" + "Proxy-Authorization: Basic " + proxyAuthB64Str + "\n"
+            + "Content-Type: application/octet-stream\n"
+            + "Content-Length: " + content.Length + "\n"
+            + "Connection: close\n\n" + content;
+
+        var sendBytes = Encoding.ASCII.GetBytes(sendStr);
+
+        using (var proxySocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+        {
+            proxySocket.Connect(_proxyHost, _proxyPort);
+            if (!proxySocket.Connected)
+                throw new SocketException();
+            proxySocket.Send(sendBytes);
+
+            const int recvSize = 65536;
+            var recvBytes = new byte[recvSize];
+            proxySocket.Receive(recvBytes, recvSize, SocketFlags.Partial);
+
+            var responseFirstLine = new string(Encoding.ASCII.GetChars(recvBytes)).Split("\n".ToCharArray()).Take(1).ElementAt(0);
+            var httpResponseCode = Regex.Replace(responseFirstLine, @"HTTP/1\.\d (\d+) (\w+)", "$1");
+            var httpResponseDescription = Regex.Replace(responseFirstLine, @"HTTP/1\.\d (\d+) (\w+)", "$2");
+            return httpResponseCode.StartsWith("2");
+        }
+        return false;
+    }
+
+
+As of .NET framework 4.5, the FtpWebRequest still cannot upload files over HTTP proxy.
+
+If the specified proxy is an HTTP proxy, only the DownloadFile, ListDirectory, and ListDirectoryDetails commands are supported.
+
+So either you need to implement the upload yourself, or use 3rd party FTP library.
+
+For example with WinSCP .NET assembly, you can use:
+// Setup session options
+SessionOptions sessionOptions = new SessionOptions
+{
+    Protocol = Protocol.Ftp,
+    HostName = "example.com",
+    UserName = "user",
+    Password = "mypassword",
+};
+
+// Configure proxy
+sessionOptions.AddRawSettings("ProxyMethod", "3");
+sessionOptions.AddRawSettings("ProxyHost", "proxy");
+
+using (Session session = new Session())
+{
+    // Connect
+    session.Open(sessionOptions);
+
+    // Upload file
+    string localFilePath = @"C:\path\file.txt";
+    string pathUpload = "/file.txt";
+    session.PutFiles(localFilePath, pathUpload).Check();
+}
+
+For the options for SessionOptions.AddRawSettings, see raw settings.
+Note that WinSCP .NET assembly is not a native .NET library. It's rather a thin .NET wrapper over a console application.
+(I'm the author of WinSCP)

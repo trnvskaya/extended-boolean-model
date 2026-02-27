@@ -1,0 +1,62 @@
+How do I Insert or Update (or overwrite) a record using NHibernate?
+nhibernate insert-update overwrite upsert
+I need to write a row to the database regardless of whether it already exists or not. Before using NHibernate this was done with a stored procedure. The procedure would attempt an update and if no rows were modified it would fallback to an insert. This worked well because the application doesn't care if the record exists.
+With NHibernate, the solutions I have found require loading the entity and modifying it, or deleting the entity so the new one can be inserted. The application does have to care if the record already exists. Is there a way around that?
+Does the Id Matter?
+Assigned Id
+The object has a keyword as an assigned id and is the primary key in the table.
+I understand that SaveOrUpdate() will call the Save() or Update() method as appropriate based on the Id. Using an assigned id, this won't work because the id isn't an unsaved-value. However a Version or Timestamp field could be used as an indicator instead. In reality, this isn't relevant because this only reflects on whether the object in memory has been associated with a record in the database; it does not indicate if the record exists or not in the database.
+Generated Id
+If the assigned id were truly the cause of the problem, I could use a generated id instead of the keyword as the primary key. This would avoid the NHibernate Insert/Update issue as it would effectively always insert. However, I still need to prevent duplicate keywords. With a unique index on the keyword column it will still throw an exception for a duplicate keyword even if the primary key is different.
+Another Approach?
+Perhaps the problem isn't really with NHibernate, but the way this is modeled. Unlike other areas of the application, this is more data-centric rather object-centric. It is nice that  NHibernate makes it easy to read/write and eliminates the stored procedures. But the desire to simply write without regard to existing values doesn't fit well with the model of an object's identity model. Is there a better way to approach this?
+
+
+call hibernate.saveOrUpdate() which will check if the object is in the database, update it if it is, and save (i.e. insert) it if it is not.
+
+Use the session.SaveOrUpdate(object) method.
+
+You can do 
+Obj j = session.get(Object.class(), id);
+if (j != null)
+   session.merge(myObj);
+else
+   session.saveOrUpdate(myObj);
+
+
+I`m using    
+    public IList<T> GetByExample<T>(T exampleInstance)
+    {
+        return _session.CreateCriteria(typeof(T))
+                    .Add(Example.Create(exampleInstance))
+                    .List<T>();
+    }
+
+    public void InsertOrUpdate<T>(T target)
+    {
+        ITransaction transaction = _session.BeginTransaction();
+        try
+        {
+            var res=GetByExample<T>(target);
+            if( res!=null && res.Count>0 )
+                _session.SaveOrUpdate(target);
+            else
+               _session.Save(target); 
+            transaction.Commit();
+        }
+        catch (Exception)
+        {
+            transaction.Rollback();
+            throw;
+        }
+        finally
+        {
+            transaction.Dispose();
+        }
+    }
+
+but FindByExample method returns all objects alike not objects with the exact ID what do you suggest ? since I have only object as parameter I don't have access to its specific ID field so I cannot use session.get(Object.class(), id);
+
+
+Typically, NHibernate can rely on the unsaved-value to determine whether it should insert or create the entity. However, since you are assigning the ID, to NHibernate it looks like your entity has already been persisted. Therefore, you need to rely on versioning your object to let NHibernate know that it is a new object. See the following link for how to version your entity:
+http://devlicio.us/blogs/mike_nichols/archive/2008/07/29/when-flushing-goes-bad-assigned-ids-in-nhibernate.aspx

@@ -1,0 +1,164 @@
+How can I know if a process is running?
+c# .net
+When I get a reference to a System.Diagnostics.Process, how can I know if a process is currently running?
+
+
+This is a way to do it with the name:
+Process[] pname = Process.GetProcessesByName("notepad");
+if (pname.Length == 0)
+  MessageBox.Show("nothing");
+else
+  MessageBox.Show("run");
+
+You can loop all process to get the ID for later manipulation:
+Process[] processlist = Process.GetProcesses();
+foreach(Process theprocess in processlist){
+   Console.WriteLine("Process: {0} ID: {1}", theprocess.ProcessName, theprocess.Id);
+}
+
+
+Process.GetProcesses() is the way to go. But you may need to use one or more different criteria to find your process, depending on how it is running (i.e. as a service or a normal app, whether or not it has a titlebar).
+
+It depends on how reliable you want this function to be.  If you want to know if the particular process instance you have is still running and available with 100% accuracy then you are out of luck.  The reason being that from the managed process object there are only 2 ways to identify the process.
+The first is the Process Id.  Unfortunately, process ids are not unique and can be recycled.  Searching the process list for a matching Id will only tell you that there is a process with the same id running, but it's not necessarily your process.
+The second item is the Process Handle.  It has the same problem though as the Id and it's more awkward to work with.
+If you're looking for medium level reliability then checking the current process list for a process of the same ID is sufficient. 
+
+Maybe (probably) I am reading the question wrongly, but are you looking for the HasExited property that will tell you that the process represented by your Process object has exited (either normally or not).
+If the process you have a reference to has a UI you can use the Responding property to determine if the UI is currently responding to user input or not.
+You can also set EnableRaisingEvents and handle the Exited event (which is sent asychronously) or call WaitForExit() if you want to block.
+
+Synchronous solution :
+void DisplayProcessStatus(Process process)
+{
+    process.Refresh();  // Important
+
+
+    if(process.HasExited)
+    {
+        Console.WriteLine("Exited.");
+    }
+    else
+    {
+        Console.WriteLine("Running.");
+    } 
+}
+
+Asynchronous solution:
+void RegisterProcessExit(Process process)
+{
+    // NOTE there will be a race condition with the caller here
+    //   how to fix it is left as an exercise
+    process.Exited += process_Exited;
+}
+
+static void process_Exited(object sender, EventArgs e)
+{
+   Console.WriteLine("Process has exited.");
+}
+
+
+This is the simplest way I found after using reflector.
+I created an extension method for that:
+public static class ProcessExtensions
+{
+    public static bool IsRunning(this Process process)
+    {
+        if (process == null) 
+            throw new ArgumentNullException("process");
+
+        try
+        {
+            Process.GetProcessById(process.Id);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+        return true;
+    }
+}
+
+The Process.GetProcessById(processId) method calls the ProcessManager.IsProcessRunning(processId) method and throws ArgumentException in case the process does not exist. For some reason the ProcessManager class is internal...
+
+You can instantiate a Process instance once for the process you want and keep on tracking the process using that .NET Process object (it will keep on tracking till you call Close on that .NET object explicitly, even if the process it was tracking has died [this is to be able to give you time of process close, aka ExitTime etc.])
+Quoting http://msdn.microsoft.com/en-us/library/fb4aw7b8.aspx:
+
+When an associated process exits (that is, when it is shut down by the
+  operation system through a normal or abnormal termination), the system
+  stores administrative information about the process and returns to the
+  component that had called WaitForExit. The Process component can then
+  access the information, which includes the ExitTime, by using the
+  Handle to the exited process. 
+Because the associated process has exited, the Handle property of the
+  component no longer points to an existing process resource. Instead,
+  the handle can be used only to access the operating systemâs
+  information about the process resource. The system is aware of handles
+  to exited processes that have not been released by Process components,
+  so it keeps the ExitTime and Handle information in memory until the
+  Process component specifically frees the resources. For this reason,
+  any time you call Start for a Process instance, call Close when the
+  associated process has terminated and you no longer need any
+  administrative information about it. Close frees the memory allocated
+  to the exited process.
+
+
+I tried Coincoin's solution :
+Before processing some file, I copy it as a temporary file and open it.
+When I'm done, I close the application if it is still open and delete
+the temporary file :
+I just use a Process variable and check it afterwards :
+private Process openApplication;  
+private void btnOpenFile_Click(object sender, EventArgs e) {  
+    ...
+    // copy current file to fileCache  
+    ...  
+    // open fileCache with proper application
+    openApplication = System.Diagnostics.Process.Start( fileCache );  
+}
+
+Later I close the application : 
+ ...   
+openApplication.Refresh(); 
+
+// close application if it is still open       
+if ( !openApplication.HasExited() ) {
+    openApplication.Kill();  
+}
+
+// delete temporary file  
+System.IO.File.Delete( fileCache );
+
+It works ( so far )
+
+    string process="notepad";
+    if (Process.GetProcessesByName(process).Length == 0)
+    {
+    MessageBox.Show("Working");
+    }
+    else
+    {
+    MessageBox.Show("Not Working");
+    }
+
+also you can use a timer for checking the process everytime
+
+reshefm had a pretty nice answer; however, it does not account for a situation in which the process was never started to begin with.
+Here is a a modified version of what he posted.
+    public static bool IsRunning(this Process process)
+    {
+        try  {Process.GetProcessById(process.Id);}
+        catch (InvalidOperationException) { return false; }
+        catch (ArgumentException){return false;}
+        return true;
+    }
+
+I removed his ArgumentNullException because its actually suppose to be a null reference exception and it gets thrown by the system anyway and I also accounted for the situation in which the process was never started to begin with or the close() method was used to close the process.
+
+This should be a one-liner:
+public static class ProcessHelpers {
+    public static bool IsRunning (string name) {
+        return Process.GetProcessesByName(name).Length > 0 ? true : false;
+    }
+}
+

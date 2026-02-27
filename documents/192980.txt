@@ -1,0 +1,76 @@
+Boiler plate code replacement - is there anything bad about this code?
+c# coding-style
+I've recently created these two (unrelated) methods to replace lots of boiler-plate code in my winforms application. As far as I can tell, they work ok, but I need some reassurance/advice on whether there are some problems I might be missing.
+(from memory)
+static class SafeInvoker
+{
+    //Utility to avoid boiler-plate InvokeRequired code
+    //Usage: SafeInvoker.Invoke(myCtrl, () => myCtrl.Enabled = false);
+    public static void Invoke(Control ctrl, Action cmd)
+    {
+        if (ctrl.InvokeRequired)
+            ctrl.BeginInvoke(new MethodInvoker(cmd));
+        else
+            cmd();
+    }
+
+    //Replaces OnMyEventRaised boiler-plate code
+    //Usage: SafeInvoker.RaiseEvent(this, MyEventRaised)
+    public static void RaiseEvent(object sender, EventHandler evnt)
+    {
+        var handler = evnt;
+        if (handler != null)
+            handler(sender, EventArgs.Empty);
+    }
+}
+
+EDIT: See related question here
+UPDATE
+Following on from deadlock problems (related in this question), I have switched from Invoke to BeginInvoke (see an explanation here).
+Another Update
+Regarding the second snippet, I am increasingly inclined to use the 'empty delegate' pattern, which fixes this problem 'at source' by declaring the event directly with an empty handler, like so:
+event EventHandler MyEventRaised = delegate {};
+
+
+
+Similar patterns have worked for me with no problems. I am not sure why you are wrapping Action in MethodInvoker though.
+
+This is good stuff. Make them extension methods though to clean up your code a little more. For example:
+//Replaces OnMyEventRaised boiler-plate code
+//Usage: SafeInvoker.RaiseEvent(this, MyEventRaised)
+public static void Raise(this EventHandler eventToRaise, object sender)
+{
+            EventHandler eventHandler = eventToRaise;
+
+            if (eventHandler != null)
+                eventHandler(sender, EventArgs.Empty);
+}
+
+Now on your events you can call: myEvent.Raise(this);
+
+Due to the fact, that Benjol doesn't know, why he places the Action into a MethodInvoker and broccliman meant to use it as an Extension Function, here is the clean up code:
+static class SafeInvoker
+{
+    //Utility to avoid boiler-plate InvokeRequired code
+    //Usage: myCtrl.SafeInvoke(() => myCtrl.Enabled = false);
+    public static void SafeInvoke(this Control ctrl, Action cmd)
+    {
+        if (ctrl.InvokeRequired)
+            ctrl.BeginInvoke(cmd);
+        else
+            cmd();
+    }
+
+    //Replaces OnMyEventRaised boiler-plate code
+    //Usage: this.RaiseEvent(myEventRaised);
+    public static void RaiseEvent(this object sender, EventHandler evnt)
+    {
+        var temp = evnt;
+        if (temp != null)
+            temp(sender, EventArgs.Empty);
+    }
+}
+
+Just a last note: MethodInvoker and Action are both just delegates having the exact same structure. Due to this case both are replaceable by each other. The root of this naming clash comes from legacy. At the beginning (.Net 2.0) there was just MethodInvoker and Action(T). But due to the fact, that everyone who used Action(T) whishes to have a Action and found it very unnatural to take MethodInvoker. So in .Net 3.5 the Action, Action(T1, T2, T3, T4) and all the Func delegates where added too, but MethodInvoker could not be removed anymore without making any breaking changes.
+Additional:
+If you are able to use .Net 3.5 the above code is fine, but if you're pinned to .Net 2.0 you can use it as normal function as before and replace Action by MethodInvoker.

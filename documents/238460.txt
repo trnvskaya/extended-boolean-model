@@ -1,0 +1,168 @@
+ASP.NET MVC Beta 1: DefaultModelBinder wrongly persists parameter and validation state between unrelated requests
+asp.net-mvc inversion-of-control castle-windsor defaultmodelbinder
+When I use the default model binding to bind form parameters to a complex object which is a parameter to an action, the framework remembers the values passed to the first request, meaning that any subsequent request to that action gets the same data as the first. The parameter values and validation state are persisted between unrelated web requests.
+Here is my controller code (service represents access to the back end of the app):
+    [AcceptVerbs(HttpVerbs.Get)]
+    public ActionResult Create()
+    {
+        return View(RunTime.Default);
+    }
+
+    [AcceptVerbs(HttpVerbs.Post)]
+    public ActionResult Create(RunTime newRunTime)
+    {
+        if (ModelState.IsValid)
+        {
+            service.CreateNewRun(newRunTime);
+            TempData["Message"] = "New run created";
+            return RedirectToAction("index");
+        }
+        return View(newRunTime);
+    }
+
+My .aspx view (strongly typed as ViewPage<RunTime>) contains directives like: 
+<%= Html.TextBox("newRunTime.Time", ViewData.Model.Time) %>
+
+This uses the DefaultModelBinder class, which is meant to autobind my model's properties.
+I hit the page, enter valid data (e.g. time = 1). The app correctly saves the new object with time = 1. I then hit it again, enter different valid data (e.g. time = 2). However the data that gets saved is the original (e.g. time = 1). This also affects validation, so if my original data was invalid, then all data I enter in the future is considered invalid. Restarting IIS or rebuilding my code flushes the persisted state.
+I can fix the problem by writing my own hard-coded model binder, a basic naive example of which is shown below. 
+    [AcceptVerbs(HttpVerbs.Post)]
+    public ActionResult Create([ModelBinder(typeof (RunTimeBinder))] RunTime newRunTime)
+    {
+        if (ModelState.IsValid)
+        {
+            service.CreateNewRun(newRunTime);
+            TempData["Message"] = "New run created";
+            return RedirectToAction("index");
+        }
+        return View(newRunTime);
+    }
+
+
+internal class RunTimeBinder : DefaultModelBinder
+{
+    public override ModelBinderResult BindModel(ModelBindingContext bindingContext)
+    {
+        // Without this line, failed validation state persists between requests
+        bindingContext.ModelState.Clear();
+
+
+        double time = 0;
+        try
+        {
+            time = Convert.ToDouble(bindingContext.HttpContext.Request[bindingContext.ModelName + ".Time"]);
+        }
+        catch (FormatException)
+        {
+            bindingContext.ModelState.AddModelError(bindingContext.ModelName + ".Time", bindingContext.HttpContext.Request[bindingContext.ModelName + ".Time"] + "is not a valid number");
+        }
+
+        var model = new RunTime(time);
+        return new ModelBinderResult(model);
+    }
+}
+
+Am I missing something? I don't think it's a browser session problem as I can reproduce the problem if the first data is entered in one browser and the second in another.
+
+
+I tried to reproduce this problem but I'm not seeing that same behavior. I created almost exactly the same controller and views that you have (with some assumptions) and every time I created a new "RunTime" I put its value in TempData and sent it off through the Redirect. Then on the target page I grabbed the value and it was always the value I typed in on that request - never a stale value.
+Here's my Controller:
+public class HomeController : Controller {
+    public ActionResult Index() {
+        ViewData["Title"] = "Home Page";
+        string message = "Welcome: " + TempData["Message"];
+        if (TempData.ContainsKey("value")) {
+            int theValue = (int)TempData["value"];
+            message += " " + theValue.ToString();
+        }
+        ViewData["Message"] = message;
+        return View();
+    }
+[AcceptVerbs(HttpVerbs.Get)]
+public ActionResult Create() {
+    return View(RunTime.Default);
+}
+
+[AcceptVerbs(HttpVerbs.Post)]
+public ActionResult Create(RunTime newRunTime) {
+    if (ModelState.IsValid) {
+        //service.CreateNewRun(newRunTime);
+        TempData["Message"] = "New run created";
+        TempData["value"] = newRunTime.TheValue;
+        return RedirectToAction("index");
+    }
+    return View(newRunTime);
+}
+
+}
+And here's my View (Create.aspx):
+<% using (Html.BeginForm()) { %>
+<%= Html.TextBox("newRunTime.TheValue", ViewData.Model.TheValue) %>
+<input type="submit" value="Save" />
+<% } %>
+
+Also, I wasn't sure what the "RunTime" type looked like, so I made this one:
+   public class RunTime {
+        public static readonly RunTime Default = new RunTime(-1);
+
+        public RunTime() {
+        }
+
+        public RunTime(int theValue) {
+            TheValue = theValue;
+        }
+
+        public int TheValue {
+            get;
+            set;
+        }
+    }
+
+Is it possible that your implementation of RunTime includes some static values or something?
+Thanks,
+Eilon
+
+I'm not sure if this is related or not, but your call to 
+<%= Html.TextBox("newRunTime.Time", ViewData.Model.Time) %>
+might actually pick the wrong overload (since Time is an integer, it will pick the object htmlAttributes overload, rather than string value.
+Checking the rendered HTML will let you know if this is occurring.  changing int to ViewData.Model.Time.ToString() will force the correct overload.
+It sounds like your issue is something different, but I noticed that and have been burned in the past.
+
+It turns out that the problem was that my controllers were being reused between calls. One of the details I chose to omit from my original post is that I am using the Castle.Windsor container to create my controllers. I had failed to mark my controller with the Transient lifestyle, so I was getting the same instance back on each request. Thus the context being used by the binder was being re-used and of course it contained stale data. 
+I discovered the problem while carefully analysing the difference between Eilon's code and mine, eliminating all other possibilities. As the Castle documentation says, this is a "terrible mistake"! Let this be a warning to others!
+Thanks for your response Eilon - sorry to take up your time.
+
+Seb, I'm not sure what you mean by an example. I don't know anything about Unity configuration. I'll explain the situation with Castle.Windsor and maybe that will help you with to configure Unity correctly. 
+By default, Castle.Windsor returns the same object each time you request a given type. This is the singleton lifestyle. There's a good explanation of the various lifestyle options in the Castle.Windsor documentation. 
+In ASP.NET MVC, each instance of a controller class is bound to the context of the web request that it was created to serve. So if your IoC container returns the same instance of your controller class each time, you'll always get a controller bound to the context of the first web request that used that controller class. In particular, the ModelState and other objects used by the DefaultModelBinder will be reused, so your bound model object and the validation messages in the ModelState will be stale.
+Therefore you need  your IoC to return a new instance each time MVC requests an instance of your controller class.
+In Castle.Windsor, this is called the transient lifestyle. To configure it, you have two options:
+
+XML configuration: you add lifestlye="transient" to each element in your configuration file that represents a controller. 
+In-code configuration: you can tell the container to use the transient lifestyle at the time you register the controller. This is what the MvcContrib helper that Ben mentioned does automatically for you - take a look at the method RegisterControllers in the MvcContrib source code.
+
+I would imagine that Unity offers a similiar concept to the lifestyle in Castle.Windsor, so you'll need to configure Unity to use its equivalent of the transient lifestyle for your controllers.
+MvcContrib appears to have some Unity support - maybe you could look there. 
+Hope this helps.
+
+Having come across similar problems when attempting to use the Windsor IoC container in an ASP.NET MVC app I had to go through the same voyage of discovery to get it working. Here are some of the details that might help someone else.
+Using this is the initial setup in the Global.asax:
+  if (_container == null) 
+  {
+    _container = new WindsorContainer("config/castle.config");
+    ControllerBuilder.Current.SetControllerFactory(new WindsorControllerFactory(Container)); 
+  }
+
+And using a WindsorControllerFactory which when asked for a controller instance does:
+  return (IController)_container.Resolve(controllerType);
+
+Whilst Windsor was correctly linking up all of the controllers, for some reason parameters were not being passed from the form to the relevant controller action. Instead they were all null, though it was calling the correct action.
+The default is for the container to pass back singletons, obviously a bad thing for controllers and the cause of the problem:
+http://www.castleproject.org/monorail/documentation/trunk/integration/windsor.html
+However the documentation does point out that the lifestyle of the controllers can be changed to transient, though it doesn't actually tell you how to do that if you are using a configuration file. Turns out it's easy enough:
+<component 
+  id="home.controller" 
+  type="DoYourStuff.Controllers.HomeController, DoYourStuff" 
+  lifestyle="transient" />
+
+And without any code changes it should now work as expected (i.e. unique controllers every time provided by the one instance of the container). You can then do all of your IoC configuration in the config file rather than the code like the good boy/girl that I know you are.

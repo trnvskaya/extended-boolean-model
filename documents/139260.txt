@@ -1,0 +1,101 @@
+Writing XML files using XmlTextWriter with ISO-8859-1 encoding
+c# .net xml encoding iso-8859-1
+I'm having a problem writing Norwegian characters into an XML file using C#. I have a string variable containing some Norwegian text (with letters like Ã¦Ã¸Ã¥). 
+I'm writing the XML using an XmlTextWriter, writing the contents to a MemoryStream like this:
+MemoryStream stream = new MemoryStream();
+XmlTextWriter xmlTextWriter = new XmlTextWriter(stream, Encoding.GetEncoding("ISO-8859-1"));
+xmlTextWriter.Formatting = Formatting.Indented;
+xmlTextWriter.WriteStartDocument(); //Start doc
+
+Then I add my Norwegian text like this:
+xmlTextWriter.WriteCData(myNorwegianText);
+
+Then I write the file to disk like this:
+FileStream myFile = new FileStream(myPath, FileMode.Create);
+StreamWriter sw = new StreamWriter(myFile);
+
+stream.Position = 0;
+StreamReader sr = new StreamReader(stream);
+string content = sr.ReadToEnd();
+
+sw.Write(content);
+sw.Flush();
+
+myFile.Flush();
+myFile.Close();
+
+Now the problem is that in the file on this, all the Norwegian characters look funny.
+I'm probably doing the above in some stupid way. Any suggestions on how to fix it?
+
+
+Which encoding do you use for displaying the result file? If it is not in ISO-8859-1, it will not display correctly.
+Is there a reason to use this specific encoding, instead of for example UTF8?
+
+Why are you writing the XML first to a MemoryStream and then writing that to the actual file stream? That's pretty inefficient. If you write directly to the FileStream it should work. 
+If you still want to do the double write, for whatever reason, do one of two things. Either
+
+Make sure that the StreamReader and StreamWriter objects you use all use the same encoding as the one you used with the XmlWriter (not just the StreamWriter, like someone else suggested), or
+Don't use StreamReader/StreamWriter. Instead just copy the stream at the byte level using a simple byte[] and Stream.Read/Write. This is going to be, btw, a lot more efficient anyway.
+
+
+Both your StreamWriter and your StreamReader are using UTF-8, because you're not specifying the encoding. That's why things are getting corrupted.
+As tomasr said, using a FileStream to start with would be simpler - but also MemoryStream has the handy "WriteTo" method which lets you copy it to a FileStream very easily.
+I hope you've got a using statement in your real code, by the way - you don't want to leave your file handle open if something goes wrong while you're writing to it.
+Jon
+
+You need to set the encoding everytime you write a string or read binary data as a string.
+    Encoding encoding = Encoding.GetEncoding("ISO-8859-1");
+
+    FileStream myFile = new FileStream(myPath, FileMode.Create);
+    StreamWriter sw = new StreamWriter(myFile, encoding);
+
+    stream.Position = 0;
+    StreamReader sr = new StreamReader(stream, encoding);
+    string content = sr.ReadToEnd();
+
+    sw.Write(content);
+    sw.Flush();
+
+    myFile.Flush();
+    myFile.Close();
+
+
+As mentioned in above answers, the biggest issue here is the Encoding, which is being defaulted due to being unspecified.
+When you do not specify an Encoding for this kind of conversion, the default of UTF-8 is used - which may or may not match your scenario. You are also converting the data needlessly by pushing it into a MemoryStream and then out into a FileStream.
+If your original data is not UTF-8, what will happen here is that the first transition into the MemoryStream will attempt to decode using default Encoding of UTF-8 - and corrupt your data as a result. When you then write out to the FileStream, which is also using UTF-8 as encoding by default, you simply persist that corruption into the file.
+In order to fix the issue, you likely need to specify Encoding into your Stream objects.
+You can actually skip the MemoryStream process entirely, also - which will be faster and more efficient. Your updated code might look something more like:
+FileStream fs = new FileStream(myPath, FileMode.Create);
+
+XmlTextWriter xmlTextWriter = 
+    new XmlTextWriter(fs, Encoding.GetEncoding("ISO-8859-1"));
+
+xmlTextWriter.Formatting = Formatting.Indented;
+xmlTextWriter.WriteStartDocument(); //Start doc
+
+xmlTextWriter.WriteCData(myNorwegianText);
+
+StreamWriter sw = new StreamWriter(fs);
+
+fs.Position = 0;
+StreamReader sr = new StreamReader(fs);
+string content = sr.ReadToEnd();
+
+sw.Write(content);
+sw.Flush();
+
+fs.Flush();
+fs.Close();
+
+
+After investigating, this is that worked best for me:
+var doc = new XDocument(new XDeclaration("1.0", "ISO-8859-1", ""));
+        using (XmlWriter writer = doc.CreateWriter()){
+            writer.WriteStartDocument();
+            writer.WriteStartElement("Root");
+            writer.WriteElementString("Foo", "value");
+            writer.WriteEndElement();
+            writer.WriteEndDocument();
+        }
+        doc.Save("dte.xml");
+

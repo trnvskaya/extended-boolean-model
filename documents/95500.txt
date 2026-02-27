@@ -1,0 +1,372 @@
+Can this macro be converted to a function?
+c++ macros c-preprocessor
+While refactoring code and ridding myself of all those #defines that we're now taught to hate, I came across this beauty used to calculate the number of elements in a structure:
+#define STRUCTSIZE(s) (sizeof(s) / sizeof(*s))
+
+Very useful as it is but can it be converted into an inline function or template?
+OK, ARRAYSIZE would be a better name but this is legacy code (no idea where it came from, it's at least 15 years old) so I pasted it 'as is'.
+
+
+
+function, no template function, yes
+template, I think so (but C++
+templates are not my thing)
+
+Edit: From Doug's code
+template <typename T>
+uint32_t StructSize()  // This might get inlined to a constant at compile time
+{
+   return sizeof(T)/sizeof(*T);
+}
+
+// or to get it at compile time for shure
+
+class StructSize<typename T>
+{
+   enum { result = sizeof(T)/sizeof(*T) };
+}
+
+I've been told that the 2nd one doesn't work. OTOH something like it should be workable, I just don't use C++ enough to fix it.
+A page on C++ (and D) templates for compile time stuff
+
+Yes it can be made a template in C++
+template <typename T>
+size_t getTypeSize()
+{
+   return sizeof(T)/sizeof(*T);
+}
+
+to use:
+struct JibbaJabba
+{
+   int int1;
+   float f;
+};
+
+int main()
+{
+    cout << "sizeof JibbaJabba is " << getTypeSize<JibbaJabba>() << std::endl;
+    return 0;
+}
+
+See BCS's post above or below about a cool way to do this with a class at compile time using some light template metaprogramming.
+
+I don't think that that really does work out the number of elements in a structure.  If the structure is packed and you used things smaller than the pointer size (such as char on a 32-bit system) then your results are wrong.  Also, if the struct contains a struct you are wrong too!
+
+Your macro is misnamed, it should be called ARRAYSIZE.  It is used to determine the number of elements in an array whos size is fixed at compile time.  Here's a way it can work:
+
+char foo[ 128 ]; // In reality, you'd
+  have some constant or constant
+  expression as the array size. 
+for( unsigned i = 0; i < STRUCTSIZE(
+  foo ); ++i ) { }
+
+It's kind of brittle to use, because you can make this mistake:
+
+char* foo = new char[128];
+for( unsigned i = 0; i < STRUCTSIZE(
+  foo ); ++i ) { }
+
+You will now iterate for i = 0 to < 1 and tear your hair out.
+
+The type of a template function is inferred automatically, in contrast with that of a template class.  You can use it even simpler:
+template< typename T > size_t structsize( const T& t ) { 
+  return sizeof( t ) / sizeof( *t ); 
+}
+
+
+int ints[] = { 1,2,3 };
+assert( structsize( ints ) == 3 );
+
+But I do agree it doesn't work for structs: it works for arrays.  So I would rather call it Arraysize :)
+
+The macro has a very misleading name - the expression in the macro will return the number of elements in an array if an array's name is passed in as the macro parameter.
+For other types you'll get something more or less meaningless if the type is a pointer or you'll get a syntax error.
+Usually that macro is named something like NUM_ELEMENTS() or something to indicate its true usefulness.  It's not possible to replace the macro with a function in C, but in C++ a template can be used.
+The version I use is based on code in Microsoft's winnt.h header (please let me know if posting this snippet goes beyond fair use):
+//
+// Return the number of elements in a statically sized array.
+//   DWORD Buffer[100];
+//   RTL_NUMBER_OF(Buffer) == 100
+// This is also popularly known as: NUMBER_OF, ARRSIZE, _countof, NELEM, etc.
+//
+#define RTL_NUMBER_OF_V1(A) (sizeof(A)/sizeof((A)[0]))
+
+#if defined(__cplusplus) && \
+    !defined(MIDL_PASS) && \
+    !defined(RC_INVOKED) && \
+    !defined(_PREFAST_) && \
+    (_MSC_FULL_VER >= 13009466) && \
+    !defined(SORTPP_PASS)
+//
+// RtlpNumberOf is a function that takes a reference to an array of N Ts.
+//
+// typedef T array_of_T[N];
+// typedef array_of_T &reference_to_array_of_T;
+//
+// RtlpNumberOf returns a pointer to an array of N chars.
+// We could return a reference instead of a pointer but older compilers do not accept that.
+//
+// typedef char array_of_char[N];
+// typedef array_of_char *pointer_to_array_of_char;
+//
+// sizeof(array_of_char) == N
+// sizeof(*pointer_to_array_of_char) == N
+//
+// pointer_to_array_of_char RtlpNumberOf(reference_to_array_of_T);
+//
+// We never even call RtlpNumberOf, we just take the size of dereferencing its return type.
+// We do not even implement RtlpNumberOf, we just decare it.
+//
+// Attempts to pass pointers instead of arrays to this macro result in compile time errors.
+// That is the point.
+//
+extern "C++" // templates cannot be declared to have 'C' linkage
+template <typename T, size_t N>
+char (*RtlpNumberOf( UNALIGNED T (&)[N] ))[N];
+
+#define RTL_NUMBER_OF_V2(A) (sizeof(*RtlpNumberOf(A)))
+
+//
+// This does not work with:
+//
+// void Foo()
+// {
+//    struct { int x; } y[2];
+//    RTL_NUMBER_OF_V2(y); // illegal use of anonymous local type in template instantiation
+// }
+//
+// You must instead do:
+//
+// struct Foo1 { int x; };
+//
+// void Foo()
+// {
+//    Foo1 y[2];
+//    RTL_NUMBER_OF_V2(y); // ok
+// }
+//
+// OR
+//
+// void Foo()
+// {
+//    struct { int x; } y[2];
+//    RTL_NUMBER_OF_V1(y); // ok
+// }
+//
+// OR
+//
+// void Foo()
+// {
+//    struct { int x; } y[2];
+//    _ARRAYSIZE(y); // ok
+// }
+//
+
+#else
+#define RTL_NUMBER_OF_V2(A) RTL_NUMBER_OF_V1(A)
+#endif
+
+#ifdef ENABLE_RTL_NUMBER_OF_V2
+#define RTL_NUMBER_OF(A) RTL_NUMBER_OF_V2(A)
+#else
+#define RTL_NUMBER_OF(A) RTL_NUMBER_OF_V1(A)
+#endif
+
+//
+// ARRAYSIZE is more readable version of RTL_NUMBER_OF_V2, and uses
+// it regardless of ENABLE_RTL_NUMBER_OF_V2
+//
+// _ARRAYSIZE is a version useful for anonymous types
+//
+#define ARRAYSIZE(A)    RTL_NUMBER_OF_V2(A)
+#define _ARRAYSIZE(A)   RTL_NUMBER_OF_V1(A)
+
+Also, Matthew Wilson's book "Imperfect C++" has a nice treatment of what's going on here (Section 14.3 - page 211-213 - Arrays and Pointers - dimensionof()).
+
+As been stated, the code actually work out the number of elements in an array, not struct. I would just write out the sizeof() division explicitly when I want it. If I were to make it a function, I would want to make it clear in its definition that it's expecting an array.
+template<typename T,int SIZE>
+inline size_t array_size(const T (&array)[SIZE])
+{
+    return SIZE;
+}
+
+The above is similar to xtofl's, except it guards against passing a pointer to it (that says point to a dynamically allocated array) and getting the wrong answer by mistake.
+EDIT: Simplified as per JohnMcG.
+EDIT: inline.
+Unfortunately, the above does not provide a compile time answer (even if the compiler does inline & optimize it to be a constant under the hood), so cannot be used as a compile time constant expression. i.e. It cannot be used as size to declare a static array. Under C++0x, this problem go away if one replaces the keyword inline by constexpr (constexpr is inline implicitly).
+constexpr size_t array_size(const T (&array)[SIZE])
+
+jwfearn's solution work for compile time, but involve having a typedef which effectively "saved" the array size in the declaration of a new name. The array size is then worked out by initialising a constant via that new name. In such case, one may as well simply save the array size into a constant from the start.
+Martin York's posted solution also work under compile time, but involve using the non-standard typeof() operator. The work around to that is either wait for C++0x and use decltype (by which time one wouldn't actually need it for this problem as we'll have constexpr). Another alternative is to use Boost.Typeof, in which case we'll end up with
+#include <boost/typeof/typeof.hpp>
+
+template<typename T>
+struct ArraySize
+{
+    private:    static T x;
+    public:     enum { size = sizeof(T)/sizeof(*x)};
+};
+template<typename T>
+struct ArraySize<T*> {};
+
+and is used by writing
+ArraySize<BOOST_TYPEOF(foo)>::size
+
+where foo is the name of an array.
+
+xtofl has the right answer for finding an array size.  No macro or template should be necessary for finding the size of a struct, since sizeof() should do nicely.
+I agree the preprocessor is evil, but there are occasions where it is the least evil of the alternatives.
+
+Simplfying @KTC's, since we have the size of the array in the template argument:
+template<typename T, int SIZE>
+int arraySize(const T(&arr)[SIZE])
+{
+    return SIZE;
+}
+
+Disadvantage is you will have a copy of this in your binary for every Typename, Size combination.
+
+As JohnMcG's answer, but 
+Disadvantage is you will have a copy of this in your binary for every Typename, Size combination.
+That's why you'd make it an inline template function.
+
+Answered in detail here:
+Array Size determination Part 1
+and here:
+Array Size determination Part 2.
+
+KTC's solution is clean but it can't be used at compile-time and it is dependent on compiler optimization to prevent code-bloat and function call overhead.
+One can calculate array size with a compile-time-only metafunction with zero runtime cost.  BCS was on the right track but that solution is incorrect.
+Here's my solution:
+// asize.hpp
+template < typename T >
+struct asize; // no implementation for all types...
+
+template < typename T, size_t N >
+struct asize< T[N] > { // ...except arrays
+    static const size_t val = N;
+};
+
+template< size_t N  >
+struct count_type { char val[N]; };
+
+template< typename T, size_t N >
+count_type< N > count( const T (&)[N] ) {}
+
+#define ASIZE( a ) ( sizeof( count( a ).val ) ) 
+#define ASIZET( A ) ( asize< A >::val )
+
+with test code (using Boost.StaticAssert to demonstrate compile-time-only usage):
+// asize_test.cpp
+#include <boost/static_assert.hpp>
+#include "asize.hpp"
+
+#define OLD_ASIZE( a ) ( sizeof( a ) / sizeof( *a ) )
+
+typedef char C;
+typedef struct { int i; double d; } S;
+typedef C A[42];
+typedef S B[42];
+typedef C * PA;
+typedef S * PB;
+
+int main() {
+    A a; B b; PA pa; PB pb;
+    BOOST_STATIC_ASSERT( ASIZET( A ) == 42 );
+    BOOST_STATIC_ASSERT( ASIZET( B ) == 42 );
+    BOOST_STATIC_ASSERT( ASIZET( A ) == OLD_ASIZE( a ) );
+    BOOST_STATIC_ASSERT( ASIZET( B ) == OLD_ASIZE( b ) );
+    BOOST_STATIC_ASSERT( ASIZE( a ) == OLD_ASIZE( a ) );
+    BOOST_STATIC_ASSERT( ASIZE( b ) == OLD_ASIZE( b ) );
+    BOOST_STATIC_ASSERT( OLD_ASIZE( pa ) != 42 ); // logic error: pointer accepted
+    BOOST_STATIC_ASSERT( OLD_ASIZE( pb ) != 42 ); // logic error: pointer accepted
+ // BOOST_STATIC_ASSERT( ASIZE( pa ) != 42 ); // compile error: pointer rejected
+ // BOOST_STATIC_ASSERT( ASIZE( pb ) != 42 ); // compile error: pointer rejected
+    return 0;
+}
+
+This solution rejects non-array types at compile time so it will not get confused by pointers as the macro version does.
+
+I prefer the enum method suggested by http://stackoverflow.com/questions/95500/can-this-macro-be-converted-to-a-function#95518">BCS
+This is because you can use it where the compiler is expecting a compile time constant. The current version of the language does not let you use functions results for compile time consts but I believe this coming in the next version of the compiler:
+The problem with this method is that it does not generate a compile time error when used with a class that has overloaded the '*' operator (see code below for details).
+Unfortunately the version supplied by 'BCS' does not quite compile as expected so here is my version:
+#include <iterator>
+#include <algorithm>
+#include <iostream>
+
+
+template<typename T>
+struct StructSize
+{
+    private:    static T x;
+    public:      enum { size = sizeof(T)/sizeof(*x)};
+};
+
+template<typename T>
+struct StructSize<T*>
+{
+    /* Can only guarantee 1 item (maybe we should even disallow this situation) */
+    //public:     enum { size = 1};
+};
+
+struct X
+{
+    int operator *();
+};
+
+
+int main(int argc,char* argv[])
+{
+    int data[]                                  = {1,2,3,4,5,6,7,8};
+    int copy[ StructSize<typeof(data)>::size];
+
+    std::copy(&data[0],&data[StructSize<typeof(data)>::size],&copy[0]);
+    std::copy(&copy[0],&copy[StructSize<typeof(copy)>::size],std::ostream_iterator<int>(std::cout,","));
+
+    /*
+     * For extra points we should make the following cause the compiler to generate an error message */
+    X   bad1;
+    X   bad2[StructSize<typeof(bad1)>::size];
+}
+
+
+Windows specific:
+There is the macro _countof() supplied by the CRT exactly for this purpose.
+A link to the doc at MSDN
+
+None has so far proposed a portable way to get the size of an array when you only have an instance of an array and not its type. (typeof and _countof is not portable so can't be used.)
+I'd do it the following way:
+template<int n>
+struct char_array_wrapper{
+    char result[n];
+};
+
+template<typename T, int s>
+char_array_wrapper<s> the_type_of_the_variable_is_not_an_array(const T (&array)[s]){
+}
+
+
+#define ARRAYSIZE_OF_VAR(v) sizeof(the_type_of_the_variable_is_not_an_array(v).result)
+
+#include <iostream>
+using namespace std;
+
+int main(){
+    int foo[42];
+    int*bar;
+    cout<<ARRAYSIZE_OF_VAR(foo)<<endl;
+    // cout<<ARRAYSIZE_OF_VAR(bar)<<endl;  fails
+}
+
+
+It works when only the value is around.
+It is portable and only uses std-C++.
+It fails with a descriptiv error message.
+It does not evaluate the value. (I can't think up of a situation where this would be a problem because array type can't be returned by a function, but better be safe than sorry.)
+It returns the size as compiletime constant.
+
+I wrapped the construct into a macro to have some decent syntax. If you want to get rid of it your only option is to do the substitution manually.
+
+For C99-style variable-length arrays, it appears that the pure macro approach (sizeof(arr) / sizeof(arr[0])) is the only one that will work.

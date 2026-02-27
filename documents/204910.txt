@@ -1,0 +1,62 @@
+Tool for parsing smtp logs that finds bounces
+parsing logging smtp zabbix splunk
+Our web application sends e-mails. We have lots of users, and we get lots of bounces. For example, user changes company and his company e-mail is no longer valid.
+To find bounces, I parse smtp log file with log parser.
+Some bounces are great, like 550+#5.1.0+Address+rejected+user@domain.com. There is user@domain.com in bounce.
+But some do not have e-mail in error message, like 550+No+such+recipient.
+I have created simple ruby script that parses logs (uses log parser) to find which mail caused something like 550+No+such+recipient.
+I am just surprised that I could not find a tool that does it. I have found tools like zabbix and splunk for log analysis, but they look like overkill for such simple task.
+Anybody knows a tool that would parse smtp logs, find bounces and e-mails that cause them?
+Edit: smtp server is microsoft smtp server.
+
+
+This article is exactly what you are looking for. It is based on the great tool log parser.
+
+Log parser is a powerful, versatile
+  tool that provides universal query
+  access to text-based data such as log
+  files, XML files and CSV files, as
+  well as key data sources on the
+  WindowsÂ® operating system such as the
+  Event Log, the Registry, the file
+  system, and Active DirectoryÂ®.  You
+  tell Log Parser what information you
+  need and how you want it processed.
+  The results of your query can be
+  custom-formatted in text based output,
+  or they can be persisted to more
+  specialty targets like SQL, SYSLOG, or
+  a chart.  Most software is designed to
+  accomplish a limited number of
+  specific tasks. Log Parser is
+  different... the number of ways it can
+  be used is limited only by the needs
+  and imagination of the user.  The
+  world is your database with Log
+  Parser.
+
+
+I like logParser. When I need to parse for somthing very specific or custom or using regular expressions, I use biterScripting. They actually have some sample scripts that I used to get started. One is at http://www.biterscripting.com/Download/SS_WebLogParser.txt.
+Mike
+
+I based a bounce counter program on this post, only to find out later that this method doesn't actually work for high-volume senders because SMTP logs are not in sequential order. There's more about it in my blog post: Email Bounce Detection in SMTP Logs and Why It Is Impossible.
+
+As far as I can see, log file analysis is really only useful to detect mails which are rejected at the SMTP session level. What about bounces which occur after the remote MTA has accepted a message for delivery but subsequently fails to deliver it? 
+We use the following set up to detect and classify all bounces after delivery to the remote MTA.
+
+All outgoing mails are given a unique return-path header which, when decoded, identifies the recipient email address and the particular mailing.
+An Apache James server which receives mail returned to the returned-path address.
+A custom mailet, developed in Java and executing within Apache James which decodes the to address, sends the email text to boogietools bounce studio for bounce type classification and then persists the results to our database.
+
+It works very, very well. We are able to detect permanent hard bounces and transient soft bounces which are further classified into very granular bounce types such as spam rejections, out of office replies etc. 
+
+You don't want to parse the logs to try and identify bounces. You will have both false negatives and false positives if you just look at logs. 
+Bounces might be generated downstream from the server you deliver to. They will look like successful deliveries in your outgoing server logs.
+The naive pattern match for bounces in incoming logs (from the null sender, to one of your VERP-ed addresses) will be inaccurate. There are a few reasons why:
+
+There will be delay warnings mixed in with actual failure bounces.
+Most Out-of-Office and similar autoresponders use the null sender to prevent battlin-bots syndrome.
+Similarly, challenge-response systems (like *spit* boxbe.com) tend to use the null sender.
+Your VERP-ed sender addresses, if they are persistent per recipient, will get harvested by spammers and come back as either spam targets or backscatter.
+
+So, sadly, the only reliable way to do it is to examine the bounce messages themselves. Most of them will have a "report/delivery-status" MIME part as per RFC1894, and depending on your language of choice there are probably libraries or modules to help with other bounce formats. The only one I have direct experience with is the Perl Mail::DeliveryStatus::BounceParser module, which works well enough.

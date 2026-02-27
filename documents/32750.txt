@@ -1,0 +1,41 @@
+How can I take a byte array of a TIFF image and turn it into a System.Drawing.Image object?
+c# .net image tiff
+I have a byte[] array, the contents of which represent a TIFF file (as in, if I write out these bytes directly to a file using the BinaryWriter object, it forms a perfectly valid TIFF file) and I'm trying to turn it into a System.Drawing.Image object so that I can use it for later manipulation (feeding into a multipage TIFF object)
+The problem I'm having is that the commonly accepted code for this task:
+    public Image byteArrayToImage(byte[] byteArrayIn)
+    {
+        MemoryStream ms = new MemoryStream(byteArrayIn);
+        Image returnImage = Image.FromStream(ms, true);
+        return returnImage;
+    }
+
+doesn't work for me. The second line of the above method where it calls the Image.FromStream method dies at runtime, saying
+Parameter Not Valid
+
+I believe that the method is choking on the fact that this is a TIFF file but I cannot figure out how to make the FromStream method accept this fact.
+How do I turn a byte array of a TIFF image into an Image object?
+Also, like I said the end goal of this is to have a byte array representing a multipage TIFF file, which contains the TIFF files for which I have byte array objects of right now. If there's a much better way to go about doing this, I'm all for it.
+
+
+Edit: The assumption below is not correct, I had a chance to fire up my IDE later and tested with and without Write and both populated the MemoryStream correctly.
+I think you need to write to your MemeoryStream first.
+As if my memory (no pun intended) serves me correctly this:
+MemoryStream ms = new MemoryStream(byteArrayIn);
+
+Creates a memory stream of that size.
+You then need to write your byte array contents to the memory stream:
+ms.Write(byteArrayIn, 0, byteArrayIn.Length);
+
+See if that fixes it.
+
+OK, I found the issue, and it was from a part of the code unrelated to the part of the code I was asking about. The data was being passed as a string, I was converting it to a byte array (this was a test rig so I was trying to simulate the byte array that I get in the main app), then converting that to a MemoryStream, then making an Image from that.
+What I failed to realize was that the string was Base64 encoded. Calling Convert.FromBase64String() caused it to turn into a byte array which wouldn't kill the Image.FromStream() method.
+So basically it boiled down to a stupid mistake on my part. But hey, the code above is still useful and this page will probably serve as a Google result as to how to avoid this mistake to someone else.
+Also, I found an easy way to construct a Multi-Page TIFF from my byte arrays here.
+
+All these were clues that helped me figure out my problem which was the same problem as the question asks. So i want to post my solution which i arrived at because of these helpful clues. Thanks for all the clues posted so far!
+As Time Saunders posted in his answer, that Write method to actually write the bytes to the memory stream is essential. That was my first mistake.
+Then my data was bad TIFF data too, but in my case, i had an extra character 13 at the beginning of my image data. Once i removed that, it all worked fine for me.
+When i read about some basic TIFF file format specs, i found that TIFF files must begin with II or MM (two bytes with values of either 73 or 77). II means little-endian byte order ('Intel byte ordering') is used. MM means big-ending ('Motorola byte ordering') is used. The next two bytes are a two byte integer value ( = Int16 in .NET) of 42, binary 101010.
+Thus a correct TIFF stream of bytes begins with the decimal byte values of: 73, 73, 42, 0 or 77, 77, 0, 42. I encourage anyone with the same problem that we experienced to inspect your TIFF data byte stream and make sure your data is valid TIFF data!
+Thanks Schnapple and Tim Saunders!!

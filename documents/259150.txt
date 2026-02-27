@@ -1,0 +1,112 @@
+How to cut out a part from a stream in Delphi7
+delphi stream
+I have an incoming soap message wich form is TStream (Delphi7), server that send this soap is in development mode and adds a html header to the message for debugging purposes. Now i need to cut out the html header part from it before i can pass it to soap converter. It starts from the beginning with 'pre' tag and ends with '/pre' tag. Im thinking it should be fairly easy to but i havent done it before in Delphi7, so can someone help me?  
+
+
+Make a new TStream (use TMemoryStream) and move any stuff you want to keep over from one stream to the other with TStream.CopyFrom or the TStream.ReadBuffer/WriteBuffer methods.
+
+I think the following code would do what you want, assuming you only have one <pre> block in your document.
+function DepreStream(Stm : tStream):tStream;
+var
+  sTemp : String;
+  oStrStm : tStringStream;
+  i : integer;
+begin
+  oStrStm := tStringStream.create('');
+  try
+    Stm.Seek(0,soFromBeginning);
+    oStrStm.copyfrom(Stm,Stm.Size);
+    sTemp := oStrStm.DataString;
+    if (Pos('<pre>',sTemp) > 0) and (Pos('</pre>',sTemp) > 0) then
+      begin
+        delete(sTemp,Pos('<pre>',sTemp),(Pos('</pre>',sTemp)-Pos('<pre>',sTemp))+6);
+        oStrStm.free;
+        oStrStm := tStringStream.Create(sTemp);
+      end;
+    Result := tMemoryStream.create;
+    oStrStm.Seek(0,soFromBeginning);
+    Result.CopyFrom(oStrStm,oStrStm.Size);
+    Result.Seek(0,soFromBeginning);
+  finally
+    oStrStm.free;
+  end;
+end;
+
+Another option I believe would be to use an xml transform to remove the unwanted tags, but I don't do much in the way of transforms so if anyone else wants that torch...
+EDIT: Corrected code so that it works.  Teaches me for coding directly into SO rather than into the IDE first.
+
+An XPath expression of "//pre[1][1]" will haul out the first node of the first <pre> tag in the XML message: from your description, that should contain the SOAP message you want.
+It's been many years since I last used it, but I think Dieter Koehler's OpenXML library supports XPath.
+
+Another solution, more in line with Lars' suggestion and somehow more worked out.
+It's faster, especially when the size of the Stream is above 100, and even more so on really big ones. It avoids copying to an intermediate string.
+FilterBeginStream is simpler and follows the "specs" in removing everything up until the  end of the header.
+FilterMiddleStream does the same as DepreStream, leaving what's before and after the header.
+Warning: this code is for Delphi up to D2007, not D2009. 
+// returns position of a string token (its 1st char) into a Stream. 0 if not found
+function StreamPos(Token: string; AStream: TStream): Int64;
+var
+  TokenLength: Integer;
+  StringToMatch: string;
+begin
+  Result := 0;
+  TokenLength := Length(Token);
+  if TokenLength > 0 then
+  begin
+    SetLength(StringToMatch, TokenLength);
+    while AStream.Read(StringToMatch[1], 1) > 0 do
+    begin
+      if (StringToMatch[1] = Token[1]) and
+         ((TokenLength = 1) or
+          ((AStream.Read(StringToMatch[2], Length(Token)-1) = Length(Token)-1) and
+           (Token = StringToMatch))) then
+      begin
+        Result := AStream.Seek(0, soCurrent) - (Length(Token) - 1); // i.e. AStream.Position - (Length(Token) - 1);
+        Break;
+      end;
+    end;
+  end;
+end;
+
+// Returns portion of a stream after the end of a tag delimited header. Works for 1st header.
+// Everything preceding the header is removed too. Returns same stream if no valid header detected.
+// Result is True if valid header found and stream has been filtered.
+function FilterBeginStream(const AStartTag, AEndTag: string; const AStreamIn, AStreamOut: TStream): Boolean;
+begin
+  AStreamIn.Seek(0, soBeginning); // i.e. AStreamIn.Position := 0;
+  Result := (StreamPos(AStartTag, TStream(AStreamIn)) > 0) and (StreamPos(AEndTag, AStreamIn) > 0);
+  if Result then
+    AStreamOut.CopyFrom(AStreamIn, AStreamIn.Size - AStreamIn.Position)
+  else
+    AStreamOut.CopyFrom(AStreamIn, 0);
+end;
+
+// Returns a stream after removal of a tag delimited portion. Works for 1st encountered tag.
+// Returns same stream if no valid tag detected.
+// Result is True if valid tag found and stream has been filtered.
+function FilterMiddleStream(const AStartTag, AEndTag: string; const AStreamIn, AStreamOut: TStream): Boolean;
+var
+  StartPos, EndPos: Int64;
+begin
+  Result := False;
+  AStreamIn.Seek(0, soBeginning); // i.e. AStreamIn.Position := 0;
+  StartPos := StreamPos(AStartTag, TStream(AStreamIn));
+  if StartPos > 0 then
+  begin
+    EndPos := StreamPos(AEndTag, AStreamIn);
+    Result := EndPos > 0;
+  end;
+  if Result then
+  begin
+    if StartPos > 1 then
+    begin
+      AStreamIn.Seek(0, soBeginning); // i.e. AStreamIn.Position := 0;
+      AStreamOut.CopyFrom(AStreamIn, StartPos - 1);
+      AStreamIn.Seek(EndPos - StartPos + Length(AEndTag), soCurrent);
+    end;
+    AStreamOut.CopyFrom(AStreamIn, AStreamIn.Size - AStreamIn.Position);
+  end
+  else
+    AStreamOut.CopyFrom(AStreamIn, 0);
+end;
+

@@ -1,0 +1,184 @@
+Eventhandling in ascx usercontrols
+c# asp.net
+What is best practises for communicating events from a usercontrol to parent control/page i want to do something similar to this:
+MyPage.aspx:
+<asp:Content ID="Content1" ContentPlaceHolderID="MainContentPlaceholder" runat="server">
+  <uc1:MyUserControl ID="MyUserControl1" runat="server" 
+     OnSomeEvent="MyUserControl_OnSomeEvent" />
+
+MyUserControl.ascx.cs:
+public partial class MyUserControl: UserControl
+{
+    public event EventHandler SomeEvent;
+....
+   private void OnSomething()
+    {
+        if (SomeEvent!= null)
+            SomeEvent(this, EventArgs.Empty);
+    }
+
+Question is what is best practise?
+
+
+1) Declare a Public event in the user control
+2) Issue a RaiseEvent where appropriate inside the user control
+3) In the Init event of the parent page, use AddHandler to assign the control.event to the the handling procedure you want to use
+Simple as that!
+
+You would want to create an event on the control that is subscribed to in the parent. See OdeToCode for an example.
+Here is the article for longevity sake:
+Some user controls are entirely self contained, for example, a user control displaying current stock quotes does not need to interact with any other content on the page. Other user controls will contain buttons to post back. Although it is possible to subscribe to the button click event from the containing page, doing so would break some of the object oriented rules of encapsulation. A better idea is to publish an event in the user control to allow any interested parties to handle the event.
+This technique is commonly referred to as âevent bubblingâ since the event can continue to pass through layers, starting at the bottom (the user control) and perhaps reaching the top level (the page) like a bubble moving up a champagne glass.
+For starters, letâs create a user control with a button attached.
+<%@ Control Language="c#" AutoEventWireup="false" 
+    Codebehind="WebUserControl1.ascx.cs" 
+    Inherits="aspnet.eventbubble.WebUserControl1" 
+    TargetSchema="http://schemas.microsoft.com/intellisense/ie5"
+%>
+<asp:Panel id="Panel1" runat="server" Width="128px" Height="96px">
+    WebUserControl1 
+    <asp:Button id="Button1" Text="Button" runat="server"/>
+</asp:Panel>
+
+The code behind for the user control looks like the following.
+public class WebUserControl1 : System.Web.UI.UserControl
+{
+   protected System.Web.UI.WebControls.Button Button1;
+   protected System.Web.UI.WebControls.Panel Panel1;
+
+   private void Page_Load(object sender, System.EventArgs e)
+   {
+      Response.Write("WebUserControl1 :: Page_Load <BR>");
+   }
+
+   private void Button1_Click(object sender, System.EventArgs e)
+   {
+      Response.Write("WebUserControl1 :: Begin Button1_Click <BR>");
+      OnBubbleClick(e);
+      Response.Write("WebUserControl1 :: End Button1_Click <BR>");
+   }
+
+   public event EventHandler BubbleClick;
+
+   protected void OnBubbleClick(EventArgs e)
+   {
+      if(BubbleClick != null)
+      {
+         BubbleClick(this, e);
+      }
+   }           
+
+   #region Web Form Designer generated code
+   override protected void OnInit(EventArgs e)
+   {
+      InitializeComponent();
+      base.OnInit(e);
+   }
+
+   private void InitializeComponent()
+   {
+      this.Button1.Click += new System.EventHandler(this.Button1_Click);
+      this.Load += new System.EventHandler(this.Page_Load);
+
+   }
+   #endregion
+
+}
+
+The user control specifies a public event (BubbleClick) which declares a delegate. Anyone interested in the BubbleClick event can add an EventHandler method to execute when the event fires â just like the user control adds an EventHandler for when the Button fires the Click event.
+In the OnBubbleClick event, we first check to see if anyone has attached to the event (BubbleClick != null), we can then invoke all the event handling methods by calling BubbleClick, passing through the EventArgs parameter and setting the user control (this) as the event sender. Notice we are also using Response.Write to follow the flow of execution.
+An ASPX page can now put the user control to work.
+<%@ Register TagPrefix="ksa" 
+    TagName="BubbleControl" 
+    Src="WebUserControl1.ascx" 
+%>
+<%@ Page language="c#" Codebehind="WebForm1.aspx.cs" 
+    AutoEventWireup="false" Inherits="aspnet.eventbubble.WebForm1" 
+%>
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN" >
+<HTML>
+    <HEAD>
+    	<title>WebForm1</title>
+    </HEAD>
+    <body MS_POSITIONING="GridLayout">
+    	<form id="Form1" method="post" runat="server">
+    		<ksa:BubbleControl id="BubbleControl" runat="server" />
+    	</form>
+    </body>
+</HTML>
+
+In the code behind for the page.
+public class WebForm1 : System.Web.UI.Page
+{
+   protected WebUserControl1 BubbleControl;
+
+   private void Page_Load(object sender, System.EventArgs e)
+   {
+      Response.Write("WebForm1 :: Page_Load <BR>");
+   }
+
+   #region Web Form Designer generated code
+   override protected void OnInit(EventArgs e)
+   {
+      InitializeComponent();
+      base.OnInit(e);
+   }
+
+   private void InitializeComponent()
+   {    
+      this.Load += new System.EventHandler(this.Page_Load);
+      BubbleControl.BubbleClick += new EventHandler(WebForm1_BubbleClick);
+   }
+   #endregion
+
+   private void WebForm1_BubbleClick(object sender, EventArgs e)
+   {
+      Response.Write("WebForm1 :: WebForm1_BubbleClick from " + 
+                     sender.GetType().ToString() + "<BR>");         
+   }
+}
+
+Notice the parent page simply needs to add an event handler during InitializeComponent method. When we receive the event we will again use Reponse.Write to follow the flow of execution.
+One word of warning: if at anytime events mysteriously stop work, check the InitializeComponent method to make sure the designer has not removed any of the code adding event handlers.
+
+I found the same solution on OdeToCode that @lordscarlet linked to in his accepted solution.  The problem was that I needed a solution in VB rather than C#.  It didn't translate perfectly.  Specifically, checking if the event handler is null in OnBubbleClick didn't work in VB because the compiler thought I was trying to call the event, and was giving an error that said "... cannot be called directly. Use a 'RaiseEvent' statement to raise an event."  So here's a VB translation for the OdeToCode solution, using a control called CountryDropDownList.
+For starters, letâs create a user control with a dropdown attached.
+<%@ Control Language="vb" AutoEventWireup="false" CodeBehind="CountryDropDownList.ascx.vb" Inherits="CountryDropDownList" %>
+<asp:DropDownList runat="server" ID="ddlCountryList" OnSelectedIndexChanged="ddlCountryList_SelectedIndexChanged" AutoPostBack="true">
+    <asp:ListItem Value=""></asp:ListItem>
+    <asp:ListItem value="US">United States</asp:ListItem>
+    <asp:ListItem value="AF">Afghanistan</asp:ListItem>
+    <asp:ListItem value="AL">Albania</asp:ListItem>
+</asp:DropDownList>
+
+The code behind for the user control looks like the following.
+Public Class CountryDropDownList
+    Inherits System.Web.UI.UserControl
+    Public Event SelectedCountryChanged As EventHandler
+
+    Protected Sub ddlCountryList_SelectedIndexChanged(sender As Object, e As EventArgs)
+        ' bubble the event up to the parent
+        RaiseEvent SelectedCountryChanged(Me, e)
+    End Sub
+End Class
+
+An ASPX page can now put the user control to work.  
+<%@ Page Language="vb" AutoEventWireup="false" CodeBehind="UpdateProfile.aspx.vb" Inherits="UpdateProfile" MaintainScrollPositionOnPostback="true" %>
+<%@ Register Src="~/UserControls/CountryDropDownList.ascx" TagPrefix="SO" TagName="ucCountryDropDownList" %>
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.0 Transitional//EN" >
+<HTML>
+    <HEAD>
+        <title>WebForm1</title>
+    </HEAD>
+    <body>
+        <form id="Form1" method="post" runat="server">
+            <SO:ucCountryDropDownList id="ddlCountry" runat="server" />
+        </form>
+    </body>
+</HTML>
+
+In the code behind for the page:
+Protected Sub OnSelectedCountryChanged(ByVal sender As Object, ByVal e As System.EventArgs) Handles ddlCountry.SelectedCountryChanged
+    ' add your code here
+End Sub
+

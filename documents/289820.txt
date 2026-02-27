@@ -1,0 +1,60 @@
+Getting the current stack trace on Mac OS X
+osx backtrace
+I'm trying to work out how to store and then print the current stack in my C++ apps on Mac OS X. The main problem seems to be getting dladdr to return the right symbol when given an address inside the main executable. I suspect that the issue is actually a compile option, but I'm not sure.
+I have tried the backtrace code from Darwin/Leopard but it calls dladdr and has the same issue as my own code calling dladdr.
+Original post:
+Currently I'm capturing the stack with this code:
+int BackTrace(Addr *buffer, int max_frames)
+{
+    void **frame = (void **)__builtin_frame_address(0);
+    void **bp = ( void **)(*frame);
+    void *ip = frame[1];
+    int i;
+
+    for ( i = 0; bp && ip && i < max_frames; i++ )
+    {
+        *(buffer++) = ip;
+        ip = bp[1];
+        bp = (void**)(bp[0]);
+    }
+
+    return i;
+}
+
+Which seems to work ok. Then to print the stack I'm looking at using dladdr like this:
+Dl_info dli;
+if (dladdr(Ip, &dli))
+{
+    ptrdiff_t       offset;
+    int c = 0;
+
+    if (dli.dli_fname && dli.dli_fbase)
+    {
+        offset = (ptrdiff_t)Ip - (ptrdiff_t)dli.dli_fbase;
+        c = snprintf(buf, buflen, "%s+0x%x", dli.dli_fname, offset );
+    }
+    if (dli.dli_sname && dli.dli_saddr)
+    {
+        offset = (ptrdiff_t)Ip - (ptrdiff_t)dli.dli_saddr;
+        c += snprintf(buf+c, buflen-c, "(%s+0x%x)", dli.dli_sname, offset );
+    }
+
+    if (c > 0)
+        snprintf(buf+c, buflen-c, " [%p]", Ip);
+
+Which almost works, some example output:
+/Users/matthew/Library/Frameworks/Lgi.framework/Versions/A/Lgi+0x2473d(LgiStackTrace+0x5d) [0x102c73d]
+/Users/matthew/Code/Lgi/LgiRes/build/Debug/LgiRes.app/Contents/MacOS/LgiRes+0x2a006(tart+0x28e72) [0x2b006]
+/Users/matthew/Code/Lgi/LgiRes/build/Debug/LgiRes.app/Contents/MacOS/LgiRes+0x2f438(tart+0x2e2a4) [0x30438]
+/Users/matthew/Code/Lgi/LgiRes/build/Debug/LgiRes.app/Contents/MacOS/LgiRes+0x35e9c(tart+0x34d08) [0x36e9c]
+/Users/matthew/Code/Lgi/LgiRes/build/Debug/LgiRes.app/Contents/MacOS/LgiRes+0x1296(tart+0x102) [0x2296]
+/Users/matthew/Code/Lgi/LgiRes/build/Debug/LgiRes.app/Contents/MacOS/LgiRes+0x11bd(tart+0x29) [0x21bd]
+
+It's getting the method name right for the shared object but not for the main app. Those just map to "tart" (or "start" minus the first character).
+Ideally I'd like line numbers as well as the method name at that point. But I'll settle for the correct function/method name for starters. Maybe shoot for line numbers after that, on Linux I hear you have to write your own parser for a private ELF block that has it's own instruction set. Sounds scary.
+Anyway, can anyone sort this code out so it gets the method names right?
+
+
+What releases of OS X are you targetting. If you are running on Mac OS X 10.5 and higher you can just use the backtrace() and backtrace_symbols() libraray calls. They are defined in execinfo.h, and there is a manpage with some sample code. 
+Edit:
+You mentioned in the comments that you need to run on Tiger. You can probably just include the implementation from Libc in your app. The source is available from Apple's opensource site. Here is a link to the relevent file.

@@ -1,0 +1,88 @@
+Be notified when visual/logical child added/removed
+.net wpf
+I am currently looking for a way to be notified when a child is added to the visual or logical children.
+I am aware of the Visual::OnVisualChildrenChanged method, but it does not apply to me since I can't always inherit and override this function.  I am looking for an event.
+So, is there a way for the owner of a FrameworkElement/Visual to be notified when a child is added?
+
+
+I believe that FrameworkElement.Loaded and FrameworkElement.Unloaded are fired when the control is added to and removed from the Visual Tree, respectively. However, the few times that I was trying to do anything with them I wasn't able to get them to fire consistently (I was using Class Event Handlers at the time, so that might have something to do with it).
+
+Maybe it would be worth to add to child field keeping reference to parent and send notification after change back to it?
+
+EDIT:
+I just thought of something. If you are able to set a Loaded handler on each element which appears in your visual tree, perhaps it could be done with a technique like this (consider this a VERY basic idea, just as a start towards a possible solution):
+public class ElementChildrenChangedEventArgs
+{
+    public ElementChildrenChangedEventArgs(FrameworkElement parent, FrameworkElement child)
+    {
+        Parent = parent;
+        Child = child;
+    }
+
+    public FrameworkElement Parent { get; private set;}
+    public FrameworkElement Child { get; private set;}
+}
+
+public delegate void ChildrenChanged(ElementChildrenChangedEventArgs args);
+
+public static class ElementLoadedManager
+{
+    private static readonly HashSet<FrameworkElement> elements = new HashSet<FrameworkElement>();
+
+    public static void Process_Loaded(FrameworkElement fe)
+    {
+        FrameworkElement feParent = VisualTreeHelper.GetParent(fe) as FrameworkElement;
+
+        if (feParent != null)
+        {
+            if (elements.Contains(feParent))
+            {
+                InvokeChildrenChanged(feParent, fe);
+            }
+        }
+
+        if (!elements.Contains(fe))
+        {
+            elements.Add(fe);
+        }
+
+        fe.Unloaded += Element_Unloaded;           
+    }
+
+    static void Element_Unloaded(object sender, RoutedEventArgs e)
+    {
+        FrameworkElement fe = sender as FrameworkElement;
+        elements.Remove(fe);
+        ClearUnloaded(fe);
+    }
+
+    static void ClearUnloaded(FrameworkElement fe)
+    {
+        fe.Unloaded -= Element_Unloaded;
+    }
+
+    public static event ChildrenChanged ChildrenChanged;
+
+    private static void InvokeChildrenChanged(FrameworkElement parent, FrameworkElement child)
+    {
+        ElementChildrenChangedEventArgs args = new ElementChildrenChangedEventArgs(parent, child);
+
+        ChildrenChanged changed = ChildrenChanged;
+
+        if (changed != null) changed(args);
+    }
+}
+
+The idea (and requirement) would be to invoke the Process_Loaded(FrameworkElement) method in each element's Loaded handler, which is possible to do with some style/template setting.
+And since Loaded is a routed event, you could set the handler only on the parent window and check for e.OriginalSource.
+
+Isn't it easier to extend 
+System.Windows.Controls.UIElementCollection 
+
+to do the notification and use
+protected override UIElementCollection CreateUIElementCollection(FrameworkElement logicalParent)
+
+?
+
+You could use an attached behaviour on the child elements in order to raise an attached event which bubbles up from the child elements to their parent. Or, in the child's loaded event, you could simply search for the parent up the logical tree, and either call a method there or set a property (like incrementing a child count, for example) in order to signal that the child is there, depending on what you want to happen on the parent. If you use the approach setting properties, you'll have to handle Unloaded, also.
+Loaded and Unloaded are not always raised as expected. However, if you use DataTemplates to create the child controls, they should always be fired when a control is created and destroyed, respectively.

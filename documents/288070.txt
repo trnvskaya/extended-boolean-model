@@ -1,0 +1,55 @@
+Using Windows Role authentication in the App.config with WCF
+wcf app-config windows-authentication
+I am using a WCF service and a net.tcp endpoint with serviceAuthentication's principal PermissionMode set to UseWindowsGroups.
+Currently in the implementation of the service i am using the PrincipalPermission attribute to set the role requirements for each method. 
+        [PrincipalPermission(SecurityAction.Demand, Role = "Administrators")]
+        [OperationBehavior(Impersonation = ImpersonationOption.Required)]
+        public string method1()
+
+I am trying to do pretty much the same exact thing, except have the configuration for the role set in the app.config. Is there any way to do this and still be using windows groups authentication?
+Thanks
+
+
+If I understood well you want to select the role at runtime. This can be done with a permission demand within the WCF operation. E.g.
+public string method1()
+{
+    PrincipalPermission p = new PrincipalPermission(null, "Administrators");
+    p.Demand();
+    ...
+
+
+If you are hosting your WCF service in IIS, it will run in the ASP.NET worker process, which means you can configure authentication and authorization as you would do with ASMX web services:
+<system.Web>
+    <authentication mode="Windows"/>
+    <authorization>
+        <allow roles=".\Administrators"/>
+        <deny users="*"/>
+    </authorization>
+</system.Web>
+
+Then you will have to disable anonymous access to your endpoint in IIS, and instead enable   Windows Integrated Authentication.In the IIS management console you do that by bringing up the 'Properties' dialog for your virtual directory. You will then find the security settings in the 'Directory Security' tab.
+Of course, the only communication channel available will be HTTP. Clients will have to provide their Windows identity in the request at the transport-level with these settings:
+<system.serviceModel>
+    <bindings>
+        <wsHttpBinding>
+            <binding name="WindowsSecurity">
+                <security mode="Transport">
+                    <transport clientCredentialType="Windows" />
+                </security>
+            </binding>
+        </wsHttpBinding>
+    </bindings>
+    <client>
+        <endpoint address="https://localhost/myservice"
+                  binding="wsHttpBinding"
+                  bindingConfiguration="WindowsSecurity"
+                  contract="IMyService" />
+     </client>
+</system.serviceModel>
+
+Note that if your service endpoint uses wsHttpBinding then you will also have to add SSL to your endpoint since that's a requirement enforced by WCF when you using transport-level security.
+If you instead go for the basicHttpBinding, you are then able to use a less secure authentication mode available in WCF called TransportCredentialOnly, where SSL is no longer required.
+For more detailed information, here is a good overview of the security infrastructure in WCF.
+
+Lars Wilhelmsen has posted a solution for this problem. Have a look at
+http://www.larswilhelmsen.com/2008/12/17/configurable-principalpermission-attribute/

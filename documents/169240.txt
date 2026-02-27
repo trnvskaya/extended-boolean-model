@@ -1,0 +1,51 @@
+Merging Rails databases
+ruby-on-rails database-design merge
+I have two databases with the same structure. The tables have an integer as a primary key as used in Rails.
+If I have a patients table, I will have one patient using primary key 123 in one database and another patient using the same primary key in the other database.
+What would you suggest for merging the data from both databases?
+
+
+Set both your databases up with entries in config/database.yml, then generate a new migration.
+Use ActiveRecord::Base.establish_connection to switch between the two databases in the migration like this:
+def self.up
+  ActiveRecord::Base.establish_connection :development
+  patients = Patient.find(:all)
+  ActiveRecord::Base.establish_connection :production
+  patients.each { |patient| Patient.create patient.attributes.except("id") }
+end
+
+YMMV depending on the number of records and the associations between models.
+
+BTW it probably makes more sense for this to be a rake or capistrano task rather than a migration.
+
+If your databases are exactly the same (the data doesn't require custom processing) and there aren't too many records, you could do this (which allows for foreign keys):
+Untested... But you get the idea
+#All models and their foreign keys
+tales = {Patients => [:doctor_id, :hospital_id],
+         Doctors => [:hospital_id],
+         Hospitals}
+
+ActiveRecord::Base.establish_connection :development
+
+max_id = tables.map do |model|  
+  model.maximum(:id)
+end.max + 1000
+
+
+tables.each do |model, fks|  
+  ActiveRecord::Base.establish_connection :development
+  records = model.find(:all)
+
+  ActiveRecord::Base.establish_connection :production
+  records.each do |record|
+    #update the foreign keys
+    fks.each do |attr|
+      record[attr] += max_id if not record[attr].nil?
+    end
+    record.id += max_id
+
+    model.create record.attributes
+  end
+end
+
+If you have a LOT of records you might have to portion this out somehow... do it in groups of 10k or something.

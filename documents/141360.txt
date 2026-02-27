@@ -1,0 +1,52 @@
+Flex Post Event Screen Updates
+flex flash actionscript-3 performance profiling
+I came across this topic today while investigating something very strange. Doing certain things in our Flex app can cause the number of frames rendered to rocket, from 12fps to ~30fps: loaded animations start playing at high speed and the GUI starts to lock up.
+Since everything I've read on Flex/Flash hammers home the point "the frame rate is capped at the fps set in the top level app", it seems the only way these extra renders can be happening is due to some events causing them (no programmatic changes to the stage's framerate are done anywhere). Since it only happens when I put my update logic in the ENTER_FRAME handler, I'm trying to figure out what might be happening which to apparently causing Flex to go render-crazy.
+Hypothesis: something in my update function is triggering an immediate screen update, this raises another ENTER_FRAME immediately, which means my update loop gets called, which triggers another immediate screen update, ...
+We have Flex components used in our GUI, if this is a factor. I don't really know where to go next on this.
+Clarifications:
+
+When I say things speed up, there
+are two ways this manifests.
+Firstly, my ENTER_FRAME handler gets
+called far more often.
+Secondly, a
+loaded Flash SWF with a looping
+animation built in suddenly speeds
+up to te point it looks silly.
+I am not using updateAfterEvent, I only
+found this existed when researching
+this problem. Apparently, some
+events on Sprite subclasses
+automatically call this and I wonder
+if that's the root cause.
+I am not doing any direct messsing about with rendering at all. Background animations play automatically as they have timelines built-in from CS3 authoring, all our update function does is change the position of DisPlayObjects or add/remove them etc
+
+Update:
+I added a label to my app to print out stage.frameRate, and discovered at certain times, it suddenly changes from 12 to 1000 (the maximum allowed value). While it was trivial to add a line to my ENTER_FRAME handler to reset it that's hardly a big help.
+Also, even doing this, the rendering is all messed up. Certain actions (like raising an Alert popup) make it all spring back into life.
+Unfortunately, I am not able to view the source of the Stage class to set a breakpoint on the setter property.
+That's very interesting about the Flex loading 'set to 1000fps' thing. What we have are several Flex applications which all provide a common interface. A master app is in charge of loading these modules as required through the SWFLoader class. However, the loading process already takes into account the delayed loading... when the SWF loads we then wait for the APPLICATION_COMPLETE from the SystemManager. Once this is received, shouldn't the applications completion have occurred?
+
+
+One thing I'm not clear on - are you seeing that the actual screen refreshes are occurring faster than the published framerate? Or is it that your animations are moving faster but the screen refreshes are unchanged? (i.e., it used to move 10 pixels per second, but now it moves faster than that, regardless of how often the screen is drawn.)
+An easy way to check this would be to try publishing your content at 1 fps. It should be clear whether the screen is redrawing once per second, but animated elements are being moved more frequently than that, or whether the screen is actually updating more frequently.
+If the latter, are you using any updateAfterEvent() methods in your code? This can cause actual screen refreshes to occur faster than the published framerate. It shouldn't affect ENTER_FRAME events though. You should still only get one of those per frame update.
+Alternately, are the things you're animating just Sprites and so on, or are you implementing them as Flex components, and trying to redraw them with invalidate() methods and RENDER events and so on?
+If you could clarify a few of these points in the question the answer might be clearer. Thanks...
+
+Thanks for the clarifications. If a loaded clip with a animation (I assume you mean a frame animation) is speeding up, then that certainly sounds like something is changing your playback framerate, as opposed to other things that could be going on. With that said it's not a problem I've seen crop up before, but I do think there are some things you could try that ought to narrow down where the problem is:
+
+You might as well try tracing out stage.frameRate during the speed-up. Presumably nothing ought to be changing your framerate, but since that would explain your issues you might as well rule it out.
+Try removing as many GUI components as possible and seeing if the problem still occurs, if it's possible to trigger the problem without them.
+One sanity check you could try, if it's feasible, is to copy some of the contents of your game into a fresh project and try it there. Sometimes mysterious issues like this happen because some class or SWC is being imported somewhere that everyone forgot about.
+You could try driving your code from a different event. For example, as far as I know driving it from Event.EXIT_FRAME or Event.FRAME_CONSTRUCTED ought to look the same, but if it doesn't then that's a hint. Alternately, you could try driving it from something like a keyboard event or MouseEvent.MOUSE_MOVE. Then if updates occur even though you're not firing events, you'll know something else is driving things besides your event loop.
+
+Those are the things I'd try, anyway. Hope you track it down...
+
+Flex sets the frame rate to 1000 during "phased instantiation" of Flex components, which occurs only during initial load of a flex swf.  This allows it to build all components very quickly.
+Are you waiting for the Flex app to be fully loaded and constructed?  You should be waiting for FlexEvent.CREATION_COMPLETE before working with your Flex content.
+If you would like a reference to where this occcurs, look in the Flex LayoutManager class, line 326 (using Flex SDK 3.0.194161), in the setter for the property usePhasedInstantiation.
+Update:
+APPLICATION_COMPLETE should have you covered for the initial load.
+This actually happens any time components are created directly from MXML.  So there are a few other cases to look for.  Are you using any Repeaters?  Do you use any navigation containers that are building their children on demand?

@@ -1,0 +1,256 @@
+How to do saturating addition in C?
+c performance algorithm signal-processing
+What is the best (cleanest, most efficient) way to write saturating addition in C?
+The function or macro should add two unsigned inputs (need both 16- and 32-bit versions) and return all-bits-one (0xFFFF or 0xFFFFFFFF) if the sum overflows.
+Target is x86 and ARM using gcc (4.1.2) and Visual Studio (for simulation only, so a fallback implementation is OK there).
+
+
+uint32_t saturate_add32(uint32_t a, uint32_t b)
+{
+    uint32_t sum = a + b;
+    if ((sum < a) || (sum < b))
+        return ~((uint32_t)0);
+    else
+        return sum;
+} /* saturate_add32 */
+
+uint16_t saturate_add16(uint16_t a, uint16_t b)
+{
+    uint16_t sum = a + b;
+    if ((sum < a) || (sum < b))
+        return ~((uint16_t)0);
+    else
+        return sum;
+} /* saturate_add16 */
+
+Edit: Now that you've posted your version, I'm not sure mine is any cleaner/better/more efficient/more studly.
+
+The current implementation we are using is:
+#define sadd16(a, b)  (uint16_t)( ((uint32_t)(a)+(uint32_t)(b)) > 0xffff ? 0xffff : ((a)+(b)))
+#define sadd32(a, b)  (uint32_t)( ((uint64_t)(a)+(uint64_t)(b)) > 0xffffffff ? 0xffffffff : ((a)+(b)))
+
+
+I suppose, the best way for x86 is to use inline assembler to check overflow flag after addition. Something like:
+add eax, ebx
+jno @@1
+or eax, 0FFFFFFFFh
+@@1:
+.......
+
+It's not very portable, but IMHO the most efficient way.
+
+In ARM you may already have saturated arithmetic built-in. The ARMv5 DSP-extensions can saturate registers to any bit-length. Also on ARM saturation is usually cheap because you can excute most instructions conditional. 
+ARMv6 even has saturated addition, subtraction and all the other stuff for 32 bits and packed numbers.
+On the x86 you get saturated arithmetic either via MMX or SSE. 
+All this needs assembler, so it's not what you've asked for.
+There are C-tricks to do saturated arithmetic as well. This little code does saturated addition on four bytes of a dword. It's based on the idea to calculate 32 half-adders in parallel, e.g. adding numbers without carry overflow. 
+This is done first. Then the carries are calculated, added and replaced with a mask if the addition would overflow. 
+uint32_t SatAddUnsigned8(uint32_t x, uint32_t y) 
+{
+  uint32_t signmask = 0x80808080;
+  uint32_t t0 = (y ^ x) & signmask;
+  uint32_t t1 = (y & x) & signmask;
+  x &= ~signmask;
+  y &= ~signmask;
+  x += y;
+  t1 |= t0 & x;
+  t1 = (t1 << 1) - (t1 >> 7);
+  return (x ^ t0) | t1;
+}
+
+You can get the same for 16 bits (or any kind of bit-field) by changing the signmask constant and the shifts at the bottom like this:
+uint32_t SatAddUnsigned16(uint32_t x, uint32_t y) 
+{
+  uint32_t signmask = 0x80008000;
+  uint32_t t0 = (y ^ x) & signmask;
+  uint32_t t1 = (y & x) & signmask;
+  x &= ~signmask;
+  y &= ~signmask;
+  x += y;
+  t1 |= t0 & x;
+  t1 = (t1 << 1) - (t1 >> 15);
+  return (x ^ t0) | t1;
+}
+
+uint32_t SatAddUnsigned32 (uint32_t x, uint32_t y)
+{
+  uint32_t signmask = 0x80000000;
+  uint32_t t0 = (y ^ x) & signmask;
+  uint32_t t1 = (y & x) & signmask;
+  x &= ~signmask;
+  y &= ~signmask;
+  x += y;
+  t1 |= t0 & x;
+  t1 = (t1 << 1) - (t1 >> 31);
+  return (x ^ t0) | t1;
+}
+
+Above code does the same for 16 and 32 bit values. 
+If you don't need the feature that the functions add and saturate multiple values in parallel just mask out the bits you need. On ARM you also want to change the signmask constant because ARM can't load all possible 32 bit constants in a single cycle.
+Edit: The parallel versions are most likely slower than the straight forward methods, but they are faster if you have to saturate more than one value at a time.
+
+In IA32 without conditional jumps:
+uint32_t sadd32(uint32_t a, uint32_t b)
+{
+#if defined IA32
+  __asm
+  {
+    mov eax,a
+    xor edx,edx
+    add eax,b
+    setnc dl
+    dec edx
+    or eax,edx
+  }
+#elif defined ARM
+  // ARM code
+#else
+  // non-IA32/ARM way, copy from above
+#endif
+}
+
+
+I'm not sure if this is faster than Skizz's solution (always profile), but here's an alternative no-branch assembly solution.  Note that this requires the conditional move (CMOV) instruction, which I'm not sure is available on your target.
+
+uint32_t sadd32(uint32_t a, uint32_t b)
+{
+    __asm
+    {
+    	movl eax, a
+    	addl eax, b
+    	movl edx, 0xffffffff
+    	cmovc eax, edx
+    }
+}
+
+
+In plain C:
+uint16_t sadd16(uint16_t a, uint16_t b)
+    { return (a > 0xFFFF - b) ? 0xFFFF : a + b; }
+
+uint32_t sadd32(uint32_t a, uint32_t b)
+    { return (a > 0xFFFFFFFF - b) ? 0xFFFFFFFF : a + b;}
+
+which is almost macro-ized and directly conveys the meaning.
+
+If you care about performance, you really want to do this sort of stuff in SIMD, where x86 has native saturating arithmetic.
+Because of this lack of saturating arithmetic in scalar math, one can get cases in which operations done on 4-variable-wide SIMD is more than 4 times faster than the equivalent C (and correspondingly true with 8-variable-wide SIMD):
+sub8x8_dct8_c: 1332 clocks
+sub8x8_dct8_mmx: 182 clocks
+sub8x8_dct8_sse2: 127 clocks
+
+
+The best performance will usually involve inline assembly (as some have already stated).
+But for portable C, these functions only involve one comparison and no type-casting (and thus I believe optimal):
+unsigned saturate_add_uint(unsigned x, unsigned y)
+{
+    if (y>UINT_MAX-x) return UINT_MAX;
+    return x+y;
+}
+
+unsigned short saturate_add_ushort(unsigned short x, unsigned short y)
+{
+    if (y>USHRT_MAX-x) return USHRT_MAX;
+    return x+y;
+}
+
+As macros, they become:
+SATURATE_ADD_UINT(x, y) (((y)>UINT_MAX-(x)) ? UINT_MAX : ((x)+(y)))
+SATURATE_ADD_USHORT(x, y) (((y)>SHRT_MAX-(x)) ? USHRT_MAX : ((x)+(y)))
+
+I leave versions for 'unsigned long' and 'unsigned long long' as an exercise to the reader. ;-)
+
+You probably want portable C code here, which your compiler will turn into proper ARM assembly. ARM has conditional moves, and these can be conditional on overflow. The algorithm then becomes add, and conditionally set the destination to unsigned(-1) if overflow was detected.
+uint16_t add16(uint16_t a, uint16_t b)
+{
+  uint16_t c = a + b;
+  if (c<a) /* Can only happen due to overflow */
+    c = -1;
+  return c;
+}
+
+Note that this differs from the other algorithms in that it corrects overflow, instead of relying on another calculation to detect overflow.
+x86-64 clang 3.7 -O3 output for adds32: significantly better than any other answer:
+    add     edi, esi
+    mov     eax, -1
+    cmovae  eax, edi
+    ret
+
+ARMv7: gcc 4.8 -O3 -mcpu=cortex-a15 -fverbose-asm output for adds32:
+    adds    r0, r0, r1      @ c, a, b
+    it      cs
+    movcs   r0, #-1         @ conditional-move
+    bx      lr
+
+16bit: still doesn't use ARM's unsigned-saturating add instruction (UADD16)
+    add     r1, r1, r0        @ tmp114, a
+    movw    r3, #65535      @ tmp116,
+    uxth    r1, r1  @ c, tmp114
+    cmp     r0, r1    @ a, c
+    ite     ls        @
+    movls   r0, r1        @,, c
+    movhi   r0, r3        @,, tmp116
+    bx      lr  @
+
+
+Zero branch solution:
+uint32_t sadd32(uint32_t a, uint32_t b)
+{
+    uint64_t s = (uint64_t)a+b;
+    return -(s>>32) | (uint32_t)s;
+}
+
+A good compiler will optimize this to avoid doing any actual 64-bit arithmetic (s>>32 will merely be the carry flag, and -(s>>32) is the result of sbb %eax,%eax).
+In x86 asm (AT&T syntax, a and b in eax and ebx, result in eax):
+add %eax,%ebx
+sbb %eax,%eax
+or %ebx,%eax
+
+8- and 16-bit versions should be obvious. Signed version might require a bit more work.
+
+Using C++ you could write a more flexible variant of Remo.D's solution:
+template<typename T>
+T sadd(T first, T second)
+{
+    static_assert(std::is_integral<T>::value, "sadd is not defined for non-integral types");
+    return first > std::numeric_limits<T>::max() - second ? std::numeric_limits<T>::max() : first + second;
+}
+
+This can be easily translated to C - using the limits defined in limits.h. Please also note that the Fixed width integer types might not been available on your system.
+
+An alternative to the branch free x86 asm solution is (AT&T syntax, a and b in eax and ebx, result in eax):
+add %eax,%ebx
+sbb $0,%ebx
+
+
+Just in case someone wants to know an implementation without branching using 2's complement 32bit integers.
+Warning! This code uses the undefined operation: "shift right by -1" and therefore exploits the property of the Intel Pentium SAL instruction to mask the count operand to 5 bits.
+int32_t sadd(int32_t a, int32_t b){
+    int32_t sum = a+b;
+    int32_t overflow = ((a^sum)&(b^sum))>>31;
+    return (overflow<<31)^(sum>>overflow);
+ }
+
+It's the best implementation known to me
+
+//function-like macro to add signed vals, 
+//then test for overlow and clamp to max if required
+#define SATURATE_ADD(a,b,val)  ( {\
+if( (a>=0) && (b>=0) )\
+{\
+    val = a + b;\
+    if (val < 0) {val=0x7fffffff;}\
+}\
+else if( (a<=0) && (b<=0) )\
+{\
+    val = a + b;\
+    if (val > 0) {val=-1*0x7fffffff;}\
+}\
+else\
+{\
+    val = a + b;\
+}\
+})
+
+I did a quick test and seems to work, but not extensively bashed it yet!  This works with SIGNED 32 bit.
+op : the editor used on the web page does not let me post a macro ie its not understanding non-indented syntax etc!

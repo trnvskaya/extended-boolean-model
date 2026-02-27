@@ -1,0 +1,126 @@
+How to detect whether Vista UAC is enabled?
+windows-vista uac
+I need my application to behave differently depending on whether Vista UAC is enabled or not. How can my application detect the state of UAC on the user's computer?
+
+
+Check for the registry value at HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+The EnableLUA value determines if UAC is active.
+
+This post has sample code in C# to test if UAC is on and if the current app has been given elevated rights. You can download the code and interpret as needed. Also linked there is a sample that shows the same in C++  
+http://www.itwriting.com/blog/198-c-code-to-detect-uac-elevation-on-vista.html 
+The code in that post does not just read from the registry. If UAC is enabled, chances are you may not have rights to read that from the registry. 
+
+AFAIK, UAC is apolicy setting on the local user or group. So you can read this property from within .Net. Sorry for not having more details but I hope this helps
+
+This registry key should tell you:
+HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+
+Value  EnableLUA (DWORD)
+1 enabled / 0 or missing disabled
+But that assumes you have the rights to read it.  
+Programmatically you can try to read the user's token and guess if it's an admin running with UAC enabled (see here). Not foolproof, but it may work.
+The issue here is more of a "why do you need to know" - it has bearing on the answer.  Really, there is no API because from a OS behavior point of view, what matters is if the user is an administrator or not - how they choose to protect themselves as admin is their problem. 
+
+You can do it be examining the DWORD value EnableLUA in the following registry key:
+HKLM/SOFTWARE/Microsoft/Windows/CurrentVersion/Policies/System
+If the value is 0 (or does not exist) then the UAC is OFF. If it's present and non-zero, then UAC is ON:
+BOOL IsUacEnabled( )
+{
+    LPCTSTR pszSubKey = _T("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System");
+    LPCTSTR pszValue = _T("EnableLUA");
+    DWORD dwType = 0;
+    DWORD dwValue = 0;
+    DWORD dwValueSize = sizeof( DWORD );
+
+    if ( ERROR_SUCCESS != SHGetValue( HKEY_LOCAL_MACHINE, pszSubKey, pszValueOn, 
+		&dwType, &dwValue, &dwValueSize) )
+    {
+            return FALSE;
+    }
+
+    return dwValue != 0;
+}
+
+Note that if the user has changed the state of UAC but has not restarted the computer yet, this function will return an inconsistent result. 
+
+You don't want to check if UAC is enabled; that doesn't tell you anything.
+I can be a standard user with UAC disabled.
+You want to check if the user is running with administrative privileges using CheckTokenMembership:
+///This function tells us if we're running with administrative permissions.
+function IsUserAdmin: Boolean;
+var
+    b: BOOL;
+    AdministratorsGroup: PSID;
+begin
+    {
+        This function returns true if you are currently running with 
+               admin privileges.
+        In Vista and later, if you are non-elevated, this function will 
+               return false (you are not running with administrative privileges).
+        If you *are* running elevated, then IsUserAdmin will return 
+               true, as you are running with admin privileges.
+
+        Windows provides this similar function in Shell32.IsUserAnAdmin.
+               But the function is depricated, and this code is lifted from the 
+               docs for CheckTokenMembership: 
+               http://msdn.microsoft.com/en-us/library/aa376389.aspx
+    }
+
+    {
+        Routine Description: This routine returns TRUE if the caller's
+        process is a member of the Administrators local group. Caller is NOT
+        expected to be impersonating anyone and is expected to be able to
+        open its own process and process token.
+        Arguments: None.
+        Return Value:
+            TRUE - Caller has Administrators local group.
+            FALSE - Caller does not have Administrators local group.
+    }
+    b := AllocateAndInitializeSid(
+            SECURITY_NT_AUTHORITY,
+            2, //2 sub-authorities
+            SECURITY_BUILTIN_DOMAIN_RID,    //sub-authority 0
+            DOMAIN_ALIAS_RID_ADMINS,        //sub-authority 1
+            0, 0, 0, 0, 0, 0,               //sub-authorities 2-7 not passed
+            AdministratorsGroup);
+    if (b) then
+    begin
+        if not CheckTokenMembership(0, AdministratorsGroup, b) then
+         b := False;
+        FreeSid(AdministratorsGroup);
+    end;
+
+    Result := b;
+end;
+
+
+This post is rather ancient, but I wanted to comment on the "why do you need to know" and "check token membership" bits.
+The fact is that Microsoft's very own documentation says that "If User Account Control has been turned off and a Standard user attempts to perform a task that requires elevation" we should provide an error instead of showing buttons and/or links with the UAC shield that attempt elevation. See http://msdn.microsoft.com/en-us/library/windows/desktop/aa511445.aspx towards the bottom for the details.
+How are we do to this without a way of checking whether UAC is enabled?
+Perhaps checking whether the user is running with admin privileges is the right thing to do in this instance, but who knows? The guidance that Microsoft gives is, at best, iffy, if not just downright confusing.
+
+For anyone else that finds this and is looking for a VBScript solution.  Here is what I came up with to detect if UAC is enabled and if so relaunch my script with elevated privileges.  Just put your code in the Body() function.  I found there were problems with transportability between XP and Windows 7 if I wrote code to always launch elevated.  Using this method I bypass the elevation if there is no UAC.  Should also take into account 2008 and above server versions that have UAC enabled.
+On Error Resume Next
+UACPath = "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System\EnableLUA"
+Dim WshShell
+Set WshShell = CreateObject("wscript.Shell")
+UACValue = WshShell.RegRead(UACPath)
+If UACValue = 1 Then
+'Run Elevated
+    If WScript.Arguments.length =0 Then
+      Set objShell = CreateObject("Shell.Application")
+      'Pass a bogus argument with leading blank space, say [ uac]
+      objShell.ShellExecute "wscript.exe", Chr(34) & _
+      WScript.ScriptFullName & Chr(34) & " uac", "", "runas", 1
+      WScript.Quit
+    Else 
+        Body()
+    End If
+Else
+Body()
+End If
+
+Function Body()
+MsgBox "This is the body of the script"
+End Function
+

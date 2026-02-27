@@ -1,0 +1,86 @@
+C++ reading from a file blocks any further writing. Why?
+c++ file-io stream
+I am implementing a very simple file database. I have 2 basic operations: 
+void Insert(const std::string & i_record)
+{
+   //create or append to the file
+    m_fileStream.open(m_fileName.c_str(), std::ios::out | std::ios::app);
+
+    if (m_fileStream.is_open())
+    {
+        m_fileStream << i_record << "\n";
+    }
+
+    m_fileStream.flush();
+    m_fileStream.close();
+}
+
+/*
+* Returns a list with all the items in the file.
+*/
+ std::vector<std::string> SelectAll()
+ {
+    std::vector<std::string> results;
+
+    m_fileStream.open(m_fileName.c_str(), std::ios::in);
+
+    std::string line;
+    if (m_fileStream.is_open())
+    {
+        while (!m_fileStream.eof())
+        {
+            getline (m_fileStream, line);
+            results.push_back(line);
+
+        }
+    }
+
+    m_fileStream.close();
+
+    return results;
+ }
+
+the class has m_fileStream and m_fileName as private members. 
+OK - here's the problem: 
+If I do something like: 
+db->Insert("a");
+db->SelectAll();
+db->Insert("b");
+
+The end result is that the file will contain only "a"; WHY? 
+NOTE: it seems that getline() will set the fail bit. but why?
+
+
+Change 
+    while (!m_fileStream.eof())
+    {
+        getline (m_fileStream, line);
+        results.push_back(line);
+
+    }
+
+to 
+    while (getline (m_fileStream, line))
+    {
+        results.push_back(line);
+    }
+
+Otherwise you will get one additional empty line at the end. eof() will return true only once you tried to read past the end of the file, and not if only the next read would be past the end of the file.
+It sets the failbit because getline tries to extract characters from the stream. If there are no characters left (and no '\n' has been seen yet), stream.get(c) to a character will set the failbit. Then getline will set the eofbit and then .eof() will return true, and your loop exits.
+If you don't want failbit set, then change your condition from !stream.eof() to stream.peek() != EOF (and make sure there is a trailing newline in your file).
+This now is also the solution to your problem: .close() doesn't .clear() your stream, so the failbit still is set if you reopen your file. call stream.clear() after reading your stuff in, and then it works.
+
+I think litb pretty much nailed it.  But just to add my $0.02:
+1) I always favored:
+while ( stream && (stream.peek() != EOF) )  {...}
+
+As [bad] events other than EOF can occur.
+(And, as mentioned by litb, peek()!=EOF gets around the problem of stream not setting EOF until we try to read past the end.)
+.
+2) Since "m_fileStream" is open'ed, read/written/flushed, and closed in both these methods...
+Why not declare it locally on the stack?  Doing so assures that no previous state issues remain behind to mess you up.  And yer accessing the disk, so efficiency may not be the largest concern...
+Besides, you can be lazy:
+ifstream stream ( m_fileName.c_str() );
+ASSERT( stream, !=, NULL );  // Uses my own ASSERT macro && stream.operator().
+while ( stream && (stream.peek() != EOF) )  {...}
+

@@ -1,0 +1,73 @@
+Kill a blocked Boost::Thread
+c++ iostream boost-thread
+I am writing an application which blocks on input from two istreams.
+Reading from either istream is a synchronous (blocking) call, so, I decided to create two Boost::threads to do the reading.
+Either one of these threads can get to the "end" (based on some input received), and once the "end" is reached, both input streams stop receiving.  Unfortunately, I cannot know which will do so.
+Thus, I cannot join() on both threads, because only one thread (cannot be predetermined which one) will actually return (unblock).
+I must somehow force the other to exit, but it is blocked waiting for input, so it cannot itself decide it is time to return (condition variables or what not).
+Is their a way to either:
+
+Send a signal a boost::thread, or
+Force an istream to "fail", or
+Kill a Boost::thread?
+
+Note:
+
+One of the istreams is cin
+I am trying to restart the process, so I cannot close the input streams in a way that prohibits reseting them.
+
+Edit:
+
+I do know when the "end" is reached, and I do know which thread has successfully finished, and which needs to be killed.  Its the killing I need to figure out (or a different strategy for reading from an istream).
+I need both threads to exit and cleanup properly :(
+
+Thanks!
+
+
+I don't think there is a way to do it cross platform, but pthread_cancel should be what you are looking for. With a boost thread you can get the native_handle from a thread, and call pthread_cancel on it.
+In addition a better way might be to use the boost asio equivalent of a select call on multiple files. That way one thread will be blocked waiting for the input, but it could come from either input stream. I don't know how easy it is to do something like this with iostreams though.
+
+Rather than trying to kill your thread, you can always tryjoin the thread instead, and if it fails, you join the other one instead.  (Assuming you will always be able to join at least one of your two threads).
+In boost:thread you're looking for the timed_join function.
+If you want to look at the correct answer, however, that would be to use non-blocking io with timed waits.  Allowing you to get the flow structure of synchronous io, with the non-blocking of asynchronous io.
+You talk about reading form an istream, but an istream is only an interface.  for stdin, you can just fclose the stdin file descriptor to interrupt the read.  As for the other, it depends an where you're reading from...
+
+Under Windows, use QueueUserAPC to queue a proc which throws an exception. That approach works fine for me.
+HOWEVER: I've just found that boost mutexes etc are not "alertable" on win32, so QueueUserAPC cannot interrupt them. 
+
+Well on linux, I use pthread_signal(SIGUSR1), as it interrupts blocking IO. There no such call on windows as I discovered when porting my code. Only a deprecated one in socket reading call. In windows you have to explicitly define an event that will interrupt your blocking call. So there no such thing (AFAIK) as a generic way to interrupt blocking IO.
+The boost.thread design handle this by managing well identified interrupt points. I don't know boost.asio well and it seems that you don't want to rely on it anyway. If you don't want to refactor to use non-blocking paradigm, What you can do is using something between non-blocking (polling) and blocking IO. That is do something like (pseudo code ?) :
+while(!stopped && !interrupted)
+{
+    io.blockingCall(timeout);
+    if(!stopped && !interrupted)
+    {
+        doSomething();
+    }
+}
+
+Then you interrupt your two threads and join them ...
+Perhaps it is simpler in your case ? If you have a master thread that knows one thread is ended you just have to close the IO of the other thread ? 
+Edit:
+By the way I'm interested in the final solution you have ...
+
+It seems that threads are not helping you do what you want in a simple way.  If Boost.Asio is not to your liking, consider using select().
+The idea is to get two file descriptors and use select() to tell you which of them has input available.  The file descriptor for cin is typically STDIN_FILENO; how to get the other one depends on your specifics (if it's a file, just open() it instead of using ifstream).
+Call select() in a loop to find out which input to read, and when you want to stop, just break out of the loop.
+
+Yes there is!
+boost::thread::terminate() will do the job to your specifications.
+It will cause the targeted thread to throw an exception.  Assuming it's uncaught, the stack will unwind properly destroying all resources and terminating thread execution.
+The termination isn't instant.  (The wrong thread is running at that moment, anyway.)
+It happens under predefined conditions - the most convenient for you would probably be when calling boost::this_thread::sleep();, which you could have that thread do periodically.
+
+If a boost thread is blocking on an i/o operation (e.g. cin>>whatever), boost::thread::terminate() will not kill the thread.  cin i/o is not a valid termination point.  Catch 22.
+
+I had a similar issue myself and have reached this solution, which some other readers of this question might find useful:
+Assuming that you are using a condition variable with a wait() command, it is important for you to know that in Boost, the wait() statement is a natural interrupt point.  So just put a try/catch block around the code with the wait statement and allow the function to terminate normally in your catch block.  
+Now, assuming you have a container with your thread pointers, iterate over your thread pointers and call interrupt() on each thread, followed by join().
+Now all of your threads will terminate gracefully and any Boost-related memory cleanup should work cleanly.  
+
+Very late, but in Windows (and it's precursors like VMS or RSX for those that rember such things) I'd use something like ReadFileEx with a completion routine that signals when finished, and CancelIO if the read needs to be cancelled early. 
+Linux/BSD has an entirely different underlying API which isn't as flexible. Using pthread_kill to send a signal works for me, that will stop the read/open operation.
+It's worth implementing different code in this area for each platform, IMHO.

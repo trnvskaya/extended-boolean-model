@@ -1,0 +1,83 @@
+Turn an array of pixels into an Image object with Java's ImageIO?
+java image awt toolkit javax.imageio
+I'm currently turning an array of pixel values (originally created with a java.awt.image.PixelGrabber object) into an Image object using the following code:
+public Image getImageFromArray(int[] pixels, int width, int height) {
+    MemoryImageSource mis = new MemoryImageSource(width, height, pixels, 0, width);
+    Toolkit tk = Toolkit.getDefaultToolkit();
+    return tk.createImage(mis);
+}
+
+Is it possible to achieve the same result using classes from the ImageIO package(s) so I don't have to use the AWT Toolkit?
+Toolkit.getDefaultToolkit() does not seem to be 100% reliable and will sometimes throw an AWTError, whereas the ImageIO classes should always be available, which is why I'm interested in changing my method.
+
+
+I've had good success using java.awt.Robot to grab a screen shot (or a segment of the screen), but to work with ImageIO, you'll need to store it in a BufferedImage instead of the memory image source.  Then you can call one static method of ImageIO and save the file.  Try something like:
+// Capture whole screen
+Rectangle region = new Rectangle(Toolkit.getDefaultToolkit().getScreenSize());
+BufferedImage capturedImage = new Robot().createScreenCapture(region);
+
+// Save as PNG
+File imageFile = new File("capturedImage.png");
+ImageIO.write(capturedImage, "png", imageFile);
+
+
+You can create the image without using ImageIO. Just create a BufferedImage using an image type matching the contents of the pixel array.
+public static Image getImageFromArray(int[] pixels, int width, int height) {
+            BufferedImage image = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
+            WritableRaster raster = (WritableRaster) image.getData();
+            raster.setPixels(0,0,width,height,pixels);
+            return image;
+        }
+
+When working with the PixelGrabber, don't forget to extract the RGBA info from the pixel array before calling getImageFromArray. There's an example of this in the handlepixelmethod in the PixelGrabber javadoc. Once you do that, make sure the image type in the BufferedImage constructor to BufferedImage.TYPE_INT_ARGB. 
+
+Using the raster I got an ArrayIndexOutOfBoundsException even when I created the BufferedImage with TYPE_INT_ARGB. However, using the setRGB(...) method of BufferedImage worked for me.
+
+JavaDoc on BufferedImage.getData() says: "a Raster that is a copy of the image data."
+This code works for me but I doubt in it's efficiency:
+        // ÐÐ¾Ð»ÑÑÐ°ÐµÐ¼ ÐºÐ°ÑÑÐ¸Ð½ÐºÑ Ð¸Ð· Ð¼Ð°ÑÑÐ¸Ð²Ð°.
+        int[] pixels = new int[width*height];
+            // Ð Ð¸ÑÑÐµÐ¼ Ð´Ð¸Ð°Ð³Ð¾Ð½Ð°Ð»Ñ.
+            for (int j = 0; j < height; j++) {
+                for (int i = 0; i < width; i++) {
+                    if (i == j) {
+                        pixels[j*width + i] = Color.RED.getRGB();
+                    }
+                    else {
+                        pixels[j*width + i] = Color.BLUE.getRGB();
+                        //pixels[j*width + i] = 0x00000000;
+                    }
+                }
+            }
+
+BufferedImage pixelImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);    
+    pixelImage.setRGB(0, 0, width, height, pixels, 0, width);
+
+
+As this is one of the highest voted question tagged with ImageIO on SO, I think there's still room for a better solution, even if the question is old. :-)
+Have a look at the BufferedImageFactory.java class from my open source imageio project at GitHub. 
+With it, you can simply write: 
+BufferedImage image = new BufferedImageFactory(image).getBufferedImage();
+
+The other good thing is that this approach, as a worst case, has about the same performance (time) as the PixelGrabber-based examples already in this thread. For most of the common cases (typically JPEG), it's about twice as fast. In any case, it uses less memory.
+As a side bonus, the color model and pixel layout of the original image is kept, instead of translated to int ARGB with default color model. This might save additional memory.
+(PS: The factory also supports subsampling, region-of-interest and progress listeners if anyone's interested. :-)
+
+I had the same problem of everyone else trying to apply the correct answer of this question, my int array actually get an OutOfboundException where i fixed it adding one more index because the length of the array has to be widht*height*3 after this i could not get the image so i fixed it setting the raster to the image 
+public static Image getImageFromArray(int[] pixels, int width, int height) {
+        BufferedImage image = new BufferedImage(width, height,     BufferedImage.TYPE_INT_ARGB);
+        WritableRaster raster = (WritableRaster) image.getData();
+        raster.setPixels(0,0,width,height,pixels);
+        image.setData(raster); 
+        return image;
+    }
+
+And you can see the image if u show it on a label on a jframe like this
+    JFrame frame = new JFrame();
+    frame.getContentPane().setLayout(new FlowLayout());
+    frame.getContentPane().add(new JLabel(new ImageIcon(image)));
+    frame.pack();
+    frame.setVisible(true);
+
+setting the image on the imageIcon().
+Last advice you can try to change the Bufferedimage.TYPE_INT_ARGB to something else that matches the image you got the array from this type is very important i had an array of 0 and -1 so I used this type BufferedImage.TYPE_3BYTE_BGR

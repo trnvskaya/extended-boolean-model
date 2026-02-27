@@ -1,0 +1,34 @@
+What's your favorite cross domain cookie sharing approach?
+session cookies cross-domain sharing
+I see iframe/p3p trick is the most popular one around, but I personally don't like it because javascript + hidden fields + frame really make it look like a hack job. I've also come across a master-slave approach using web service to communicate (http://www.15seconds.com/issue/971108.htm) and it seems better because it's transparent to the user and it's robust against different browsers. 
+Is there any better approaches, and what are the pros and cons of each?
+
+
+That's a good solution if you have full-control of all the domains backend. In my situation I only have client (javascript/html) control on one, and full-control on another, therefore I need to use the iframe/p3p method, which sucks :(.
+
+We use cookie chaining, but it's not a good solution since it breaks when one of the domains doesn't work for the user (due to filtering / firewalls etc.). The newer techniques (including yours) only break when the "master" server that hands out the cookies / manages logins breaks.
+Note that your return.asp can be abused to redirect to any site (see this for example).
+
+Ok I seem to have found a solution, you can create a script tag that loads the src of the domain you want to set/get cookies on... only safari so far seems not to be able to SET cookies, but Ie6 and FF work fine... still if you only want to GET cookies, this is a very good approach.
+
+My approach designates one domain as the 'central' domain and any others as 'satellite' domains.
+When someone clicks a 'sign in' link (or presents a persistent login cookie), the sign in form ultimately sends its data to a URL that is on the central domain, along with a hidden form element saying which domain it came from (just for convenience, so the user is redirected back afterwards).
+This page at the central domain then proceeds to set a session cookie (if the login went well) and redirect back to whatever domain the user logged in from, with a specially generated token in the URL which is unique for that session.
+The page at the satellite URL then checks that token to see if it does correspond to a token that was generated for a session, and if so, it redirects to itself without the token, and sets a local cookie.  Now that satellite domain has a session cookie as well.  This redirect clears the token from the URL, so that it is unlikely that the user or any crawler will record the URL containing that token (although if they did, it shouldn't matter, the token can be a single-use token).
+Now, the user has a session cookie at both the central domain and the satellite domain.  But what if they visit another satellite?  Well, normally, they would appear to the satellite as unauthenticated.
+However, throughout my application, whenever a user is in a valid session, all links to pages on the other satellite domains have a ?s or &s appended to them.  I reserve this 's' query string to mean "check with the central server because we reckon this user has a session".  That is, no token or session id is shown on any HTML page, only the letter 's' which cannot identify someone.
+A URL receiving such an 's' query tag will, if there is no valid session yet, do a redirect to the central domain saying "can you tell me who this is?" by putting something in the query string.
+When the user arrives at the central server, if they are authenticated there the central server will simply receive their session cookie.  It will then send the user back to the satellite with another single use token, which the satellite will treat just as a satellite would after logging in (see above).  Ie, the satellite will now set up a session cookie on that domain, and redirect to itself to remove the token from the query string.
+My solution works without script, or iframe support.  It does require '?s' to be added to any cross-domain URLs where the user may not yet have a cookie at that URL.  I did think of a way of getting around this: when the user first logs in, set up a chain of redirects around every single domain, setting a session cookie at each one.  The only reason I haven't implemented this is that it would be complicated in that you would need to be able to have a set order that these redirects would happen in and when to stop, and would prevent you from expanding beyond 15 domains or so (too many more and you become dangerously close to the 'redirect limit' of many browsers and proxies).
+
+The example in that article seems suspicious to me because you basically redirect to a url which, in turn, passes variables back to your domain in a querystring.  
+In the example, that would mean that a malicious user could simply navigate to http://slave.com/return.asp?Return=blah&UID=123" and be logged in on slave.com as user 123.
+Am I missing something, or is it well-known that this technique is insecure and shouldn't be used for, well, things like that example suggests (passing user id's around, presumably to make one's identity portable).
+
+What you do is on the domain receiving the variables you check the referrer address as well so you can confirm the link was from your own domain and not someone simply typing the link into the address bar. This approach works well. 
+
+You also should validate active session information against domains b,c,d,... this way you can only login if the user has already logged in at domain a.
+
+@thomasrutter
+You could avoid having to manage all outbound links on satellites (via appending "s" to querystring) by making an ajax call to check the 'central' domain for auth status on page load. You could avoid redundant calls (on subsequent page loads) by making only one per session.
+It would be arguably better to make the auth check request server-side prior to page load so that (a) you have more efficient access to session, and (b) you will know upon page render whether or not the user is logged in (and display content accordingly).

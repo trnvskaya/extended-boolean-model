@@ -1,0 +1,115 @@
+Non-axis aligned scaling
+scaling vectormath
+Finding a good way to do this has stumped me for a while now: assume I have a selection box with a set of points in it. By dragging the corners you can scale the (distance between) points in the box. Now for an axis aligned box this is easy. Take a corner as an anchor point (subtract this corner from each point, scale it, then add it to the point again) and multiply each points x and y by the factor with which the box has gotten bigger.
+But now take a box that is not aligned with the x and y axis. How do you scale the points inside this box when you drag its corners?
+
+
+Any box is contained inside a circle.
+You find the circle which binds the box, find its center and do exactly the same as you do with an axis aligned box.
+
+You pick one corner of the rectangle as the origin. The two edges connected to it will be the basis (u and v, which should be perpendicular to each other). You would need to normalize them first.
+Subtract the origin from the coordinates and calculate the dot-product with the scaling vector (u), and with the other vector (v).  This would give you how much u and v contributes to the coordinate.
+Then you scale the component you want. To get the final coordinate, you just multiply the the (now scaled) components with their respective vector, and add them together.
+For example:
+Points: p1 = (3,5) and p2 = (6,4)
+
+Selection corners: (0,2),(8,0),(9,4),(1,6)
+selected origin = (8,0)
+
+u = ((0,2)-(8,0))/|(0,2)-(8,0)| = <-0.970, 0.242>
+v = <-0.242, -0.970>
+
+(v is u, but with flipped coordinates, and one of them negated)
+p1Â´ = p1 - origin = (-5, 5)
+p2Â´ = p2 - origin = (-2, 4)
+
+p1_u = p1Â´ . u = -0.970 * (-5) + 0.242 * 5 = 6.063
+p1_v = p1Â´ . v = -0.242 * (-5) - 0.970 * 5 = -3.638
+
+Scale p1_u by 0.5: 3.038
+
+p1_u * u + p1_v * v + origin = <5.941, 4.265>
+
+Same for p2: <7.412, 3.647>
+
+As you maybe can see, they have moved towards the line (8,0)-(9,4), since we scaled by 0.5, with (0,8) as the origin.
+Edit: This turned out to be a little harder to explain than I anticipated.
+In python code, it could look something like this:
+def scale(points, origin, u, scale):
+    # normalize
+    len_u = (u[0]**2 + u[1]**2) ** 0.5
+    u = (u[0]/len_u, u[1]/len_u)
+    # create v
+    v = (-u[1],u[0])
+    ret = []
+    for x,y in points:
+        # subtract origin
+        x, y = x - origin[0], y - origin[1]
+        # calculate dot product
+        pu = x * u[0] + y * u[1]
+        pv = x * v[0] + y * v[1]
+        # scale
+        pu = pu * scale
+        # transform back to normal space
+        x = pu * u[0] + pv * v[0] + origin[0]
+        y = pu * u[1] + pv * v[1] + origin[1]
+        ret.append((x,y))
+    return ret
+
+>>> scale([(3,5),(6,4)],(8,0),(-8,2),0.5)
+[(5.9411764705882355, 4.2647058823529411), (7.4117647058823533, 3.6470588235294117)]
+
+
+Let's say that the box is defined as a set of four points (P1, P2, P3 and P4).
+For the sake of simplicity, we'll say you are dragging P1, and that P3 is the opposite corner (the one you are using as an anchor).
+Let's label the mouse position as M, and the new points you wish to calculate as N1, N2 and N4. P3 will, of course, remain the same.
+Your scaling factor can be simply computed using vector subtraction and the vector dot product:
+scale = ((M - P3) dot (P1 - P3)) / ((P1 - P3) dot (P1 - P3))
+And the three new points can be found using scalar multiplication and vector addition:
+N1 = scale*P1 + (1 - scale)*P3
+N2 = scale*P2 + (1 - scale)*P3
+N4 = scale*P4 + (1 - scale)*P3
+edit: I see that MizardX has answered the question already, so my answer is here to help with that difficult explanation. I hope it helps!
+edit: here is the algorithm for non-proportional scaling. In this case, N1 is equal to M (the point being dragged follows the mouse), so the only points of interest are N2 and N4:
+N2 = ((M - P3) dot (P2 - P3)) / ((P2 - P3) dot (P2 - P3)) * (P2 - P3) + P3
+N4 = ((M - P3) dot (P4 - P3)) / ((P4 - P3) dot (P4 - P3)) * (P4 - P3) + P3
+where * represents scalar multiplication
+edit: Here is some C++ code which answers the question. I'm sure this question is long-dead by now, but it was an interesting problem, and I had some fun writing the code.
+#include <vector>
+
+class Point
+{
+    public:
+        float x;
+        float y;
+        Point() { x = y = 0; }
+        Point(float nx, float ny) { x = nx; y = ny; }
+};
+
+Point& operator-(Point& A, Point& B) { return Point(A.x-B.x, A.y-B.y); }
+Point& operator+(Point& A, Point& B) { return Point(A.x+B.x, A.y+B.y); }
+Point& operator*(float sc, Point& P) { return Point(sc*P.x, sc*P.y); }
+
+float dot_product(Point A, Point B) { return A.x*B.x + A.y*B.y; }
+
+struct Rect { Point point[4]; };
+
+void scale_points(Rect box, int anchor, Point mouse, vector<Point> points)
+{
+    Point& P3 = box.point[anchor];
+    Point& P2 = box.point[(anchor + 1)%4];
+    Point& P1 = box.point[(anchor + 2)%4];
+    Point& P4 = box.point[(anchor + 3)%4];
+
+    Point A = P4 - P3;
+    Point aFactor = dot_product(mouse - P3, A) / dot_product(A, A) * A;
+
+    Point B = P2 - P3;
+    Point bFactor = dot_product(mouse - P3, B) / dot_product(B, B) * B;
+
+    for (int i = 0; i < points.size(); i++)
+    {
+        Point P = points[i] - P3;
+        points[i] = P3 + dot_product(P, aFactor) + dot_product(P, bFactor);
+    }
+}

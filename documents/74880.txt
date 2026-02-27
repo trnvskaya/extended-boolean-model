@@ -1,0 +1,145 @@
+Delegating a task in and getting notified when it completes (in C#)
+c# delegates notifications
+Conceptually, I would like to accomplish the following but have had trouble understand how to code it properly in C#:
+
+SomeMethod { // Member of AClass{}
+    DoSomething;
+    Start WorkerMethod() from BClass in another thread;
+    DoSomethingElse;
+}
+
+Then, when WorkerMethod() is complete, run this:
+
+void SomeOtherMethod()  // Also member of AClass{}
+{ ... }
+
+Can anyone please give an example of that? 
+
+
+Check out BackgroundWorker.
+
+The BackgroundWorker class was added to .NET 2.0 for this exact purpose.
+In a nutshell you do:
+BackgroundWorker worker = new BackgroundWorker();
+worker.DoWork += delegate { myBClass.DoHardWork(); }
+worker.RunWorkerCompleted += new RunWorkerCompletedEventHandler(SomeOtherMethod);
+worker.RunWorkerAsync();
+
+You can also add fancy stuff like cancellation and progress reporting if you want :)
+
+Ok, I'm unsure of how you want to go about this. From your example, it looks like WorkerMethod does not create its own thread to execute under, but you want to call that method on another thread. 
+In that case, create a short worker method that calls WorkerMethod then calls SomeOtherMethod, and queue that method up on another thread. Then when WorkerMethod completes, SomeOtherMethod is called. For example:
+public class AClass
+{
+    public void SomeMethod()
+    {
+        DoSomething();
+
+        ThreadPool.QueueUserWorkItem(delegate(object state)
+        {
+            BClass.WorkerMethod();
+            SomeOtherMethod();
+        });
+
+        DoSomethingElse();
+    }
+
+    private void SomeOtherMethod()
+    {
+        // handle the fact that WorkerMethod has completed. 
+        // Note that this is called on the Worker Thread, not
+        // the main thread.
+    }
+}
+
+
+Use Async Delegates:
+// Method that does the real work
+public int SomeMethod(int someInput)
+{
+Thread.Sleep(20);
+Console.WriteLine(âProcessed input : {0}â,someInput);
+return someInput+1;
+} 
+
+
+// Method that will be called after work is complete
+public void EndSomeOtherMethod(IAsyncResult result)
+{
+SomeMethodDelegate myDelegate = result.AsyncState as SomeMethodDelegate;
+// obtain the result
+int resultVal = myDelegate.EndInvoke(result);
+Console.WriteLine(âReturned output : {0}â,resultVal);
+}
+
+// Define a delegate
+delegate int SomeMethodDelegate(int someInput);
+SomeMethodDelegate someMethodDelegate = SomeMethod;
+
+// Call the method that does the real work
+// Give the method name that must be called once the work is completed.
+someMethodDelegate.BeginInvoke(10, // Input parameter to SomeMethod()
+EndSomeOtherMethod, // Callback Method
+someMethodDelegate); // AsyncState
+
+
+You have to use AsyncCallBacks. You can use AsyncCallBacks to specify a delegate to a method, and then specify CallBack Methods that get called once the execution of the target method completes.
+Here is a small Example, run and see it for yourself.
+class Program
+    {
+    public delegate void AsyncMethodCaller();
+
+
+    public static void WorkerMethod()
+    {
+        Console.WriteLine("I am the first method that is called.");
+        Thread.Sleep(5000);
+        Console.WriteLine("Exiting from WorkerMethod.");
+    }
+
+    public static void SomeOtherMethod(IAsyncResult result)
+    {
+        Console.WriteLine("I am called after the Worker Method completes.");
+    }
+
+
+
+    static void Main(string[] args)
+    {
+        AsyncMethodCaller asyncCaller = new AsyncMethodCaller(WorkerMethod);
+        AsyncCallback callBack = new AsyncCallback(SomeOtherMethod);
+        IAsyncResult result = asyncCaller.BeginInvoke(callBack, null);
+        Console.WriteLine("Worker method has been called.");
+        Console.WriteLine("Waiting for all invocations to complete.");
+        Console.Read();
+
+    }
+}
+
+
+In .Net 2 the BackgroundWorker was introduced, this makes running async operations really easy:
+BackgroundWorker bw = new BackgroundWorker { WorkerReportsProgress = true };
+
+bw.DoWork += (sender, e) => 
+   {
+       //what happens here must not touch the form
+       //as it's in a different thread
+   };
+
+bw.ProgressChanged += ( sender, e ) =>
+   {
+       //update progress bars here
+   };
+
+bw.RunWorkerCompleted += (sender, e) => 
+   {
+       //now you're back in the UI thread you can update the form
+       //remember to dispose of bw now
+   };
+
+worker.RunWorkerAsync();
+
+In .Net 1 you have to use threads.
+
+Although there are several possibilities here, I would use a delegate, asynchronously called using BeginInvoke method.
+Warning : don't forget to always call EndInvoke on the IAsyncResult to avoid eventual memory leaks, as described in this article.

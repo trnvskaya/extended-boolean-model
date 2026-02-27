@@ -1,0 +1,25 @@
+Unit testing a module that checks internet connectivity
+windows unit-testing networking nlm
+I have a C# module responsible for acquiring the list of network adapters that are "connected to the internet" on a windows Vista machine. The module uses the "Network List Manager API" (or NLM API) to iterate over all network connections and returns all those for which the IsConnectedToInternet value is true.
+I received some suggestions for the implementation of this module in this SO question
+To test this module I've decided to write a helper that returns the list of internet connected interfaces based on another logic, so it would be a sort of a "reality check" for the original module's logic. Note that for the test helper I am willing to use detection methods that might be considered bad practice for production code (e.g. relying on some internet resource like "Google" to be available - in case it shuts down, blocked by our internal firewall etc. it's relatively easy to fix the test as opposed to a deployed product base).
+The alternative detection method I chose was to try to connect to "www.google.com:80" with a TcpClient. My problem: When I have more than one connected adapter (e.g. both wireless and LAN) the detection method fails for one of them with the error "A connect request was made on an already-connected socket".
+My question is three fold:
+
+How would you go about testing such a module in general? Do you support the idea of doing the same thing in a different way and comparing the results or is it an overkill and I should rely on the system's API? My main problem here, is that it's very hard to pre-configure the system so that I'll know what the expected results are in advance.
+What alternative logic would you suggest? One thing that was suggested in the aforementioned question was looking at the routing table - what about considering each adapter that has a routing entry with a destination of 0.0.0.0 as "connected to the internet"? Other suggestions?
+Do you understand why I get the "already-connected" error with the current test logic?
+
+
+
+UnitTests shouldn't access to external resources.  To UnitTest your method, I would stub out the Network List Manager API.  
+You still need an acceptance test layer.  In that test environment you should replicate various configurations you expect to support in your environment, setup your own webhosts, routers, machine config.  Acceptance testing should be done at the user experience level using a tool like Fitnesse.
+
+I can only answer your question about the unit test.
+The code you're testing is, in your own words, "a C# module responsible for acquiring the list of network adapters that are 'connected to the internet' on a windows Vista machine. The module uses the 'Network List Manager API' (or NLM API) to iterate over all network connections and returns all those for which the IsConnectedToInternet value is true."
+If I were writing this module, I would first use an interface for the NLM API, call it...NLMAPIService. Now, for the real code, create an Adapter that implements NLMAPIService and adapts the real NLM API. 
+For testing, create a class FakeNLMAPI that implements NLMAPIService and has all of its data in-memory somewhere, or in an XML file, or whatever. Your module calls methods only on the NLMAPIService, so you don't have to change any "real" code depending on whether you're testing or not.
+Therefore, in your test setup method, you can instantiate FakeNLMAPI and pass it to your module, and in production, instantiate your NLM API Adapter.
+I'm going to assume that you can instantiate and modify the object that represents a network connection. If not, you can follow the same pattern for faking the actual network connection object.
+
+Dependency Injection is a very handy pattern to deal with issues like this.  Instead of simply using the NLM API components directly in your code define an interface and a class that implements it and serves as a proxy to the NLM API.  Pass an instance of this class to your module in the constructor and have your module use it.  In your unit tests, instead of the real proxy object, use a mock object that returns known information -- it doesn't even have to reference the NLM API -- to use in testing the logic of your module.  Granted, your proxy class will need some testing as well, but the logic in it is much simpler -- probably just some data marshaling.  You might be able to convince yourself of its correctness or, if not, do some manual testing on it to make sure that it is working properly.

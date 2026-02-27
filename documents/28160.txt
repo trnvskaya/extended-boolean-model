@@ -1,0 +1,73 @@
+Multiple classes in a header file vs. a single header file per class
+c++ performance file-organization
+For whatever reason, our company has a coding guideline that states:
+Each class shall have it's own header and implementation file.
+So if we wrote a class called MyString we would need an associated MyStringh.h and MyString.cxx.
+Does anyone else do this?  Has anyone seen any compiling performance repercussions as a result?  Does 5000 classes in 10000 files compile just as quickly as 5000 classes in 2500 files?  If not, is the difference noticeable?
+[We code C++ and use GCC 3.4.4 as our everyday compiler]
+
+
+We do that at work, its just easier to find stuff if the class and files have the same name. As for performance, you really shouldn't have 5000 classes in a single project. If you do, some refactoring might be in order.
+That said, there are instances when we have multiple classes in one file. And that is when it's just a private helper class for the main class of the file.
+
+It's common practice to do this, especially to be able to include .h in the files that need it. Of course the performance is affected but try not to think about this problem until it arises :).
+It's better to start with the files separated and after that try to merge the .h's that are commonly used together to improve performance if you really need to. It all comes down to dependencies between files and this is very specific to each project.
+
++1 for separation.  I just came onto a project where some classes are in files with a different name, or lumped in with another class, and it is impossible to find these in a quick and efficient manner.  You can throw more resources at a build - you can't make up lost programmer time because (s)he can't find the right file to edit.
+
+The same rule applies here, but it notes a few exceptions where it is allowed Like so:
+
+Inheritance trees
+Classes that are only used within a very limited scope
+Some Utilities are simply placed in a general 'utils.h'
+
+
+G'day,
+Most places where I have worked have folowed this practice. I've actually written coding standards for BAE (Aust.) along with the reasons why instead of just carving something in stone with no real justification.
+Concerning your question about source files, it's not so much time to compile but more an issue of being able to find the relevant code snippet in the first place. Not everyone is using an IDE. And knowing that you just look for MyClass.h and MyClass.cpp really saves time compared to running "grep MyClass *.(h|cpp)" over a bunch of files and then filtering out the #include MyClass.h statements...
+Mind you there are work-arounds for the impact of large numbers of source files on compile times. See Large Scale C++ Software Design by John Lakos for an interesting discussion.
+You might also like to read Code Complete by Steve McConnell for an excellent chapter on coding guidelines. Actualy, this book is a great read that I keep coming back to regularly
+cheers,
+Rob
+
+The term here is translation unit and you really want to (if possible) have one class per translation unit ie, one class implementation per .cpp file, with a corresponding .h file of the same name.
+It's usually more efficient (from a compile/link) standpoint to do things this way, especially if you're doing things like incremental link and so forth. The idea being, translation units are isolated such that, when one translation unit changes, you don't have to rebuild a lot of stuff, as you would have to if you started lumping many abstractions into a single translation unit.
+Also you'll find many errors/diagnostics are reported via file name ("Error in Myclass.cpp, line 22") and it helps if there's a one-to-one correspondence between files and classes. (Or I suppose you could call it a 2 to 1 correspondence).
+
+In addition to simply being "clearer", separating classes into separate files makes it easier for multiple developers not to step on each others toes.  There will be less merging when it comes time to commit changes to your version control tool.
+
+The best practice, as others have said, is to place each class in its own translation unit from a code maintenance and understandability perspective. However on large scale systems this is sometimes not advisable - see the section entitled "Make Those Source Files Bigger" in this article by Bruce Dawson for a discussion of the tradeoffs.
+
+It is very helpful to have only have one class per file, but if you do your building via bulkbuild files which include all the individual C++ files, it makes for faster compilations since startup time is relatively large for many compilers.
+
+Overwhelmed by thousands lines of code?
+Having one set of header/source files per class in a directory can seem overkill. And if the number of classes goes toward 100 or 1000, it can even be frightening.
+But having played with sources following the philosophy "let's put together everything", the conclusion is that only the one who wrote the file has any hope to not be lost inside. Even with an IDE, it is easy to miss things because when you're playing with a source of 20,000 lines, you just close your mind for anything not exactly refering to your problem.
+Real life example: the class hierarchy defined in those thousand lines sources closed itself into a diamond-inheritance, and some methods were overridden in child classes by methods with exactly the same code. This was easily overlooked (who wants to explore/check a 20,000 lines source code?), and when the original method was changed (bug correction), the effect was not as universal as excepted.
+Dependancies becoming circular?
+I had this problem with templated code, but I saw similar problems with regular C++ and C code.
+Breaking down your sources into 1 header per struct/class lets you:
+
+Speed up compilation because you can use symbol forward-declaration instead of including whole objects
+Have circular dependencies between classes (Â§) (i.e. class A has a pointer to B, and B has a pointer to A)
+
+In source-controlled code, class dependencies could lead to regular moving of classes up and down the file, just to make the header compile. You don't want to study the evolution of such moves when comparing the same file in different versions.
+Having separate headers makes the code more modular, faster to compile, and makes it easier to study its evolution through different versions diffs
+For my template program, I had to divide my headers into two files: The .HPP file containing the template class declaration/definition, and the .INL file containing the definitions of the said class methods.
+Putting all this code inside one and only one unique header would mean putting class definitions at the begining of this file, and the method definitions at the end.
+And then, if someone needed only a small part of the code, with the one-header-only solution, they still would have to pay for the slower compilation.
+(Â§) Note that you can have circular dependencies between classes if you know which class owns which. This is a discussion about classes having knowledge of the existence of other classes, not shared_ptr circular dependencies antipattern.
+One last word: Headers should be self-sufficients
+One thing, though, that must be respected by a solution of multiple headers and multiple sources.
+When you include one header, no matter which header, your source must compile cleanly.
+Each header should be self-sufficient. You're supposed to develop code, not treasure-hunting by greping your 10,000+ source files project to find which header defines the symbol in the 1,000 lines header you need to include just because of one enum.
+This means that either each header defines or forward-declare all the symbols it uses, or include all the needed headers (and only the needed headers).
+
+I found these guidelines particularly useful when it comes to header files :
+http://google-styleguide.googlecode.com/svn/trunk/cppguide.xml#Header_Files
+
+I'm surprised that almost everyone is in favor of having one file per class. The problem with that is that in the age of 'refactoring' one may have a hard time keeping the file and class names in synch. Everytime you change a class name, you then have to change the file name too, which means that you have to also make a change everywhere the file is included. 
+I personally group related classes into a single files and then give such a file a meaningful name that won't have to change even if a class name changes. Having fewer files also makes scrolling through a file tree easier. 
+I use Visual Studio on Windows and Eclipse CDT on Linux, and both have shortcut keys that take you straight to a class declaration, so finding a class declaration is easy and quick. 
+Having said that, I think once a project is completed, or its structure has 'solidified', and name changes become rare, it may make sense to have one class per file. I wish there was a tool that could extract classes and place them in distinct .h and .cpp files. But I don't see this as essential.
+The choice also depends on the type of project one works on. In my opinion the issue doesn't deserve a black and white answer since either choice has pros and cons. 

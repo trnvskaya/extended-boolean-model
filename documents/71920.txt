@@ -1,0 +1,56 @@
+How to implement a Digg-like algorithm?
+sql algorithm recommendation-engine digg
+How to implement a website with a recommendation system similar to stackoverflow/digg/reddit? I.e., users submit content and the website needs to calculate some sort of "hotness" according to how popular the item is. The flow is as follows:
+
+Users submit content
+Other users view and vote on the content (assume 90% of the users only views content and 10% actively votes up or down on content)
+New content is continuously submitted
+
+How do I implement an algorithm that calculates the "hotness" of a submitted item, preferably in real-time? Are there any best-practices or design patterns?
+I would assume that the algorithm takes the following into consideration:
+
+When an item was submitted
+When each vote was cast
+When the item was viewed
+
+E.g. an item that gets a constant trickle of votes would stay somewhat "hot" constantly while an item that receives a burst of votes when it is first submitted will jump to the top of the "hotness"-list but then fall down as the votes stop coming in.
+(I am using a MySQL+PHP but I am interested in general design patterns).
+
+
+You could use something similar to the Reddit algorithm - the basic principle of which is you compute a value for a post based on the time it was posted and the score. What's neat about the Reddit algorithm is that you only need recompute the value when the score of a post changes. When you want to display your front page, you just get the top n posts from your database based on that score. As time goes on the scores will naturally increase, so you don't have to do any special processing to remove items from the front page.
+
+On my own site, I assign each entry a unique integer from a monotonically increasing series (newer posts get higher numbers). Each up vote increases the number by one, and each down vote decreases it by one (you can tweak these values, of course). Then, simply sort by the number to display the 'hottest' entries.
+
+I developed an social bookmarking site, Sites Favoritos, and used a complex algoritm:
+
+First, the votes are finite, an user only have a limited number of votes, and the number of votes depends on the user points. To earn points each user must add links that get positive votes.
+Then, users can vote -3,-2,-1,1,2 or 3 votes for each link. As the votes are limited, each user will vote only on those links that they like.
+To prevent user to vote only on links for the same user, creating support groups, the points each vote adds to the link depends on a racio between total votes and votes to links of the owner of the voted link. If you always vote on the same users links, your votes will lose value.
+Votes lose value with time.
+New links from users who don't have points (new users) will have a starting 0 points. New links from older users will have points depending on their points. Ranging from +3 to -infinite. Links from users with negative points will have negative starting points, links from users with positive points will have positive starting points.
+
+Users will get random points when their links are voted. Positive votes give positive points, negative votes for negative points.
+
+Paul Graham wrote an essay on what he learned in developing Hacker News. The emphasis is more on the people/interactions he was trying to attract/create than on the algorithm per se, but still well worth a read. For example, he discusses the different outcomes when stories bubble up from the bottom (HN) versus exploding to the top (Digg) of the front page. (Although from what I've seen of HN, it looks like stories explode to the top there also).
+He offers this quote:
+
+The key to performance is elegance, not battalions of special cases.
+
+which in light of the purported algorithm for generating the HN front page:
+
+(p - 1) / (t + 2)^1.5
+where
+p = an article's points and
+t = time from submission of article
+
+might be a good starting point.
+
+I implemented an SQL version of Reddit's ranking algorithm for a video aggregator like so:
+SELECT id, title
+FROM videos
+ORDER BY 
+    LOG10(ABS(cached_votes_total) + 1) * SIGN(cached_votes_total)   
+    + (UNIX_TIMESTAMP(created_at) / 300000) DESC
+LIMIT 50
+
+*cached_votes_total* is updated by a trigger whenever a new vote is cast. It runs fast enough on our current site, but I am planning on adding a ranking value column and updating it with the same trigger as the *cached_votes_total* column. After that optimization, it should be fast enough for most any size site.

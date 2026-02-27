@@ -1,0 +1,63 @@
+Is there a delegate available for properties in C#?
+c# .net
+Given the following class: 
+class TestClass {
+  public void SetValue(int value) { Value = value; }
+  public int Value { get; set; }
+}
+
+I can do 
+TestClass tc = new TestClass();
+Action<int> setAction = tc.SetValue;
+setAction.Invoke(12);
+
+which is all good. Is it possible to do the same thing using the property instead of the method? Preferably with something built in to .net. 
+
+
+Properties are really wrappers around methods in .Net, so using reflection you should be able to get the delegate (set_PROPERTY and get_PROPERTY) and then execute them...
+See System.Reflection.PropertyInfo
+If has two methods which you can use to get/ set the value - GetGetMethod and GetSetMethod.
+So you could write:
+var propertyInfo = typeof (TestClass).GetProperty ("Value");
+
+var setMethod = property.GetSetMethod (); // This will return a MethodInfo class.
+
+
+There are three ways of doing this; the first is to use GetGetMethod()/GetSetMethod() and create a delegate with Delegate.CreateDelegate. The second is a lambda (not much use for reflection!) [i.e. x=>x.Foo]. The third is via Expression (.NET 3.5).
+The lambda is the easiest ;-p
+    class TestClass
+    {
+        public int Value { get; set; }
+    }
+    static void Main()
+    {
+        Func<TestClass, int> lambdaGet = x => x.Value;
+        Action<TestClass, int> lambdaSet = (x, val) => x.Value = val;
+
+        var prop = typeof(TestClass).GetProperty("Value");
+        Func<TestClass, int> reflGet = (Func<TestClass, int>) Delegate.CreateDelegate(
+            typeof(Func<TestClass, int>), prop.GetGetMethod());
+        Action<TestClass, int> reflSet = (Action<TestClass, int>)Delegate.CreateDelegate(
+            typeof(Action<TestClass, int>), prop.GetSetMethod());
+    }
+
+To show usage:
+        TestClass foo = new TestClass();
+        foo.Value = 1;
+        Console.WriteLine("Via property: " + foo.Value);
+
+        lambdaSet(foo, 2);
+        Console.WriteLine("Via lambda: " + lambdaGet(foo));
+
+        reflSet(foo, 3);
+        Console.WriteLine("Via CreateDelegate: " + reflGet(foo));
+
+Note that if you want the delegate pointing to the specific instance, you can use closures for the lambda, or the overload of CreateDelegate that accepts and instance.
+
+You could create the delegate using reflection :
+Action<int> valueSetter = (Action<int>)Delegate.CreateDelegate(typeof(Action<int>), tc, tc.GetType().GetProperty("Value").GetSetMethod());
+
+or create a delegate to an anonymous method which sets the property;
+Action<int> valueSetter = v => tc.Value = v;
+
+Edit: used wrong overload for CreateDelegate(), need to use the one that takes and object as target. Fixed.

@@ -1,0 +1,67 @@
+Generating a unique machine id
+windows winapi wmi uniqueidentifier
+I need to write a function that generates an id that is unique for a given machine running a Windows OS.
+Currently, I'm using WMI to query various hardware parameters and concatenate them together and hash them to derive the unique id. My question is, what are the suggested parameters I should use? 
+Currently, I'm using a combination of bios\cpu\disk data to generate the unique id. And am using the first result if multiple results are there for each metric.
+However, I ran into an issue where a machine that dual boots into 2 different Windows OS generates different site codes on each OS, which should ideally not happen.
+For reference, these are the metrics I'm currently using:
+Win32_Processor:UniqueID,ProcessorID,Name,Manufacturer,MaxClockSpeed
+Win32_BIOS:Manufacturer
+Win32_BIOS:SMBIOSBIOSVersion,IdentificationCode,SerialNumber,ReleaseDate,Version
+Win32_DiskDrive:Model, Manufacturer, Signature, TotalHeads
+Win32_BaseBoard:Model, Manufacturer, Name, SerialNumber
+Win32_VideoController:DriverVersion, Name
+
+
+
+You should look into using the MAC address on the network card (if it exists). Those are usually unique but can be fabricated. I've used software that generates its license file based on your network adapter MAC address, so it's considered a fairly reliable way to distinguish between computers.
+
+What about just using the UniqueID of the processor?
+
+Look up CPUID for one option. There might be some issues with multi-CPU systems.
+
+Why not use the MAC address of your network card?
+
+Maybe cheating a little, but the MAC Address of a machines Ethernet adapter rarely changes without the motherboard changing these days.
+
+I hate to be the guy who says, "you're just doing it wrong" (I always hate that guy ;) but...
+Does it have to be repeatably generated for the unique machine? Could you just assign the identifier or do a public/private key? Maybe if you could generate and store the value, you could access it from both OS installs on the same disk?
+You've probably explored these options and they doesn't work for you, but if not, it's something to consider.
+If it's not a matter of user trust, you could just use MAC addresses.
+
+Can you pull some kind of manufacturer serial number or service tag?
+Our shop is a Dell shop, so we use the service tag which is unique to each machine to identify them.  I know it can be queried from the BIOS, at least in Linux, but I don't know offhand how to do it in Windows.
+
+Parse the SMBIOS yourself and hash it to an arbitrary length. See the PDF specification for all SMBIOS structures available.
+To query the SMBIOS info from Windows you could use EnumSystemFirmwareEntries, EnumSystemFirmwareTables and GetSystemFirmwareTable.
+IIRC, the "unique id" from the CPUID instruction is deprecated from P3 and newer.
+
+In my program I first check for Terminal Server and use the WTSClientHardwareId. Else the MAC address of the local PC should be adequate.
+If you really want to use the list of properties you provided leave out things like Name and DriverVersion, Clockspeed, etc. since it's possibly OS dependent. Try outputting the same info on both operating systems and leave out that which differs between.
+
+I had the same problem and after a little research I decided the best would be to read MachineGuid in registry key HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography, as @Agnus suggested. It is generated during OS installation and won't change unless you make another fresh OS install. Depending on the OS version it may contain the network adapter MAC address embedded (plus some other numbers, including random), or a pseudorandom number, the later for newer OS versions (after XP SP2, I believe, but not sure). If it's a pseudorandom theoretically it can be forged - if two machines have the same initial state, including real time clock. In practice, this will be rare, but be aware if you expect it to be a base for security that can be attacked by hardcore hackers.
+Of course a registry entry can also be easily changed by anyone to forge a machine GUID, but what I found is that this would disrupt normal operation of so many components of Windows that in most cases no regular user would do it (again, watch out for hardcore hackers).
+
+For one of my applications, I either use the computer name if it is non-domain computer, or the domain machine account SID for domain computers. Mark Russinovich talks about it in this blog post, Machine SID:
+
+The final case where SID duplication would be an issue is if a distributed application used machine SIDs to uniquely identify computers. No Microsoft software does so and using the machine SID in that way doesnât work just for the fact that all DCâs have the same machine SID. Software that relies on unique computer identities either uses computer names or computer Domain SIDs (the SID of the computer accounts in the Domain). 
+
+You can access the domain machine account SID via LDAP or System.DirectoryServices.
+
+With our licensing tool we consider the following components
+
+MAC Address
+CPU (Not the serial number, but the actual CPU profile like stepping and model)
+System Drive Serial Number (Not Volume Label)
+Memory
+CD-ROM model & vendor
+Video Card model & vendor
+IDE Controller
+SCSI Controller
+
+However, rather than just hashing the components and creating a pass/fail system, we create a comparable fingerprint that can be used to determine how different two machine profiles are. If the difference rating is above a specified tolerance then ask the user to activate again. 
+We've found over the last 8 years in use with hundreds of thousands of end-user installs that this combination works well to provide a reliably unique machine id - even for virtual machines and cloned OS installs.
+
+Try this one, it gives a unique hard disk ID: Port of DiskId32 for Delphi 7-2010.
+
+There is a library available for getting hardware specific informations: Hardware serial number extractor (CPU, RAM, HDD, BIOS)

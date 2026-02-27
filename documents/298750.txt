@@ -1,0 +1,198 @@
+How do I select text nodes with jQuery?
+javascript jquery dom
+I would like to get all descendant text nodes of an element, as a jQuery collection. What is the best way to do that?
+
+
+Jauco posted a good solution in a comment, so I'm copying it here:
+$(elem)
+  .contents()
+  .filter(function() {
+    return this.nodeType === 3; //Node.TEXT_NODE
+  });
+
+
+jQuery doesn't have a convenient function for this. You need to combine contents(), which will give just child nodes but includes text nodes, with find(), which gives all descendant elements but no text nodes. Here's what I've come up with:
+var getTextNodesIn = function(el) {
+    return $(el).find(":not(iframe)").addBack().contents().filter(function() {
+        return this.nodeType == 3;
+    });
+};
+
+getTextNodesIn(el);
+
+Note: If you're using jQuery 1.7 or earlier, the code above will not work. To fix this, replace addBack() with andSelf(). andSelf() is deprecated in favour of addBack() from 1.8 onwards.
+This is somewhat inefficient compared to pure DOM methods and has to include an ugly workaround for jQuery's overloading of its contents() function (thanks to @rabidsnail in the comments for pointing that out), so here is non-jQuery solution using a simple recursive function. The includeWhitespaceNodes parameter controls whether or not whitespace text nodes are included in the output (in jQuery they are automatically filtered out).
+Update: Fixed bug when includeWhitespaceNodes is falsy.
+function getTextNodesIn(node, includeWhitespaceNodes) {
+    var textNodes = [], nonWhitespaceMatcher = /\S/;
+
+    function getTextNodes(node) {
+        if (node.nodeType == 3) {
+            if (includeWhitespaceNodes || nonWhitespaceMatcher.test(node.nodeValue)) {
+                textNodes.push(node);
+            }
+        } else {
+            for (var i = 0, len = node.childNodes.length; i < len; ++i) {
+                getTextNodes(node.childNodes[i]);
+            }
+        }
+    }
+
+    getTextNodes(node);
+    return textNodes;
+}
+
+getTextNodesIn(el);
+
+
+If you can make the assumption that all children are either Element Nodes or Text Nodes, then this is one solution.
+To get all child text nodes as a jquery collection:
+$('selector').clone().children().remove().end().contents();
+
+To get a copy of the original element with non-text children removed:
+$('selector').clone().children().remove().end();
+
+
+if you want to strip all tags, then try this
+function:
+String.prototype.stripTags=function(){
+var rtag=/<.*?[^>]>/g;
+return this.replace(rtag,'');
+}
+
+usage: 
+var newText=$('selector').html().stripTags();
+
+
+I had the same problem and solved it with:
+Code:
+$.fn.nextNode = function(){
+  var contents = $(this).parent().contents();
+  return contents.get(contents.index(this)+1);
+}
+
+Usage:
+$('#my_id').nextNode();
+
+Is like next() but also returns the text nodes.
+
+$('body').find('*').contents().filter(function () { return this.nodeType === 3; });
+
+
+Can also be done like this:
+var textContents = $(document.getElementById("ElementId").childNodes).filter(function(){
+        return this.nodeType == 3;
+});
+
+The above code filters the textNodes from direct children child nodes of a given element.
+
+For me, plain old .contents() appeared to work to return the text nodes, just have to be careful with your selectors so that you know they will be text nodes.
+For example, this wrapped all the text content of the TDs in my table with pre tags and had no problems.
+jQuery("#resultTable td").content().wrap("<pre/>")
+
+
+jQuery.contents() can be used with jQuery.filter to find all child text nodes. With a little twist, you can find grandchildren text nodes as well. No recursion required:
+
+
+$(function() {
+  var $textNodes = $("#test, #test *").contents().filter(function() {
+    return this.nodeType === Node.TEXT_NODE;
+  });
+  /*
+   * for testing
+   */
+  $textNodes.each(function() {
+    console.log(this);
+  });
+});
+div { margin-left: 1em; }
+<script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+
+<div id="test">
+  child text 1<br>
+  child text 2
+  <div>
+    grandchild text 1
+    <div>grand-grandchild text 1</div>
+    grandchild text 2
+  </div>
+  child text 3<br>
+  child text 4
+</div>
+
+
+
+jsFiddle
+
+For some reason contents() didn't work for me, so if it didn't work for you, here's a solution I made, I created jQuery.fn.descendants with the option to include text nodes or not
+Usage
+
+Get all descendants including text nodes and element nodes
+jQuery('body').descendants('all');
+
+
+Get all descendants returning only text nodes
+jQuery('body').descendants(true);
+
+
+Get all descendants returning only element nodes
+jQuery('body').descendants();
+
+
+Coffeescript Original:
+jQuery.fn.descendants = ( textNodes ) ->
+
+    # if textNodes is 'all' then textNodes and elementNodes are allowed
+    # if textNodes if true then only textNodes will be returned
+    # if textNodes is not provided as an argument then only element nodes
+    # will be returned
+
+    allowedTypes = if textNodes is 'all' then [1,3] else if textNodes then [3] else [1]
+
+    # nodes we find
+    nodes = []
+
+
+    dig = (node) ->
+
+        # loop through children
+        for child in node.childNodes
+
+            # push child to collection if has allowed type
+            nodes.push(child) if child.nodeType in allowedTypes
+
+            # dig through child if has children
+            dig child if child.childNodes.length
+
+
+    # loop and dig through nodes in the current
+    # jQuery object
+    dig node for node in this
+
+
+    # wrap with jQuery
+    return jQuery(nodes)
+
+Drop In Javascript Version 
+var __indexOf=[].indexOf||function(e){for(var t=0,n=this.length;t<n;t++){if(t in this&&this[t]===e)return t}return-1}; /* indexOf polyfill ends here*/ jQuery.fn.descendants=function(e){var t,n,r,i,s,o;t=e==="all"?[1,3]:e?[3]:[1];i=[];n=function(e){var r,s,o,u,a,f;u=e.childNodes;f=[];for(s=0,o=u.length;s<o;s++){r=u[s];if(a=r.nodeType,__indexOf.call(t,a)>=0){i.push(r)}if(r.childNodes.length){f.push(n(r))}else{f.push(void 0)}}return f};for(s=0,o=this.length;s<o;s++){r=this[s];n(r)}return jQuery(i)}
+
+
+Unminified Javascript version: http://pastebin.com/cX3jMfuD
+
+This is cross browser, a small Array.indexOf polyfill is included in the code.
+
+I was getting a lot of empty text nodes with the accepted filter function.  If you're only interested in selecting text nodes that contain non-whitespace, try adding a nodeValue conditional to your filter function, like a simple $.trim(this.nodevalue) !== '':
+$('element')
+    .contents()
+    .filter(function(){
+        return this.nodeType === 3 && $.trim(this.nodeValue) !== '';
+    });
+
+http://jsfiddle.net/ptp6m97v/
+Or to avoid strange situations where the content looks like whitespace, but is not (e.g. the soft hyphen &shy; character, newlines \n, tabs, etc.), you can try using a Regular Expression. For example, \S will match any non-whitespace characters:
+$('element')
+        .contents()
+        .filter(function(){
+            return this.nodeType === 3 && /\S/.test(this.nodeValue);
+        });
+

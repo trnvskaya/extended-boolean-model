@@ -1,0 +1,152 @@
+Function for creating color wheels
+algorithm language-agnostic colors color-space
+This is something I've pseudo-solved many times and never quite found a solution. That's stuck with me. The problem is to come up with a way to generate N colors, that are as distinguishable as possible where N is a parameter.
+
+
+I've read somewhere the human eye can't distinguish between less than 4 values apart. so This is something to keep in mind. The following algorithm does not compensate for this.
+I'm not sure this is exactly what you want, but this is one way to randomly generate non-repeating color values:
+(beware, inconsistent pseudo-code ahead)
+//colors entered as 0-255 [R, G, B]colors = []; //holds final colors to be usedrand = new Random();//assumes n is less than 16,777,216randomGen(int n){   while (len(colors) < n){      //generate a random number between 0,255 for each color      newRed = rand.next(256);      newGreen = rand.next(256);      newBlue = rand.next(256);      temp = [newRed, newGreen, newBlue];      //only adds new colors to the array      if temp not in colors {         colors.append(temp);      }   }}
+One way you could optimize this for better visibility would be to compare the distance between each new color and all the colors in the array:
+for item in color{   itemSq = (item[0]^2 + item[1]^2 + item[2]^2])^(.5);   tempSq = (temp[0]^2 + temp[1]^2 + temp[2]^2])^(.5);   dist = itemSq - tempSq;   dist = abs(dist);}//NUMBER can be your chosen distance apart.if dist < NUMBER and temp not in colors {   colors.append(temp);}
+But this approach would significantly slow down your algorithm.
+Another way would be to scrap the randomness and systematically go through every 4 values and add a color to an array in the above example.
+Isn't it also a factor which order you set up the colors?
+Like if you use Dillie-Os idea you need to mix the colors as much as possible. 
+0 64 128 256 is from one to the next. but 0 256 64 128 in a wheel would be more "apart"
+Does this make sense?
+My first thought on this is "how generate N vectors in a space that maximize distance from each other." You can see that the RGB (or any other scale you use that forms a basis in color space) are just vectors. Take a look at Random Point Picking. Hope this is a good start for you! Once you have a set of vectors that are maximized a part, you can save them in a hash table or something for later, and just perform random rotations on them to get all the colors you desire that are maximally apart from each other!
+Edit: Thinking about this problem more, it would be better to map the colors in a linear manor, possibly (0,0,0) --> (255,255,255) lexicographically, and then distribute them evenly. I really don't know how well this will work, but it should since, lets say:
+n = 10
+we know we have 16777216 colors (256^3). We can use buckles algorithm 515 to find the lexicographically indexed color.. You'll probably have to edit the algorithm to avoid overflow and probably add some minor speed improvements.
+
+It would be best to find colors maximally distant in a "perceptually uniform" colorspace, e.g. CIELAB (using Euclidean distance between L*, a*, b* coordinates as your distance metric) and then converting to the colorspace of your choice.  Perceptual uniformity is achieved by tweaking the colorspace to approximate the non-linearities in the human visual system.
+
+Some related resources:
+ColorBrewer - Sets of colours designed to be maximally distinguishable for use on maps.
+Escaping RGBland: Selecting Colors for Statistical Graphics - A technical report describing a set of algorithms for generating good (i.e. maximally distinguishable) colour sets in the hcl colour space.
+
+Here is some code to allocate RGB colors evenly around a HSL color wheel of specified luminosity.
+class cColorPicker
+{
+public:
+    void Pick( vector<DWORD>&v_picked_cols, int count, int bright = 50 );
+private:
+    DWORD HSL2RGB( int h, int s, int v );
+    unsigned char ToRGB1(float rm1, float rm2, float rh);
+};
+/**
+
+  Evenly allocate RGB colors around HSL color wheel
+
+  @param[out] v_picked_cols  a vector of colors in RGB format
+  @param[in]  count   number of colors required
+  @param[in]  bright  0 is all black, 100 is all white, defaults to 50
+
+  based on Fig 3 of http://epub.wu-wien.ac.at/dyn/virlib/wp/eng/mediate/epub-wu-01_c87.pdf?ID=epub-wu-01_c87
+
+*/
+
+void cColorPicker::Pick( vector<DWORD>&v_picked_cols, int count, int bright )
+{
+    v_picked_cols.clear();
+    for( int k_hue = 0; k_hue < 360; k_hue += 360/count )
+        v_picked_cols.push_back( HSL2RGB( k_hue, 100, bright ) );
+}
+/**
+
+  Convert HSL to RGB
+
+  based on http://www.codeguru.com/code/legacy/gdi/colorapp_src.zip
+
+*/
+
+DWORD cColorPicker::HSL2RGB( int h, int s, int l )
+{
+    DWORD ret = 0;
+    unsigned char r,g,b;
+
+    float saturation = s / 100.0f;
+    float luminance = l / 100.f;
+    float hue = (float)h;
+
+    if (saturation == 0.0) 
+    {
+      r = g = b = unsigned char(luminance * 255.0);
+    }
+    else
+    {
+      float rm1, rm2;
+
+      if (luminance <= 0.5f) rm2 = luminance + luminance * saturation;  
+      else                     rm2 = luminance + saturation - luminance * saturation;
+      rm1 = 2.0f * luminance - rm2;   
+      r   = ToRGB1(rm1, rm2, hue + 120.0f);   
+      g = ToRGB1(rm1, rm2, hue);
+      b  = ToRGB1(rm1, rm2, hue - 120.0f);
+    }
+
+    ret = ((DWORD)(((BYTE)(r)|((WORD)((BYTE)(g))<<8))|(((DWORD)(BYTE)(b))<<16)));
+
+    return ret;
+}
+
+
+unsigned char cColorPicker::ToRGB1(float rm1, float rm2, float rh)
+{
+  if      (rh > 360.0f) rh -= 360.0f;
+  else if (rh <   0.0f) rh += 360.0f;
+
+  if      (rh <  60.0f) rm1 = rm1 + (rm2 - rm1) * rh / 60.0f;   
+  else if (rh < 180.0f) rm1 = rm2;
+  else if (rh < 240.0f) rm1 = rm1 + (rm2 - rm1) * (240.0f - rh) / 60.0f;      
+
+  return static_cast<unsigned char>(rm1 * 255);
+}
+
+int _tmain(int argc, _TCHAR* argv[])
+{
+    vector<DWORD> myCols;
+    cColorPicker colpick;
+    colpick.Pick( myCols, 20 );
+    for( int k = 0; k < (int)myCols.size(); k++ )
+        printf("%d: %d %d %d\n", k+1,
+        ( myCols[k] & 0xFF0000 ) >>16,
+        ( myCols[k] & 0xFF00 ) >>8,
+        ( myCols[k] & 0xFF ) );
+
+    return 0;
+}
+
+
+Last I checked JFreeChart has this precise algorithm and as it is open source you can check out what it does.  I do know that the colors I get do not seem to be randomly spaced along some circle or sphere, but rather chosen more specifically.
+
+I know this an old post but I found it while looking for a PHP solution to the topic and finally came with a simple solution:
+function random_color($i = null, $n = 10, $sat = .5, $br = .7) {
+    $i = is_null($i) ? mt_rand(0,$n) : $i;
+    $rgb = hsv2rgb(array($i*(360/$n), $sat, $br));
+    for ($i=0 ; $i<=2 ; $i++) 
+        $rgb[$i] = dechex(ceil($rgb[$i]));
+    return implode('', $rgb);
+}
+
+function hsv2rgb($c) { 
+    list($h,$s,$v)=$c; 
+    if ($s==0) 
+        return array($v,$v,$v); 
+    else { 
+        $h=($h%=360)/60; 
+        $i=floor($h); 
+        $f=$h-$i; 
+        $q[0]=$q[1]=$v*(1-$s); 
+        $q[2]=$v*(1-$s*(1-$f)); 
+        $q[3]=$q[4]=$v; 
+        $q[5]=$v*(1-$s*$f); 
+        return(array($q[($i+4)%6]*255,$q[($i+2)%6]*255,$q[$i%6]*255)); //[1] 
+    } 
+}
+
+So just call the random_color() function where $i identifies the color, $n the number of possible colors, $sat the saturation and $br the brightness.
+
+To achieve "most distinguishable" we need to use a perceptual color space like Lab (or any other perceptually linear color space) and not RGB. Also, we can quantize this space to reduce the size of the space.
+Generate the full 3D space with all possible quantized entries and run the K-means algorithm with k=N. The resulting centers/ "means" should be approximately most distinguishabl from each other. 

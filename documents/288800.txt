@@ -1,0 +1,57 @@
+Why does this regular expression kill the Java regex engine?
+java regex
+I have this naive regex "<([\s]|[^<])+?>" (excluding the quotation marks). It seems so
+straightforward but it is indeed evil when it works against the below HTML text. It sends the Java regular expression engine to an infinite loop. 
+I have another regex ("<.+?>"), which does somewhat the same thing, but it doesn't kill anything. Do you know why this happens?
+<script language="JavaScript" type="text/javascript">
+        var numDivs, layerName;
+        layerName = "lnavLayer";
+        catLinkName = "category";
+        numDivs = 2;
+        function toggleLayer(layerID){
+            if (!(navigator.appName == "Netscape" && navigator.appVersion.substr(0, 1) < 5)){
+                thisLayer = document.getElementById(layerName + layerID);
+                categoryLink = document.getElementById(catLinkName + layerID);
+                closeThem();
+                if (thisLayer.className == 'subnavDefault'){
+                    thisLayer.className = 'subnavToggled';
+                    categoryLink.className = 'leftnavLinkSelectedSection';
+                }
+            }
+        }
+        function closeThem(){
+            for(x = 0; x < numDivs; x++){
+                theLayer = document.getElementById(layerName + (x
++ 1));
+                thecategoryLink = document.getElementById(catLinkName + (x + 1));
+                theLayer.className = 'subnavDefault';
+                thecategoryLink.className = 'leftnavLink';
+            }
+        } var flag = 0; var lastClicked = 0
+    //-->
+    </script>
+
+it even keeps looping with an online Java regex tool (such as www.fileformat.info/tool/regex.htm) or a utility like RegexBuddy.
+
+
+The regex ([\s]|[^<]) in plain terms means any single character that IS white-space or IS NOT a < character, which is redundant because white-space characters are NOT a < character. It appears to me that what you really mean is:
+`"<([^<])+?>"`
+
+I am not sure if this will solve the infinite loop, but I thought I'd point this out.
+
+The reason the Java regex engine crashes is that this part of your regex causes a stack overflow (indeed!):
+[\s]|[^<]
+
+What happens here is that every character matched by \s can also be matched by [^<].  That means there are two ways to match each whitespace character.  If we represent the two character classes with A and B:
+A|B
+
+Then a string of three spaces could be matched as AAA, AAB, ABA, ABB, BAA, BAB, BBA, or BBB.  In other words the complexity of this part of the regex is 2^N.  This will kill any regex engine that doesn't have any safeguards against what I call catastrophic backtracking.
+When using alternation (vertical bar) in a regex, always make sure the alternatives are mutually exclusive.  That is, at most one of the alternatives may be allowed to match any given bit of text.
+
+Another problem (in addition to what Jan said) is that you're matching one character at a time inside the parentheses, equivalent to this simplified example:
+(.)+
+
+Each time this part of the regex is executed, the regex engine has to save the start and end positions of whatever was matched by the subexpression inside the parens, in case it needs to backtrack.  This would be true even if it were a non-capturing group, i.e.,
+(?:.)+
+
+...but because it's a capturing group, even more information has to be saved.  Going through all that for one character at a time gets really expensive.  It's almost never correct to match a single character inside a parenthesized group with a * or + quantifier on the group.  Also, you should use capturing groups only when you need to capture something; otherwise, use the non-capturing variety.

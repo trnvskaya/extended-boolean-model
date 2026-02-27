@@ -1,0 +1,39 @@
+My first Lisp macro; is it leaky?
+macros lisp
+I've been working through Practical Common Lisp and as an exercise decided to write a macro to determine if a number is a multiple of another number:
+(defmacro multp (value factor)
+   `(= (rem ,value ,factor)  0))
+so that :
+(multp 40 10)
+evaluates to true whilst
+(multp 40 13)
+does not 
+The question is does this macro leak in some way?  Also is this "good" Lisp?  Is there already an existing function/macro that I could have used?
+
+
+Siebel gives an extensive rundown (for simple cases anyway) of possible sources of leaks, and there aren't any of those here. Both value and factor are evaluated only once and in order, and rem doesn't have any side effects.
+This is not good Lisp though, because there's no reason to use a macro in this case. A function
+(defun multp (value factor)
+  (zerop (rem value factor)))
+
+is identical for all practical purposes. (Note the use of zerop. I think it makes things clearer in this case, but in cases where you need to highlight, that the value you're testing might still be meaningful if it's something other then zero, (= ... 0) might be better)
+
+Your macro looks fine to me. I don't know what a leaky macro is, but yours is pretty straightforward and doesn't require any gensyms. As far as if this is "good" Lisp, my rule of thumb is to use a macro only when a function won't do, and in this case a function can be used in place of your macro. However, if this solution works for you there's no reason not to use it.
+
+Well, in principle, a user could do this:
+(flet ((= (&rest args) nil))
+  (multp 40 10))
+
+which would evaluate to NIL... except that ANSI CL makes it illegal to rebind most standard symbols, including CL:=, so you're on the safe side in this particular case.
+In generial, of course, you should be aware of both referential untransparency (capturing identifiers from the context the macro is expanded in) and macro unhygiene (leaking identifiers to expanded code).
+
+No, no symbol introduced in the macro's "lexical closure" is released to the outside.
+Note that leaking isn't NECESSARILY a bad thing, even if accidental leaking almost always is. For one project I worked on, I found that a macro similar to this was useful:
+(defmacro ana-and (&rest forms)
+  (loop for form in (reverse forms)
+        for completion = form then `(let ((it ,form))
+                                      (when it
+                                       ,completion))
+        finally (return completion)))
+
+This allowed me to get "short-circuiting" of things needed to be done in sequence, with arguments carried over from previous calls in the sequence (and a failure signalled by returning NIL). The specific context this code is from is for a hand-written parser for a configuration file that has a cobbled-together-enough syntax that writing a proper parser using a parser generator was more work than hand-rolling.

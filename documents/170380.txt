@@ -1,0 +1,56 @@
+Why do thread functions need to be declared as '__cdecl'?
+c++ multithreading mfc boost
+Sample code that shows how to create threads using MFC declares the thread function as both static and __cdecl.  Why is the latter required?  Boost threads don't bother with this convention, so is it just an anachronism?
+For example (MFC):
+static __cdecl UINT MyFunc(LPVOID pParam)
+{
+...
+}
+
+CWinThread* pThread = AfxBeginThread(MyFunc, ...);
+
+Whereas Boost:
+static void func()
+{
+...
+}
+
+boost::thread t;
+t.create(&func);
+
+(the code samples might not be 100% correct as I am nowhere near an IDE).
+What is the point of __cdecl?  How does it help when creating threads?
+
+
+Because your thread is going to be called by a runtime function that manages this for you, and that function expects it to be that way.  Boost designed it a different way.
+Put a breakpoint at the start of your thread function and look at the stack when it gets called, you'll see the runtime function that calls you.
+
+__cdecl tells the compiler to use the C calling convention (as opposed to the stdcall, fastcall or whatever other calling convention your compiler supports). I believe, VC++ uses stdcall by default.
+The calling convention affects things such as how arguments are pushed onto the stack (or registers, in the case of fastcall) and who pops arguments off the stack (caller or callee).
+In the case of Boost. I believe it uses template specialization to figure out the appropriate function type and calling convention.
+
+Look at the prototype for AfxBeginThread():
+CWinThread* AfxBeginThread(
+   AFX_THREADPROC pfnThreadProc,
+   LPVOID pParam,
+   int nPriority = THREAD_PRIORITY_NORMAL,
+   UINT nStackSize = 0,
+   DWORD dwCreateFlags = 0,
+   LPSECURITY_ATTRIBUTES lpSecurityAttrs = NULL 
+);
+
+AFX_THREADPROC is a typedef for UINT(AFX_CDECL*)(LPVOID). When you pass a function to AfxBeginThread(), it must match that prototype, including the calling convention.
+The MSDN pages on __cdecl and __stdcall (as well as __fastcall and __thiscall) explain the pros and cons of each calling convention.
+The boost::thread constructor uses templates to allow you to pass a function pointer or callable function object, so it doesn't have the same restrictions as MFC.
+
+C/C++ compilers by default use the C calling convention (pushing rightmost param first on the stack) for it allows working with functions with variable argument number as printf.
+The Pascal calling convention (aka "fastcall") pushes leftmost param first. This is quicker though costs you the possibility of easy variable argument functions (I read somewhere they're still possible, though you need to use some tricks).
+Due to the speed resulting from using the Pascal convention, both Win32 and MacOS APIs by default use that calling convention, except in certain cases.
+If that function has only one param, in theory using either calling convention would be legal, though the compiler may enforce the same calling convention is used to avoid any problem.
+The boost libraries were designed with an eye on portability, so they should be agnostic as to which caller convention a particular compiler is using.
+
+The real answer has to do with how windows internally calls the thread proc routine, and it is expecting the function to abide by a specific calling convention, which in this case is a macro, WINAPI, which according to my system is defined as:
+#define WINAPI      __stdcall
+
+This means that the called function is responsible for cleaning up the stack. The reason why boost::thread is able to support arbitrary functions is that it passes a pointer to the function object used in the call to thread::create function to CreateThread. The threadproc associated with the thread simply calls operator() on the function object.
+The reason MFC requires __cdecl therefore has to do with the way it internally calls the function passed in to the call to AfxBeginThread. There is no good reason to do this unless they were planning on allowing vararg parameters... 

@@ -1,0 +1,16 @@
+How does gcc implement stack unrolling for C++ exceptions on linux?
+c++ exception gcc
+How does gcc implement stack unrolling for C++ exceptions on linux?  In particular, how does it know which destructors to call when unrolling a frame (i.e., what kind of information is stored and where is it stored)?
+
+
+Although this looks to be for Itanium, presumably the implementation is similar for x86: exception handling ABI
+
+There isn't much documentation currently available, however the basic system is that GCC translates try/catch blocks to function calls and then links in a library with the needed runtime support (documentation about the tree building code includes the statement "throwing an exception is not directly represented in GIMPLE, since it is implemented by calling a function").
+Unfortunately I'm not familiar with these functions and can't tell you what to look at (other than the source for libgcc -- which includes the exception handling runtime).
+There is an "Exception Handling for Newbies" document available.
+
+See section 6.2 of the x86_64 ABI. This details the interface but not a lot of the underlying data. This is also independent of C++ and could conceivably be used for other purposes as well.
+There are primarily two sections of the ELF binary as emitted by gcc which are of interest for exception handling. They are .eh_frame and .gcc_except_table. 
+.eh_frame follows the DWARF format (the debugging format that primarily comes into play when you're using gdb). It has exactly the same format as the .debug_frame section emitted when compiling with -g. Essentially, it contains the information necessary to pop back to the state of the machine registers and the stack at any point higher up the call stack. See the Dwarf Standard at dwarfstd.org for more information on this.
+.gcc_except_table contains information about the exception handling "landing pads" the locations of handlers. This is necessary so as to know when to stop unwinding. Unfortunately this section is not well documented. The only snippets of information I have been able to glean come from the gcc mailing list. See particularly this post
+The remaining piece of information is then what actual code interprets the information found in these data sections. The relevant code lives in libstdc++ and libgcc. I cannot remember at the moment which pieces live in which. The interpreter for the DWARF call frame information can be found in the gcc source code in the file gcc/unwind-dw.c

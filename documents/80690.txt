@@ -1,0 +1,40 @@
+Phantom Referenced Objects
+java finalize phantom-reference
+Phantom References serve for post-mortem operations.
+The Java specification states that a phantom referenced object will not be deallocated until the phantom-reference itself is cleaned.
+My question is: What purpose does this feature (object not deallocated) serve?
+(The only idea i came up with, is to allow native code to do post-mortem cleanup on the object, but it isn't much convincing).
+
+
+Edit, since I've misunderstand the question first:
+Quoted from here http://www.memorymanagement.org/glossary/p.html:
+
+The Java specification says that the
+  phantom reference is not cleared when
+  the reference object is enqueued, but
+  actually, there's no way in the
+  language to tell whether that has been
+  done or not. In some implementations,
+  JNI weak global references are weaker
+  than phantom references, and provide a
+  way to access phantom reachable
+  objects.
+
+But I found no other references which would say the same.
+
+It can allow you two have phantom caches which are very efficient in memory management.
+Simply put, if you have huge objects that are expensive to create but seldom used, you can use a phantom cache to reference them and be sure they do not take up memory that is more valuable.  If you use regular references you have to be manually make sure there are no references left to the object.  You can argue the same about any object but you dont have to manually manage the references in your phantom cache.  Just have to be carefull to check if they have been collected or not.
+Also you can use a framework (i.e. a factory) where references are given as phantom references.  This is useful if the objects are many and short lived (i.e. used and then disposed).  Very handy for clearing memory if you have sloppy programmers that think garbage collection is magical.
+
+I think the idea is to let other objects do extra cleanup above and beyond what the original object does. For example, if the original object cannot be extended to implement some finalization stuff, you can use phantom references.
+The bigger problem is that the JVM makes no guarantee that an object will ever be finalized, and I assume by extension no guarantee that phantom references get to do their thing post-finalization.
+
+Phantom references can be used to perform pre-garbage collection actions such as freeing resources. Instead, people usually use the finalize() method for this which is not a good idea. Finalizers have a horrible impact on the performance of the garbage collector and can break data integrity of your application if you're not very careful since the "finalizer" is invoked in a random thread, at a random time.
+
+In the constructor of a phantom reference, you specify a ReferenceQueue where the phantom references are enqueued once the referenced objects becomes "phantom reachable". Phantom reachable means unreachable other than through the phantom reference. The initially confusing thing is that although the phantom reference continues to hold the referenced object in a private field (unlike soft or weak references), its getReference() method always returns null. This is so that you cannot make the object strongly reachable again.
+
+From time to time, you can poll the ReferenceQueue and check if there are any new PhantomReferences whose referenced objects have become phantom reachable. In order to be able to to anything useful, one can for example derive a class from java.lang.ref.PhantomReference that references resources that should be freed before garbage collection. The referenced object is only garbage collected once the phantom reference becomes unreachable itself.
+http://www.javalobby.org/java/forums/m91822870.html#91822413
+
+The only good use-case I can think of, that would prevent deallocation, is one where some kind of JNI-implemented asynchronous data source is writing into the referenced object, and must be told to stand down - to stop writing into the object - before the memory is recycled. If prior deallocation were allowed, a simple forgot-to-dispose() bug could result in memory corruption. 
+This is one of the cases where finalize() would have been used in the past, and probably drove some of its quirks.

@@ -1,0 +1,89 @@
+Is there a better StringCollection editor for use in PropertyGrids?
+c# .net python editor propertygrid
+I'm making heavy use of PropertySheets in my application framework's configuration editor.  I like them a lot because it's pretty easy to work with them (once you learn how) and make the editing bulletproof.
+One of the things that I'm storing in my configuration are Python scripts.  It's possible to edit a Python script in a StringCollection editor, which is what I've been using, but there's a long distance between "possible" and "useable."  I'd like to have an editor that actually supported resizeable and monospace fonts, preserved blank lines, and - hey, let's go crazy with the wishlist - did syntax coloring.
+I can certainly write this if I really have to, but I'd prefer not to.
+I've poked around on the Google and can't find anything like what I'm describing, so I thought I'd ask here.  Is this a solved problem?  Has anyone out there already taken a crack at building a better editor?
+
+
+You would need to write your own type editor. You can think of this as a user control, in that when you write your own type editor you are providing the UI controls that appear when the property grid edits the property. As such, you can create a type editor that does anything, which means if you have a third-party editor control you can include it as part of type editor.
+Some resources to get you started:
+
+User Interface Type Editors Overview
+Walkthrough: Implementing a UI Type Editor
+UITypeEditor Class
+How to: Implement a UI Type Editor
+Rich Design Time Editing with UITypeEditors (VB.NET)
+Creating Property Editors in DesignTime for VS.Net Easily (UITypeEditor Helper)
+Using PropertyGrid
+
+
+You can create your own string collection editor easily, following these simple steps. This example uses C#.
+1) You must create an editor control and derive it from System.Drawing.Design.UITypeEditor. I called mine StringArrayEditor. Thus my class starts with
+public class StringArrayEditor : System.Drawing.Design.UITypeEditor
+
+The PropertyGrid control needs to know that the editor is modal and it will show the ellipses button when the property in question is selected. So you must override GetEditStyle as follows:
+        public override UITypeEditorEditStyle GetEditStyle(ITypeDescriptorContext context)
+    {
+        return UITypeEditorEditStyle.Modal;
+    }
+
+Lastly the editor control must override the EditValue operation so that it knows how you want to proceed when the user clicks on the ellipses button for your property. Here is the full code for the override:
+        public override object EditValue(ITypeDescriptorContext context, IServiceProvider provider, object value)
+    {
+        var editorService = provider.GetService(typeof(IWindowsFormsEditorService)) as IWindowsFormsEditorService;
+        if (editorService != null)
+        {
+            var selectionControl = new TextArrayPropertyForm((string[])value, "Edit the lines of text", "Label Editor");
+            editorService.ShowDialog(selectionControl);
+            if (selectionControl.DialogResult == DialogResult.OK)
+                value = selectionControl.Value;
+        }
+        return value ?? new string[] {};
+    }
+
+So what is happening? When the user clicks on the ellipses, this override is called. editorService is set as the interface for our editing form. It is set to the form which we haven't yet created that I call TextArrayPropertyForm. TextArrayPropertyForm is instantiated, passing the value to be edited. For good measure I am also passing 2 strings, one for the form title and the other for a label at the top explaining what the user should do. It is shown modally and if the OK button was clicked then the value is updated with whatever the value was set in selectionControl.Value from the form we will create. Finally this value is returned at the end of the override.
+Step 2) Create the editor form. In my case I created a form with 2 Buttons (buttonOK and buttonCancel) a Label (labelInstructions) and a TextBox (textValue) to mimic the default StringCollection editor. The code is pretty straight-forward, but in case you're interested, here it is.
+using System;
+using System.Windows.Forms;
+
+namespace MyNamespace
+{
+    /// <summary>
+    /// Alternate form for editing string arrays in PropertyGrid control
+    /// </summary>
+    public partial class TextArrayPropertyForm : Form
+    {
+        public TextArrayPropertyForm(string[] value,
+            string instructions = "Enter the strings in the collection (one per line):", string title = "String Collection Editor")
+        {
+            InitializeComponent();
+            Value = value;
+            textValue.Text = string.Join("\r\n", value);
+            labelInstructions.Text = instructions;
+            Text = title;
+        }
+
+        public string[] Value;
+
+        private void buttonCancel_Click(object sender, EventArgs e)
+        {
+            DialogResult = DialogResult.Cancel;
+        }
+
+        private void buttonOK_Click(object sender, EventArgs e)
+        {
+            Value = textValue.Text.Split(new[] { "\r\n" }, StringSplitOptions.None);
+            DialogResult = DialogResult.OK;
+        }
+    }
+}
+
+Step 3)Tell the PropertyGrid to use the alternate editor. The change between this property and any other that is used in the PropertyGrid control is the [Editor] line.
+    [Description("The name or text to appear on the layout.")]
+    [DisplayName("Text"), Browsable(true), Category("Design")]
+    [Editor(typeof(StringArrayEditor), typeof(System.Drawing.Design.UITypeEditor))]
+    public string[] Text {get; set;}
+
+Now when you create a PropertyGrid on a form and set  to the class containing this Text property it will edit in your custom made form. There are countless opportunities to change your custom form in ways you choose. With modifications this will work for editing any type you like. The important thing is that the editor control returns the same type as is the property in the overridden EditValue(ITypeDescriptorContext context, IServiceProvider provider, object value)
+Hope this helps!

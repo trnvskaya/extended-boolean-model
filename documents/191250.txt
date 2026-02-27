@@ -1,0 +1,141 @@
+How to find the installation directory of a third-party application, such as Google Earth, using C#?
+c# google-earth
+I have the following code fragment that starts a Google Earth process using a hardcoded path:
+var process =
+    new Process
+        {
+            StartInfo =
+                {
+                    //TODO: Get location of google earth executable from registry
+                    FileName = @"C:\Program Files\Google\Google Earth\googleearth.exe",
+                    Arguments = "\"" + kmlPath + "\""
+                }
+        };
+process.Start();
+
+I want to programmatically fetch the installation location of googleearth.exe from somewhere (most likely the registry).
+
+
+From the example given you can gauge that I'm actually trying to pass a KML file to Google Earth. Because of this, the simplest way of resolving this problem is relying on the file association of KML with Google Earth and using the following as a replacement for the entire example:
+Process.Start(kmlPath);
+
+This was found by reviewing the answers to this question.
+
+Obviously if you're opening a specific file associated with the program then launching it via the file is preferable (for instance, the user might have a program associated with the file type they prefer to use).
+Here is a method I've used in the past to launch an application associated with a particular file type, but without actually opening a file. There may be a better way to do it.
+static Regex pathArgumentsRegex = new Regex(@"(%\d+)|(""%\d+"")", RegexOptions.ExplicitCapture);
+static string GetPathAssociatedWithFileExtension(string extension)
+{
+    RegistryKey extensionKey = Registry.ClassesRoot.OpenSubKey(extension);
+    if (extensionKey != null)
+    {
+        object applicationName = extensionKey.GetValue(string.Empty);
+        if (applicationName != null)
+        {
+            RegistryKey commandKey = Registry.ClassesRoot.OpenSubKey(applicationName.ToString() + @"\shell\open\command");
+            if (commandKey != null)
+            {
+                object command = commandKey.GetValue(string.Empty);
+                if (command != null)
+                {
+                    return pathArgumentsRegex.Replace(command.ToString(), "");
+                }
+            }
+        }
+    }
+    return null;
+}
+
+Sometimes though there are cases when you want to launch a specific program without opening a file. Usually (hopefully) the program has a registry entry with the install location. Here is an example of how to launch Google Earth in such a manner.
+private static string GetGoogleEarthExePath()
+{
+    RegistryKey googleEarthRK = Registry.CurrentUser.OpenSubKey(@"Software\Google\Google Earth Plus\");
+    if (googleEarthRK != null)
+    {
+        object rootDir = googleEarthRK.GetValue("InstallLocation");
+        if (rootDir != null)
+        {
+            return Path.Combine(rootDir.ToString(), "googleearth.exe");
+        }
+    }
+
+    return null;
+}
+
+
+Here's a C++ version I just had to write.  Taken directly from ICR's C# version.
+void PrintString(CString string)
+{
+    std::wcout << static_cast<LPCTSTR>(string) << endl;
+}
+
+CString GetClassesRootKeyValue(const wchar_t * keyName)
+{
+    HKEY hkey;
+    TCHAR keyNameCopy[256] = {0};
+    _tcscpy_s(keyNameCopy, 256, keyName);
+    BOOL bResult = SUCCEEDED(::RegOpenKey(HKEY_CLASSES_ROOT, keyNameCopy, &hkey));
+    CString hkeyValue = CString("");
+    if (bResult) {
+        TCHAR temporaryValueBuffer[256];
+        DWORD bufferSize = sizeof (temporaryValueBuffer);
+        DWORD type;
+        bResult = SUCCEEDED(RegQueryValueEx(hkey, _T(""), NULL, &type, (BYTE*)temporaryValueBuffer, &bufferSize)) && (bufferSize > 1);
+        if (bResult) {
+    		hkeyValue = CString(temporaryValueBuffer);
+        }
+        RegCloseKey(hkey);
+    	return hkeyValue;
+    }
+    return hkeyValue;
+}
+
+
+int _tmain(int argc, TCHAR* argv[], TCHAR* envp[])
+{
+    int nRetCode = 0;
+
+    // initialize MFC and print and error on failure
+    if (!AfxWinInit(::GetModuleHandle(NULL), NULL, ::GetCommandLine(), 0))
+    {
+    	// TODO: change error code to suit your needs
+    	_tprintf(_T("Fatal Error: MFC initialization failed\n"));
+    	nRetCode = 1;
+    }
+    else
+    {
+
+    	CString dwgAppName = GetClassesRootKeyValue(_T(".dwg"));
+    	PrintString(dwgAppName);
+
+    	dwgAppName.Append(_T("\\shell\\open\\command"));
+    	PrintString(dwgAppName);
+
+    	CString trueViewOpenCommand = GetClassesRootKeyValue(static_cast<LPCTSTR>(dwgAppName));
+    	PrintString(trueViewOpenCommand);
+
+    	//  Shell open command usually ends with a "%1" for commandline params.  We don't want that,
+    	//  so strip it off.
+    	int firstParameterIndex = trueViewOpenCommand.Find(_T("%"));
+    	PrintString(trueViewOpenCommand.Left(firstParameterIndex).TrimRight('"').TrimRight(' '));
+
+
+        cout << "\n\nPress <enter> to exit...";
+        getchar();
+    }
+}
+
+
+This would also work: (C# code)
+        Type type = Type.GetTypeFromProgID("WindowsInstaller.Installer");
+        Installer msi = (Installer)Activator.CreateInstance(type);
+        foreach (string productcode in msi.Products)
+        {
+            string productname = msi.get_ProductInfo(productcode, "InstalledProductName");
+            if (productname.Contains("Google Earth"))
+            {
+                string installdir = msi.get_ProductInfo(productcode, "InstallLocation");
+                Console.WriteLine("{0}: {1} @({2})", productcode, productname, installdir);
+            }
+        }
+

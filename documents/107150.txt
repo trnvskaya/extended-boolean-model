@@ -1,0 +1,186 @@
+ASP.NET TreeView and Selecting the Selected Node
+asp.net treeview
+How do I capture the event of the clicking the Selected Node of a TreeView?
+It doesn't fire the SelectedNodeChanged since the selection has obviously not changed but then what event can I catch so I know that the Selected Node was clicked?
+UPDATE:
+When I have some time, I'm going to have to dive into the bowels of the TreeView control and dig out what and where it handles the click events and subclass the TreeView to expose a new event OnSelectedNodeClicked.
+I'll probably do this over the Christmas holidays and I'll report back with the results.
+UPDATE:
+I have come up with a solution below that sub-classes the TreeView control.
+
+
+Easiest way - if it doesn't interfere with the rest of your code - is to simply set the node as not selected in the SelectedNodeChanged method.
+protected void TreeView1_SelectedNodeChanged(object sender, EventArgs e){
+  // Do whatever you're doing
+  TreeView1.SelectedNode.Selected = false;
+}
+
+
+You can always use the MouseDown or MouseUp event and check to see if it the selected node.
+
+Store what is selected and use code in the Page_Load event handler to compare what is selected to what you have stored.  Page_Load is called for every post back even if the selected value doesn't change, unlike SelectedNodeChanged.
+Example
+
+html
+<form id="form1" runat="server">
+<div>
+    <asp:TreeView ID="TreeView1" runat="server" OnSelectedNodeChanged="TreeView1_SelectedNodeChanged"
+        ShowLines="True">
+        <Nodes>
+            <asp:TreeNode Text="Root" Value="Root">
+                <asp:TreeNode Text="RootSub1" Value="RootSub1"></asp:TreeNode>
+                <asp:TreeNode Text="RootSub2" Value="RootSub2"></asp:TreeNode>
+            </asp:TreeNode>
+            <asp:TreeNode Text="Root2" Value="Root2">
+                <asp:TreeNode Text="Root2Sub1" Value="Root2Sub1">
+                    <asp:TreeNode Text="Root2Sub1Sub1" Value="Root2Sub1Sub1"></asp:TreeNode>
+                </asp:TreeNode>
+                <asp:TreeNode Text="Root2Sub2" Value="Root2Sub2"></asp:TreeNode>
+            </asp:TreeNode>
+        </Nodes>
+    </asp:TreeView>
+    <asp:Label ID="Label1" runat="server" Text="Selected"></asp:Label>
+    <asp:TextBox ID="TextBox1" runat="server"></asp:TextBox>
+    <asp:Label ID="Label2" runat="server" Text="Label"></asp:Label></div>
+</form>
+
+C#
+protected void Page_Load(object sender, EventArgs e)
+{
+    if(TreeView1.SelectedNode!=null && this.TextBox1.Text == TreeView1.SelectedNode.Value.ToString())
+    {
+        Label2.Text = (int.Parse(Label2.Text) + 1).ToString();
+    }
+    else
+    {
+        Label2.Text = "0";
+    }
+}
+protected void TreeView1_SelectedNodeChanged(object sender, EventArgs e)
+{
+    this.TextBox1.Text = TreeView1.SelectedNode.Value.ToString();
+}
+
+
+When you're adding nodes to the tree in the _TreeNodePopulate() event, set the .SelectionAction property on the node.
+TreeNode newCNode;
+newCNode = new TreeNode("New Node");
+
+newCNode.SelectAction = TreeNodeSelectAction.Select;
+
+//now you can set the .NavigateUrl property to call the same page with some query string parameter to catch in the page_load()
+
+newCNode.NavigateUrl = "~/ThisPage.aspx?args=" + someNodeAction
+
+RootNode.ChildNodes.Add(newCNode);
+
+
+After a somewhat lengthy period, I have finally had some time to look into how to subclass the TreeView to handle a Selected Node being clicked.
+Here is my solution which exposes a new event SelectedNodeClicked which you can handle from the Page or wherever.
+(If needed it is a simple task to refactor into C#)
+Imports System.Web.UI
+Imports System.Web
+
+
+Public Class MyTreeView
+  Inherits System.Web.UI.WebControls.TreeView
+
+  Public Event SelectedNodeClicked As EventHandler
+
+  Private Shared ReadOnly SelectedNodeClickEvent As Object
+
+  Private Const CurrentValuePathState As String = "CurrentValuePath"
+
+  Protected Property CurrentValuePath() As String
+    Get
+      Return Me.ViewState(CurrentValuePathState)
+    End Get
+    Set(ByVal value As String)
+      Me.ViewState(CurrentValuePathState) = value
+    End Set
+  End Property
+
+  Friend Sub RaiseSelectedNodeClicked()
+
+    Me.OnSelectedNodeClicked(EventArgs.Empty)
+
+  End Sub
+
+  Protected Overridable Sub OnSelectedNodeClicked(ByVal e As EventArgs)
+
+    RaiseEvent SelectedNodeClicked(Me, e)
+
+  End Sub
+
+  Protected Overrides Sub OnSelectedNodeChanged(ByVal e As System.EventArgs)
+
+    MyBase.OnSelectedNodeChanged(e)
+
+    ' Whenever the Selected Node changed, remember its ValuePath for future reference
+    Me.CurrentValuePath = Me.SelectedNode.ValuePath
+
+  End Sub
+
+  Protected Overrides Sub RaisePostBackEvent(ByVal eventArgument As String)
+
+    ' Check if the node that caused the event is the same as the previously selected node
+    If Me.SelectedNode IsNot Nothing AndAlso Me.SelectedNode.ValuePath.Equals(Me.CurrentValuePath) Then
+      Me.RaiseSelectedNodeClicked()
+    End If
+
+    MyBase.RaisePostBackEvent(eventArgument)
+
+  End Sub
+
+End Class
+
+
+protected void Page_Load(object sender, EventArgs e)
+{
+    if (!IsPostBack)
+    {
+        TreeView1.SelectedNode.Selected = false;
+    }
+}
+
+works for me 
+
+c#:
+TreeNode node = TreeTypes.FindNode(obj.CustomerTypeId.ToString());
+
+
+TreeTypes.Nodes[TreeTypes.Nodes.IndexOf(node)].Select();
+
+
+i have a problem look like but i solved it !
+in server side code :
+    protected void MainTreeView_SelectedNodeChanged(object sender, EventArgs e)
+    {
+        ClearTreeView();
+        MainTreeView.SelectedNode.Text = "<span class='SelectedTreeNodeStyle'>" + MainTreeView.SelectedNode.Text + "</span>";
+        MainTreeView.SelectedNode.Selected = false;
+
+    }
+
+    public void ClearTreeView()
+    {
+         for (int i = 0; i < MainTreeView.Nodes.Count; i++)
+        {
+            for(int j=0;j< MainTreeView.Nodes[i].ChildNodes.Count;j++)
+            {
+                ClearNodeText(MainTreeView.Nodes[i].ChildNodes[j]);
+            }
+            ClearNodeText(MainTreeView.Nodes[i]);
+        }
+    }
+
+    public void ClearNodeText(TreeNode tn)
+    {
+        tn.Text = tn.Text.Replace("<span class='SelectedTreeNodeStyle'>", "").Replace("</span>", "");
+    }
+
+in client side code :
+ <style type="text/css">
+     .SelectedTreeNodeStyle { font-weight: bold;}
+ </style>
+

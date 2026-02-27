@@ -1,0 +1,100 @@
+How can I concatenate regex literals in JavaScript?
+javascript regex syntax
+Is it possible to do something like this?
+var pattern = /some regex segment/ + /* comment here */
+    /another segment/;
+
+Or do I have to use new RegExp() syntax and concatenate a string? I'd prefer to use the literal as the code is both more self-evident and concise.
+
+
+You'll have to use new RegExp !-)
+
+Here is how to create a regular expression without using the regular expression literal syntax. This lets you do arbitary string manipulation before it becomes a regular expression object:
+var segment_part = "some bit of the regexp";
+var pattern = new RegExp("some regex segment" + /*comment here */
+              segment_part + /* that was defined just now */
+              "another segment");
+
+If you have two regular expression literals, you can in fact concatenate them using this technique:
+var expression_one = /foo/;
+var expression_two = /bar/;
+var expression_three = new RegExp(expression_one.source + expression_two.source);
+
+It's not entirely a good solution, as you lose the flags that were set on expression_one and expression_two, and is more wordy than just having expression one and two being literal strings instead of literal regular expressions.
+
+No, the literal way is not supported. You'll have to use RegExp.
+
+I prefer to use eval('your expression') because it does not add the /on each end/ that ='new RegExp' does.
+
+I don't quite agree with the "eval" option.
+var xxx = /abcd/;
+var yyy = /efgh/;
+var zzz = new RegExp(eval(xxx)+eval(yyy));
+
+will give "//abcd//efgh//" which is not the intended result.
+Using source like
+var zzz = new RegExp(xxx.source+yyy.source);
+
+will give "/abcdefgh/" and that is correct.
+Logicaly there is no need to EVALUATE, you know your EXPRESSION. You just need its SOURCE or how it is written not necessarely its value. As for the flags, you just need to use the optional argument of RegExp.
+In my situation, I do run in the issue of ^ and $ being used in several expression I am trying to concatenate together! Those expressions are grammar filters used accross the program. Now I wan't to use some of them together to handle the case of PREPOSITIONS.
+I may have to "slice" the sources to remove the starting and ending ^( and/or )$ :)
+Cheers, Alex.
+
+It would be preferable to use the literal syntax as often as possible. It's shorter, more legible, and you do not need escape quotes or double-escape backlashes. From "Javascript Patterns", Stoyan Stefanov 2010. 
+But using New may be the only way to concatenate.
+I would avoid eval. Its not safe. 
+
+Just randomly concatenating regular expressions objects can have some adverse side effects. Use the RegExp.source instead:
+var r1 = /abc/g;
+var r2 = /def/;
+var r3 = new RegExp(r1.source + r2.source, 
+                   (r1.global ? 'g' : '') 
+                   + (r1.ignoreCase ? 'i' : '') + 
+                   (r1.multiline ? 'm' : ''));
+var m = 'test that abcdef and abcdef has a match?'.match(r3);
+// m should contain 2 matches
+
+This will also give you the ability to retain the regular expression flags from a previous RegExp using the standard RegExp flags.
+jsFiddle
+
+Use the constructor with 2 params and avoid the problem with trailing '/':
+var re_final = new RegExp("\\" + ".", "g");    // constructor can have 2 params!
+console.log("...finally".replace(re_final, "!") + "\n" + re_final + 
+    " works as expected...");                  // !!!finally works as expected
+
+                         // meanwhile
+
+re_final = new RegExp("\\" + "." + "g");              // appends final '/'
+console.log("... finally".replace(re_final, "!"));    // ...finally
+console.log(re_final, "does not work!");              // does not work
+
+
+Problem If the regexp contains back-matching groups like \1.
+var r = /(a|b)\1/  // Matches aa, bb but nothing else.
+var p = /(c|d)\1/   // Matches cc, dd but nothing else.
+
+Then just contatenating the sources will not work. Indeed, the combination of the two is:
+var rp = /(a|b)\1(c|d)\1/
+rp.test("aadd") // Returns false
+
+The solution:
+    First we count the number of matching groups in the first regex, Then for each back-matching token in the second, we increment it by the number of matching groups.
+function concatenate(r1, r2) {
+  var count = function(r, str) {
+    return str.match(r).length;
+  }
+  var numberGroups = /([^\\]|^)(?=\((?!\?:))/g; // Home-made regexp to count groups.
+  var offset = count(numberGroups, r1.source);    
+  var escapedMatch = /[\\](?:(\d+)|.)/g;        // Home-made regexp for escaped literals, greedy on numbers.
+  var r2newSource = r2.source.replace(escapedMatch, function(match, number) { return number?"\\"+(number-0+offset):match; });
+  return new RegExp(r1.source+r2newSource,
+      (r1.global ? 'g' : '') 
+      + (r1.ignoreCase ? 'i' : '')
+      + (r1.multiline ? 'm' : ''));
+}
+
+Test:
+var rp = concatenate(r, p) // returns  /(a|b)\1(c|d)\2/
+rp.test("aadd") // Returns true
+

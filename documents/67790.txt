@@ -1,0 +1,178 @@
+Is there any way to pass a structure type to a c function
+c
+I have some code with multiple functions very similar to each other to look up an item in a list based on the contents of one field in a structure.  The only difference between the functions is the type of the structure that the look up is occurring in.  If I could pass in the type, I could remove all the code duplication.
+I also noticed that there is some mutex locking happening in these functions as well, so I think I might leave them alone...
+
+
+One way to do this is to have a type field as the first byte of the structure.  Your receiving function looks at this byte and then casts the pointer to the correct type based on what it discovers.  Another approach is to pass the type information as a separate parameter to each function that needs it. 
+
+Since structures are nothing more than predefined blocks of memory, you can do this.  You could pass a void * to the structure, and an integer or something to define the type.
+From there, the safest thing to do would be to recast the void * into a pointer of the appropriate type before accessing the data.
+You'll need to be very, very careful, as you lose type-safety when you cast to a void * and you can likely end up with a difficult to debug runtime error when doing something like this.
+
+I'm a little rusty on c, but try using a void* pointer as the variable type in the function parameter.  Then pass the address of the structure to the function, and then use it he way that you would.
+void foo(void* obj);
+
+void main()
+{
+  struct bla obj;
+  ...
+  foo(&obj);
+  ...
+}
+
+void foo(void* obj)
+{
+  printf(obj -> x, "%s")
+}
+
+
+If you ensure that the field is placed in the same place in each such structure, you can simply cast a pointer to get at the field. This technique is used in lots of low level system libraries e.g. BSD sockets.
+struct person {
+  int index;
+};
+
+struct clown {
+  int index;
+  char *hat;
+};
+
+/* we're not going to define a firetruck here */
+struct firetruck;
+
+
+struct fireman {
+  int index;
+  struct firetruck *truck;
+};
+
+int getindexof(struct person *who)
+{
+  return who->index;
+}
+
+int main(int argc, char *argv[])
+{
+  struct fireman sam;
+  /* somehow sam gets initialised */
+  sam.index = 5;
+
+  int index = getindexof((struct person *) &sam);
+  printf("Sam's index is %d\n", index);
+
+  return 0;
+}
+
+You lose type safety by doing this, but it's a valuable technique.
+[ I have now actually tested the above code and fixed the various minor errors. It's much easier when you have a compiler. ]
+
+You can do this with a parameterized macro but most coding policies will frown on that.
+
+#include 
+#define getfield(s, name) ((s).name)
+
+typedef struct{
+  int x;
+}Bob;
+
+typedef struct{
+  int y;
+}Fred;
+
+int main(int argc, char**argv){
+    Bob b;
+    b.x=6;
+
+    Fred f;
+    f.y=7;
+
+    printf("%d, %d\n", getfield(b, x), getfield(f, y));
+}
+
+
+Short answer: no. You can, however, create your own method for doing so, i.e. providing a specification for how to create such a struct. However, it's generally not necessary and is not worth the effort; just pass by reference. (callFuncWithInputThenOutput(input, &struct.output);)
+
+I think you should look at the C standard functions qsort() and bsearch() for inspiration.  These are general purpose code to sort arrays and to search for data in a pre-sorted array.  They work on any type of data structure - but you pass them a pointer to a helper function that does the comparisons.  The helper function knows the details of the structure, and therefore does the comparison correctly.
+In fact, since you are wanting to do searches, it may be that all you need is bsearch(), though if you are building the data structures on the fly, you may decide you need a different structure than a sorted list.  (You can use sorted lists -- it just tends to slow things down compared with, say, a heap.  However, you'd need a general heap_search() function, and a heap_insert() function, to do the job properly, and such functions are not standardized in C.   Searching the web shows such functions exist - not by that name; just do not try "c heap search" since it is assumed you meant "cheap search" and you get tons of junk!)
+
+If the ID field you test is part of a common initial sequence of fields shared by all the structs, then using a union guarantees that the access will work:
+#include <stdio.h>
+
+typedef struct
+{
+    int id;
+    int junk1;
+} Foo;
+
+typedef struct
+{
+    int id;
+    long junk2;
+} Bar;
+
+typedef union
+{
+    struct
+    {
+        int id;
+    } common;
+
+    Foo foo;
+    Bar bar;
+} U;
+
+int matches(const U *candidate, int wanted)
+{
+    return candidate->common.id == wanted;
+}
+
+int main(void)
+{
+    Foo f = { 23, 0 };
+    Bar b = { 42, 0 };
+
+    U fu;
+    U bu;
+
+    fu.foo = f;
+    bu.bar = b;
+
+    puts(matches(&fu, 23) ? "true" : "false");
+    puts(matches(&bu, 42) ? "true" : "false");
+
+    return 0;
+}
+
+If you're unlucky, and the field appears at different offsets in the various structs, you can add an offset parameter to your function.  Then, offsetof and a wrapper macro simulate what the OP asked for - passing the type of struct at the call site:
+#include <stddef.h>
+#include <stdio.h>
+
+typedef struct
+{
+    int id;
+    int junk1;
+} Foo;
+
+typedef struct
+{
+    int junk2;
+    int id;
+} Bar;
+
+int matches(const void* candidate, size_t idOffset, int wanted)
+{
+    return *(int*)((const unsigned char*)candidate + idOffset) == wanted;
+}
+
+#define MATCHES(type, candidate, wanted) matches(candidate, offsetof(type, id), wanted)
+
+int main(void)
+{
+    Foo f = { 23, 0 };
+    Bar b = { 0, 42 };
+    puts(MATCHES(Foo, &f, 23) ? "true" : "false");
+    puts(MATCHES(Bar, &b, 42) ? "true" : "false");
+
+    return 0;
+}
+

@@ -1,0 +1,172 @@
+Transpose a set of rows as columns in SQL Server 2000
+sql-server pivot
+Is there any facility of transposing rows to columns in SQL Server (it is possible in MS-Access)? 
+I was befuddled because this facility is available in MS-Access but not in SQL Server. Is it by design that this feature has not been included in SQL Server?
+
+
+The example at http://jdixon.dotnetdevelopersjournal.com/pivot_table_data_in_sql_server_2000_and_2005.htm only works if you know in advance what the row values can be.   For example, let's say you have an entity with custom attributes and the custom attributes are implemented as rows in a child table, where the child table is basically variable/value pairs, and those variable/value pairs are configurable.  
+color red
+size  big
+city  Chicago
+
+I'm going to describe a technique that works.  I've used it.  I'm NOT promoting it, but it works.
+To pivot the data where you don't know what the values can be in advance, create a temp table on the fly with no columns.  Then use a cursor to loop through your rows, issuing a dynamically built "alter table" for each variable, so that in the end your temp table has the columns, color, size, city.
+Then you insert one row in your temp table, update it via another cursor through the variable, value pairs, and then select it, usually joined with its parent entity, in effect making it seem like those custom variable/value pairs were like built-in columns in the original parent entity.
+
+The cursor method described is probably the least SQL-like to use. As mentioned, SQL 2005 and on has PIVOT which works great. But for older versions and non-MS SQL servers, the Rozenshtein method from "Optimzing Transact-SQL" (edit: out of print, but avail. from Amazon: http://www.amazon.com/Optimizing-Transact-SQL-Advanced-Programming-Techniques/dp/0964981203), is excellent for pivoting and unpivoting data.
+It uses point characteristics to turn row based data into columns. Rozenshtein describes several cases, here's one example:
+SELECT
+    RowValueNowAColumn = 
+       CONVERT(varchar,
+           MAX(
+          SUBSTRING(myTable.MyVarCharColumn,1,DATALENGTH(myTable.MyVarCharColumn)
+       * CHARINDEX(sa.SearchAttributeName,'MyRowValue'))))
+FROM
+    myTable
+
+This method is a lot more efficient than using case statements and works for a variety of data types and SQL implementations (not just MS SQL). 
+
+For UNPIVOT in sql server 2005, I have found a good article
+columns-to-rows-in-sql-server
+
+Best to limit to small scale for this sort of thing. If you're using SQL 2k though and don't have PIVOT features available, I've drafted a stored proc that should do the job for you. Bit of a botch rush job so pull it apart as much as you like. Paste the below into a sql window and edit the EXEC at the bottom as preferred. If you want to see what's being generated, remove the --s in the middle:
+IF EXISTS (SELECT * FROM SYSOBJECTS WHERE XTYPE = 'P' AND NAME = 'USP_LIST_CONCAT')
+DROP PROCEDURE USP_LIST_CONCAT
+GO
+
+CREATE PROCEDURE USP_LIST_CONCAT (@SourceTable NVARCHAR(1000) = '' ,@SplitColumn NVARCHAR(1000) = '' , @Deli NVARCHAR(10) = '', @KeyColumns NVARCHAR(2000) = '' , @Condition NVARCHAR(1000) = '')
+AS
+BEGIN
+SET NOCOUNT ON
+
+/* PROCEDURE CREATED 2010 FOR SQL SERVER 2000. SIMON HUGHES. */
+/* NOTES: REMOVE --'s BELOW TO LIST GENERATED SQL. */
+
+IF @SourceTable = '' OR @SourceTable = '?' OR @SourceTable = '/?' OR @SplitColumn = '' OR @KeyColumns = ''
+BEGIN
+PRINT 'Format for use:'
+PRINT ' USP_LIST_CONCAT ''SourceTable'', ''SplitColumn'', ''Deli'', ''KeyColumn1,...'', ''Column1 = 12345 AND ...'''
+PRINT ''
+PRINT 'Description:'
+PRINT 'The SourceTable should contain a number of records acting as a list of values.'
+PRINT 'The SplitColumn should be the name of the column holding the values wanted.'
+PRINT 'The Delimiter may be any single character or string ie ''/'''
+PRINT 'The KeyColumn may contain a comma separated list of columns that will be returned before the concatenated list.'
+PRINT 'The optional Conditions may be left blank or may include the following as examples:'
+PRINT ' ''Column1 = 12334 AND (Column2 = ''ABC'' OR Column3 = ''DEF'')'''
+PRINT ''
+PRINT 'A standard list in the format:'
+PRINT ' Store1, Employee1, Rabbits'
+PRINT ' Store1, Employee1, Dogs'
+PRINT ' Store1, Employee1, Cats'
+PRINT ' Store1, Employee2, Dogs'
+PRINT ''
+PRINT 'Will be returned as:'
+PRINT ' Store1, Employee1, Cats/Dogs/Rabbits'
+PRINT ' Store1, Employee2, Dogs'
+PRINT ''
+PRINT 'A full ORDER BY and DISTINCT is included'
+RETURN -1
+END
+
+
+DECLARE @SQLStatement NVARCHAR(4000)
+
+SELECT @SQLStatement = '
+DECLARE @DynamicSQLStatement NVARCHAR(4000)
+
+SELECT @DynamicSQLStatement = ''SELECT '+@KeyColumns+', SUBSTRING(''
+
+SELECT @DynamicSQLStatement = @DynamicSQLStatement + '' + '' + CHAR(10) +
+'' MAX(CASE WHEN '+@SplitColumn+' = ''''''+RTRIM('+@SplitColumn+')+'''''' THEN '''''+@Deli+'''+RTRIM('+@SplitColumn+')+'''''' ELSE '''''''' END)''
+FROM '+ @SourceTable +' ORDER BY '+@SplitColumn+'
+
+SELECT @DynamicSQLStatement = @DynamicSQLStatement + '' ,2,7999) List'' + CHAR(10) + ''FROM '+ @SourceTable+''' + CHAR(10) +'''+CASE WHEN @Condition = '' THEN '/* WHERE */' ELSE 'WHERE '+@Condition END+ '''+ CHAR(10) + ''GROUP BY '+@KeyColumns+'''
+
+SELECT @DynamicSQLStatement = REPLACE(@DynamicSQLStatement,''( +'',''('')
+
+-- SELECT @DynamicSQLStatement -- DEBUG ONLY
+EXEC (@DynamicSQLStatement)'
+
+EXEC (@SQLStatement)
+
+END
+GO
+
+EXEC USP_LIST_CONCAT 'MyTableName', 'ColumnForListing', 'Delimiter', 'KeyCol1, KeyCol2', 'Column1 = 123456'
+
+
+I have Data in following format 
+Survey_question_ID
+Email (User)
+Answer
+for 1 survey there are 13 question and answers
+the desired output i wanted was
+User ---Survey_question_ID1---Survey_question_ID2
+email---answers---answer                   ........so on 
+Here is the solution for SQL Server 2000, Cause field data type is TEXT.
+DROP TABLE #tmp
+
+DECLARE @tmpTable  TABLE
+(
+emailno NUMERIC,
+question1 VARCHAR(80),
+question2 VARCHAR(80),
+question3 VARCHAR(80),
+question4 VARCHAR(80),
+question5 VARCHAR(80),
+question6 VARCHAR(80),
+question7 VARCHAR(80),
+question8 VARCHAR(80),
+question9 VARCHAR(80),
+question10 VARCHAR(80),
+question11 VARCHAR(80),
+question12 VARCHAR(80),
+question13 VARCHAR(8000)
+)
+
+DECLARE @tmpTable2  TABLE
+(
+emailNumber NUMERIC
+)
+
+DECLARE @counter INT
+DECLARE @Email INT
+
+SELECT @counter =COUNT(DISTINCT ans.email) FROM answers ans WHERE ans.surveyname=100430 AND ans.qnpkey BETWEEN 233702 AND 233714
+SELECT * INTO #tmp FROM @tmpTable
+INSERT INTO @tmpTable2 (emailNumber) SELECT DISTINCT CAST(ans.email AS NUMERIC) FROM answers ans WHERE ans.surveyname=100430 AND ans.qnpkey BETWEEN 233702 AND 233714
+
+WHILE @counter >0
+
+BEGIN
+
+        SELECT TOP 1 @Email= emailNumber FROM @tmpTable2
+        INSERT INTO @tmpTable (emailno) VALUES (@Email )
+
+
+        Update @tmpTable set question1=CAST(answer as VARCHAR(80)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233702 and ans.email=@Email
+        Update @tmpTable set question2=CAST(answer as VARCHAR(80)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233703 and email=@email
+        Update @tmpTable set question3=CAST(answer as VARCHAR(80)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233704 and email=@email
+        Update @tmpTable set question4=CAST(answer as VARCHAR(80)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233705 and email=@email
+        Update @tmpTable set question5=CAST(answer as VARCHAR(80)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233706 and email=@email
+        Update @tmpTable set question6=CAST(answer as VARCHAR(80)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233707 and email=@email
+        Update @tmpTable set question7=CAST(answer as VARCHAR(80)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233708 and email=@email
+        Update @tmpTable set question8=CAST(answer as VARCHAR(80)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233709 and email=@email
+        Update @tmpTable set question9=CAST(answer as VARCHAR(80)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233710 and email=@email
+        Update @tmpTable set question10=CAST(answer as VARCHAR(80)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233711 and email=@email
+        Update @tmpTable set question11=CAST(answer as VARCHAR(80)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233712 and email=@email
+        Update @tmpTable set question12=CAST(answer as VARCHAR(80)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233713 and email=@email
+        Update @tmpTable set question13=CAST(answer as VARCHAR(8000)) from answers ans where ans.surveyname=100430 and ans.qnpkey = 233714 and email=@email
+
+        insert into #tmp select * from  @tmpTable       
+
+        DELETE FROM @tmpTable       
+        DELETE FROM @tmpTable2 WHERE emailNumber= @Email
+
+        set @counter =@counter -1
+
+End
+
+select * from #tmp
+

@@ -1,0 +1,48 @@
+What advice can you give me for writing a meaningful benchmark?
+benchmarking
+I have developed a framework that is used by several teams in our organisation. Those "modules", developed on top of this framework, can behave quite differently but they are all pretty resources consuming even though some are more than others. They all receive data in input, analyse and/or transform it, and send it further. 
+We planned to buy new hardware and my boss asked me to define and implement a benchmark based on the modules in order to compare the different offers we have got. 
+My idea is to simply start sequentially each module with a well chosen bunch of data as input. 
+Do you have any advice? Any remarks on this simple procedure? 
+
+
+The most meaningful benchmark is to measure how your code performs under everyday usage.  That will obviously provide you with the most realistic numbers.
+Choose several real-life data sets and put them through the same processes your org uses every day.  For extra credit, talk with the people that use your framework and ask them to provide some "best-case", "normal", and "worst-case" data.  Anonymize the data if there are privacy concerns, but try not to change anything that could affect performance.
+Remember that you are benchmarking and comparing two sets of hardware, not your framework.  Treat all of the software as a black box and simply measure the hardware performance.
+Lastly, consider saving the data sets and using them to similarly evaluate any later changes you make to the software.
+
+If you can, try to record some operations users (or processes) are doing with your framework, ideally using a clone of the real system. That gives you the most realistic data. Things to consider:
+
+Which functions are most often used?
+How much data is transferred?
+Do not assume anything. If you think "that is going to be fast/slow", don't bet on it. In 9 out of 10 cases, you're wrong.
+
+Create a top ten for 1+2 and work from that.
+That said: If you replace old hardware with new hardware, you can expect roughly 10% faster execution for each year that has passed since you bought the first set (if the systems are otherwise pretty equal).
+If you have a specialized system, the numbers may be completely different but usually, new hardware doesn't change much. For example, adding an useful index to a database can reduce the runtime of a query from two hours to two seconds. Hardware will never give you that.
+
+Your question is pretty broad, so unfortunately my answer will not be very specific either.
+First, benchmarking is hard.  Do not underestimate the effort necessary to produce meaningful, repeatable, high-confidence results.
+Second, what is your performance goal?  Is it throughput (transaction or operations per second)?  Is it latency (time it takes to execute a transaction)?  Do you care about average performance?  Do I care about worst case performance?  Do you care about the absolute worst case or I care that 90%, 95% or some other percentile get adequate performance?
+Depending on which goal you have, then you should design your benchmark to measure against that goal.  So, if you are interested in throughput, you probably want to send messages / transactions / input into your system at a prescribed rate and see if the system is keeping up.
+If you are interested in latency, you would send messages / transactions / input and measure how long it takes to process each one.
+If you are interested in worst case performance you will add load to the system until up to whatever you consider "realistic" (or whatever the system design says it should support.)
+Second, you do not say if these modules are going to be CPU bound, I/O bound, if they can take advantage of multiple CPUs/cores, etc.  As you are trying to evaluate different hardware solutions you may find that your application benefits more from a great I/O subsystem vs. a huge number of CPUs.
+Third, the best benchmark (and the hardest) is to put realistic load into the system.  Meaning, you record data from a production environment, and put the new hardware solution through this data.  Getting this done is harder than it sounds, often, this means adding all kinds of measure points in the system to see how it behaves (if you do not have them already,) modifying the existing system to add record/playback capabilities, modifying the playback to run at different rates, and getting a realistic (i.e., similar to production) environment for testing.
+
+If you're system is supposed to be able to handle multiple clients all calling at the same time, then your benchmark should reflect this.  Note that some calls will not play well together.  For example, having 25 threads post the same bit of information at the same time could lead to locks on the server end, thus skewing your results.
+From a nuts-and-bolts point of view, I've used Perl and its Benchmark module to gather the information I care about.
+
+If you're comparing differing hardware, then measuring the cost per transaction will give you a good comparison of the trade offs of hardware for performance. One configuration may give you the best performance, but costs too much. A less expensive configuration may give you adequate performance.
+It's important to emulate the "worst case" or "peak hour" of load. It's also important to test with "typical" volumes. It's a balancing act to get good server utilization, that doesn't cost too much, that gives the required performance. 
+Testing across hardware configurations quickly becomes expensive. Another viable option is to first measure on the configuration you have, then simulate that behavior across virtual systems using a model.
+
+As I see it, there are two kinds of benchmarks when it comes to benchmarking software. First, microbenchmarks, when you try to evaluate a piece of code in isolation or how a system deals with narrowly defined workload. Compare two sorting algorithms written in Java. Compare two web browsers how fast can each perform some DOM manipulation operation. Second, there are system benchmarks (I just made the name up), when you try to evaluate a software system under a realistic workload. Compare my Python based backend running on Google Compute Engine and on Amazon AWS.
+When dealing with Java and such like, keep in mind that the VM needs to warm up before it can give you realistic performance. If you measure time with the time command, the JVM startup time will be included. You almost always want to either ignore start-up time or keep track of it separately.
+Microbenchmarking
+During the first run, CPU caches are getting filled with the necessary data. The same goes for disk caches. During few subsequent runs the VM continues to warm up, meaning JIT compiles what it deems helpful to compile. You want to ignore these runs and start measuring afterwards.
+Make a lot of measurements and compute some statistics. Mean, median, standard deviation, plot a chart. Look at it and see how much it changes. Things that can influence the result include GC pauses in the VM, frequency scaling on the CPU, some other process may start some background task (like virus scan), OS may decide move the process on a different CPU core, if you have NUMA architecture, the results would be even more marked.
+In case of microbenchmarks, all of this is a problem. Kill what processes you can before you begin. Use a benchmarking library that can do some of it for you. Like https://github.com/google/caliper and such like.
+System benchmarking
+In case of benchmarking a system under a realistic workload, these details do not really interest you and your problem is "only" to know what a realistic workload is, how to generate it and what data to collect. It is always best if you can instrument a production system and collect data there. You can usually do that, because you are measuring end-user characteristics (how long did a web page render) and these are I/O bound so the code gathering data does not slow down the system. (The page needs to be shipped to the user over the network, it does not matter if we also log a few numbers in the process).
+Be mindful of the difference between profiling and benchmarking. Benchmarking can give you absolute time spent doing something, profiling gives you relative time spent doing something compared to everything else that needed doing. This is because profilers run heavily instrumented programs (common technique is to stop-the-world every few hundred ms and save a stack trace) and the instrumentation slows everything down significantly.

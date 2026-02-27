@@ -1,0 +1,81 @@
+How to get CreateProcess/CreateProcessW to execute a process in a path > MAX_PATH characters
+winapi createprocess max-path
+I'm trying to get either CreateProcess or CreateProcessW to execute a process with a name < MAX_PATH characters but in a path that's greater than MAX_PATH characters.  According to the docs at: http://msdn.microsoft.com/en-us/library/ms682425.aspx, I need to make sure lpApplicationName isn't NULL and then lpCommandLine can be up to 32,768 characters.
+I tried that, but I get ERROR_PATH_NOT_FOUND.
+I changed to CreateProcessW, but still get the same error.  When I prefix lpApplicationName with \\?\ as described in http://msdn.microsoft.com/en-us/library/aa365247(VS.85).aspx when calling CreateProcessW I get a different error that makes me think I'm a bit closer:  ERROR_SXS_CANT_GEN_ACTCTX.
+My call to CreateProcessW is:
+
+    CreateProcessW(w_argv0,arg_string,NULL,NULL,0,NULL,NULL,&si,&ipi);
+
+where w_argv0 is \\?\<long absolute path>\foo.exe.
+arg_string contains "<long absolute path>\foo.exe" foo  
+si is set as follows:
+
+    memset(&si,0,sizeof(si));
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;>
+
+and pi is empty, as in:
+
+    memset(π,0,sizeof(pi));
+
+I looked in the system event log and there's a new entry each time I try this with event id 59, source SideBySide: Generate Activation Context failed for .Manifest. Reference error message: The operation completed successfully.
+The file I'm trying to execute runs fine in a path < MAX_PATH characters.
+To clarify, no one component of <long absolute path> is greater than MAX_PATH characters.  The name of the executable itself certainly isn't, even with .manifest on the end.  But, the entire path together is greater than MAX_PATH characters long.
+I get the same error whether I embed its manifest or not.  The manifest is named foo.exe.manifest and lives in the same directory as the executable when it's not embedded.  It contains:
+
+<?xml version='1.0' encoding='UTF-8' standalone='yes'?>
+<assembly xmlns='urn:schemas-microsoft-com:asm.v1' manifestVersion='1.0'>
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity type='win32' name='Microsoft.VC80.DebugCRT' version='8.0.50727.762' processorArchitecture='x86' publicKeyToken='1fc8b3b9a1e18e3b' />
+    </dependentAssembly>
+  </dependency>
+</assembly>
+
+Anyone know how to get this to work?  Possibly:
+
+some other way to call CreateProcess or CreateProcessW to execute a process in a path > MAX_PATH characters
+something I can do in the manifest file
+
+I'm building with Visual Studio 2005 on XP SP2 and running native.
+Thanks for your help.
+
+
+I don't see any reference in the CreateProcess documentation saying that the '\\?\' syntax is valid for the module name. The page on "Naming a File or Directory" also does not state that CreateProcess supports it, while functions such as CreateFile link to the "Naming a File" page.
+I do see that you can't use a module name longer than MAX_PATH in lpCommandLine, which suggests that CreateProcess does not support extra long filenames. The error message also suggests that an error is occurring while attempting to append ".manifest" to your application path (that is, the length is now exceeding MAX_PATH).
+GetShortPathName() may be of some help here, though it does not guarantee to return a name less than MAX_PATH (it does explicitly state that '\\?\' syntax is valid, though). Otherwise, you could try adjusting the PATH environment variable and passing it to CreateProcess() in lpEnvironment. Or you could use SetCurrentDirectory() and pass only the executable name.
+
+Embedding the manifest and using GetShortPathNameW did it for me.  One or the other on their own wasn't enough.
+Before calling CreateProcessW using the \\?-prefixed absolute path name of the process to execute as the first argument, I check:
+
+wchar_t *w_argv0;
+wchar_t *w_short_argv0;
+
+...
+
+if (wcslen(w_argv0) >= MAX_PATH)
+{
+    num_chars = GetShortPathNameW(w_argv0,NULL,0);
+    if (num_chars == 0) {
+        syslog(LOG_ERR,"GetShortPathName(%S) to get size failed (%d)",               w_argv0,GetLastError());
+        /*
+        ** Might as well keep going and try with the long name
+        */
+    } else {
+        w_short_argv0 = malloc(num_chars * sizeof(wchar_t));
+        memset(w_short_argv0,0,num_chars * sizeof(wchar_t));
+        if (GetShortPathNameW(w_argv0,w_short_argv0,num_chars) == 0) {
+            syslog(LOG_ERR,"GetShortPathName(%S) failed (%d)",w_argv0,            GetLastError());
+            free(w_short_argv0);
+            w_short_argv0 = NULL;
+        } else {
+            syslog(LOG_DEBUG,"using short name %S for %S",w_short_argv0,            w_argv0);
+        }
+    }
+}
+
+and then call CreateProcessW(w_short_argv0 ? w_short_argv0 : w_argv0...);
+remembering to free(w_short_argv0); afterwards.
+This may not solve every case, but it lets me spawn more child processes than I could before.

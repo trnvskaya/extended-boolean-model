@@ -1,0 +1,129 @@
+PHP Session data not being saved
+php session
+I have one of those "I swear I didn't touch the server" situations. I honestly didn't touch any of the php scripts. The problem I am having is that php data is not being saved across different pages or page refreshes. I know a new session is being created correctly because I can set a session variable (e.g. $_SESSION['foo'] = "foo" and print it back out on the same page just fine. But when I try to use that same variable on another page it is not set! Is there any php functions or information I can use on my hosts server to see what is going on?
+Here is an example script that does not work on my hosts' server as of right now:
+<?php
+session_start();
+if(isset($_SESSION['views']))
+    $_SESSION['views'] = $_SESSION['views']+ 1;
+else
+    $_SESSION['views'] = 1;
+
+echo "views = ". $_SESSION['views'];
+echo '<p><a href="page1.php">Refresh</a></p>';
+?>
+
+The 'views' variable never gets incremented after doing a page refresh. I'm thinking this is a  problem on their side, but I wanted to make sure I'm not a complete idiot first.
+Here is the phpinfo() for my hosts' server (PHP Version 4.4.7):
+
+
+
+use phpinfo() and check the session.* settings.
+Maybe the informations is forced to be stored in cookies and your browser do not accept cookies, something like that.
+Check that first and come back with the results.
+You can also do aÂ print\_r($\_SESSION); to have a dump of this variable and see the content....
+Regarding your phpinfoI(), does the session.save_path is a valid one? Does your webserver has write access to this directory?
+Hope this helps.
+vIceBerg
+
+Check the value of "views" when before you increment it. If, for some bizarre reason, it's getting set to a string, then when you add 1 to it, it'll always return 1.
+if (isset($_SESSION['views'])) {
+    if (!is_numeric($_SESSION['views'])) {
+        echo "CRAP!";
+    }
+    ++$_SESSION['views'];
+} else {
+    $_SESSION['views'] = 1;
+}
+
+
+Check to see if the session save path is writable by the web server.
+Make sure you have cookies turned on.. (I forget when I turn them off to test something)
+Use firefox with the firebug extension to see if the cookie is being set and transmitted back.
+And on a unrelated note, start looking at php5, because php 4.4.9 is the last of the php4 series.
+
+Well, we can eliminate code error because I tested the code on my own server (PHP 5).
+Here's what to check for:
+
+Are you calling session_unset() or session_destroy() anywhere? These functions will delete the session data immediately. If I put these at the end of my script, it begins behaving exactly like you describe.
+Does it act the same in all browsers? If it works on one browser and not another, you may have a configuration problem on the nonfunctioning browser (i.e. you turned off cookies and forgot to turn them on, or are blocking cookies by mistake).
+Is the session folder writable? You can't test this with is_writable(), so you'll need to go to the folder (from phpinfo() it looks like /var/php_sessions) and make sure sessions are actually getting created.
+
+
+I know one solution I found (OSX with Apache 1 and just switched to PHP5) when I had a similar problem was that unsetting 1 specific key (ie unset($_SESSION['key']);) was causing it not to save. As soon as I didn't unset that key any more it saved. I have never seen this again, except on that server on another site, but then it was a different variable. Neither were anything special.
+
+Here is one common problem I haven't seen addressed in the other comments: is your host running a cache of some sort? If they are automatically caching results in some fashion you would get this sort of behavior.
+
+Thanks for all the helpful info. It turns out that my host changed servers and started using a different session save path other than /var/php_sessions which didn't exist anymore. A solution would have been to declare ini_set(' session.save_path','SOME WRITABLE PATH'); in all my script files but that would have been a pain. I talked with the host and they explicitly set the session path to a real path that did exist. Hope this helps anyone having session path troubles.
+
+Just wanted to add a little note that this can also occur if you accidentally miss the session_start() statement on your pages.
+
+
+I know one solution I found (OSX with Apache 1 and just switched to PHP5) when I had a similar problem was that unsetting 1 specific key (ie unset($_SESSION['key']);) was causing it not to save. As soon as I didn't unset that key any more it saved. I have never seen this again, except on that server on another site, but then it was a different variable. Neither were anything special.
+
+Thanks for this one Darryl.  This helped me out.  I was deleting a session variable, and for some reason it was keeping the session from committing.  now i'm just setting it to null instead (which is fine for my app), and it works. 
+
+Check if you are using session_write_close(); anywhere, I was using this right after another session and then trying to write to the session again and it wasn't working.. so just comment that sh*t out
+
+If you set a session in php5, then try to read it on a php4 page, it might not look in the correct place! Make the pages the same php version or set the session_path.
+
+Check who the group and owner are of the folder where the script runs. If the group id or user id are wrong, for example, set to root, it will cause sessions to not be saved properly.
+
+Had same problem - what happened to me is our server admin changed the session.cookie_secure boolean to On, which means that cookies will only be sent over a secure connection. Since the cookie was not being found, php was creating a new session every time, thus session variables were not being seen.
+
+I spent ages looking for the answer for a similar problem.  It wasn't an issue with the code or the setup, as a very similar code worked perfectly in another .php on the same server. Turned out the problem was caused by a very large amount of data being saved into the session in this page.  In one place we had a line like this:$_SESSION['full_list'] = $full_list where $full_list was an array of data loaded from the database; each row was an array of about 150 elements.  When the code was initially written a couple of years ago, the DB only contained about 1000 rows, so the $full_list contained about 100 elements, each being an array of about 20 elements.  With time, the 20 elements turned into 150 and 1000 rows turned into 17000, so the code was storing close to 64 meg of data into the session.  Apparently, with this amount of data being stored, it refused to store anything else.  Once we changed the code to deal with data locally without saving it into the session, everything worked perfectly.
+
+I had session cookie path set to "//" instead of "/". Firebug is awesome.
+Hope it helps somebody.
+
+I had following problem
+index.php
+<?
+    session_start();
+    $_SESSION['a'] = 123;
+    header('location:index2.php');
+?>
+
+index2.php
+<?
+  session_start();
+  echo $_SESSION['a'];
+?>
+
+The variable $_SESSION['a'] was not set correctly. Then I have changed the index.php acordingly
+<?
+    session_start();
+    $_SESSION['a'] = 123;
+    session_write_close();
+    header('location:index2.php');
+?>
+
+I dont know what this internally means, I just explain it to myself that the session variable change was not quick enough :)
+
+Check to make sure you are not mixing https:// with http://.  Session variables do not flow between secure and insecure sessions.
+
+I had this problem when using secure pages where I was coming from www.domain.com/auth.php that redirected to domain.com/destpage.php. I removed the www from the auth.php link and it worked. This threw me because everything worked otherwise; the session was not set when I arrived at the destination though.
+
+A common issue often overlooked is also that there must be NO other code or extra spacing before the session_start() command.
+I've had this issue before where I had a blank line before session_start() which caused it not to work properly.
+
+edit your php.ini
+i think value of session.gc_probability is 1, so set to 0
+
+session.gc_probability=0
+
+
+Adding my solution: 
+Check if you access the correct domain. I was using www.mysite.com to start the session, and tried to receive it from mysite.com (without the www). 
+I have solved this by adding a htaccess rewrite of all domains to www to be on the safe side/site.
+Also check if you use http or https.
+
+Another few things I had to do (I had same problem: no sesson retention after PHP upgrade to 5.4). You many not need these, depending on what your server's php.ini contains (check phpinfio());
+session.use_trans_sid=0 ; Do not add session id to URI (osc does this)
+session.use_cookies=0;  ; ensure cookies are not used
+session.use_only_cookies=0 ; ensure sessions are OK to use IMPORTANT
+session.save_path=~/tmp/osc; ; Set to same as admin setting
+session.auto_start = off; Tell PHP not to start sessions, osc code will do this
+
+Basically, your php.ini should be set to no cookies, and session parameters must be consistent with what osc wants.
+You may also need to change a few session code snippets in application_top.php - creating objects where none exist in the tep_session_is_registered(...) calls (e eg. navigation object), set $HTTP_ variables to the newer $_SERVER ones and a few other isset tests for empty objects (google for info). I ended up being able to use the original sessions.php files (includes/classes and includes/functions) with a slightly modified application_top.php to get things going again. The php.ini settings were the main problem, but this of course depends on what your server company has installed as the defaults.

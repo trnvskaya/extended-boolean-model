@@ -1,0 +1,28 @@
+When can DataInputStream.skipBytes(n) not skip n bytes?
+io java
+The Sun Documentation for DataInput.skipBytes states that it "makes an attempt to skip over n bytes of data from the input stream, discarding the skipped bytes. However, it may skip over some smaller number of bytes, possibly zero. This may result from any of a number of conditions; reaching end of file before n bytes have been skipped is only one possibility."
+
+Other than reaching end of file, why might skipBytes() not skip the right number of bytes? (The DataInputStream I am using will either be wrapping a FileInputStream or a PipedInputStream.)
+If I definitely want to skip n bytes and throw an EOFException if this causes me to go to the end of the file, should I use readFully() and ignore the resulting byte array? Or is there a better way?
+
+
+
+1) There might not be that much data available to read (the other end of the pipe might not have sent that much data yet), and the implementing class might be non-blocking (i.e. it will just return what it can, rather than waiting for enough data to fulfil the request).
+I don't know if any implementations actually behave in this way, however, but the interface is designed to permit it.
+Another option is simply that the file gets closed part-way through the read.
+2) Either readFully() (which will always wait for enough input or else fail) or call skipBytes() in a loop.  I think the former is probably better, unless the array is truly vast.
+
+Josh Bloch has publicised this recently. It is consistent in that InputStream.read is not guaranteed to read as many bytes as it could. However, it is utterly pointless as an API method. InputStream should probably also have readFully.
+
+It turns out that readFully() adds more performance overhead than I was willing to put up with.
+In the end I compromised: I call skipBytes() once, and if that returns fewer than the right number of bytes, I call readFully() for the remaining bytes.
+
+I came across this problem today.  It was reading off a network connection on a virtual machine so I imagine there could be a number of reasons for this happening. I solved it by simply forcing the input stream to skip bytes until it had skipped the number of bytes I wanted it to:
+int byteOffsetX = someNumber; //n bytes to skip
+int nSkipped = 0;
+
+nSkipped = in.skipBytes(byteOffsetX);
+while (nSkipped < byteOffsetX) {
+    nSkipped = nSkipped + in.skipBytes(byteOffsetX - nSkipped);
+}
+

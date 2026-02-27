@@ -1,0 +1,43 @@
+Problem with SET FMTONLY ON
+sql-server
+I'm executing stored procedures using SET FMTONLY ON, in order to emulate what our code generator does.  However, it seems that the results are cached when executed like this, as I'm still getting a Conversion failed error from a proc that I have just dropped! This happens even when I execute the proc without SET FMTONLY ON.
+Can anyone please tell me what's going on here?
+
+
+
+This sounds like a client-side error.  Do you get the same message when running through SQL Management Studio?
+Have you confirmed that there isn't another procedure with the same name that's owned by a different schema/user?
+
+
+Some statements will still be executed, even with SET FMTONLY ON.  You "Conversion failed" error could be from something as simple as a set variable statement in the stored proc.  For example, this returns the metadata for the first query, but throws an exception when it runs the last statement:
+SET FMTONLY on
+
+select 1 as a
+
+declare @a int
+set @a = 'a'
+
+As for running a dropped procedure, that's a new one to me.  SQL Server uses the system tables to determine the object to execute, so it doesn't matter if the execution plan is cached for that object.  If you drop it, it is deleted from the system tables, and should never be executable.  Could you please query sysobjects (or sys.objects) just before you execute the procedure?  I expect you'll find that you haven't dropped it.
+
+DDL statements are parsed, but ignored when run if SET FMTONLY ON has been executed on the connection.  So if you drop a proc, table, etc when FMTONLY is ON, the statement is parsed, but the action is not executed.
+Try this to verify
+SET FMTONLY OFF
+--Create table to test on
+CREATE TABLE TestTable (Column1 INT, Column2 INT)
+--insert 1 record
+INSERT INTO TestTable (Column1, Column2)
+VALUES (1,2)
+--validate the record was inserted
+SELECT * FROM TestTable
+--now set format only to ON
+SET FMTONLY ON
+--columns are returned, but no data
+SELECT * FROM TestTable
+--perform DDL statement with FMTONLY ON
+DROP TABLE TestTable
+--Turn FMTONLY OFF again
+SET FMTONLY OFF
+--The table was dropped above, so this should not work
+SELECT * FROM TestTable
+DROP TABLE TestTable
+SELECT * FROM TestTable

@@ -1,0 +1,121 @@
+Illustrating usage of the volatile keyword in C#
+c# .net volatile
+I would like to code a little program which visually illustrates the behavior of the volatile keyword. Ideally, it should be a program which performs concurrent access to a non volatile static field and which gets incorrect behavior because of that. 
+Adding the volatile keyword in the same program should fix the problem.
+That something I didn't manage to achieve. Even trying several times, enabling optimization, etc., I always get a correct behavior without the 'volatile' keyword.
+Do you have any idea about this topic? Do you know how to simulate such a problem in a simple demo app? Does it depend on hardware?
+
+
+Yes, it's hardware dependent (you are unlikely to see the problem without multiple processors), but it's also implementation dependent.  The memory model specifications in the CLR spec permit things which the Microsoft implementation of the CLR do not necessarily do.  The best documentation I've seen on the volatile keyword is this blog post by Joe Duffy.  Note that he says the MSDN documentation is "highly misleading."
+
+It's not really a matter of a fault happening when the 'volatile' keyword isn't specified, more that an error could happen when it hasn't been specified.  Generally you are going to know when this is the case better than the compiler!
+The easiest way of thinking about it would be that the compiler could, if it wanted to, inline certain values.  By marking the value as volatile, you are telling yourself and the compiler that the value may actually change (even if the compiler doesn't think so).  This means the compiler should not in-line values, keep cache or read the value early (in an attempt to optimize).
+This behaviour isn't really the same keyword as in C++.
+MSDN has a short description here.
+Here is a perhaps a more in depth post on the subjects of Volatility, Atomicity and Interlocking
+
+It's hard to demonstrate in C#, as the code is abstracted by a virtual machine, thus on one implementation of this machine it work right without volatile, while it might fail on another one.
+The Wikipedia has a good example how to demonstrate it in C, though.
+The same thing could happen in C# if the JIT compiler decides that the value of the variable cannot change anyway and thus creates machine code that doesn't even check it any longer. If now another thread was changing the value, your first thread might still be caught in the loop.
+Another example is Busy Waiting.
+Again, this could happen with C# as well, but it strongly depends on the virtual machine and on the JIT compiler (or interpreter, if it has no JIT... in theory, I think MS always uses a JIT compiler and also Mono uses one; but you might be able to disable it manually).
+
+I've achieved a working example!
+The main idea received from wiki, but with some changes for C#. The wiki article demonstrates this for static field of C++, it is looks like C# always carefully compile requests to static fields... and i make example with non static one:
+If you run this example in Release mode and without debugger (Ctrl+F5) then a line 'while (test.foo != 255)' will be optimized to 'while(true)' and this program never returns.
+But after adding 'volatile' keyword, you always get 'OK'.
+class Test
+{
+    /*volatile*/ int foo;
+
+    static void Main()
+    {
+        var test = new Test();
+
+        new Thread(delegate() { Thread.Sleep(500); test.foo = 255; }).Start();
+
+        while (test.foo != 255) ;
+        Console.WriteLine("OK");
+    }
+}
+
+
+Here's my contribution to the collective understanding of this behaviour... It's not much, just a demonstration (based on xkip's demo) which shows the behaviour of a volatile verses a non-volatile (i.e. "normal") int value, side-by-side, in the same program... which is what I was looking for when I found this thread.
+using System;
+using System.Threading;
+
+namespace VolatileTest
+{
+  class VolatileTest 
+  {
+    private volatile int _volatileInt;
+    public void Run() {
+      new Thread(delegate() { Thread.Sleep(500); _volatileInt = 1; }).Start();
+      while ( _volatileInt != 1 ) 
+        ; // Do nothing
+      Console.WriteLine("_volatileInt="+_volatileInt);
+    }
+  }
+
+  class NormalTest 
+  {
+    private int _normalInt;
+    public void Run() {
+      new Thread(delegate() { Thread.Sleep(500); _normalInt = 1; }).Start();
+      // NOTE: Program hangs here in Release mode only (not Debug mode).
+      // See: http://stackoverflow.com/questions/133270/illustrating-usage-of-the-volatile-keyword-in-c-sharp
+      // for an explanation of why. The short answer is because the
+      // compiler optimisation caches _normalInt on a register, so
+      // it never re-reads the value of the _normalInt variable, so
+      // it never sees the modified value. Ergo: while ( true )!!!!
+      while ( _normalInt != 1 ) 
+        ; // Do nothing
+      Console.WriteLine("_normalInt="+_normalInt);
+    }
+  }
+
+  class Program
+  {
+    static void Main() {
+#if DEBUG
+      Console.WriteLine("You must run this program in Release mode to reproduce the problem!");
+#endif
+      new VolatileTest().Run();
+      Console.WriteLine("This program will now hang!");
+      new NormalTest().Run();
+    }
+
+  }
+}
+
+There are some really excellent succinct explanations above, as well as some great references. Thanks to all for helping me get my head around volatile (atleast enough to know not rely to on volatile where my first instinct was lock it).
+Cheers, and Thanks for ALL the fish. Keith.
+
+PS: I'd be very interested in a demo of the original request, which was: "I'd like to see a static volatile int behaving correctly where a static int misbehaves. 
+I have tried and failed this challenge. (Actually I gave up pretty quickly ;-). In everything I tried with static vars they behave "correctly" regardless of whether or not they're volatile ... and I'd love an explanation of WHY that is the case, if indeed it is the case... Is it that the compiler doesn't cache the values of static vars in registers (i.e. it caches a reference to that heap-address instead)? 
+No this isn't a new question... it's an attempt to stear the community back to the original question.
+
+I came across the following text by Joe Albahari that helped me a lot.
+
+Memory Barriers and Volatility
+
+I grabbed an example from the above text which I altered a little bit, by creating a static volatile field. When you remove the volatile keyword the program will block indefinitely. Run this example in Release mode.
+class Program
+{
+    public static volatile bool complete = false;
+
+    private static void Main()
+    {           
+        var t = new Thread(() =>
+        {
+            bool toggle = false;
+            while (!complete) toggle = !toggle;
+        });
+
+        t.Start();
+        Thread.Sleep(1000); //let the other thread spin up
+        complete = true;
+        t.Join(); // Blocks indefinitely when you remove volatile
+    }
+}
+

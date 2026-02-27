@@ -1,0 +1,351 @@
+How do I invoke a Java method when given the method name as a string?
+java reflection invoke
+If I have two variables:
+Object obj;
+String methodName = "getName";
+
+Without knowing the class of obj, how can I call the method identified by methodName on it?
+The method being called has no parameters, and a String return value. It's a getter for a Java bean.
+
+
+Use reflection:
+http://java.sun.com/docs/books/tutorial/reflect/member/methodInvocation.html
+Class<?> c = Class.forName("class name");
+Method  method = c.getDeclaredMethod ("method name", parameterTypes)
+method.invoke (objectToInvokeOn, params)
+
+Where:
+"class name" is the name of the class
+objectToInvokeOn is of type Object and is the object you want to invoke the method on
+"method name" is the name of the method you want to call
+parameterTypes is of type Class [] and decalres the parameters the method takes
+params is of type Object [] and declares the parameters to be passed to the method
+
+This sounds like something that is doable with the Java Reflection package.
+http://java.sun.com/developer/technicalArticles/ALT/Reflection/index.html
+Particularly under Invoking Methods by Name:
+import java.lang.reflect.*;
+public class method2 {
+  public int add(int a, int b)
+  {
+     return a + b;
+  }
+
+  public static void main(String args[])
+  {
+     try {
+       Class cls = Class.forName("method2");
+       Class partypes[] = new Class[2];
+        partypes[0] = Integer.TYPE;
+        partypes[1] = Integer.TYPE;
+        Method meth = cls.getMethod(
+          "add", partypes);
+        method2 methobj = new method2();
+        Object arglist[] = new Object[2];
+        arglist[0] = new Integer(37);
+        arglist[1] = new Integer(47);
+        Object retobj 
+          = meth.invoke(methobj, arglist);
+        Integer retval = (Integer)retobj;
+        System.out.println(retval.intValue());
+     }
+     catch (Throwable e) {
+        System.err.println(e);
+     }
+  }
+}
+
+
+Object obj;
+
+Method method = obj.getClass().getMethod("methodName", null);
+
+method.invoke(obj, null);
+
+
+Coding from the hip, it would be something like:
+java.lang.reflect.Method method;
+try {
+  method = obj.getClass().getMethod(methodName, param1.class, param2.class, ..);
+} catch (SecurityException e) { ... }
+  catch (NoSuchMethodException e) { ... }
+
+The parameters identify the very specific method you need (if there are several overloaded available, if the method has no arguments, only give methodName).
+Then you invoke that method by calling
+try {
+  method.invoke(obj, arg1, arg2,...);
+} catch (IllegalArgumentException e) { ... }
+  catch (IllegalAccessException e) { ... }
+  catch (InvocationTargetException e) { ... }
+
+Again, leave out the arguments in .invoke, if you don't have any. But yeah. Read about Java Reflection
+
+The method can be invoked like this. There are also more possibilities (check the reflection api), but this is the simplest one:
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+
+import org.junit.Assert;
+import org.junit.Test;
+
+public class ReflectionTest {
+
+    private String methodName = "length";
+    private String valueObject = "Some object";
+
+    @Test
+    public void testGetMethod() throws SecurityException, NoSuchMethodException, IllegalArgumentException,
+            IllegalAccessException, InvocationTargetException {
+        Method m = valueObject.getClass().getMethod(methodName, new Class[] {});
+        Object ret = m.invoke(valueObject, new Object[] {});
+        Assert.assertEquals(11, ret);
+    }
+
+
+
+}
+
+
+To complete my colleague's answers, You might want to pay close attention to:
+
+static or instance calls (in one case, you do not need an instance of the class, in the other, you might need to rely on an existing default constructor that may or may not be there)
+public or non-public method call (for the latter,you need to call setAccessible on the method within an doPrivileged block, other findbugs won't be happy)
+encapsulating into one more manageable applicative exception if you want to throw back the numerous java system exceptions (hence the CCException in the code below)
+
+Here is an old java1.4 code which takes into account those points:
+/**
+ * Allow for instance call, avoiding certain class circular dependencies. <br />
+ * Calls even private method if java Security allows it.
+ * @param aninstance instance on which method is invoked (if null, static call)
+ * @param classname name of the class containing the method 
+ * (can be null - ignored, actually - if instance if provided, must be provided if static call)
+ * @param amethodname name of the method to invoke
+ * @param parameterTypes array of Classes
+ * @param parameters array of Object
+ * @return resulting Object
+ * @throws CCException if any problem
+ */
+public static Object reflectionCall(final Object aninstance, final String classname, final String amethodname, final Class[] parameterTypes, final Object[] parameters) throws CCException
+{
+    Object res;// = null;
+    try {
+    	Class aclass;// = null;
+    	if(aninstance == null)
+    	{
+    		aclass = Class.forName(classname);
+    	}
+    	else
+    	{
+    		aclass = aninstance.getClass();
+    	}
+    	//Class[] parameterTypes = new Class[]{String[].class};
+    final Method amethod = aclass.getDeclaredMethod(amethodname, parameterTypes);
+    	AccessController.doPrivileged(new PrivilegedAction() {
+	public Object run() {
+                amethod.setAccessible(true);
+                return null; // nothing to return
+    		}
+    	});
+    	res = amethod.invoke(aninstance, parameters);
+    } catch (final ClassNotFoundException e) {
+    	throw new CCException.Error(PROBLEM_TO_ACCESS+classname+CLASS, e);
+    } catch (final SecurityException e) {
+    	throw new CCException.Error(PROBLEM_TO_ACCESS+classname+GenericConstants.HASH_DIESE+ amethodname + METHOD_SECURITY_ISSUE, e);
+    } catch (final NoSuchMethodException e) {
+    	throw new CCException.Error(PROBLEM_TO_ACCESS+classname+GenericConstants.HASH_DIESE+ amethodname + METHOD_NOT_FOUND, e);
+    } catch (final IllegalArgumentException e) {
+    	throw new CCException.Error(PROBLEM_TO_ACCESS+classname+GenericConstants.HASH_DIESE+ amethodname + METHOD_ILLEGAL_ARGUMENTS+String.valueOf(parameters)+GenericConstants.CLOSING_ROUND_BRACKET, e);
+    } catch (final IllegalAccessException e) {
+    	throw new CCException.Error(PROBLEM_TO_ACCESS+classname+GenericConstants.HASH_DIESE+ amethodname + METHOD_ACCESS_RESTRICTION, e);
+    } catch (final InvocationTargetException e) {
+	throw new CCException.Error(PROBLEM_TO_ACCESS+classname+GenericConstants.HASH_DIESE+ amethodname + METHOD_INVOCATION_ISSUE, e);
+    } 
+    return res;
+}
+
+
+First, don't. Avoid this sort of code. It tends to be really bad code and insecure too (see section 6 of Secure Coding Guidelines for the
+Java Programming Language, version 2.0).
+If you must do it, prefer java.beans to reflection. Beans wraps reflection allowing relatively safe and conventional access.
+
+There is an Eclipse Plugin that you can use to generate private method invocation. So you don't need to code formal arguments and actual arguments every time you need to invoke a private method (an usual scenario in unit testing). 
+http://code.google.com/p/hexacta-booster/ 
+
+for me a pretty simple and fool proof way would be to simply make a method caller method like so:
+public static object methodCaller(String methodName)
+{
+    if(methodName.equals("getName"))
+        return className.getName();
+}
+
+then when you need to call the method simply put something like this
+//calling a toString method is unnessary here, but i use it to have my programs to both rigid and self-explanitory 
+System.out.println(methodCaller(methodName).toString()); 
+
+
+//Step1 - Using string funClass to convert to class
+String funClass = "package.myclass";
+Class c = Class.forName(funClass);
+
+//Step2 - instantiate an object of the class abov
+Object o = c.newInstance();
+//Prepare array of the arguments that your function accepts, lets say only one string here
+Class[] paramTypes = new Class[1];
+paramTypes[0]=String.class;
+String methodName = "mymethod";
+//Instantiate an object of type method that returns you method name
+ Method m = c.getDeclaredMethod(methodName, paramTypes);
+//invoke method with actual params
+m.invoke(o, "testparam");
+
+
+For those who want a straight-forward code example in Java 7:
+Dog class:
+package com.mypackage.bean;
+
+public class Dog {
+    private String name;
+    private int age;
+
+    public Dog() {
+        // empty constructor
+    }
+
+    public Dog(String name, int age) {
+        this.name = name;
+        this.age = age;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public int getAge() {
+        return age;
+    }
+
+    public void setAge(int age) {
+        this.age = age;
+    }
+
+    public void printDog(String name, int age) {
+        System.out.println(name + " is " + age + " year(s) old.");
+    }
+}
+
+ReflectionDemo class:
+package com.mypackage.demo;
+
+import java.lang.reflect.*;
+
+public class ReflectionDemo {
+
+    public static void main(String[] args) throws Exception {
+        String dogClassName = "com.mypackage.bean.Dog";
+        Class<?> dogClass = Class.forName(dogClassName); // convert string classname to class
+        Object dog = dogClass.newInstance(); // invoke empty constructor
+
+        String methodName = "";
+
+        // with single parameter, return void
+        methodName = "setName";
+        Method setNameMethod = dog.getClass().getMethod(methodName, String.class);
+        setNameMethod.invoke(dog, "Mishka"); // pass arg
+
+        // without parameters, return string
+        methodName = "getName";
+        Method getNameMethod = dog.getClass().getMethod(methodName);
+        String name = (String) getNameMethod.invoke(dog); // explicit cast
+
+        // with multiple parameters
+        methodName = "printDog";
+        Class<?>[] paramTypes = {String.class, int.class};
+        Method printDogMethod = dog.getClass().getMethod(methodName, paramTypes);
+        printDogMethod.invoke(dog, name, 3); // pass args
+    }
+}
+
+Output:
+Mishka is 3 year(s) old.
+
+You can invoke the constructor with parameters this way:
+Constructor<?> dogConstructor = dogClass.getConstructor(String.class, int.class);
+Object dog = dogConstructor.newInstance("Hachiko", 10);
+
+Alternatively, you can remove
+String dogClassName = "com.mypackage.bean.Dog";
+Class<?> dogClass = Class.forName(dogClassName);
+Object dog = dogClass.newInstance();
+
+and do
+Dog dog = new Dog();
+
+Method method = Dog.class.getMethod(methodName, ...);
+method.invoke(dog, ...);
+
+Suggested reading: Creating New Class Instances
+
+You should use reflection - init a class object, then a method in this class, and then invoke this method on an object with optional parameters. Remember to wrap the following snippet in try-catch block
+Hope it helps!
+Class<?> aClass = Class.forName(FULLY_QUALIFIED_CLASS_NAME);
+Method method = aClass.getMethod(methodName, YOUR_PARAM_1.class, YOUR_PARAM_2.class);
+method.invoke(OBJECT_TO_RUN_METHOD_ON, YOUR_PARAM_1, YOUR_PARAM_2);
+
+
+This is working fine for me :
+public class MethodInvokerClass {
+    public static void main(String[] args) throws NoSuchMethodException, SecurityException, IllegalAccessException, IllegalArgumentException, ClassNotFoundException, InvocationTargetException, InstantiationException {
+        Class c = Class.forName(MethodInvokerClass.class.getName());
+        Object o = c.newInstance();
+        Class[] paramTypes = new Class[1];
+        paramTypes[0]=String.class;
+        String methodName = "countWord";
+         Method m = c.getDeclaredMethod(methodName, paramTypes);
+         m.invoke(o, "testparam");
+}
+public void countWord(String input){
+    System.out.println("My input "+input);
+}
+
+}
+Output: 
+My input testparam
+I am able to invoke the method by passing its name to another method (like main).
+
+Please refer following code may help you.
+public static void main(String args[]) 
+{
+    MethodClass obj = new MethodClass();
+    Method[] methods = obj.getClass().getMethods();
+    try
+    {
+        for(int i=0;i<methods.length;i++)
+        {
+            String name=methods[i].getName();
+            if(name.equals("A"))
+            {   
+                methods[i].invoke(obj,"Test Parameters of A");
+                return;
+            }
+        }
+    }
+    catch(Exception ex)
+    {
+        System.out.println(ex.getMessage());
+    }
+}
+
+Thanks....
+
+I do this manner:
+try {
+    YourClass yourClass = new YourClass();
+    Method method = YourClass.class.getMethod("yourMethodName", ParameterOfThisMethod.class);
+    method.invoke(yourClass, parameter);
+} catch (Exception e) {
+    e.printStackTrace();
+}
+

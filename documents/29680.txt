@@ -1,0 +1,43 @@
+Suppress NTLM dialog box after unauthorized request
+asp.net javascript sharepoint
+In a recent sharepoint project, I implemented an authentication webpart which should replace the NTLM authentication dialog box. It works fine as long as the user provides valid credentials. Whenever the user provides invalid credentials, the NTLM dialog box pops up in Internet Explorer.
+My Javascript code which does the authentication via XmlHttpRequest looks like this:
+function Login() {
+   var request = GetRequest(); // retrieves XmlHttpRequest
+   request.onreadystatechange = function() {
+      if (this.status == 401) {     // unauthorized request -> invalid credentials
+         // do something to suppress NTLM dialog box...
+         // already tried location.reload(); and window.location = <url to authentication form>;
+      }
+   }
+   request.open("GET", "http://myServer", false, "domain\\username", "password");
+   request.send(null);
+}
+
+I don't want the NTLM dialog box to be displayed when the user provides invalid credentials. Instead the postback by the login button in the authentication form should be executed. In other words, the browser should not find out about my unauthorized request.
+Is there any way to do this via Javascript?
+
+
+IIRC, the browser pops the auth dialog when the following comes back in the request stream:
+
+Http status of 401
+WWW-Authenticate header
+
+I would guess that you'd need to suppress one or both of those. The easy way to do that is to have a login method that'll take a Base64 username and password (you are using HTTPS, right?) and return 200 with a valid/invalid status. Once the password has been validated, you can use it with XHR.
+
+Mark's comment is correct; The NTLM auth prompt is triggered by a 401 response code and the presence of NTLM as the first mechanism offered in the WWW-Authenticate header (Ref: The NTLM Authentication Protocol).
+I'm not sure if I understand the question description correctly, but I think you are trying to wrap the NTLM authentication for SharePoint, which means you don't have control over the server-side authentication protocol, correct? If you're not able to manipulate the server side to avoid sending a 401 response on failed credentials, then you will not be able to avoid this problem, because it's part of the (client-side) spec:
+The XMLHttpRequest Object
+
+If the UA supports HTTP Authentication [RFC2617] it SHOULD consider requests
+  originating from this object to be part of the protection space that includes the
+  accessed URIs and send Authorization  headers and handle 401 Unauthorised requests
+  appropriately. if authentication fails, UAs should prompt the users for credentials.
+
+So the spec actually calls for the browser to prompt the user accordingly if any 401 response is received in an XMLHttpRequest, just as if the user had accessed the URL directly. As far as I can tell the only way to really avoid this would be for you to have control over the server side and cause 401 Unauthorized responses to be avoided, as Mark mentioned. 
+One last thought is that you may be able to get around this using a proxy, such a separate server side script on another webserver. That script then takes a user and pass parameter and checks the authentication, so that the user's browser isn't what's making the original HTTP request and therefore isn't receiving the 401 response that's causing the prompt. If you do it this way you can find out from your "proxy" script if it failed, and if so then prompt the user again until it succeeds. On a successful authentication event, you can simply fetch the HTTP request as you are now, since everything works if the credentials are correctly specified.
+
+I was able to get this working for all browsers except firefox.  See my blog post below from a few years ago.  My post is aimed at IE only but with some small code changes it should work in Chrome and safari.  
+http://steve.thelineberrys.com/ntlm-login-with-anonymous-fallback-2/
+EDIT:
+The gist of my post is wrapping your JS xml call in a try catch statement.  In IE, Chrome, and Safari, this will suppress the NTLM dialog box.  It does not seem to work as expected in firefox.  

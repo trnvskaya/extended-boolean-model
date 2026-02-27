@@ -1,0 +1,86 @@
+Should I delete or disable a row in a relational database?
+mysql sql oracle relational
+In a brand new program where space isn't really that big a deal, is it better to delete a row or to disable a row by let's say a boolean "Disabled" and have the program just ignore it?
+For example, if I wanted to remove a user from a program.
+
+
+It's a judgment call, but I have ended up adding "disabled" columns on tables where I previously thought I could just delete row. I'd say most of the time you're safer adding a disabled column. This can get tricky with n:n relations however, so that's something to consider.
+
+It depends. (But you guessed that already, I'm sure.)  
+In practice, the violation of proper usage here is almost always in the direction of deleting.  
+The main bad consequence of deleting is how often there are dependent records in other tables whose referential integrity is lost when the parent record goes away.
+One red herring used to defend deletion (which you've already dealt with properly by dismissing the issue of storage capacity), is expecting that it will make any noticeable difference in query efficiency.
+There are too many cases where user or software issues cause someone to need to hit the big "Undo" button; if you delete, you're out of luck (at least without getting special help and aggravating people you'd rather be nice to.)
+The terminology I usually use is "Active" and "Inactive".
+
+A few more points to consider (by Totophil):
+
+Deleting a record in some databases will not automatically free up the disk space.
+Purging any sensitive information that you no longer require helps avoiding security risks.
+Data protection legislation might require your organisation under certain circumstances to purge any identifiable information about an individual. The legislation differs from country to country, some pointers:    
+
+EU http://ec.europa.eu/justice_home/fsj/privacy/law/index_en.htm 
+UK http://www.ico.gov.uk/what_we_cover/data_protection.aspx
+Estonia http://www.riigiteataja.ee/ert/act.jsp?id=748829
+
+On the other hand you might be required by law to keep certain information.
+
+
+It depends. If it is disabled then it is easier to undelete / to see that someone actually deleted the record (for auditing).
+You may also have a technical requirement to not delete records. For example, if you wanted to synchronize your database with another user by just sending changed records you wouldn't be able to do that if it was actually deleted.
+
+It's probably best to add "deleted" column and offer users to undelete or purge deleted items.
+
+You need to have it in functional requirements. If it is not said there explicitly you will have to figure out it yourself.
+In most cases it is better to store such records in separate table. You then avoid various situations where one table refers another table and you need to decide should records in second table be treated as deleted as well or not.
+
+Not deleting will create a new class of bugs for all future queries.  Don't forget that query writing is often done by power users (i.e. non-IT professionals), and junior developers.  So now every table that has invalid data marked only by a BIT active flag will need an additional AND in the WHERE clause for every query from now until forever.  This will help users fall into the pit of failure instead of the pit of success.  However, I strongly encourage you to implement these flag systems anyhow because without bad design, there is no need for maintenance developers to fix the numerous bugs it will create.
+How valuable is it to have historical data in the table?  If the business if forward looking, having old data in the tables can just be a burden-- it cause problems when creating constraints (all constraints will have to be modified to exclude data you wish wasn't there).  Data quality assurance is complicated by having to continually re-identify what is "old crap we are afraid to delete but never want to ever use or update again" and new stuff we care about.
+Is it being deleted because it was a mistake?  If the row corresponds to an entity in real life, maybe it is interesting to keep and set a "vaporized", "dead", "left the building" flag.  If you accidentally inserted a row that corresponds to no entity in real life, a DELETE is not a bad thing.  Are imaginary customers that never existed important to keep in the customer table?
+And finally, personality plays a big role.  People can be packrats with data, too.  If a DBA keeps all his newspapers from 30 years back and don't like deleting data, maybe he should make sure he's making data design decisions based on the merits and not an irrelevant personal preference.
+
+It's up to you and your requirements (some things get rather hard when records exist that...don't).
+I will say that a boolean is a bad choice, though.  Make it a nullable timestamp.  It's pretty handy to know when something was deleted, especially when you deleted too much and want to undo part of the delete.
+
+This should be determined by the application needs.  I have done it both ways.  I have some applications that need to support undo as the cost of removing a row -- and the cascading deletes that are caused by that -- are too expensive to not have it.  Normally, though, the applications I have done require the user to confirm deletes, then just do as the user has asked.  In some cases, you must delete the data due to privacy concerns.  That is, if the user requests to be removed, you need to really remove it, not just mark it as not current.  In other cases (like tax-related transactions), there may be reasons to keep data in a non-current state until no longer required by law.  I have applications that fit in both categories.
+Various strategies can be used in the case where you need to keep "archival" data.  Depending on whether it needs to be immediately available you can push it to archive tables that are either kept or backed up and cleaned out regularly.   If there is a need for undo you may want to keep it in the current table and just mark it by setting a flag.  It really depends on the complexity of your schema, the requirements of the application, and personal preference to some extent.
+
+After reading a book on temporal database design, I came to believe in the philosophy that every record of temporal significance needs to have at least 4 timestamp columns.  Those four are: created, deleted, start, end.  The created and deleted timestamps are fairly self-explanatory.  Your system shouldn't look at records where deleted is before now().  The start and end columns determine when the data applies to your system.  It's for keeping a history of changes.  If you need to update a record, you'd set it's end time to now(), copy it, update the copy, and set the copy's start time to now().  That way, when you need to look at the way something was historically, you can have the system figure it out.  You could also set the start to some point in the future to have a change take place automatically at that time, or set the end to a future time to have it automatically go away at that time.  Setting the created/deleted timestamps to the future doesn't really make sense...
+
+Adding a "DELETED" column to your table and marking rows instead of deleting them creates a lot more work for you with little (if any) benefit.  Now, every time you write a query you have to remember to include "WHERE DELETED IS NOT NULL" (or whatever).
+A better approach is to delete data when you need to delete data, and rely on your regular backup process to ensure that no data is ever lost.  If for some reason you need to keep some deleted data handy (for searches, maybe), you're better off just copying the data to a different table created for this purpose and then deleting the originals.
+I've inherited many databases over the years, and this strategy of flagging records instead of deleting them is unfortunately very common, and (in my experience at least) always leads to major problems down the road.
+
+Unless you have a specific need for managing your own deletions, you are better off just deleting the rows.
+
+If you do use a deleted, visible, isactive, etc column, you can abstract away having to remember to use it by using views.
+
+It depends on the function of the database. Is it the source of all truth? If yes, then disable rather than delete, as it is easier to recover from bad operations (ie user error). If the database is feed from some upstream data source, delete then unused data. Any recreation/recovery can be done by the upstream system.
+
+If you will need the deleted data sometimes, but not very often: you can move the records into a separate database/table (e.g. users and users_deleted, or better somedb.users and somedb_deleted.users).
+This way, the data is still accessible through a query (although it won't be as simple as the normal one), yet it doesn't clutter the original database and you don't have to code around it.
+
+I'd like to note that there are (in most countries) use-cases where you can't delete records for legal reasons. Industry and data dependant of course. 
+In this case I believe the best practice guidleine is to shadow table the "deleted" data which gains you the benefits of actual deletion outlined by MatthewMartin and by extension I have come to find this pattern frequently preferable to creating "active" bit-flags across my data-tables.
+
+As many have already said, the application needs dictated what you want to do. But to me, marking a row seems like not using the right tool for the right thing. We logically think of a delete as a DELETE, so when if you are not allowed to delete for legal reasons, then you don't delete it in the first place.
+At the same time, i think about all the internal data structure keeping and indexing. Not to mention all the optimizations that can be done to retrieve data, but adding that check(in the view or in the query) affects the performance exponentially with the complexity of the database and the relations the entities have.
+In a nutshell, put the deletion logic in the UI layer to prevent user errors and give delete permissions to users who should be able to delete it. Use regular backups for keeping archives. If your application absolutely requires a strict audit history, implement it in triggers and put the audit in an off-site database to avoid all that traffic, check and crap from the production.
+
+There are two additional solutions for this which I have commonly used.  I agree with other individuals who have posted that it is really up to the requirements of your data.
+You could prevent the user from deleting the record if it will cause referential integrity problems by using foreign key constraints (provided your RDBMS supports that).  A few times I have provided a message to the end-user that "You cannot delete this <object> until you disassociate <parent object> with it."  This can work as long as you don't anticipate there are a tremendously high number of associations with another other table or tables.
+Another approach is to move any disassociated records to be associated with a record that isn't deleted.  For example, say you have a course for which 10 separate class times are associated with it.  If you delete the course, you could allow to the user to decided if all 10 classes are deleted or if they are associated with a new or existing course.
+
+I am creating a CRUD and i'm facing the same problem.
+Solution : The D of CRUD should disable instead of delete.
+Problems: 
+
+"Every" query should check if the registry is disable or not (flag=1 for example).  More specifically, ever select * should check that.
+Every insert should activate the registry (flag=1) by default.
+Update shouldn't change the flag.
+Disable is an update in disguise that marks the flag=0.
+
+Big Problem
+
+Garbage collector. Exists three strategies : to delete old registries, to delete registries that are not referenced or a mix of strategies.
+

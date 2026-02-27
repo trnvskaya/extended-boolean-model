@@ -1,0 +1,81 @@
+How do you do a SQL style 'IN' statement in LINQ to Entities (Entity Framework) if Contains isn't supported?
+c# linq entity-framework linq-to-entities
+I'm using LINQ to Entities (not LINQ to SQL) and I'm having trouble creating an 'IN' style query.  Here is my query at the moment:
+var items = db.InventoryItem
+                .Include("Kind")
+                .Include("PropertyValues")
+                .Include("PropertyValues.KindProperty")
+                .Where(itm => valueIds.Contains(itm.ID)).ToList<InventoryItem>();
+
+When I do this however, the following exception is thrown:
+
+LINQ to Entities does not recognize the method 'Boolean Contains(Int64)' method, and this method cannot be translated into a store expression.
+
+Does anyone have a workaround or another solution for this?
+
+
+You need to either use this one:
+.Where(string.Format("it.ID in {0}", string.Join(",", valueIds.ToArray())));
+
+or construct the WHERE part dynamically, as in this post.  
+P.S. - Information has been updated and this answer updated as follows to maintain relevance:
+The link referenced contains the following update:
+
+...in EF4 we added support for the
+Contains method and at least in this
+specific case for collection-valued
+parameters. Therefore this kind of
+code now works right out of the box
+and it is not necesary to use any
+additinal expression building method: 
+
+var statusesToFind = new List<int> {1, 2, 3, 4};
+var foos = from foo in myEntities.Foos
+           where statusesToFind.Contains(foo.Status)
+           select foo;
+
+
+Someone had created an expression for this scenario...I found it and hijacked it but can't remember where I found the original source. I'll post the code in a bit. For now this is a marker for me to come back.
+
+My workaround is to convert the entities result to a List and after that apply the Contains().
+Example:
+var items = db.InventoryItem
+                .Include("Kind")
+                .Include("PropertyValues")
+                .Include("PropertyValues.KindProperty")
+                .ToList()
+                .Where(itm => valueIds.Contains(itm.ID));
+
+
+You can use Linq's Any extension method for this in some cases:
+var userIds = new[] { 1, 2, 3 };
+
+from u in Users
+     where userIds.Any(i => i==u.Id)
+     select u;
+
+The generated SQL looks pretty strange in such a case, but like much Linq-to-Entities generated SQL it might be overly verbose for a human, but runs fast in practice.
+SELECT 
+[Extent1].[Id] AS [Id], 
+[Extent1].[DisplayName] AS [DisplayName], 
+FROM [dbo].[Users] AS [Extent1]
+WHERE  EXISTS (SELECT 
+    1 AS [C1]
+    FROM  (SELECT 
+        [UnionAll1].[C1] AS [C1]
+        FROM  (SELECT 
+            1 AS [C1]
+            FROM  ( SELECT 1 AS X ) AS [SingleRowTable1]
+        UNION ALL
+            SELECT 
+            2 AS [C1]
+            FROM  ( SELECT 1 AS X ) AS [SingleRowTable2]) AS [UnionAll1]
+    UNION ALL
+        SELECT 
+        3 AS [C1]
+        FROM  ( SELECT 1 AS X ) AS [SingleRowTable3]) AS [UnionAll2]
+    WHERE [UnionAll2].[C1] = [Extent1].[Id]
+)
+
+
+As mentioned by Diego B Vega in this post (second answer), Contains should now work in EF4.

@@ -1,0 +1,91 @@
+Identify full vs half yearly datasets in SQL
+sql sql-server-2005 tsql
+I have a table with two fields of interest for this particular exercise: a CHAR(3) ID and a DATETIME.  The ID identifies the submitter of the data - several thousand rows.  The DATETIME is not necessarily unique, either.  (The primary keys are other fields of the table.)
+Data for this table is submitted every six months.  In December, we receive July-December data from each submitter, and in June we receive July-June data.  My task is to write a script that identifies people who have only submitted half their data, or only submitted January-June data in June.
+...Does anyone have a solution?
+
+
+from your description, i wouldn't worry about the efficiency of the query since apparently it only needs to run twice a year!
+there are a few ways to do this, which one is 'best' depends on the data that you have. the datediff (on max/min date values) you suggested should work, another option is to just count records for each submitted within each date range, e.g.
+select * from (
+    select T.submitterId,
+        (select count(*) 
+        from TABLE T1
+        where T1.datefield between [july] and [december]
+        and T1.submitterId = T.submitterId
+        group by T1.submitterId) as JDCount,
+        (select count(*)
+        from TABLE T2
+        where T2.datefield between [december] and [june]
+        and T2.submitterId = T.submitterId
+        group by T2.submitterId) as DJCount
+    from TABLE T) X
+where X.JDCount <= 0 OR X.DJCount <= 0
+
+caveat: untested query off the top of my head; your mileage may vary
+
+For interest, this is what I wound up using.  It was based off Stephen's answer, but with a few adaptations.  I don't yet have the reputation to upvote him.  :).
+It's part of a larger script that's run every six months, but we're only checking this every twelve months - hence the "If FullYear = 1".  I'm sure there's a more stylish way to identify the boundary dates, but this seems to work.
+IF @FullYear = 1 
+    BEGIN
+        DECLARE @FirstDate AS DATETIME
+        DECLARE @LastDayFirstYear AS DATETIME
+        DECLARE @SecondYear AS INT
+        DECLARE @NewYearsDay AS DATETIME
+        DECLARE @LastDate AS DATETIME
+
+        SELECT @FirstDate = MIN(dscdate), @LastDate = MAX(dscdate)
+        FROM    TheTable
+
+        SELECT  @SecondYear = DATEPART(yyyy, @FirstDate) + 1
+        SELECT  @NewYearsDay = CAST(CAST(@SecondYear AS VARCHAR) 
+            + '-01-01' AS DATETIME)
+
+        INSERT  INTO @AuditResults
+                SELECT DISTINCT
+                    'Submitter missing Jan-Jun data', t.id
+                FROM    TheTable t
+                WHERE   
+                    EXISTS ( 
+                        SELECT 1
+                        FROM   TheTable t1
+                        WHERE  t.id = t1.id 
+                            AND t1.date >= @FirstDate
+                            AND t1.date < @NewYearsDay )
+                    AND NOT EXISTS ( 
+                        SELECT 1
+                        FROM   TheTable t2
+                        WHERE  t2.date >= @NewYearsDay
+                        AND t2.date <= @LastDate
+                        AND t2.id = t.id
+                        GROUP BY t2.id )
+                GROUP BY t.id
+    END
+
+
+I later realised that I was supposed to check to make sure that there was data for both July to December and January to June.  So this is what I wound up in v2:
+SELECT  @avgmonths = AVG(x.[count])
+FROM    ( SELECT    CAST(COUNT(DISTINCT DATEPART(month,
+                                                 DATEADD(month,
+                                                         DATEDIFF(month, 0, dscdate),
+                                                         0))) AS FLOAT) AS [count]
+          FROM      HospDscDate
+          GROUP BY  hosp
+         ) x
+
+IF @avgmonths > 7 
+    SET @months = 12
+ELSE 
+    SET @months = 6
+
+
+SELECT  'Submitter missing data for some months' AS [WarningType],
+     t.id
+FROM    TheTable t
+WHERE   EXISTS ( SELECT 1
+                 FROM   TheTable t1
+                 WHERE  t.id = t1.id
+                 HAVING COUNT(DISTINCT DATEPART(month,
+                       DATEADD(month, DATEDIFF(month, 0, t1.Date), 0))) < @months )
+GROUP BY t.id
+

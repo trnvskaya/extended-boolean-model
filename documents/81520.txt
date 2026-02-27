@@ -1,0 +1,122 @@
+How to suppress Terminated message after killing in bash?
+bash unix shell
+How can you suppress the Terminated message that comes up after you kill a
+process in a bash script?
+I tried set +bm, but that doesn't work.
+I know another solution involves calling exec 2> /dev/null, but is that
+reliable? How do I reset it back so that I can continue to see stderr?
+
+
+Maybe detach the process from the current shell process by calling disown?
+
+The short answer is that you can't.  Bash always prints the status of foreground jobs. The monitoring flag only applies for background jobs, and only for interactive shells, not scripts.
+see notify_of_job_status() in jobs.c.
+As you say, you can redirect so standard error is pointing to /dev/null but then you miss any other error messages.  You can make it temporary by doing the redirection in a subshell which runs the script.  This leaves the original environment alone.
+(script 2> /dev/null)
+
+which will lose all error messages, but just from that script, not from anything else run in that shell.
+You can save and restore standard error, by redirecting a new filedescriptor to point there:
+exec 3>&2          # 3 is now a copy of 2
+exec 2> /dev/null  # 2 now points to /dev/null
+script             # run script with redirected stderr
+exec 2>&3          # restore stderr to saved
+exec 3>&-          # close saved version
+
+But I wouldn't recommend this -- the only upside from the first one is that it saves a sub-shell invocation, while being more complicated and, possibly even altering the behavior of the script, if the script alters file descriptors.
+
+disown did exactly the right thing for me -- the exec 3>&2 is risky for a lot of reasons -- set +bm didn't seem to work inside a script, only at the command prompt
+
+Solution: use SIGINT (works only in non-interactive shells)
+Demo:
+cat > silent.sh <<"EOF"
+sleep 100 &
+kill -INT $!
+sleep 1
+EOF
+
+sh silent.sh
+
+http://thread.gmane.org/gmane.comp.shells.bash.bugs/15798
+
+In order to silence the message, you must be redirecting stderr at the time the message is generated. Because the kill command sends a signal and doesn't wait for the target process to respond, redirecting stderr of the kill command does you no good. The bash builtin wait was made specifically for this purpose.
+Here is very simple example that kills the most recent background command. (Learn more about $! here.)
+kill $!
+wait $! 2>/dev/null
+
+Because both kill and wait accept multiple pids, you can also do batch kills. Here is an example that kills all background processes (of the current process/script of course).
+kill $(jobs -rp)
+wait $(jobs -rp) 2>/dev/null
+
+I was led here from bash: silently kill background function process.
+
+Is this what we are all looking for?
+Not wanted: 
+$ sleep 3 &
+[1] 234
+<pressing enter a few times....>
+$
+$
+[1]+  Done                    sleep 3
+$
+
+Wanted:
+$ (set +m; sleep 3 &)
+<again, pressing enter several times....>
+$
+$
+$
+$
+$
+
+As you can see, no job end message. Works for me in bash scripts as well, also for killed background processes.
+'set +m' disables job control (see 'help set') for the current shell. So if you enter your command in a subshell (as done here in brackets) you will not influence the job control settings of the current shell. Only disadvantage is that you need to get the pid of your background process back to the current shell if you want to check whether it has terminated, or evaluate the return code.
+
+This also works for killall (for those who prefer it):
+killall -s SIGINT (yourprogram) 
+supresses the message..I was running mpg123 in backgroundmode.
+It could only silently be killed by sending a ctrl-c (SIGINT) instead of a SIGTERM (default).
+
+Inspired by MarcHâs answer. I was using kill -INT as he suggests with some success, but I noticed that it was not killing some processes. After testing some other signals I see that SIGPIPE will kill as well without a message.
+kill -PIPE
+
+or simply
+kill -13
+
+
+Another way to disable job notifications is to place your command to be backgrounded in a sh -c 'cmd &' construct.
+#!/bin/bash
+# ...
+pid="`sh -c 'sleep 30 & echo ${!}' | head -1`"
+kill "$pid"
+# ...
+
+# or put several cmds in sh -c '...' construct
+sh -c '
+sleep 30 &
+pid="${!}"
+sleep 5 
+kill "${pid}"
+'
+
+
+Had success with adding 'jobs 2>&1 >/dev/null' to the script, not certain if it will help anyone else's script, but here is a sample.
+    while true; do echo $RANDOM; done | while read line
+    do
+    echo Random is $line the last jobid is $(jobs -lp)
+    jobs 2>&1 >/dev/null
+    sleep 3
+    done
+
+
+Simple:
+{ kill $! } 2>/dev/null
+Advantage ? can use any signal
+ex:
+{ kill -9 $PID } 2>/dev/null
+
+On Linux and OSX I add the following alias to my ~/.bashrc file:
+alias killrails="ps aux | grep -ie [r]ails | awk '{print $2}' | xargs kill -9 2> /dev/null"
+
+When I want to kill a rails server started with rails s. I execute the following on the terminal:
+killrails
+

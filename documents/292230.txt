@@ -1,0 +1,39 @@
+How wrong is it to have a unique and normal index on the same column?
+mysql indexing unique-index
+I have the following table structure
+CREATE TABLE `table` (
+  `id` int(11) NOT NULL auto_increment,
+  `date_expired` datetime NOT NULL,
+  `user_id` int(11) NOT NULL,
+  `foreign_id` int(11) NOT NULL,
+  PRIMARY KEY  (`id`),
+  UNIQUE KEY `date_expired` (`date_expired`,`user_id`,`foreign_id`),
+  KEY `user_id` (`user_id`)
+) ENGINE=MyISAM DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
+
+As you'll notice, I have duplicate indexes on user_id: date_expired & user_id. I of course want the unique index because I want to ensure the data is unique.
+The reason for the duplicate indexes is because without the user_id index, my main search query takes 4 seconds. With the extra index it takes 1 second. The query is joining the table on user_id and checking date_expired.
+The table only has 275 records.
+
+How bad is it to have a unique and normal index on the same field?
+How bad is it to have larger indexes than data when the table is purely ids?
+
+
+
+Having several indexes including one field is not bad at all (essentially, they do index different things). It has a slight impact on write perfomance, but that's the typical trade-off you have with every index in first place.
+Having indexes eating up more space than the data itself is not bad if space is cheap. In your case, it should be cheap given the fact that you have a really small amount of entries.
+The question I would ask in your position is: How does the indexing of such a small table so severly affect my query runtime? Perhaps you are doing something wrong (I think about lots of possibly redundant querys to this table), as a single one should be nowhere near this time range with this small number of entries).
+
+I don't understand what do you mean by duplicate indexes. You have three indexes in the table:
+
+One for the primary key 'id' (which implies unique)
+Another unique one for the combination of 'date_expired', 'user_id', and 'foreign_id'
+And a third one over 'user_id' only
+
+so there's no duplication, you have three different indexes that'll do different things. You need number 3 to speed up queries related to user_id which is what you are seeing. So there's nothing wrong with this particular table, you aren't duplicating anything. Regarding the second question, it depends on your needs, but certainly it's not bad to have more space used up in indexes than in the data.
+What would be bad, for example, is to have a UNIQUE ('user_id') and later a KEY('user_id') (I'm not even sure if MySQL will allow that) because one index would contain the other and there's nothing to gain. 
+
+I believe if you created your unique index as (user_id, date_expired, foreign_id), you'll get the same benefit of having a normal index on user_id with just the unique index. MySQL can use the first columns of any index to pare down the number of rows in the join in the same manner as an index on user_id. 
+See MySQL's index documentation for more information.
+Are you referring to the id auto_increment column elsewhere in your schema to save space? Since your unique index covers all of the other columns in your table, it is in essence a primary key itself and could be dropped if you're not.
+You can check what keys your query is using by prefixing it with EXPLAIN.

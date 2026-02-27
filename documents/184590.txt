@@ -1,0 +1,134 @@
+Is there a Perl-compatible regular expression to trim whitespace from both sides of a string?
+regex perl whitespace trim
+Is there a way to do this in one line?
+$x =~ s/^\s+//;
+$x =~ s/\s+$//;
+
+In other words, remove all leading and trailing whitespace from a string.
+
+
+Here you go: $x =~ s/\A\s*(.*?)\s*\z/$1/;
+
+
+$x =~ s/(^\s+)|(\s+$)//g;
+
+$x =~ s/^\s*(.*?)\s*$/$1/;
+
+
+Or this: s/\A\s*|\s*\Z//g
+
+s/^\s*(\S*\S)\s*$/$1/
+
+
+$x =~ s/^\s+|\s+$//g;
+
+or
+s/^\s+//, s/\s+$// for $x;
+
+
+My first question is ... why?  I don't see any of the single-regexp solutions to be any more readable than the regexp you started with.  And they sure aren't anywhere near as fast.
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use Benchmark qw(:all);
+
+my $a = 'a' x 1_000;
+
+my @x = (
+         "    $a   ",
+         "$a   ",
+         $a,
+         "    $a"
+        );
+
+cmpthese(-5,
+         {
+             single => sub {
+                 for my $s (@x)
+                 {
+                     my $x = $s;
+                     $x =~ s/^\s+|\s+$//g;
+                 }
+             },
+             double => sub {
+                 for my $s (@x)
+                 {
+                     my $x = $s;
+                     $x =~ s/^\s+//;
+                     $x =~ s/\s+$//;
+                 }
+             },
+             trick => sub {
+                 for my $s (@x)
+                 {
+                     my $x = $s;
+                     s/^\s+//, s/\s+$// for $x;
+                 }
+             },
+             capture => sub {
+                 for my $s (@x)
+                 {
+                     my $x = $s;
+                     $x =~ s/\A\s*(.*?)\s*\z/$1/
+                 }
+             },
+             kramercap => sub {
+                 for my $s (@x)
+                 {
+                     my $x = $s;
+                     ($x) = $x =~ /^\s*(.*?)\s*$/
+                 }
+             },
+         }
+        );
+
+gives results on my machine of:
+
+             Rate    single   capture kramercap     trick    double
+single     2541/s        --      -12%      -13%      -96%      -96%
+capture    2902/s       14%        --       -0%      -95%      -96%
+kramercap  2911/s       15%        0%        --      -95%      -96%
+trick     60381/s     2276%     1981%     1974%        --       -7%
+double    65162/s     2464%     2145%     2138%        8%        --
+
+Edit: runrig is right, but to little change.  I've updated the code to copy the string before modification, which, of course, slows things down.  I also took into account brian d foy's suggestion in another answer to use a longer string (though a million seemed like overkill).  However, that also suggests that before you choose the trick style, you figure out what your string lengths are like - the advantages of trick are lessened with shorter strings.  At all lengths I've tested, though, double wins.  And it's still easier on the eyes.
+
+Arguing from the heretical, why do it at all? All of the above solutions are "correct" in that they trim whitespace from both sides of the string in one pass, but none are terribly readable (expect maybe this one). Unless the audience for your code is comprised of expert-level Perl coders each of the above candidates should have a comment describing what they do (probably a good idea anyway). By contrast, these two lines accomplish the same thing without using lookaheads, wildcards, midichlorines or anything that isn't immediately obvious to a programmer of moderate experience:
+$string =~ s/^\s+//;
+$string =~ s/\s+$//;
+
+There is (arguably) a performance hit, but as long as you aren't concerned with a few microseconds at execution the added readability will be worth it. IMHO.
+
+Funny you should bring this up!
+I recently read an article analyzing the performance of twelve (!) different trim implementations.
+Although the article specifically uses the JavaScript regex implementation, it uses Perl syntax, so I think it's apropos to this discussion.
+
+Tanktalus shows a benchmark for very small strings, but the problems get worse as the strings get bigger. In his code, I changed the top portion:
+my $a = 'a' x 1_000_000;
+
+my @x = (
+  "   $a   ",
+  "$a    ",
+  $a,
+  "    $a"
+  );
+
+I get these results:
+          Rate  single capture   trick  double
+single  2.09/s      --    -12%    -98%    -98%
+capture 2.37/s     13%      --    -98%    -98%
+trick   96.0/s   4491%   3948%      --     -0%
+double  96.4/s   4512%   3967%      0%      --
+
+As the string gets bigger, using "trick" and "double" are almost the same, and the common solution that most people go for, the "single" (including me, because I can't break that habit even though I know this), really starts to suck.
+Whenever you look at a benchmark, think about what it's telling you. To see if you understand it, change the data and try again. Make arrays long, scalars big, and so on. Make loops, greps, or regexes find stuff at the start, middle, and end. See if the new results match your prediction. Figure out what the trend is. Does performance get better and better, approach a limit, peak then start to decline, or something else?
+
+I usually do it like this:
+($foo) = $foo =~ /^\s*(.*?)\s*$/;
+
+Everything between the leading spaces and the trailing spaces is grouped and returned, so I can assign it to the same old variable.
+
+$var1 =~ s/(^\s*)(.*?)(\s*$)+/$2/;
+

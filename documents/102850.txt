@@ -1,0 +1,70 @@
+How can I install CPAN modules locally without root access (DynaLoader.pm line 229 error)?
+perl install cpan
+Doesn't work with other modules, but to give an example. I installed Text::CSV_XS with a CPAN setting:
+'makepl_arg' => q[PREFIX=~/lib],
+
+When I try running a test.pl script:
+
+$ perl test.pl
+
+#!/usr/bin/perl
+
+use lib "/homes/foobar/lib/lib64/perl5/site_perl/5.8.8/x86_64-linux-thread-multi";
+
+use Text::CSV_XS;
+
+print "test";
+
+I get
+
+Can't load '/homes/foobar/lib/lib64/perl5/site_perl/5.8.8/x86_64-linux-thread-multi/auto/Text/CSV_XS/CSV_XS.so' for module Text::CSV_XS: /homes/foobar/lib/lib64/perl5/site_perl/5.8.8/x86_64-linux-thread-multi/auto/Text/CSV_XS/CSV_XS.so: cannot open shared object file: No such file or directory at /www/common/perl/lib/5.8.2/i686-linux/DynaLoader.pm line 229.
+at test.pl line 6
+Compilation failed in require at test.pl line 6.
+BEGIN failed--compilation aborted at test.pl line 6.
+
+I traced the error back to DynaLoader.pm it happens at this line:
+# Many dynamic extension loading problems will appear to come from
+# this section of code: XYZ failed at line 123 of DynaLoader.pm.
+# Often these errors are actually occurring in the initialisation
+# C code of the extension XS file. Perl reports the error as being
+# in this perl code simply because this was the last perl code
+# it executed.
+
+my $libref = dl_load_file($file, $module->dl_load_flags) or
+    croak("Can't load '$file' for module $module: ".dl_error());
+
+CSV_XS.so exists in the above directory
+
+
+Try this instead:
+'makepl_arg' => q[PREFIX=~/]
+
+PREFIX sets the base for all the directories you will be installing into  (bin, lib, and so forth.)
+You may also be running into shell expansion problems with your '~'.  You can try to expand it yourself:
+'makepl_arg' => q[PREFIX=/home/users/foobar]
+
+It would also be helpful if you included the commands you used to get the error you are asking about.
+
+Does the file in question (CSV_XS.so) exist?
+Does it exist at the listed location?
+If you do:
+set |grep PERL
+
+What is the output?
+Have you successfully installed other local perl modules?
+
+When you installed the module, did you watch the output? Where did it say it installed the module? Look in lib. Do you see the next directory you expect?
+Look in ~/lib to see where eveything ended up to verify that you have the right directory name in your use lib statement:
+
+% find ~/lib -name CSV_XS.so
+
+Once you see where it is installed, use that directory name in your use lib (or PERL5LIB or whatever).
+I expect you have a lib/lib in there somehow. The PREFIX is just the, well, prefix, and the installer appends other directory portions to that base path. That includes lib, man, bin, etc.
+
+I strongly suggest installing your own perl in your own home directory, if you have space.  Then you can keep everything under your control and keep your own module set, as well as escaping if the admins are keeping you on an older version of perl.  (Not to mention preserving yourself if they upgrade some day and leave out all the modules you are relying on.)
+
+It looks from the error message ("at /www/common ...") that your script is a CGI or mod_perl script. The web server is probably not running as the user 'foo', under whose home directory you've installed the module - that could result in the web server being unable to read that directory.
+It may also be running in a "chroot jail", which would mean that the directory in which you've installed the module may not be visible to the script.
+In other words, just because you can see the module, does not mean that the web server, and therefore your script, can do so. You should check the relevant file permissions, and if the server is chrooted, whether your module directory is mounted within the virtual file system.
+
+Personally I would suggest to use local::lib. :)

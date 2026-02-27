@@ -1,0 +1,92 @@
+What is the Managed C++ equivalent to the C# using statement
+.net managed-c++ using-statement
+How would one code the following C# code in Managed C++
+void Foo()
+{
+    using (SqlConnection con = new SqlConnection("connectionStringGoesHere"))
+    {
+         //do stuff
+    }
+}
+
+Clarificaton:
+For managed objects.
+
+
+If you're concerned about limiting the variable's lifetime rather than automatic disposal, you can always just put it into its own scope:
+void Foo()
+{
+    {
+        SqlConnection con = new SqlConnection("connectionStringGoesHere");
+        // do stuff
+        // delete it before end of scope of course!
+    }
+}
+
+
+To to that in Managed C++ just use stack semantics.
+void Foo(){
+   SqlConnection con("connectionStringGoesHere");
+    //do stuff
+}
+
+When con goes out of scope the "Destructor", ie Dispose(), is called.
+
+Assuming you mean C++/CLI (not the old Managed C++), the following are your options:
+(1)  Mimic a using-Block with using automatic / stackbased objects:
+{
+  SqlConnection conn(connectionString);
+}
+
+This will call the Destructor of the "conn" Object when the next enclosing block ends.  Whether this is the enclosing function, or a block you manually add to limit scope doesn't matter.
+(2)  Explicitly call "Dispose", i.e. destruct the object:
+SqlConnection^ conn = nullptr;
+try
+{
+  conn = gcnew SqlConnection(conntectionString);
+
+}
+finally
+{
+  if (conn != nullptr)
+    delete conn;
+}
+
+The first one would be the direct replacement for "using". The second one is an option, typically you won't need to do unless you optionally pass the reference to somewhere else.
+
+You could do something similar in an auto_ptr style:
+void foo()
+{
+    using( Foo, p, gcnew Foo() )
+    {
+        p->x = 100;
+    }
+}
+
+with the following:
+template <typename T>
+public ref class using_auto_ptr
+{
+public:
+    using_auto_ptr(T ^p) : m_p(p),m_use(1) {}
+    ~using_auto_ptr() { delete m_p; }
+    T^ operator -> () { return m_p; }
+    int m_use;
+private:
+    T ^ m_p;
+};
+
+#define using(CLASS,VAR,ALLOC) \
+    for ( using_auto_ptr<CLASS> VAR(ALLOC); VAR.m_use; --VAR.m_use)
+
+For reference:
+public ref class Foo
+{
+public:
+    Foo() : x(0) {}
+    ~Foo()
+    {
+    }
+    int x;
+};
+

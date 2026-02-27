@@ -1,0 +1,49 @@
+Best way to sandbox Apache on Linux
+linux security apache debian sysadmin
+I have Apache running on a public-facing Debian server, and am a bit worried about the security of the installation. This is a machine that hosts several free-time hobby projects, so none of us who use the machine really have the time to constantly watch for upstream patches, stay aware of security issues, etc. But I would like to keep the bad guys out, or if they get in, keep them in a sandbox.
+So what's the best, easy to set up, easy to maintain solution here? Is it easy to set up a user-mode linux sandbox on Debian? Or maybe a chroot jail? I'd like to have easy access to files inside the sadbox from the outside. This is one of those times where it becomes very clear to me that I'm a programmer, not a sysadmin. Any help would be much appreciated!
+
+
+You could always set it up inside a virtual machine and keep an image of it, so you can re-roll it if need be. That way the server is abstracted from your actual computer, and any virus' or so forth are contained inside the virtual machine. As I said before, if you keep an image as a backup you can restore to your previous state quite easy.
+
+Make a virtual machine. try something like vmware or qemu
+
+Chroot jails can be really insecure when you are running a complete sandbox environment. Attackers have complete access to kernel functionality and for example may mount drives to access the "host" system.
+I would suggest that you use linux-vserver. You can see linux-vserver as an improved chroot jail with a complete debian installation inside. It is really fast since it is running within one single kernel, and all code execution is one natively. 
+I personally use linux-vserver for seperation of all my services and there are only barely noticeable performance differences. 
+Have a look at the linux-vserver wiki for installation instructions.
+regards, Dennis
+
+To make sure it is said, CHRoot Jails are rarely a good idea it is, despite the intention, very easy to break out of, infact I have seen it done by users accidentally!
+
+No offense, but if you don't have time to watch for security patches, and stay aware of security issues, you should be concerned, no matter what your setup. On the other hand, the mere fact that you're thinking about these issues sets you apart from the other 99.9% of owners of such machines. You're on the right path!
+
+I second what xardias says, but recommend OpenVZ instead.
+It's similar to Linux-Vserver, so you might want to compare those two when going this route.
+I've setup a webserver with a proxy http server (nginx), which then delegates traffic to different OpenVZ containers (based on hostname or requested path). Inside each container you can setup Apache or any other webserver (e.g. nginx, lighttpd, ..).
+This way you don't have one Apache for everything, but could create a container for any subset of services (e.g. per project).
+OpenVZ containers can quite easily get updated altogether ("for i in $(vzlist); do vzctl exec apt-get upgrade; done")
+The files of the different containers are stored in the hardware node and therefore you can quite easily access them by SFTPing into the hardware node.
+Apart from that you could add a public IP address to some of your containers, install SSH there and then access them directly from the container.
+I've even heard from SSH proxies, so the extra public IP address might be unnecessary even in that case.
+
+What problem are you really trying to solve? If you care about what's on that server, you need to prevent intruders from getting into it. If you care about what intruders would do with your server, you need to restrict the capabilities of the server itself.
+Neither of these problems could be solved with virtualization, without severly criplling the server itself. I think the real answer to your problem is this:
+
+run an OS that provides you with an easy mechanism for OS updates.
+use the vendor-supplied software.
+backup everything often.
+
+
+I find it astonishing that nobody mentioned mod_chroot and suEXEC, which are the basic things you should start with, and, most likely the only things you need.
+
+You should use SELinux. I don't know how well it's supported on Debian; if it's not, just install a Centos 5.2 with SELinux enabled in a VM. Shouldn't be too much work, and much much safer than any amateur chrooting, which is not as safe as most people believe.
+SELinux has a reputation for being difficult to admin, but if you're just running a webserver, that shouldn't be an issue. You might just have to do a few "sebool" to let httpd connect to the DB, but that's about it.
+
+While all of the above are good suggestions, I also suggest adding a iptables rule to disallow unexpected outgoing network connections.  Since the first thing most automated web exploits do is download the rest of their payload, preventing the network connection can slow the attacker down.
+Some rules similar to these can be used (Beware, your webserver may need access to other protocols):
+    iptables --append OUTPUT -m owner --uid-owner apache -m state --state ESTABLISHED,RELATED --jump ACCEPT
+    iptables --append OUTPUT -m owner --uid-owner apache --protocol udp --destination-port 53 --jump ACCEPT
+    iptables --append OUTPUT -m owner --uid-owner apache --jump REJECT
+
+If using Debian, debootstrap is your friend coupled with QEMU, Xen, OpenVZ, Lguest or a plethora of others.

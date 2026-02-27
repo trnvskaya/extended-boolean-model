@@ -1,0 +1,103 @@
+When to catch java.lang.Error?
+java exception error-handling exception-handling
+In what situations should one catch java.lang.Error on an application?
+
+
+Almost never. Errors are designed to be issues that applications generally can't do anything about. The only exception might be to handle the presentation of the error but even that might not go as planned depending on the error.
+
+Never. You can never be sure that the application is able to execute the next line of code. If you get an OutOfMemoryError, you have no guarantee that you will be able to do anything reliably. Catch RuntimeException and checked Exceptions, but never Errors.
+http://pmd.sourceforge.net/rules/strictexception.html
+
+And there are a couple of other cases where if you catch an Error, you have to rethrow it. For example ThreadDeath should never be caught, it can cause big problem is you catch it in a contained environment (eg. an application server) :
+
+An application should catch instances of this class only if it must clean up
+  after being terminated asynchronously. If ThreadDeath is caught by a method,
+  it is important that it be rethrown so that the thread actually dies.
+
+
+Generally, never.
+However, sometimes you need to catch specific Errors.
+If you're writing framework-ish code (loading 3rd party classes), it might be wise to catch LinkageErrors (no class def found, unsatisfied link, incompatible class change). 
+I've also seen some stupid 3rd-party code throwing sublcasses of Errors, so you'll have to handle these either.
+By the way, I'm not sure it isn't possible to recover from OutOfMemory.
+
+Very rarely.
+I'd say only at the top level of a thread in order to ATTEMPT to issue a message with the reason for a thread dying.
+If you are in a framework that does this sort of thing for you, leave it to the framework.
+
+An Error usually shouldn't be caught, as it indicates an abnormal condition that should never occur.
+From the Java API Specification for the Error class:
+
+An Error is a subclass of Throwable
+  that indicates serious problems that a
+  reasonable application should not try
+  to catch. Most such errors are
+  abnormal conditions. [...]
+A method is not required to declare in
+  its throws clause any subclasses of
+  Error that might be thrown during the
+  execution of the method but not
+  caught, since these errors are
+  abnormal conditions that should never
+  occur.
+
+As the specification mentions, an Error is only thrown in circumstances that are 
+Chances are, when an Error occurs, there is very little the application can do, and in some circumstances, the Java Virtual Machine itself may be in an unstable state (such as VirtualMachineError)
+Although an Error is a subclass of Throwable which means that it can be caught by a try-catch clause, but it probably isn't really needed, as the application will be in an abnormal state when an Error is thrown by the JVM.
+There's also a short section on this topic in Section 11.5 The Exception Hierarchy of the Java Language Specification, 2nd Edition.
+
+Very, very rarely.
+I did it only for one very very specific known cases.
+For example, java.lang.UnsatisfiedLinkError could be throw if two independence ClassLoader load same DLL. (I agree that I should move the JAR to a shared classloader)
+But most common case is that you needed logging in order to know what happened when user come to complain. You want a message or a popup to user, rather then silently dead.
+Even programmer in C/C++, they pop an error and tell something people don't understand  before it exit (e.g. memory failure).
+
+If you are crazy enough to be creating a new unit test framework, your test runner will probably need to catch java.lang.AssertionError thrown by any test cases.
+Otherwise, see other answers.
+
+Generally you should always catch java.lang.Error and write it to a log or display it to the user. I work in support and see daily that programmers cannot tell what has happened in a program.
+If you have a daemon thread then you must prevent it being terminated. In other cases your application will work correctly.
+You should only catch java.lang.Error at the highest level.
+If you look at the list of errors you will see that most can be handled. For example a ZipError occurs on reading corrupt zip files.
+The most common errors are OutOfMemoryError and NoClassDefFoundError, which are both in most cases runtime problems.
+For example:
+int length = Integer.parseInt(xyz);
+byte[] buffer = new byte[length];
+
+can produce an OutOfMemoryError but it is a runtime problem and no reason to terminate your program.
+NoClassDefFoundError occur mostly if a library is not present or if you work with another Java version. If it is an optional part of your program then you should not terminate your program.
+I can give many more examples of why it is a good idea to catch Throwable at the top level and produce a helpful error message.
+
+In multithreaded environment, you most often want to catch it! When you catch it, log it, and terminate whole application! If you don't do that, some thread that might be doing some crucial part would be dead, and rest of the application will think that everything is normal. Out of that, many unwanted situations can happen. 
+One smallest problem is that you wouldn't be able to easily find root of the problem, if other threads start throwing some exceptions because of one thread not working.
+For example, usually loop should be:
+try {
+   while (shouldRun()) {
+       doSomething();
+   }
+}
+catch (Throwable t) {
+   log(t);
+   stop();
+   System.exit(1);
+}
+
+Even in some cases, you would want to handle different Errors differently, for example, on OutOfMemoryError you would be able to close application regularly (even maybe free some memory, and continue), on some others, there is not much you can do.
+
+ideally we should never catch Error in our Java application as it is an abnormal condition. The application would be in abnormal state and could result in carshing or giving some seriously wrong result.
+
+It might be appropriate to catch error within unit tests that check an assertion is made. If someone disables assertions or otherwise deletes the assertion you would want to know
+
+In an Android application I am catching a java.lang.VerifyError. A library that I am using won't work in devices with an old version of the OS and the library code will throw such an error. I could of course avoid the error by checking the version of OS at runtime, but:
+
+The oldest supported SDK may change in future for the specific library
+The try-catch error block is part of a bigger falling back mechanism. Some specific devices, although they are supposed to support the library, throw exceptions. I catch VerifyError and all Exceptions to use a fall back solution.
+
+
+There is an Error when the JVM is no more working as expected, or is on the verge to. If you catch an error, there is no guarantee that the catch block will run, and even less that it will run till the end.
+It will also depend on the running computer, the current memory state, so there is no way to test, try and do your best. You will only have an hasardous result.
+You will also downgrade the readability of your code.
+
+it's quite handy to catch java.lang.AssertionError in a test environment...
+
+Ideally we should not handle/catch errors. But there may be cases where we need to do, based on requirement of framework or application. Say i have a XML Parser daemon which implements DOM Parser which consumes more Memory. If there is a requirement like Parser thread should not be died when it gets OutOfMemoryError, instead it should handle it and send a message/mail to administrator of application/framework. 

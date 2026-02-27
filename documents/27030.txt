@@ -1,0 +1,168 @@
+Comparing Arrays of Objects in JavaScript
+javascript arrays comparison
+I want to compare 2 arrays of objects in JavaScript code.  The objects have 8 total properties, but each object will not have a value for each, and the arrays are never going to be any larger than 8 items each, so maybe the brute force method of traversing each and then looking at the values of the 8 properties is the easiest way to do what I want to do, but before implementing, I wanted to see if anyone had a more elegant solution. Any thoughts?
+
+
+EDIT: You cannot overload operators in current, common browser-based implementations of JavaScript interpreters.
+To answer the original question, one way you could do this, and mind you, this is a bit of a hack, simply serialize the two arrays to JSON and then compare the two JSON strings. That would simply tell you if the arrays are different, obviously you could do this to each of the objects within the arrays as well to see which ones were different.
+Another option is to use a library which has some nice facilities for comparing objects - I use and recommend MochiKit.
+
+EDIT: The answer kamens gave deserves consideration as well, since a single function to compare two given objects would be much smaller than any library to do what I suggest (although my suggestion would certainly work well enough).
+Here is a naÃ¯ve implemenation that may do just enough for you - be aware that there are potential problems with this implementation:
+function objectsAreSame(x, y) {
+   var objectsAreSame = true;
+   for(var propertyName in x) {
+      if(x[propertyName] !== y[propertyName]) {
+         objectsAreSame = false;
+         break;
+      }
+   }
+   return objectsAreSame;
+}
+
+The assumption is that both objects have the same exact list of properties.
+Oh, and it is probably obvious that, for better or worse, I belong to the only-one-return-point camp. :)
+
+Honestly, with 8 objects max and 8 properties max per object, your best bet is to just traverse each object and make the comparisons directly.  It'll be fast and it'll be easy.
+If you're going to be using these types of comparisons often, then I agree with Jason about JSON serialization...but otherwise there's no need to slow down your app with a new library or JSON serialization code.
+
+The objectsAreSame function mentioned in Jason's answer works fine for me. However, there's a little problem: If x[propertyName] and y[propertyName] are objects (typeof x[propertyName] == 'object'), you'll need to call the function recursively in order to compare them.
+
+I have worked a bit on a simple algorithm to compare contents of two objects and return an intelligible list of difference. Thought I would share. It borrows some ideas for jQuery, namely the map function implementation and the object and array type checking. 
+It returns a list of "diff objects", which are arrays with the diff info. It's very simple.
+Here it is: 
+// compare contents of two objects and return a list of differences
+// returns an array where each element is also an array in the form:
+// [accessor, diffType, leftValue, rightValue ]
+//
+// diffType is one of the following:
+//   value: when primitive values at that index are different
+//   undefined: when values in that index exist in one object but don't in 
+//              another; one of the values is always undefined
+//   null: when a value in that index is null or undefined; values are
+//         expressed as boolean values, indicated wheter they were nulls
+//   type: when values in that index are of different types; values are 
+//         expressed as types
+//   length: when arrays in that index are of different length; values are
+//           the lengths of the arrays
+//
+
+function DiffObjects(o1, o2) {
+    // choose a map() impl.
+    // you may use $.map from jQuery if you wish
+    var map = Array.prototype.map?
+        function(a) { return Array.prototype.map.apply(a, Array.prototype.slice.call(arguments, 1)); } :
+        function(a, f) { 
+            var ret = new Array(a.length), value;
+            for ( var i = 0, length = a.length; i < length; i++ ) 
+                ret[i] = f(a[i], i);
+            return ret.concat();
+        };
+
+    // shorthand for push impl.
+    var push = Array.prototype.push;
+
+    // check for null/undefined values
+    if ((o1 == null) || (o2 == null)) {
+        if (o1 != o2)
+            return [["", "null", o1!=null, o2!=null]];
+
+        return undefined; // both null
+    }
+    // compare types
+    if ((o1.constructor != o2.constructor) ||
+        (typeof o1 != typeof o2)) {
+        return [["", "type", Object.prototype.toString.call(o1), Object.prototype.toString.call(o2) ]]; // different type
+
+    }
+
+    // compare arrays
+    if (Object.prototype.toString.call(o1) == "[object Array]") {
+        if (o1.length != o2.length) { 
+            return [["", "length", o1.length, o2.length]]; // different length
+        }
+        var diff =[];
+        for (var i=0; i<o1.length; i++) {
+            // per element nested diff
+            var innerDiff = DiffObjects(o1[i], o2[i]);
+            if (innerDiff) { // o1[i] != o2[i]
+                // merge diff array into parent's while including parent object name ([i])
+                push.apply(diff, map(innerDiff, function(o, j) { o[0]="[" + i + "]" + o[0]; return o; }));
+            }
+        }
+        // if any differences were found, return them
+        if (diff.length)
+            return diff;
+        // return nothing if arrays equal
+        return undefined;
+    }
+
+    // compare object trees
+    if (Object.prototype.toString.call(o1) == "[object Object]") {
+        var diff =[];
+        // check all props in o1
+        for (var prop in o1) {
+            // the double check in o1 is because in V8 objects remember keys set to undefined 
+            if ((typeof o2[prop] == "undefined") && (typeof o1[prop] != "undefined")) {
+                // prop exists in o1 but not in o2
+                diff.push(["[" + prop + "]", "undefined", o1[prop], undefined]); // prop exists in o1 but not in o2
+
+            }
+            else {
+                // per element nested diff
+                var innerDiff = DiffObjects(o1[prop], o2[prop]);
+                if (innerDiff) { // o1[prop] != o2[prop]
+                    // merge diff array into parent's while including parent object name ([prop])
+                    push.apply(diff, map(innerDiff, function(o, j) { o[0]="[" + prop + "]" + o[0]; return o; }));
+                }
+
+            }
+        }
+        for (var prop in o2) {
+            // the double check in o2 is because in V8 objects remember keys set to undefined 
+            if ((typeof o1[prop] == "undefined") && (typeof o2[prop] != "undefined")) {
+                // prop exists in o2 but not in o1
+                diff.push(["[" + prop + "]", "undefined", undefined, o2[prop]]); // prop exists in o2 but not in o1
+
+            }
+        }
+        // if any differences were found, return them
+        if (diff.length)
+            return diff;
+        // return nothing if objects equal
+        return undefined;
+    }
+    // if same type and not null or objects or arrays
+    // perform primitive value comparison
+    if (o1 != o2)
+        return [["", "value", o1, o2]];
+
+    // return nothing if values are equal
+    return undefined;
+}
+
+
+I know this is an old question and the answers provided work fine ... but this is a bit shorter and doesn't require any additional libraries ( i.e. JSON ):
+function arraysAreEqual(ary1,ary2){
+  return (ary1.join('') == ary2.join(''));
+}
+
+
+Please try this one 
+ function used_to_compare_two_arrays(a,b)
+     {
+///this block will make the array of indexed that array b contains a elements
+       var c = a.filter(function(value, index, obj)
+       {
+        return b.indexOf(value) > -1;
+         });
+    ///this is used for making comparison that both have same length if no condition go wrong 
+    if (c.length !== a.length) {
+        return 0;
+    }
+    else{
+      return 1;
+    }
+
+     }
+

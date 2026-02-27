@@ -1,0 +1,125 @@
+C# Lambda Expressions or Delegates as a Properties or Arguments
+c# lambda
+I'm looking to create an ValidationRule class that validates properties on an entity type object.  I'd really like to set the name of the property to inspect, and then give the class a delegate or a lambda expression that will be evaluated at runtime when the object runs its IsValid() method.  Does anyone have a snippet of something like this, or any ideas on how to pass an anonymous method as an argument or property?
+Also, I'm not sure if I'm explaining what I'm trying to accomplish so please ask questions if I'm not being clear.
+
+
+class ValidationRule {
+    public delegate bool Validator();
+
+    private Validator _v;
+
+    public ValidationRule(Validator v) { _v = v; }
+
+    public Validator Validator {
+        get { return _v; }
+        set { _v = value; }
+    }
+
+    public bool IsValid { get { return _v(); } }
+}
+
+var alwaysPasses = new ValidationRule(() => true);
+var alwaysFails = new ValidationRule(() => false);
+
+var textBoxHasText = new ValidationRule(() => textBox1.Text.Length > 0);
+
+That should get you started. But, really, inheritance is far more appropriate here. The problem is simply that the Validator doesn't have access to any state that it doesn't close over, this means that it isn't as reusable as say ValidationRules that contain their own state. Compare the following class to the previous definition of textBoxHasText.
+interface IValidationRule {
+    bool IsValid { get; }
+}
+
+class BoxHasText : IValidationRule {
+    TextBox _c;
+
+    public BoxHasText(TextBox c) { _c = c; }
+
+    public bool IsValid {
+        get { return _c.Text.Length > 0; }
+    }
+}
+
+
+Really, what you want to use is Func<T,bool> where T is the type of the item you want to validate. Then you would do something like this
+validator.AddValidation(item => (item.HasEnoughInformation() || item.IsEmpty());
+
+you could store them in a List<Func<T,bool>>.
+
+something like:
+class ValidationRule
+{
+    private Func<bool> validation;
+
+    public ValidationRule(Func<bool> validation)
+    {
+        this.validation = validation;
+    }
+    public bool IsValid()
+    {
+        return validation();
+    }
+}
+
+would be more C# 3 style but is compiled to the same code as @Frank Krueger's answer.
+This is what you asked for, but doesn't feel right. Is there a good reason why the entity can't be extended to perform validation?
+
+Well, simply, if you have an Entity class, and you want to use lambda expressions on that Entity to determine if something is valid (returning boolean), you could use a Func. 
+So, given an Entity:
+ class Entity
+ {
+      public string MyProperty { get; set; }
+ }
+
+You could define a ValidationRule class for that like this:
+ class ValidationRule<T> where T : Entity
+ {
+      private Func<T, bool> _rule;
+
+      public ValidationRule(Func<T, bool> rule)
+      {
+           _rule = rule;
+      }
+
+      public bool IsValid(T entity)
+      {
+           return _rule(entity);
+      }
+ }
+
+Then you could use it like this:
+ var myEntity = new Entity() { MyProperty = "Hello World" };
+ var rule = new ValidationRule<Entity>(entity => entity.MyProperty == "Hello World");
+
+ var valid = rule.IsValid(myEntity);
+
+Of course, that's just one possible solution.
+If you remove the generic constraint above ("where T : Entity"), you could make this a generic rules engine that could be used with any POCO. You wouldn't have to derive a class for every type of usage you need. So if I wanted to use this same class on a TextBox, I could use the following (after removing the generic constraint):
+ var rule = new ValidationRule<TextBox>(tb => tb.Text.Length > 0);
+ rule.IsValid(myTextBox);
+
+It's pretty flexible this way. Using lambda expressions and generics together is very powerful. Instead of accepting Func or Action, you could accept an Expression> or Expression> and have direct access to the express tree to automatically investigate things like the name of a method or property, what type of expression it is, etc. And people using your class would not have to change a single line of code.
+
+Would a rule definition syntax like this one work for you?
+  public static void Valid(Address address, IScope scope)
+  {
+    scope.Validate(() => address.Street1, StringIs.Limited(10, 256));
+    scope.Validate(() => address.Street2, StringIs.Limited(256));
+    scope.Validate(() => address.Country, Is.NotDefault);
+    scope.Validate(() => address.Zip, StringIs.Limited(10));
+
+    switch (address.Country)
+    {
+      case Country.USA:
+        scope.Validate(() => address.Zip, StringIs.Limited(5, 10));
+        break;
+      case Country.France:
+        break;
+      case Country.Russia:
+        scope.Validate(() => address.Zip, StringIs.Limited(6, 6));
+        break;
+      default:
+        scope.Validate(() => address.Zip, StringIs.Limited(1, 64));
+        break;
+    }
+
+Check out DDD and Rule driven UI Validation in .NET for more information

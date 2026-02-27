@@ -1,0 +1,63 @@
+Mysql results in PHP - arrays or objects?
+php mysql arrays object
+Been using PHP/MySQL for a little while now, and I'm wondering if there are any specific advantages (performance or otherwise) to using mysql_fetch_object() vs mysql_fetch_assoc() / mysql_fetch_array().
+
+
+Fetching an array with mysql_fetch_array() lets you loop through the result set via either a foreach loop or a for loop. mysql_fetch_object() cannot be traversed by a for loop.
+Not sure if that even matters much, just thought I'd mention it.
+
+I think the difference between all these functions is insignificant, especially when compared to code readability.
+If you're concerned about this kind of optimization, use mysql_fetch_row(). It's  the fastest because it doesn't use associative arrays (e.g. $row[2]), but it's easiest to break your code with it.
+
+while ($Row = mysql_fetch_object($rs)) {
+    // ...do stuff...
+}
+
+...is how I've always done it.  I prefer to use objects for collections of data instead of arrays, since it organizes the data a little better, and I know I'm a lot less likely to try to add arbitrary properties to an object than I am to try to add an index to an array (for the first few years I used PHP, I thought you couldn't just assign arbitrary properties to an object, so it's ingrained to not do that).
+
+Performance-wise it doesn't matter what you use. The difference is that mysql_fetch_object returns object:
+while ($row = mysql_fetch_object($result)) {
+    echo $row->user_id;
+    echo $row->fullname;
+}
+
+mysql_fetch_assoc() returns associative array:
+while ($row = mysql_fetch_assoc($result)) {
+    echo $row["userid"];
+    echo $row["fullname"];
+}
+
+and mysql_fetch_array() returns array:
+while ($row = mysql_fetch_array($result)) {
+    echo $row[0];
+    echo $row[1] ;
+}
+
+
+Speed-wise, mysql_fetch_object() is identical to mysql_fetch_array(), and almost as quick as mysql_fetch_row().
+Also, with mysql_fetch_object() you will only be able to access field data by corresponding field names. 
+
+I vote against mysql_fetch_array()
+Because you get back both numerically indexed columns and column names, this creates an array that is twice as large. It's fine if you don't need to debug your code and view it's contents. But for the rest of us, it becomes harder to debug since you have to wade through twice as much data in an odd looking format. 
+I sometimes run into a project that uses this function then when I debug, I think that something has gone terribly wrong since I have numeric columns mixed in with my data.
+So in the name of sanity, please don't use this function, it makes code maintenance more difficult
+
+Something to keep in mind: arrays can easily be added to a memory cache (eaccelerator, XCache, ..), while objects cannot (they need to get serialized when storing and unserialized on every retrieval!).
+You may switch to using arrays instead of objects when you want to add memory cache support - but by that time you may have to change a lot of code already, which uses the previously used object type return values.
+
+mysql_fetch_array makes your code difficult to read = a maintenace nightmare. You can't see at a glance what data your object is dealing with. It slightly faster, but if that is important to you you are processing so much data that PHP is probably not the right way to go.
+mysql_fetch_object has some drawbacks, especially if you base a db layer on it.
+
+Column names may not be valid PHP identifiers, e.g tax-allowance or user.id if your database driver gives you the column name as specified in the query. Then you have to start using {} all over the place.
+If you want to get a column based on its name, stroed in some variable you also have to start using variable properties $row->{$column_name}, while array syntax $row[$column_name]
+Constructors don't get invoked when you might expect if you specify the classname.
+If you don't specify the class name you get a stdClass, which is hardly better than an array anyway.
+
+mysql_fetch_assoc is the easiest of the three to work with, and I like the distinction this gives in the code between objects and database result rows...
+$object->property=$row['column1'];
+$object->property=$row[$column_name];
+foreach($row as $column_name=>$column_value){...}
+
+While many OOP fans (and I am an OOP fan) like the idea of turning everything into an object, I feel that the associative array is a better model of a row from a database than an object, as in my mind an object is a set of properties with methods to act upon them, whereas the row is just data and should be treated as such without further complication.
+
+Additionally, if you eventually want to apply Memcaching to your MySQL results, you may want to opt for arrays. It seems it's safer to store array types, rather than object type results.

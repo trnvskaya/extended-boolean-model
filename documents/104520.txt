@@ -1,0 +1,136 @@
+WPF Validation for the whole form
+wpf validation
+I have been seriously disappointed with WPF validation system. Anyway! How can I validate the complete form by clicking the "button"? 
+For some reason everything in WPF is soo complicated! I can do the validation in 1 line of code in ASP.NET which requires like 10-20 lines of code in WPF!!
+I can do this using my own ValidationEngine framework: 
+Customer customer = new Customer();
+customer.FirstName = "John";
+customer.LastName = String.Empty;
+
+ValidationEngine.Validate(customer);
+
+if (customer.BrokenRules.Count > 0)
+{
+   // do something display the broken rules! 
+}
+
+
+
+I would suggest to look at the IDataErrorInfo interface on your business object. Also have a look at this article: Self Validating Text Box
+
+The description of your problem is a little vague to me. I mean, I'm not exactly sure what your difficulty is.
+Assuming that the DataContext is some sort of presenter or controller that has a propetry representing the customer instance, and ValidateCommand is a property of type ICommand:
+  <StackPanel>  
+    <TextBox Text="{Binding CurrentCustomer.FirstName}" />
+    <TextBox Text="{Binding CurrentCustomer.LastName}" />
+    <Button Content="Validate" 
+            Command="{Binding ValidateCommand}"
+            CommandParameter="{Binding CurrentCustomer}" />
+    <ItemsControl ItemsSource="{Binding CurrentCustomer.BrokenRules}" />
+  </StackPanel>
+
+This XAML is really simplified, of course, and there are other ways to do it.
+As a Web developer who is now heavily involved with WPF, I find most tasks like this significantly easier in WPF.
+
+A WPF application should disable the button to submit a form iff the entered data is not valid. You can achieve this by implementing the IDataErrorInfo interface on your business object, using Bindings with ValidatesOnDataErrors=true. For customizing the look of individual controls in the case of errors, set a Validation.ErrorTemplate.
+XAML:
+<Window x:Class="Example.CustomerWindow" ...>
+    <Window.CommandBindings>
+        <CommandBinding Command="ApplicationCommands.Save"
+                        CanExecute="SaveCanExecute"
+                        Executed="SaveExecuted" />
+    </Window.CommandBindings>
+    <StackPanel>
+        <TextBox Text="{Binding FirstName, ValidatesOnDataErrors=true, UpdateSourceTrigger=PropertyChanged}" />
+        <TextBox Text="{Binding LastName, ValidatesOnDataErrors=true, UpdateSourceTrigger=PropertyChanged}" />
+        <Button Command="ApplicationCommands.Save" IsDefault="True">Save</Button>
+        <TextBlock Text="{Binding Error}"/>
+    </StackPanel>
+</Window>
+
+This creates a Window with two TextBoxes where you can edit the first and last name of a customer. The "Save" button is only enabled if no validation errors have occurred. The TextBlock beneath the button shows the current errors, so the user knows what's up.
+The default ErrorTemplate is a thin red border around the erroneous Control. If that doesn't fit into you visual concept, look at Validation in Windows Presentation Foundation article on CodeProject for an in-depth look into what can be done about that.
+To get the window to actually work, there has to be a bit infrastructure in the Window and the Customer.
+Code Behind
+// The CustomerWindow class receives the Customer to display
+// and manages the Save command
+public class CustomerWindow : Window
+{
+    private Customer CurrentCustomer;
+    public CustomerWindow(Customer c) 
+    {
+        // store the customer for the bindings
+        DataContext = CurrentCustomer = c;
+        InitializeComponent();
+    }
+
+    private void SaveCanExecute(object sender, CanExecuteRoutedEventArgs e)
+    {
+        e.CanExecute = ValidationEngine.Validate(CurrentCustomer);
+    }
+
+    private void SaveExecuted(object sender, ExecutedRoutedEventArgs e) 
+    {
+        CurrentCustomer.Save();
+    }
+}
+
+public class Customer : IDataErrorInfo, INotifyPropertyChanged
+{
+    // holds the actual value of FirstName
+    private string FirstNameBackingStore;
+    // the accessor for FirstName. Only accepts valid values.
+    public string FirstName {
+        get { return FirstNameBackingStore; }
+        set {
+            FirstNameBackingStore = value;
+            ValidationEngine.Validate(this);
+            OnPropertyChanged("FirstName");
+        }
+    }
+    // similar for LastName        
+
+    string IDataErrorInfo.Error {
+        get { return String.Join("\n", BrokenRules.Values); }
+    }
+
+    string IDataErrorInfo.this[string columnName]
+    {
+        get { return BrokenRules[columnName]; }
+    }
+}
+
+An obvious improvement would be to move the IDataErrorInfo implementation up the class hierarchy, since it only depends on the ValidationEngine, but not the business object.
+While this is indeed more code than the simple example you provided, it also has quite a bit more of functionality than only checking for validity. This gives you fine grained, and automatically updated indications to the user about validation problems and automatically disables the "Save" button as long as the user tries to enter invalid data.
+
+You might be interested in the BookLibrary sample application of the WPF Application Framework (WAF). It shows how to use validation in WPF and how to control the Save button when validation errors exists.
+
+ValidatesOnDataError is used to validate business rules against your view models, and it will validate only if the binding succeeds. 
+ValidatesOnExceptions needs to be applied along with ValidatesOnDataError to handle those scenarios where wpf cannot perform binding because of data type mismatch, lets say you want to bind a TextBox to the Age (integer) property in your view model
+<TextBox Text="{Binding Age, ValidatesOnDataErrors=true, UpdateSourceTrigger=PropertyChanged}" />
+
+If the user enters invalid entry by typing alphabets rather than numbers as age, say xyz, the wpf databinding will silently ignores the value as it cannot bind xyz to Age, and the binding error will be lost unless the binding is decorated with ValidatesOnExceptions
+<TextBox Text="{Binding Age, ValidatesOnDataErrors=true, ValidatesOnExceptions="True", UpdateSourceTrigger=PropertyChanged}" />
+
+ValidatesOnException uses default exception handling for binding errors using ExceptionValidationRule, the above syntax is a short form for the following 
+<TextBox>
+    <TextBox.Text>
+        <Binding Path="Age" UpdateSourceTrigger="PropertyChanged" ValidatesOnDataErrors="True">
+            <Binding.ValidationRules>
+                  <ExceptionValidationRule />
+             </Binding.ValidationRules>
+        </Binding>
+    </TextBox.Text>
+</TextBox>
+
+You can defined your own rules to validate against the user input by deriving from ValidationRule and implementing Validate method, NumericRule in the following example
+<TextBox.Text>
+ <Binding Path="Age" ValidatesOnDataErrors="True">
+   <Binding.ValidationRules>
+        <rules:NumericRule />
+      </Binding.ValidationRules>
+    </Binding>
+  </TextBox.Text>
+
+The validation rules should be generic and not tied to business, as the later is accomplished through IDataErrorInfo and ValidatesOnDataError.  
+The above syntax is quite messy compared to the one line binding syntax we have, by implementing the ValidationRule as an attached property the syntax can be improved and you can take a look at it here

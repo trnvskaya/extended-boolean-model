@@ -1,0 +1,680 @@
+How to do query auto-completion/suggestions in Lucene?
+java autocomplete lucene
+I'm looking for a way to do query auto-completion/suggestions in Lucene. I've Googled around a bit and played around a bit, but all of the examples I've seen seem to be setting up filters in Solr. We don't use Solr and aren't planning to move to using Solr in the near future, and Solr is obviously just wrapping around Lucene anyway, so I imagine there must be a way to do it!
+I've looked into using EdgeNGramFilter, and I realise that I'd have to run the filter on the index fields and get the tokens out and then compare them against the inputted Query... I'm just struggling to make the connection between the two into a bit of code, so help is much appreciated!
+To be clear on what I'm looking for (I realised I wasn't being overly clear, sorry) - I'm looking for a solution where when searching for a term, it'd return a list of suggested queries. When typing 'inter' into the search field, it'll come back with a list of suggested queries, such as 'internet', 'international', etc.
+
+
+You can use the class PrefixQuery on a "dictionary" index. The class LuceneDictionary could be helpful too.
+Take a look at this article. It explains how to implement the feature "Did you mean ?" available in modern search engine such as Google. You may not need something as complex as described in the article. However the article explains how to use the Lucene spell package.
+One way to build a "dictionary" index would be  to iterate on a LuceneDictionary.
+Hope it helps
+
+Based on @Alexandre Victoor's answer, I wrote a little class based on the Lucene Spellchecker in the contrib package (and using the LuceneDictionary included in it) that does exactly what I want.
+This allows re-indexing from a single source index with a single field, and provides suggestions for terms. Results are sorted by the number of matching documents with that term in the original index, so more popular terms appear first. Seems to work pretty well :)
+import java.io.IOException;
+import java.io.Reader;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+
+import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.ISOLatin1AccentFilter;
+import org.apache.lucene.analysis.LowerCaseFilter;
+import org.apache.lucene.analysis.StopFilter;
+import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.ngram.EdgeNGramTokenFilter;
+import org.apache.lucene.analysis.ngram.EdgeNGramTokenFilter.Side;
+import org.apache.lucene.analysis.standard.StandardFilter;
+import org.apache.lucene.analysis.standard.StandardTokenizer;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.document.Field;
+import org.apache.lucene.index.CorruptIndexException;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.Term;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.Sort;
+import org.apache.lucene.search.TermQuery;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.spell.LuceneDictionary;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FSDirectory;
+
+/**
+ * Search term auto-completer, works for single terms (so use on the last term
+ * of the query).
+ * <p>
+ * Returns more popular terms first.
+ * 
+ * @author Mat Mannion, M.Mannion@warwick.ac.uk
+ */
+public final class Autocompleter {
+
+    private static final String GRAMMED_WORDS_FIELD = "words";
+
+    private static final String SOURCE_WORD_FIELD = "sourceWord";
+
+    private static final String COUNT_FIELD = "count";
+
+    private static final String[] ENGLISH_STOP_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "but", "by",
+    "for", "i", "if", "in", "into", "is",
+    "no", "not", "of", "on", "or", "s", "such",
+    "t", "that", "the", "their", "then", "there", "these",
+    "they", "this", "to", "was", "will", "with"
+    };
+
+    private final Directory autoCompleteDirectory;
+
+    private IndexReader autoCompleteReader;
+
+    private IndexSearcher autoCompleteSearcher;
+
+    public Autocompleter(String autoCompleteDir) throws IOException {
+    	this.autoCompleteDirectory = FSDirectory.getDirectory(autoCompleteDir,
+    			null);
+
+    	reOpenReader();
+    }
+
+    public List<String> suggestTermsFor(String term) throws IOException {
+    	// get the top 5 terms for query
+    	Query query = new TermQuery(new Term(GRAMMED_WORDS_FIELD, term));
+    	Sort sort = new Sort(COUNT_FIELD, true);
+
+    	TopDocs docs = autoCompleteSearcher.search(query, null, 5, sort);
+    	List<String> suggestions = new ArrayList<String>();
+    	for (ScoreDoc doc : docs.scoreDocs) {
+    		suggestions.add(autoCompleteReader.document(doc.doc).get(
+    				SOURCE_WORD_FIELD));
+    	}
+
+    	return suggestions;
+    }
+
+    @SuppressWarnings("unchecked")
+    public void reIndex(Directory sourceDirectory, String fieldToAutocomplete)
+    		throws CorruptIndexException, IOException {
+    	// build a dictionary (from the spell package)
+    	IndexReader sourceReader = IndexReader.open(sourceDirectory);
+
+    	LuceneDictionary dict = new LuceneDictionary(sourceReader,
+    			fieldToAutocomplete);
+
+    	// code from
+    	// org.apache.lucene.search.spell.SpellChecker.indexDictionary(
+    	// Dictionary)
+    	IndexReader.unlock(autoCompleteDirectory);
+
+    	// use a custom analyzer so we can do EdgeNGramFiltering
+    	IndexWriter writer = new IndexWriter(autoCompleteDirectory,
+    	new Analyzer() {
+    		public TokenStream tokenStream(String fieldName,
+    				Reader reader) {
+    			TokenStream result = new StandardTokenizer(reader);
+
+    			result = new StandardFilter(result);
+    			result = new LowerCaseFilter(result);
+    			result = new ISOLatin1AccentFilter(result);
+    			result = new StopFilter(result,
+    				ENGLISH_STOP_WORDS);
+    			result = new EdgeNGramTokenFilter(
+    				result, Side.FRONT,1, 20);
+
+    			return result;
+    		}
+    	}, true);
+
+    	writer.setMergeFactor(300);
+    	writer.setMaxBufferedDocs(150);
+
+    	// go through every word, storing the original word (incl. n-grams) 
+    	// and the number of times it occurs
+    	Map<String, Integer> wordsMap = new HashMap<String, Integer>();
+
+    	Iterator<String> iter = (Iterator<String>) dict.getWordsIterator();
+    	while (iter.hasNext()) {
+    		String word = iter.next();
+
+    		int len = word.length();
+    		if (len < 3) {
+    			continue; // too short we bail but "too long" is fine...
+    		}
+
+    		if (wordsMap.containsKey(word)) {
+    			throw new IllegalStateException(
+    					"This should never happen in Lucene 2.3.2");
+    			// wordsMap.put(word, wordsMap.get(word) + 1);
+    		} else {
+    			// use the number of documents this word appears in
+    			wordsMap.put(word, sourceReader.docFreq(new Term(
+    					fieldToAutocomplete, word)));
+    		}
+    	}
+
+    	for (String word : wordsMap.keySet()) {
+    		// ok index the word
+    		Document doc = new Document();
+    		doc.add(new Field(SOURCE_WORD_FIELD, word, Field.Store.YES,
+    				Field.Index.UN_TOKENIZED)); // orig term
+    		doc.add(new Field(GRAMMED_WORDS_FIELD, word, Field.Store.YES,
+    				Field.Index.TOKENIZED)); // grammed
+    		doc.add(new Field(COUNT_FIELD,
+    				Integer.toString(wordsMap.get(word)), Field.Store.NO,
+    				Field.Index.UN_TOKENIZED)); // count
+
+    		writer.addDocument(doc);
+    	}
+
+    	sourceReader.close();
+
+    	// close writer
+    	writer.optimize();
+    	writer.close();
+
+    	// re-open our reader
+    	reOpenReader();
+    }
+
+    private void reOpenReader() throws CorruptIndexException, IOException {
+    	if (autoCompleteReader == null) {
+    		autoCompleteReader = IndexReader.open(autoCompleteDirectory);
+    	} else {
+    		autoCompleteReader.reopen();
+    	}
+
+    	autoCompleteSearcher = new IndexSearcher(autoCompleteReader);
+    }
+
+    public static void main(String[] args) throws Exception {
+    	Autocompleter autocomplete = new Autocompleter("/index/autocomplete");
+
+    	// run this to re-index from the current index, shouldn't need to do
+    	// this very often
+    	// autocomplete.reIndex(FSDirectory.getDirectory("/index/live", null),
+    	// "content");
+
+    	String term = "steve";
+
+    	System.out.println(autocomplete.suggestTermsFor(term));
+    	// prints [steve, steven, stevens, stevenson, stevenage]
+    }
+
+}
+
+
+Here's a transliteration of Mat's implementation into C# for Lucene.NET, along with a snippet for wiring a text box using jQuery's autocomplete feature.
+<input id="search-input" name="query" placeholder="Search database." type="text" />
+
+... JQuery Autocomplete:
+// don't navigate away from the field when pressing tab on a selected item
+$( "#search-input" ).keydown(function (event) {
+    if (event.keyCode === $.ui.keyCode.TAB && $(this).data("autocomplete").menu.active) {
+        event.preventDefault();
+    }
+});
+
+$( "#search-input" ).autocomplete({
+    source: '@Url.Action("SuggestTerms")', // <-- ASP.NET MVC Razor syntax
+    minLength: 2,
+    delay: 500,
+    focus: function () {
+        // prevent value inserted on focus
+        return false;
+    },
+    select: function (event, ui) {
+        var terms = this.value.split(/\s+/);
+        terms.pop(); // remove dropdown item
+        terms.push(ui.item.value.trim()); // add completed item
+        this.value = terms.join(" "); 
+        return false;
+    },
+ });
+
+... here's the ASP.NET MVC Controller code:
+    //
+    // GET: /MyApp/SuggestTerms?term=something
+    public JsonResult SuggestTerms(string term)
+    {
+        if (string.IsNullOrWhiteSpace(term))
+            return Json(new string[] {});
+
+        term = term.Split().Last();
+
+        // Fetch suggestions
+        string[] suggestions = SearchSvc.SuggestTermsFor(term).ToArray();
+
+        return Json(suggestions, JsonRequestBehavior.AllowGet);
+    }
+
+... and here's Mat's code in C#:
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using Lucene.Net.Store;
+using Lucene.Net.Index;
+using Lucene.Net.Search;
+using SpellChecker.Net.Search.Spell;
+using Lucene.Net.Analysis;
+using Lucene.Net.Analysis.Standard;
+using Lucene.Net.Analysis.NGram;
+using Lucene.Net.Documents;
+
+namespace Cipher.Services
+{
+    /// <summary>
+    /// Search term auto-completer, works for single terms (so use on the last term of the query).
+    /// Returns more popular terms first.
+    /// <br/>
+    /// Author: Mat Mannion, M.Mannion@warwick.ac.uk
+    /// <seealso cref="http://stackoverflow.com/questions/120180/how-to-do-query-auto-completion-suggestions-in-lucene"/>
+    /// </summary>
+    /// 
+    public class SearchAutoComplete {
+
+        public int MaxResults { get; set; }
+
+        private class AutoCompleteAnalyzer : Analyzer
+        {
+            public override TokenStream  TokenStream(string fieldName, System.IO.TextReader reader)
+            {
+                TokenStream result = new StandardTokenizer(kLuceneVersion, reader);
+
+                result = new StandardFilter(result);
+                result = new LowerCaseFilter(result);
+                result = new ASCIIFoldingFilter(result);
+                result = new StopFilter(false, result, StopFilter.MakeStopSet(kEnglishStopWords));
+                result = new EdgeNGramTokenFilter(
+                    result, Lucene.Net.Analysis.NGram.EdgeNGramTokenFilter.DEFAULT_SIDE,1, 20);
+
+                return result;
+            }
+        }
+
+        private static readonly Lucene.Net.Util.Version kLuceneVersion = Lucene.Net.Util.Version.LUCENE_29;
+
+        private static readonly String kGrammedWordsField = "words";
+
+        private static readonly String kSourceWordField = "sourceWord";
+
+        private static readonly String kCountField = "count";
+
+        private static readonly String[] kEnglishStopWords = {
+            "a", "an", "and", "are", "as", "at", "be", "but", "by",
+            "for", "i", "if", "in", "into", "is",
+            "no", "not", "of", "on", "or", "s", "such",
+            "t", "that", "the", "their", "then", "there", "these",
+            "they", "this", "to", "was", "will", "with"
+        };
+
+        private readonly Directory m_directory;
+
+        private IndexReader m_reader;
+
+        private IndexSearcher m_searcher;
+
+        public SearchAutoComplete(string autoCompleteDir) : 
+            this(FSDirectory.Open(new System.IO.DirectoryInfo(autoCompleteDir)))
+        {
+        }
+
+        public SearchAutoComplete(Directory autoCompleteDir, int maxResults = 8) 
+        {
+            this.m_directory = autoCompleteDir;
+            MaxResults = maxResults;
+
+            ReplaceSearcher();
+        }
+
+        /// <summary>
+        /// Find terms matching the given partial word that appear in the highest number of documents.</summary>
+        /// <param name="term">A word or part of a word</param>
+        /// <returns>A list of suggested completions</returns>
+        public IEnumerable<String> SuggestTermsFor(string term) 
+        {
+            if (m_searcher == null)
+                return new string[] { };
+
+            // get the top terms for query
+            Query query = new TermQuery(new Term(kGrammedWordsField, term.ToLower()));
+            Sort sort = new Sort(new SortField(kCountField, SortField.INT));
+
+            TopDocs docs = m_searcher.Search(query, null, MaxResults, sort);
+            string[] suggestions = docs.ScoreDocs.Select(doc => 
+                m_reader.Document(doc.Doc).Get(kSourceWordField)).ToArray();
+
+            return suggestions;
+        }
+
+
+        /// <summary>
+        /// Open the index in the given directory and create a new index of word frequency for the 
+        /// given index.</summary>
+        /// <param name="sourceDirectory">Directory containing the index to count words in.</param>
+        /// <param name="fieldToAutocomplete">The field in the index that should be analyzed.</param>
+        public void BuildAutoCompleteIndex(Directory sourceDirectory, String fieldToAutocomplete)
+        {
+            // build a dictionary (from the spell package)
+            using (IndexReader sourceReader = IndexReader.Open(sourceDirectory, true))
+            {
+                LuceneDictionary dict = new LuceneDictionary(sourceReader, fieldToAutocomplete);
+
+                // code from
+                // org.apache.lucene.search.spell.SpellChecker.indexDictionary(
+                // Dictionary)
+                //IndexWriter.Unlock(m_directory);
+
+                // use a custom analyzer so we can do EdgeNGramFiltering
+                var analyzer = new AutoCompleteAnalyzer();
+                using (var writer = new IndexWriter(m_directory, analyzer, true, IndexWriter.MaxFieldLength.LIMITED))
+                {
+                    writer.MergeFactor = 300;
+                    writer.SetMaxBufferedDocs(150);
+
+                    // go through every word, storing the original word (incl. n-grams) 
+                    // and the number of times it occurs
+                    foreach (string word in dict)
+                    {
+                        if (word.Length < 3)
+                            continue; // too short we bail but "too long" is fine...
+
+                        // ok index the word
+                        // use the number of documents this word appears in
+                        int freq = sourceReader.DocFreq(new Term(fieldToAutocomplete, word));
+                        var doc = MakeDocument(fieldToAutocomplete, word, freq);
+
+                        writer.AddDocument(doc);
+                    }
+
+                    writer.Optimize();
+                }
+
+            }
+
+            // re-open our reader
+            ReplaceSearcher();
+        }
+
+        private static Document MakeDocument(String fieldToAutocomplete, string word, int frequency)
+        {
+            var doc = new Document();
+            doc.Add(new Field(kSourceWordField, word, Field.Store.YES,
+                    Field.Index.NOT_ANALYZED)); // orig term
+            doc.Add(new Field(kGrammedWordsField, word, Field.Store.YES,
+                    Field.Index.ANALYZED)); // grammed
+            doc.Add(new Field(kCountField,
+                    frequency.ToString(), Field.Store.NO,
+                    Field.Index.NOT_ANALYZED)); // count
+            return doc;
+        }
+
+        private void ReplaceSearcher() 
+        {
+            if (IndexReader.IndexExists(m_directory))
+            {
+                if (m_reader == null)
+                    m_reader = IndexReader.Open(m_directory, true);
+                else
+                    m_reader.Reopen();
+
+                m_searcher = new IndexSearcher(m_reader);
+            }
+            else
+            {
+                m_searcher = null;
+            }
+        }
+
+
+    }
+}
+
+
+In addition to the above (much appreciated) post re: c# conversion, should you be using .NET 3.5 you'll need to include the code for the EdgeNGramTokenFilter - or at least I did - using Lucene 2.9.2 - this filter is missing from the .NET version as far as I could tell.  I had to go and find the .NET 4 version online in 2.9.3 and port back - hope this makes the procedure less painful for someone...
+Edit : Please also note that the array returned by the SuggestTermsFor() function is sorted by count ascending, you'll probably want to reverse it to get the most popular terms first in your list
+using System.IO;
+using System.Collections;
+using Lucene.Net.Analysis;
+using Lucene.Net.Analysis.Tokenattributes;
+using Lucene.Net.Util;
+
+namespace Lucene.Net.Analysis.NGram
+{
+
+/**
+ * Tokenizes the given token into n-grams of given size(s).
+ * <p>
+ * This {@link TokenFilter} create n-grams from the beginning edge or ending edge of a input token.
+ * </p>
+ */
+public class EdgeNGramTokenFilter : TokenFilter
+{
+    public static Side DEFAULT_SIDE = Side.FRONT;
+    public static int DEFAULT_MAX_GRAM_SIZE = 1;
+    public static int DEFAULT_MIN_GRAM_SIZE = 1;
+
+    // Replace this with an enum when the Java 1.5 upgrade is made, the impl will be simplified
+    /** Specifies which side of the input the n-gram should be generated from */
+    public class Side
+    {
+        private string label;
+
+        /** Get the n-gram from the front of the input */
+        public static Side FRONT = new Side("front");
+
+        /** Get the n-gram from the end of the input */
+        public static Side BACK = new Side("back");
+
+        // Private ctor
+        private Side(string label) { this.label = label; }
+
+        public string getLabel() { return label; }
+
+        // Get the appropriate Side from a string
+        public static Side getSide(string sideName)
+        {
+            if (FRONT.getLabel().Equals(sideName))
+            {
+                return FRONT;
+            }
+            else if (BACK.getLabel().Equals(sideName))
+            {
+                return BACK;
+            }
+            return null;
+        }
+    }
+
+    private int minGram;
+    private int maxGram;
+    private Side side;
+    private char[] curTermBuffer;
+    private int curTermLength;
+    private int curGramSize;
+    private int tokStart;
+
+    private TermAttribute termAtt;
+    private OffsetAttribute offsetAtt;
+
+    protected EdgeNGramTokenFilter(TokenStream input) : base(input)
+    {
+        this.termAtt = (TermAttribute)AddAttribute(typeof(TermAttribute));
+        this.offsetAtt = (OffsetAttribute)AddAttribute(typeof(OffsetAttribute));
+    }
+
+    /**
+     * Creates EdgeNGramTokenFilter that can generate n-grams in the sizes of the given range
+     *
+     * @param input {@link TokenStream} holding the input to be tokenized
+     * @param side the {@link Side} from which to chop off an n-gram
+     * @param minGram the smallest n-gram to generate
+     * @param maxGram the largest n-gram to generate
+     */
+    public EdgeNGramTokenFilter(TokenStream input, Side side, int minGram, int maxGram)
+        : base(input)
+    {
+
+        if (side == null)
+        {
+            throw new System.ArgumentException("sideLabel must be either front or back");
+        }
+
+        if (minGram < 1)
+        {
+            throw new System.ArgumentException("minGram must be greater than zero");
+        }
+
+        if (minGram > maxGram)
+        {
+            throw new System.ArgumentException("minGram must not be greater than maxGram");
+        }
+
+        this.minGram = minGram;
+        this.maxGram = maxGram;
+        this.side = side;
+        this.termAtt = (TermAttribute)AddAttribute(typeof(TermAttribute));
+        this.offsetAtt = (OffsetAttribute)AddAttribute(typeof(OffsetAttribute));
+    }
+
+    /**
+     * Creates EdgeNGramTokenFilter that can generate n-grams in the sizes of the given range
+     *
+     * @param input {@link TokenStream} holding the input to be tokenized
+     * @param sideLabel the name of the {@link Side} from which to chop off an n-gram
+     * @param minGram the smallest n-gram to generate
+     * @param maxGram the largest n-gram to generate
+     */
+    public EdgeNGramTokenFilter(TokenStream input, string sideLabel, int minGram, int maxGram)
+        : this(input, Side.getSide(sideLabel), minGram, maxGram)
+    {
+
+    }
+
+    public override bool IncrementToken()
+    {
+        while (true)
+        {
+            if (curTermBuffer == null)
+            {
+                if (!input.IncrementToken())
+                {
+                    return false;
+                }
+                else
+                {
+                    curTermBuffer = (char[])termAtt.TermBuffer().Clone();
+                    curTermLength = termAtt.TermLength();
+                    curGramSize = minGram;
+                    tokStart = offsetAtt.StartOffset();
+                }
+            }
+            if (curGramSize <= maxGram)
+            {
+                if (!(curGramSize > curTermLength         // if the remaining input is too short, we can't generate any n-grams
+                    || curGramSize > maxGram))
+                {       // if we have hit the end of our n-gram size range, quit
+                    // grab gramSize chars from front or back
+                    int start = side == Side.FRONT ? 0 : curTermLength - curGramSize;
+                    int end = start + curGramSize;
+                    ClearAttributes();
+                    offsetAtt.SetOffset(tokStart + start, tokStart + end);
+                    termAtt.SetTermBuffer(curTermBuffer, start, curGramSize);
+                    curGramSize++;
+                    return true;
+                }
+            }
+            curTermBuffer = null;
+        }
+    }
+
+    public override  Token Next(Token reusableToken)
+    {
+        return base.Next(reusableToken);
+    }
+    public override Token Next()
+    {
+        return base.Next();
+    }
+    public override void Reset()
+    {
+        base.Reset();
+        curTermBuffer = null;
+    }
+}
+}
+
+
+my code based on lucene 4.2ï¼may help you
+import java.io.File;
+import java.io.IOException;
+
+import org.apache.lucene.analysis.miscellaneous.PerFieldAnalyzerWrapper;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.IndexWriterConfig.OpenMode;
+import org.apache.lucene.search.spell.Dictionary;
+import org.apache.lucene.search.spell.LuceneDictionary;
+import org.apache.lucene.search.spell.PlainTextDictionary;
+import org.apache.lucene.search.spell.SpellChecker;
+import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.store.IOContext;
+import org.apache.lucene.store.RAMDirectory;
+import org.apache.lucene.util.Version;
+import org.wltea4pinyin.analyzer.lucene.IKAnalyzer4PinYin;
+
+
+/**
+ * 
+ * 
+ * @author <a href="mailto:liu.gang@renren-inc.com"></a>
+ * @version 2013-11-25ä¸å11:13:59
+ */
+public class LuceneSpellCheckerDemoService {
+
+private static final String INDEX_FILE = "/Users/r/Documents/jar/luke/youtui/index";
+private static final String INDEX_FILE_SPELL = "/Users/r/Documents/jar/luke/spell";
+
+private static final String INDEX_FIELD = "app_name_quanpin";
+
+public static void main(String args[]) {
+
+    try {
+        //
+        PerFieldAnalyzerWrapper wrapper = new PerFieldAnalyzerWrapper(new IKAnalyzer4PinYin(
+                true));
+
+        //  read index conf
+        IndexWriterConfig conf = new IndexWriterConfig(Version.LUCENE_42, wrapper);
+        conf.setOpenMode(OpenMode.CREATE_OR_APPEND);
+
+        // read dictionary
+        Directory directory = FSDirectory.open(new File(INDEX_FILE));
+        RAMDirectory ramDir = new RAMDirectory(directory, IOContext.READ);
+        DirectoryReader indexReader = DirectoryReader.open(ramDir);
+
+        Dictionary dic = new LuceneDictionary(indexReader, INDEX_FIELD);
+
+
+        SpellChecker sc = new SpellChecker(FSDirectory.open(new File(INDEX_FILE_SPELL)));
+        //sc.indexDictionary(new PlainTextDictionary(new File("myfile.txt")), conf, false);
+        sc.indexDictionary(dic, conf, true);
+        String[] strs = sc.suggestSimilar("zhsiwusdazhanjiangshi", 10);
+        for (int i = 0; i < strs.length; i++) {
+            System.out.println(strs[i]);
+        }
+        sc.close();
+    } catch (IOException e) {
+        e.printStackTrace();
+    }
+}
+
+
+}
+

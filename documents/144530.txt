@@ -1,0 +1,156 @@
+== or .Equals()
+c#
+Why use one over the other?
+
+
+== is the identity test. It will return true if the two objects being tested are in fact the same object. Equals() performs an equality test, and will return true if the two objects consider themselves equal.
+Identity testing is faster, so you can use it when there's no need for more expensive equality tests. For example, comparing against null or the empty string.
+It's possible to overload either of these to provide different behavior -- like identity testing for Equals() --, but for the sake of anybody reading your code, please don't.
+
+Pointed out below: some types like String or DateTime provide overloads for the == operator that give it equality semantics. So the exact behavior will depend on the types of the objects you are comparing.
+
+See also:
+
+http://blogs.msdn.com/csharpfaq/archive/2004/03/29/102224.aspx
+
+
+use equals if you want to express the contents of the objects compared should be equal. use == for primitive values or if you want to check that the objects being compared is one and the same object. For objects == checks whether the address pointer of the objects is the same.
+
+== is generally the "identity" equals meaning "object a is in fact the exact same object in memory as object b". 
+equals() means that the objects logically equal (say, from a business point of view). So if you are comparing instances of a user-defined class, you would generally need to use and define equals() if you want things like a Hashtable to work properly. 
+If you had the proverbial Person class with properties "Name" and "Address" and you wanted to use this Person as a key into a Hashtable containing more information about them, you would need to implement equals() (and hash) so that you could create an instance of a Person and use it as a key into the Hashtable to get the information.
+Using == alone, your new instance would not be the same. 
+
+According to MSDN:
+In C#, there are two different kinds of equality: reference equality (also known as identity) and value equality. Value equality is the generally understood meaning of equality: it means that two objects contain the same values. For example, two integers with the value of 2 have value equality. Reference equality means that there are not two objects to compare. Instead, there are two object references and both of them refer to the same object.
+...
+By default, the operator == tests for reference equality by determining whether two references indicate the same object.
+
+The example is because the class DateTime implements the IEquatable interface, which implements a "type-specific method for determining equality of instances." according to MSDN.
+
+Another thing to take into consideration:  the == operator may not be callable or may have different meaning if you access the object from another language.  Usually, it's better to have an alternative that can be called by name.
+
+Everyone else pretty much has you covered, but I have one more word of advice. Every now and again, you will get someone who swears on his life (and those of his loved ones) that .Equals is more efficient/better/best-practice or some other dogmatic line. I can't speak to efficiency (well, OK, in certain circumstances I can), but I can speak to a big issue which will crop up: .Equals requires an object to exist. (Sounds stupid, but it throws people off.)
+You can't do the following:
+StringBuilder sb = null;
+if (sb.Equals(null))
+{
+    // whatever
+}
+
+It seems obvious to me, and perhaps most people, that you will get a NullReferenceException. However, proponents of .Equals forget about that little factoid. Some are even "thrown" off (sorry, couldn't resist) when they see the NullRefs start to pop up.
+(And years before the DailyWTF posting, I did actually work with someone who mandated that all equality checks be .Equals instead of ==. Even proving his inaccuracy didn't help. We just made damn sure to break all his other rules so that no reference returned from a method nor property was ever null, and it worked out in the end.)
+
+@John Millikin:
+
+Pointed out below: some value types like DateTime provide overloads for the == operator >that give it equality semantics. So the exact behavior will depend on the types of the >objects you are comparing.
+
+To elaborate:
+DateTime is implemented as a struct. All structs are children of System.ValueType.
+Since System.ValueType's children live on the stack, there is no reference pointer to the heap, and thus no way to do a reference check, you must compare objects by value only.
+System.ValueType overrides .Equals() and == to use a reflection based equality check, it uses reflection to compare each fields value.
+Because reflection is somewhat slow, if you implement your own struct, it is important to override .Equals() and add your own value checking code, as this will be much faster. Don't just call base.Equals();
+
+I have seen Object.ReferenceEquals() used in cases where one wants to know if two references refer to the same object
+
+Both Equals and == can be overloaded, so the exact results of calling one or the other will vary. Note that == is determined at compile time, so while the actual implementation could change, which == is used is fixed at compile time, unlike Equals which could use a different implementation based on the run time type of the left side.
+For instance string performs an equality test for ==.
+Also note that the semantics of both can be complex.
+Best practice is to implement equality like this example. Note that you can simplify or exclude all of this depending on how you plan on using you class, and that structs get most of this already.
+class ClassName
+{
+    public bool Equals(ClassName other)
+    {
+        if (other == null)
+        {
+            return false;
+        }
+        else
+        {
+            //Do your equality test here.
+        }
+    }
+
+    public override bool Equals(object obj)
+    {
+        ClassName other = obj as null; //Null and non-ClassName objects will both become null
+        if (obj == null)
+        {
+            return false;
+        }
+        else
+        {
+            return Equals(other);
+        }
+    }
+
+    public bool operator ==(ClassName left, ClassName right)
+    {
+        if (left == null)
+        {
+            return right == null;
+        }
+        else
+        {
+            return left.Equals(right);
+        }
+    }
+
+    public bool operator !=(ClassName left, ClassName right)
+    {
+        if (left == null)
+        {
+            return right != null;
+        }
+        else
+        {
+            return !left.Equals(right);
+        }
+    }
+
+    public override int GetHashCode()
+    {
+        //Return something useful here, typically all members shifted or XORed together works
+    }
+}
+
+
+I think the fundamental confusion is caused by virtual method Equals in System.Object has been implemented 'wrong'! It was meant to check equality but what it does is checking identity.
+In c# framework class library (FCL) Equals in Object class is implemented like this
+public virtual bool Equals(object obj)
+{
+   if (this == obj)
+    {
+      return true;
+    }
+
+   return false;
+}
+
+So this is doomed to fail on inheritance hierarchy because it simply checks identity rather than equality which is what it should do. Also if you don't override Equals in your own type, there is no difference between calling Equals() and == (of course don't pass in null for comparison!). Hence it's advertisable to override Equals in your own type and moreover it's advertisable to implement Equals method from System.IEquatable<T> for type safety equality check.
+
+If you do disassemble (by dotPeek for example) of Object, so 
+public virtual bool Equals(Object obj)
+
+described as:
+// Returns a boolean indicating if the passed in object obj is
+// Equal to this.  Equality is defined as object equality for reference
+// types and bitwise equality for value types using a loader trick to
+// replace Equals with EqualsValue for value types). 
+//
+
+So, is depend on type.
+For example:
+        Object o1 = "vvv";
+        Object o2 = "vvv";
+        bool b = o1.Equals(o2);
+
+        o1 = 555;
+        o2 = 555;
+        b = o1.Equals(o2);
+
+        o1 = new List<int> { 1, 2, 3 };
+        o2 = new List<int> { 1, 2, 3 };
+        b = o1.Equals(o2);
+
+First time b is true (equal performed on value types), second time b is true (equal performed on value types), third time b is false (equal performed on reference types).

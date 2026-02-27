@@ -1,0 +1,134 @@
+THotkey with win-key support?
+delphi hotkeys
+Is there anyway to get the THotkey component in delphi to support the windows key?
+Or does anyone know of a component that can do this?
+Thanks heaps!
+
+
+I don't know if you can do it with the THotkey component.
+But you can capture the left and right Windows Key in any KeyDown event using:
+
+if key = vk_LWin then showmessage('left');
+  if key = vk_RWin then showmessage('right');
+
+
+IMHO it is a good thing THotKey does not support this.
+Don't use the windows key for keyboard shortcuts in your program, the "Windows Vista User Experience Guidelines" says the following under Guidelines - Interaction - Keyboard:
+
+Don't use the Windows logo modifier key for program shortcut keys. Windows logo key is reserved for Windows use. Even if a Windows logo key combination isn't being used by Windows now, it may be in the future.
+
+Even if the shortcut isn't used by Windows, using such a keyboard shortcut would be confusing to users, as it would perform a function in your program, while other such shortcuts like Win+E or Win+R activate a system-wide function, deactivating your program in the process.
+Edit:
+THotKey is a light wrapper around a system control, supporting only the things that this system control supports. There is no documented way to set anything but the Alt, Ctrl and Shift modifiers for the shortcut.
+You might be able to create your own control to display shortcuts using the Windows key, and set a global keyboard hook (look into the SetWindowsHookEx() API function).
+
+See RegisterHotKey function on MSDN.
+
+THotKey doesn't support the Win-Key.  I would add a check box next to it maybe for the Win-Key modifier.  
+
+Sure its possible - you need to make your own copy of { THotKey } and tweak it a little to support also Win key.  You need to add your own KeyDown() and Repaint() functions to this class .
+Like this:
+  TMyCustomHotKey = class(TWinControl)
+  public
+      WinKey: boolean;
+  procedure WMPaint(var Message: TWMPaint); message WM_PAINT;
+    constructor Create(AOwner: TComponent); override;
+  end;
+
+  TMyHotKey = class(TMyCustomHotKey)
+
+..
+    procedure TMyCustomHotKey.KeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+    var
+     a : integer;
+     lbl : string;
+      tmphot : tshortcut;
+    begin
+
+     a:= 0;
+      if GetAsyncKeyState(VK_LWIN) <> 0 then  a:= 1;
+      if GetAsyncKeyState(VK_RWIN) <> 0 then a:= 1;
+
+     if a=1 then begin
+            winkey := true;
+      end else
+      begin
+            winkey := false;
+      end;
+      rePaint();
+}
+
+
+procedure TMyCustomHotKey.WMPaint(var Message: TWMPaint);
+var
+  PS: TPaintStruct;
+  DC: HDC;
+  Canvas: TCanvas;
+  i: Integer;
+  X, Y: Integer;
+  OldColor: TColor;
+  Size: TSize;
+  Max: Integer;
+  s, Palabra, PrevWord: string;
+    OldPen, DrawPen: HPEN;
+ tmphot : tshortcut;
+  Key: Word;
+  Shift: TShiftState;
+
+  lbl ,res: string;
+ keyboardState: TKeyboardState;
+asciiResult: Integer;
+
+begin
+
+  DC := Message.DC;
+  if DC = 0 then DC := BeginPaint(Handle, PS);
+
+  Canvas := TCanvas.Create;
+  try
+
+     OldColor         := Font.Color;
+    Canvas.Handle    := DC;
+    Canvas.Font.Name := Font.Name;
+    Canvas.Font.Size := Font.Size;
+    with Canvas do
+    begin
+
+      Brush.Color := Self.Color;
+      FillRect(Self.ClientRect);
+          Font.Color := OldColor;
+
+       tmphot := gethotkey;
+         ShortCutToKey(tmphot, Key, Shift);
+
+          res := GetCharFromVKey(key);
+
+
+         if (winkey = false) and (key = 0 ) and (tmphot = 0)then
+          BEGIN lbl := 'Enter hotkey [CTRL/ALT/WIN] + Key'   ;
+          TextOut(1 ,1,lbl)             ;
+          END
+         else begin
+
+         if winkey then lbl := 'Win +' else lbl := '';
+          if ssAlt in Shift then lbl := lbl+ 'Alt + ';
+          if ssShift in Shift then lbl := lbl+ 'Shift + ';
+          if (not winkey) and (ssCtrl  in Shift) then lbl := lbl+ 'Ctrl + ';
+          lbl := lbl+ res;
+
+          end;
+
+          TextOut(1 ,1,lbl);
+
+
+
+      end;
+
+  finally
+    if Message.DC = 0 then EndPaint(Handle, PS);
+  end;
+  Canvas.Free;
+    SETCARETPOS(1,1);
+
+end;
+

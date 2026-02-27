@@ -1,0 +1,117 @@
+Computing a cross-browser iframe height
+javascript jquery iframe
+One of the most difficult problems in my javascript experience has been the correct (that is "cross-browser") computing of a iframe height.
+In my applications I have a lot of dynamically generated iframe and I want them all do a sort of autoresize at the end of the load event to adjust their height and width.
+In the case of height computing my best solution is the following (with the help of jQuery):
+function getDocumentHeight(doc) {
+  var mdoc = doc || document;
+  if (mdoc.compatMode=='CSS1Compat') {       
+      return mdoc.body.offsetHeight;
+  }
+  else {
+    if ($.browser.msie)
+      return mdoc.body.scrollHeight;
+    else  
+      return Math.max($(mdoc).height(), $(mdoc.body).height());
+  }
+}
+
+I searched the internet without success. I also tested Yahoo library that has some methods for document and viewport dimensions, but it's not satisfactory.
+My solution works decently, but sometimes it calculates a taller height.
+I've studied and tested tons of properties regarding document height in Firefox/IE/Safari: documentElement.clientHeight, documentElement.offsetHeight, documentElement.scrollHeight, body.offsetHeight, body.scrollHeight, ...
+Also jQuery doesn't have a coherent behavior in various browser with the calls $(document.body).height(), $('html', doc).height(), $(window).height()
+I call the above function not only at the end of load event, but also in the case of dynamically inserted DOM elements or elements hidden or shown. This is a case that sometimes breaks the code that works only in the load event.
+Does someone have a real cross-browser (at least Firefox/IE/Safari) solution? Some tips or hints?
+
+
+Although I like your solution, I've always found IFRAMEs to be more trouble than they're worth.
+Why ?  1. The sizing issue. 2. the iframe has that src attribute to worry about. i.e. absolute path.  3. the extra complexity with the pages.
+My solution - DIVs which are dynamically loaded through AJAX calls.  DIVs will auto size. Although the AJAX code requires javascript work (which can be done through frameworks)  they are relative to where the site is.  3 is a wash, you're trading complexity in pages up to javascript.
+Instead of <IFRAME ...>  use <DIV id="mystuff" />
+Do the ajax call to fill the mystuff div with data and let the browser worry about it.
+
+Here is a solution that seems to work.  Basically, the scrollHeight is the correct value in most cases.  However, in IE (specifically 6 and 7), if the content is simply contained in text nodes, the height is not calculated and just defaults to the height set in CSS or on the "height" attribute on the iframe.  This was found through trial and error, so take it for what it is worth.
+function getDocumentHeight(doc) {
+  var mdoc = doc || document; 
+  var docHeight = mdoc.body.scrollHeight;
+
+  if ($.browser.msie) {
+      // IE 6/7 don't report body height correctly.  
+      // Instead, insert a temporary div containing the contents.
+
+      var child = $("<div>" + mdoc.body.innerHTML + "</div>", mdoc);
+      $("body", mdoc).prepend(child);
+      docHeight = child.height();
+      child.remove();
+  }
+
+  return docHeight;
+}
+
+
+I have found this solution to work in ie 6+, ff 3.5+, safari 4+. I am creating and appending an iframe to the document. The following code is executed at the end of jQuery's load event after some other dom manipulation. The timeout is needed for me because of the additional dom manipulation taking place in the load event.
+// sizing - slight delay for good scrollheight
+setTimeout(function() {
+   var intContentHeight = objContentDoc.body.scrollHeight;
+   var $wrap = $("#divContentWrapper", objContentFrameDoc);
+   var intMaxHeight = getMaxLayeredContentHeight($wrap);
+   $this.height(intContentHeight > intMaxHeight ? intMaxHeight : intContentHeight);
+
+   // animate
+   fireLayeredContentAnimation($wrap);
+}, 100);
+
+I have some sizing constraints to consider, which is what the getMaxLayeredContentHeight call is checking for me. Hope that helps.
+
+Since in your example you're accessing the document inside the IFRAME I guess you're talking about knowing the height of the document and not of the frame itself. Also, that means that the content comes from your own website and you have control over it's contents.
+So, why don't you simply place a DIV around your content and then use the clientHeight of that DIV?
+Code you load in your IFRAME:
+...
+<body>
+  <div id="content">
+  ...
+  </div>
+</body>
+
+The parent document:
+ function getDocumentHeight(mdoc) {
+    return mdoc.getElementById("content").clientHeight;
+ }
+
+BTW, this part of your example function does not make sense as "document" does not refer to the IFRAME:
+var mdoc = doc || document;
+
+Here's a script that resizes the iFrame depending on the body inside it's height.
+
+This has been without an accepted answer for awhile, so I wanted to contribute the solution I ended up going with after some research. This is cross-browser and cross-domain (e.g. when the iframe points to content from a different domain)
+I ended up using html5's message passing mechanism wrapped in a jQuery pluging that makes it compatible with older browsers using various methods (some of them described in this thread).
+The end solution is very simple.
+On the host (parent) page:
+// executes when a message is received from the iframe, to adjust 
+// the iframe's height
+    $.receiveMessage(
+        function( event ){
+            $( 'my_iframe' ).css({
+                height: event.data
+            });
+    });
+
+// Please note this function could also verify event.origin and other security-related checks.
+
+On the iframe page:
+$(function(){
+
+    // Sends a message to the parent window to tell it the height of the 
+    // iframe's body
+
+    var target = parent.postMessage ? parent : (parent.document.postMessage ? parent.document : undefined);
+
+    $.postMessage(
+        $('body').outerHeight( true ) + 'px',
+        '*',
+        target
+    );
+
+});
+
+I've tested this on Chrome 13+, Firefox 3.6+, IE7, 8 and 9 on XP and W7, safari on OSX and W7. ;)

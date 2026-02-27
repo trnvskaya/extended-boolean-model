@@ -1,0 +1,326 @@
+How to get name associated with open HANDLE
+c windows winapi
+What's the easiest way to get the filename associated with an open HANDLE in Win32?
+
+
+On unixes there is no real way of reliably doing this.  In unix with the traditional unix filesystem, you can open a file and then unlink it (remove its entry from the directory) and use it, at which point the name isn't stored anywhere.  In addition, because a file may have multiple hardlinks into the filesystem, each of the names are equivalent, so once you've got just the open handle it wouldn't be clear which filename you should map back towards.
+So, you may be able to do this on Win32 using the other answers, but should you ever need to port the application to a unix enviornment, you'll be out of luck.  My advice to you is to refactor your program, if possible, so that you don't need the OS to be able to maintain an open resource to filename connection.
+
+edit Thanks for the comments about this being Vista or Server 2008 only. I missed that in the page. Guess I should have read the whole article ;)
+It looks like you can use GetFileInformationByHandleEx() to get this information.
+You'll likely want to do something like:
+GetFileInformationByHandleEx( fileHandle, FILE_NAME_INFO, lpFileInformation, sizeof(FILE_NAME_INFO));
+
+Double check the MSDN page to make sure I haven't misled you too badly :)
+Cheers,
+Taylor
+
+If you need to do this on Win32 pre-Vista or Server 2008, look at the GetMappedFileName(...) function, which is one of the best kept secrets in Win32.  WIth a little C/C++-fu, you can memory map a small portion of the file in question, and then pass that handle to this function.
+Also, on Win32, you cannot really delete a file that is open (the open/unlink issue mentioned on another answer) - you can mark it for deletion on close, but it will still hang around until its last open handle is closed.  Dunno if mapping (via mmap(...)) the file in this case would help, because it has to point back to a physical file...
+-=- James.
+
+FWIW, here's the same solution from the MSDN article suggested by Prakash in Python using the wonderful ctypes:
+from ctypes import *
+# get handle to  c:\boot.ini to test
+handle = windll.kernel32.CreateFileA("c:\\boot.ini", 0x80000000, 3, 0, 3, 0x80, 0)
+hfilemap = windll.kernel32.CreateFileMappingA(handle, 0, 2, 0, 1, 0)
+pmem = windll.kernel32.MapViewOfFile(hfilemap, 4, 0, 0, 1)
+name = create_string_buffer(1024)
+windll.psapi.GetMappedFileNameA(windll.kernel32.GetCurrentProcess(), pmem, name, 1024)
+print "The name for the handle 0x%08x is %s" % (handle, name.value)
+# convert device name to drive letter
+buf = create_string_buffer(512)
+size = windll.kernel32.GetLogicalDriveStringsA(511, buf)
+names = buf.raw[0:size-1].split("\0")
+for drive in names:
+    windll.kernel32.QueryDosDeviceA(drive[0:2], buf, 512)
+    if name.value.startswith(buf.value):
+        print "%s%s" % (drive[0:2], name.value[len(buf.value):])
+        break
+
+
+There is a correct (although undocumented) way to do this on Windows XP which also works with directories -- the same method GetFinalPathNameByHandle uses on Windows Vista and later.
+Here are the eneded declarations. Some of these are already in WInternl.h and MountMgr.h but I just put them here anyway:
+#include "stdafx.h"
+#include <Windows.h>
+#include <assert.h>
+
+enum OBJECT_INFORMATION_CLASS { ObjectNameInformation = 1 };
+enum FILE_INFORMATION_CLASS { FileNameInformation = 9 };
+struct FILE_NAME_INFORMATION { ULONG FileNameLength; WCHAR FileName[1]; };
+struct IO_STATUS_BLOCK { PVOID Dummy; ULONG_PTR Information; };
+struct UNICODE_STRING { USHORT Length; USHORT MaximumLength; PWSTR Buffer; };
+struct MOUNTMGR_TARGET_NAME { USHORT DeviceNameLength; WCHAR DeviceName[1]; };
+struct MOUNTMGR_VOLUME_PATHS { ULONG MultiSzLength; WCHAR MultiSz[1]; };
+
+extern "C" NTSYSAPI NTSTATUS NTAPI NtQueryObject(IN HANDLE Handle OPTIONAL,
+    IN OBJECT_INFORMATION_CLASS ObjectInformationClass,
+    OUT PVOID ObjectInformation OPTIONAL, IN ULONG ObjectInformationLength,
+    OUT PULONG ReturnLength OPTIONAL);
+extern "C" NTSYSAPI NTSTATUS NTAPI NtQueryInformationFile(IN HANDLE FileHandle,
+    OUT PIO_STATUS_BLOCK IoStatusBlock, OUT PVOID FileInformation,
+    IN ULONG Length, IN FILE_INFORMATION_CLASS FileInformationClass);
+
+#define MOUNTMGRCONTROLTYPE ((ULONG) 'm')
+#define IOCTL_MOUNTMGR_QUERY_DOS_VOLUME_PATH \
+    CTL_CODE(MOUNTMGRCONTROLTYPE, 12, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+union ANY_BUFFER {
+    MOUNTMGR_TARGET_NAME TargetName;
+    MOUNTMGR_VOLUME_PATHS TargetPaths;
+    FILE_NAME_INFORMATION NameInfo;
+    UNICODE_STRING UnicodeString;
+    WCHAR Buffer[USHRT_MAX];
+};
+
+Here's the core function:
+LPWSTR GetFilePath(HANDLE hFile)
+{
+    static ANY_BUFFER nameFull, nameRel, nameMnt;
+    ULONG returnedLength; IO_STATUS_BLOCK iosb; NTSTATUS status;
+    status = NtQueryObject(hFile, ObjectNameInformation,
+        nameFull.Buffer, sizeof(nameFull.Buffer), &returnedLength);
+    assert(status == 0);
+    status = NtQueryInformationFile(hFile, &iosb, nameRel.Buffer,
+        sizeof(nameRel.Buffer), FileNameInformation);
+    assert(status == 0);
+    //I'm not sure how this works with network paths...
+    assert(nameFull.UnicodeString.Length >= nameRel.NameInfo.FileNameLength);
+    nameMnt.TargetName.DeviceNameLength = (USHORT)(
+        nameFull.UnicodeString.Length - nameRel.NameInfo.FileNameLength);
+    wcsncpy(nameMnt.TargetName.DeviceName, nameFull.UnicodeString.Buffer,
+        nameMnt.TargetName.DeviceNameLength / sizeof(WCHAR));
+    HANDLE hMountPointMgr = CreateFile(_T("\\\\.\\MountPointManager"),
+        0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        NULL, OPEN_EXISTING, 0, NULL);
+    __try
+    {
+        DWORD bytesReturned;
+        BOOL success = DeviceIoControl(hMountPointMgr,
+            IOCTL_MOUNTMGR_QUERY_DOS_VOLUME_PATH, &nameMnt,
+            sizeof(nameMnt), &nameMnt, sizeof(nameMnt),
+            &bytesReturned, NULL);
+        assert(success && nameMnt.TargetPaths.MultiSzLength > 0);
+        wcsncat(nameMnt.TargetPaths.MultiSz, nameRel.NameInfo.FileName,
+            nameRel.NameInfo.FileNameLength / sizeof(WCHAR));
+        return nameMnt.TargetPaths.MultiSz;
+    }
+    __finally { CloseHandle(hMountPointMgr); }
+}
+
+and here's an example usage:
+int _tmain(int argc, _TCHAR* argv[])
+{
+    HANDLE hFile = CreateFile(_T("\\\\.\\C:\\Windows\\Notepad.exe"),
+        0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    assert(hFile != NULL && hFile != INVALID_HANDLE_VALUE);
+    __try
+    {
+        wprintf(L"%s\n", GetFilePath(hFile));
+        //  Prints:
+        //  C:\Windows\notepad.exe
+    }
+    __finally { CloseHandle(hFile); }
+    return 0;
+}
+
+
+I tried the code posted by Mehrdad here. It works, but with limitations:
+
+It should not be used for network shares because the MountPointManager may hang for a very long time.
+It uses undocumented API (IOCTL_MOUNTMGR_QUERY_DOS_VOLUME_PATH) I don't like that very much
+It does not support USB devices that create virtual COM ports (I need that in my project)
+
+I also studied other approaches like GetFileInformationByHandleEx() and GetFinalPathNameByHandle(), but these are useless as they return only Path + Filename but without drive. Additionally GetFinalPathNameByHandle() also has the hanging bug.
+The GetMappedFileName() approach in the MSDN (posted by Max here) is also very limited:
+
+It works only with real files
+The file size must not be zero bytes
+Directories, Network and COM ports are not supported
+The code is clumsy
+
+So I wrote my own code. I tested it on Win XP and on Win 7, 8, and 10. It works perfectly.
+NOTE: You do NOT need any additional LIB file to compile this code!
+CPP FILE:
+t_NtQueryObject NtQueryObject()
+{
+    static t_NtQueryObject f_NtQueryObject = NULL;
+    if (!f_NtQueryObject)
+    {
+        HMODULE h_NtDll = GetModuleHandle(L"Ntdll.dll"); // Ntdll is loaded into EVERY process!
+        f_NtQueryObject = (t_NtQueryObject)GetProcAddress(h_NtDll, "NtQueryObject");
+    }
+    return f_NtQueryObject;
+}
+
+
+// returns
+// "\Device\HarddiskVolume3"                                (Harddisk Drive)
+// "\Device\HarddiskVolume3\Temp"                           (Harddisk Directory)
+// "\Device\HarddiskVolume3\Temp\transparent.jpeg"          (Harddisk File)
+// "\Device\Harddisk1\DP(1)0-0+6\foto.jpg"                  (USB stick)
+// "\Device\TrueCryptVolumeP\Data\Passwords.txt"            (Truecrypt Volume)
+// "\Device\Floppy0\Autoexec.bat"                           (Floppy disk)
+// "\Device\CdRom1\VIDEO_TS\VTS_01_0.VOB"                   (DVD drive)
+// "\Device\Serial1"                                        (real COM port)
+// "\Device\USBSER000"                                      (virtual COM port)
+// "\Device\Mup\ComputerName\C$\Boot.ini"                   (network drive share,  Windows 7)
+// "\Device\LanmanRedirector\ComputerName\C$\Boot.ini"      (network drive share,  Windwos XP)
+// "\Device\LanmanRedirector\ComputerName\Shares\Dance.m3u" (network folder share, Windwos XP)
+// "\Device\Afd"                                            (internet socket)
+// "\Device\Console000F"                                    (unique name for any Console handle)
+// "\Device\NamedPipe\Pipename"                             (named pipe)
+// "\BaseNamedObjects\Objectname"                           (named mutex, named event, named semaphore)
+// "\REGISTRY\MACHINE\SOFTWARE\Classes\.txt"                (HKEY_CLASSES_ROOT\.txt)
+DWORD GetNtPathFromHandle(HANDLE h_File, CString* ps_NTPath)
+{
+    if (h_File == 0 || h_File == INVALID_HANDLE_VALUE)
+        return ERROR_INVALID_HANDLE;
+
+    // NtQueryObject() returns STATUS_INVALID_HANDLE for Console handles
+    if (IsConsoleHandle(h_File))
+    {
+        ps_NTPath->Format(L"\\Device\\Console%04X", (DWORD)(DWORD_PTR)h_File);
+        return 0;
+    }
+
+    BYTE  u8_Buffer[2000];
+    DWORD u32_ReqLength = 0;
+
+    UNICODE_STRING* pk_Info = &((OBJECT_NAME_INFORMATION*)u8_Buffer)->Name;
+    pk_Info->Buffer = 0;
+    pk_Info->Length = 0;
+
+    // IMPORTANT: The return value from NtQueryObject is bullshit! (driver bug?)
+    // - The function may return STATUS_NOT_SUPPORTED although it has successfully written to the buffer.
+    // - The function returns STATUS_SUCCESS although h_File == 0xFFFFFFFF
+    NtQueryObject()(h_File, ObjectNameInformation, u8_Buffer, sizeof(u8_Buffer), &u32_ReqLength);
+
+    // On error pk_Info->Buffer is NULL
+    if (!pk_Info->Buffer || !pk_Info->Length)
+        return ERROR_FILE_NOT_FOUND;
+
+    pk_Info->Buffer[pk_Info->Length /2] = 0; // Length in Bytes!
+
+    *ps_NTPath = pk_Info->Buffer;
+    return 0;
+}
+
+// converts
+// "\Device\HarddiskVolume3"                                -> "E:"
+// "\Device\HarddiskVolume3\Temp"                           -> "E:\Temp"
+// "\Device\HarddiskVolume3\Temp\transparent.jpeg"          -> "E:\Temp\transparent.jpeg"
+// "\Device\Harddisk1\DP(1)0-0+6\foto.jpg"                  -> "I:\foto.jpg"
+// "\Device\TrueCryptVolumeP\Data\Passwords.txt"            -> "P:\Data\Passwords.txt"
+// "\Device\Floppy0\Autoexec.bat"                           -> "A:\Autoexec.bat"
+// "\Device\CdRom1\VIDEO_TS\VTS_01_0.VOB"                   -> "H:\VIDEO_TS\VTS_01_0.VOB"
+// "\Device\Serial1"                                        -> "COM1"
+// "\Device\USBSER000"                                      -> "COM4"
+// "\Device\Mup\ComputerName\C$\Boot.ini"                   -> "\\ComputerName\C$\Boot.ini"
+// "\Device\LanmanRedirector\ComputerName\C$\Boot.ini"      -> "\\ComputerName\C$\Boot.ini"
+// "\Device\LanmanRedirector\ComputerName\Shares\Dance.m3u" -> "\\ComputerName\Shares\Dance.m3u"
+// returns an error for any other device type
+DWORD GetDosPathFromNtPath(const WCHAR* u16_NTPath, CString* ps_DosPath)
+{
+    DWORD u32_Error;
+
+    if (wcsnicmp(u16_NTPath, L"\\Device\\Serial", 14) == 0 || // e.g. "Serial1"
+        wcsnicmp(u16_NTPath, L"\\Device\\UsbSer", 14) == 0)   // e.g. "USBSER000"
+    {
+        HKEY h_Key; 
+        if (u32_Error = RegOpenKeyEx(HKEY_LOCAL_MACHINE, L"Hardware\\DeviceMap\\SerialComm", 0, KEY_QUERY_VALUE, &h_Key))
+            return u32_Error;
+
+        WCHAR u16_ComPort[50];
+
+        DWORD u32_Type;
+        DWORD u32_Size = sizeof(u16_ComPort); 
+        if (u32_Error = RegQueryValueEx(h_Key, u16_NTPath, 0, &u32_Type, (BYTE*)u16_ComPort, &u32_Size))
+        {
+            RegCloseKey(h_Key);
+            return ERROR_UNKNOWN_PORT;
+        }
+
+        *ps_DosPath = u16_ComPort;
+        RegCloseKey(h_Key);
+        return 0;
+    }
+
+    if (wcsnicmp(u16_NTPath, L"\\Device\\LanmanRedirector\\", 25) == 0) // Win XP
+    {
+        *ps_DosPath  = L"\\\\";
+        *ps_DosPath += (u16_NTPath + 25);
+        return 0;
+    }
+
+    if (wcsnicmp(u16_NTPath, L"\\Device\\Mup\\", 12) == 0) // Win 7
+    {
+        *ps_DosPath  = L"\\\\";
+        *ps_DosPath += (u16_NTPath + 12);
+        return 0;
+    }
+
+    WCHAR u16_Drives[300];
+    if (!GetLogicalDriveStrings(300, u16_Drives))
+        return GetLastError();
+
+    WCHAR* u16_Drv = u16_Drives;
+    while (u16_Drv[0])
+    {
+        WCHAR* u16_Next = u16_Drv +wcslen(u16_Drv) +1;
+
+        u16_Drv[2] = 0; // the backslash is not allowed for QueryDosDevice()
+
+        WCHAR u16_NtVolume[1000];
+        u16_NtVolume[0] = 0;
+
+        // may return multiple strings!
+        // returns very weird strings for network shares
+        if (!QueryDosDevice(u16_Drv, u16_NtVolume, sizeof(u16_NtVolume) /2))
+            return GetLastError();
+
+        int s32_Len = (int)wcslen(u16_NtVolume);
+        if (s32_Len > 0 && wcsnicmp(u16_NTPath, u16_NtVolume, s32_Len) == 0)
+        {
+            *ps_DosPath  =  u16_Drv;
+            *ps_DosPath += (u16_NTPath + s32_Len);
+            return 0;
+        }
+
+        u16_Drv = u16_Next;
+    }
+    return ERROR_BAD_PATHNAME;
+}
+
+HEADER FILE:
+#pragma warning(disable: 4996) // wcsnicmp deprecated
+#include <winternl.h>
+
+// This makro assures that INVALID_HANDLE_VALUE (0xFFFFFFFF) returns FALSE
+#define IsConsoleHandle(h) (((((ULONG_PTR)h) & 0x10000003) == 0x3) ? TRUE : FALSE)
+
+enum OBJECT_INFORMATION_CLASS 
+{
+    ObjectBasicInformation, 
+    ObjectNameInformation,
+    ObjectTypeInformation, 
+    ObjectAllInformation, 
+    ObjectDataInformation
+};
+
+struct OBJECT_NAME_INFORMATION 
+{
+    UNICODE_STRING Name; // defined in winternl.h
+    WCHAR NameBuffer;
+};
+
+typedef NTSTATUS (NTAPI* t_NtQueryObject)(HANDLE Handle, OBJECT_INFORMATION_CLASS Info, PVOID Buffer, ULONG BufferSize, PULONG ReturnLength);   
+
+
+For Windows Vista and later I prefer to use 
+GetFinalPathNameByHandle()
+char buf[MAX_PATH];
+GetFinalPathNameByHandleA(fileHandle, buf, sizeof(buf), VOLUME_NAME_DOS)
+
+For Windows XP I prefer the solution by Mehrdad.  
+So I load GetFinalPathNameByHandle() dynamically via GetProcAddress() and if this fails (because it's Windows XP) I go for Mehrdad's solution with NtQueryObject()

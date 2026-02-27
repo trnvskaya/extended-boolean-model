@@ -1,0 +1,171 @@
+Why is there "class" in "template <class x>"?
+c++ templates syntax
+What does the "class" part of a template statement do?
+Example:
+template <class T>
+class Something
+{
+    public:
+        Something(const T &something);
+}
+
+And what else can go there?  I usually only see "class".
+
+
+The class keyword means the same thing as the typename keyword for the most part. They both indicates that T is a type.
+The only difference between the keywords class and typename is that class can be used to provide class template template arguments to a template, whereas typename can't. Consider:
+template<template <class T> class U> // must be "class"
+std::string to_string(const U<char>& u)
+{
+  return std::string(u.begin(),u.end());
+}
+
+The only other thing you can put in place of the class or typename keywords is an integral type. For example:
+template<std::size_t max>
+class Foo{...};
+...
+Foo<10> f;
+
+For a concrete example of this, take a look at std::bitset<N> in the standard library.
+
+You can also use the following as template arguments:
+
+any integral type short, int, long, bool, etc.
+pointers to objects or functions
+references to objects or functions
+pointers to member objects or member functions
+
+A few examples:
+template<typename T, int N=4, bool Flag>
+class myClass { /*...*/ };
+
+template<typename T, const int& Reference, myClass * Pointer>
+class someClass { /*...*/ };
+
+template<typename T, int (T::*MemberFunctionPtr)(int, int)>
+class anotherClass { /*...*/ };
+
+To define a template parameter, you need either to tell the compiler the parameter is a type, or a value.
+In the begining...
+If I remember correctly, the C++ committee was reluctant to add a new keyword to the C++ language, and so, they decided to authorize the following notations:
+template<int I>
+int getTwice()
+{
+   return I * 2 ;
+}
+
+template<class T>
+std::string getType(const T & t)
+{
+   return typeid(t).name() ;
+}
+
+void doSomething()
+{
+   std::cout << "25 : " << getTwice<25>() << std::endl ;
+   std::cout << "5  : " << getTwice<5>() << std::endl ;
+
+   std::cout << "type(25)   : " << getType(25) << std::endl ;
+   std::cout << "type(25.5) : " << getType(25.5) << std::endl ;
+   std::cout << "type(abc)  : " << getType("abc") << std::endl ;
+}
+
+Which outputs, in g++:
+25 : 50
+5  : 10
+type(25)   : i
+type(25.5) : d
+type(abc)  : A4_c
+
+The first notation was a template over a value. So, we have the type of the value in the template declaration:
+// "I" is the value, and "int" is the type of the value
+template <int I>
+
+The second notation was a template over a unknown type, and the fact that type was not "known" was marked by a "class" keyword. So, in this context, "class" meant "type".
+// "T" is a type... And "class" is the "this-is-a-type" keyword
+template <class T> 
+
+You'll note that with the second notation, despite the class keyword, T could be... a int, or another build-in type. But then, better to have this curiosity than add a new keyword, don't you agree?...
+Oops...
+Everything was good and Ok until someone wrote the following code:
+template<class T> // T could be any STL container, for example a vector<char>
+void printContainerData(const T & t)
+{
+   std::cout << "aVector:" ;
+
+   for(T::const_iterator it = t.begin(), itEnd = t.end(); it != itEnd; ++it)
+   {
+      std::cout << " " << (*it) ;
+   }
+
+   std::cout << std::endl ;
+}
+
+Where T::const_iterator is a type, of course... But then, it could be a static member of a class of type T, and thus, a value. The compiler could be quite confused.
+In the end...
+The solution was to tell the compiler that T::const_iterator was really a type... Which would lead with this kind of notation:
+for(class T::const_iterator it = t.begin(), // etc.
+
+But this was thought not possible/correct (class is about classes declarations, no?). So, dragging their feet, they decided a keyword was indeed needed to tell the compiler the symbol was a type, and not a value.
+"type" was not considered, I guess, because making it a keyword would break a lot of code. So typename was used instead. With typename, we can write:
+for(typename T::const_iterator it = t.begin(), // etc.
+
+And for consistency's sake, we are supposed to use:
+template <typename T>
+
+When T is supposed to be a type, and not a value.
+But for compatibility reasons, the old notation:
+template <class T>
+
+is still authorized.
+And what about??
+eben proposed an answer above, an answer I wanted to comment, because it is quite interesting:
+template<template <class T> class U> // must be "class"
+std::string to_string(const U<char>& u)
+{
+  return std::string(u.begin(),u.end());
+}
+
+I will comment only its "meaning" (this code can't be used with STL containers on my g++ compiler, but this was not the point, I guess): One moment, it puts a constraint over U saying: "U is a class templated over the type T. This is the part:
+template <class T> class U
+
+Which can be also written:
+template <typename T> class U
+
+Because U is really and only a class (and not a built-in type), while T is a type, any type.
+And the next line, it says that U is specialized over char:
+std::string to_string(const U<char>& u)
+
+So, this "generic code" will only work for U if U is declared as:
+template<typename T>
+class U
+{
+   // Etc.
+} ;
+
+And U is instanciated over a char:
+U<char> u ;
+// etc.
+to_string(u)
+
+But one thing was forgotten: The notation proposed by Eben can be written two ways:
+template<template <class T> class U>
+std::string to_string(const U<char>& u)
+
+template<template <typename T> class U>
+std::string to_string(const U<char>& u)
+
+The second "class" keyword is not a "type" keyword per se. It's a type that is a templated class over T. Thus the confusing notation.
+Another way of writting Eben's code, removing the constraints above, would be something like:
+template<typename U>
+std::string to_string(const U & u)
+{
+   return std::string(u.begin(),u.end());
+}
+
+And let the compiler do its magic:
+std::list<char> myList ;
+// etc.
+std::cout << to_string(myList) << std:endl ;
+
+(Eben's code didn't work with STL containers templated on "char" on my g++ compiler, for example...)

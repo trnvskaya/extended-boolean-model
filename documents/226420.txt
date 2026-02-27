@@ -1,0 +1,116 @@
+C# Attribute to trigger an event on invoking a method
+c# .net reflection attributes
+Is there a way in C# or .NET in general to create an attribute on a method which triggers an event when a method is invoked? Ideally, I would be able to run custom actions before and after the invocation of the method.
+I mean something like this:
+[TriggersMyCustomAction()]
+public void DoSomeStuff()
+{
+}
+
+I am totally clueless how to do it or if it possible at all, but System.Diagnostic.ConditionalAttribute might do a similar thing in the background. I am not sure though.
+EDIT: I forgot to mention that due to the circumstances of my specific case, performance is not really an issue.
+
+
+The only way I know how to do this is with PostSharp.  It post-processes your IL and can do things like what you asked for.
+
+I don't think there is a way to do it with just an attribute, but using proxy classes and reflection you could have a class that knows to intercept instantiations of the classes in which you have attributed methods.  
+Then the proxy class can trigger an event whenever the attributed methods are called.
+
+An attribute gives information, they are metadata.  I don't know of a way to do this offhand, someone might.
+You could look at partial methods in .NET which allow you to do some lightweight event handling.  You provide the hooks and let someone else handle the implementation.  If the method isn't implemented the compiler just ignores it.
+http://msdn.microsoft.com/en-us/library/wa80x488.aspx
+
+You need some sort of Aspect oriented framework.  PostSharp will do it, as will Windsor.
+Basically, they subclass your object and override this method...
+then it becomes:
+//proxy
+public override void DoSomeStuff()
+{
+     if(MethodHasTriggerAttribute)
+        Trigger();
+
+     _innerClass.DoSomeStuff();
+}
+
+of course all this is hidden to you.   All you have to do is ask Windsor for the type, and it will do the proxying for you.  The attribute becomes a (custom) facility I think in Windsor.
+
+You can use ContextBoundObject and IMessageSink. See http://msdn.microsoft.com/nb-no/magazine/cc301356(en-us).aspx
+Be warned that this approach has a severe performance impact compared with a direct method call.
+
+This concept is used in MVC web applications. 
+The .NET Framework 4.x provides several attributes which trigger actions, e.g.: ExceptionFilterAttribute (handling exceptions), AuthorizeAttribute (handling authorization). Both are defined in System.Web.Http.Filters.
+You could for instance define your own authorization attribute as follows:
+public class myAuthorizationAttribute : AuthorizeAttribute
+{
+    protected override bool IsAuthorized(HttpActionContext actionContext)
+    {
+        // do any stuff here
+        // it will be invoked when the decorated method is called
+        if (CheckAuthorization(actionContext)) 
+           return true; // authorized
+        else
+           return false; // not authorized
+    }
+
+}
+
+Then, in your controller class you decorate the methods which are supposed to use your authorization as follows:
+[myAuthorization]
+public HttpResponseMessage Post(string id)
+{
+    // ... your code goes here
+    response = new HttpResponseMessage(HttpStatusCode.OK); // return OK status
+    return response;
+}
+
+Whenever the Post method is invoked, it will call the IsAuthorized method inside the myAuthorization Attribute before the code inside the Post method is executed.
+If you return false in the IsAuthorized you signal that authorization is not granted and the execution of the method Post aborts.
+
+To understand how this works, let's look into the ExceptionFilter, which allows filtering exceptions by using attributes, just as shown above for the AuthorizeAttribute.
+It uses the interface IExceptionFilter internally as a contract:
+namespace System.Web.Http.Filters
+{
+    public interface IExceptionFilter : IFilter
+    {
+        // Executes an asynchronous exception filter.
+        // Returns: An asynchronous exception filter.
+        Task ExecuteExceptionFilterAsync(
+                    HttpActionExecutedContext actionExecutedContext, 
+                    CancellationToken cancellationToken);
+    }
+}
+
+The ExceptionFilterAttribute itself is defined as follows:
+namespace System.Web.Http.Filters
+{
+    // Represents the attributes for the exception filter.
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method, 
+            Inherited = true, AllowMultiple = true)]
+    public abstract class ExceptionFilterAttribute : FilterAttribute, 
+            IExceptionFilter, IFilter
+    {
+        // Raises the exception event.
+        // actionExecutedContext: The context for the action.</param>
+        public virtual void OnException(
+            HttpActionExecutedContext actionExecutedContext)
+        {
+        }
+        // Asynchronously executes the exception filter.
+        // Returns: The result of the execution.
+        Task IExceptionFilter.ExecuteExceptionFilterAsync(
+            HttpActionExecutedContext actionExecutedContext, 
+            CancellationToken cancellationToken)
+        {
+            if (actionExecutedContext == null)
+            {
+                throw Error.ArgumentNull("actionExecutedContext");
+            }
+            this.OnException(actionExecutedContext);
+            return TaskHelpers.Completed();
+        }
+    }
+}
+
+Inside ExecuteExceptionFilterAsync, the method OnException is called. You can use it analogously as previously shown for the AuthorizeAttribute: Create your own class, inheriting from ExceptionFilterAttribute, and override the method OnException.
+
+There is also a commercial product available as mentioned in OwenP's answer, PostSharp, which allows you to do that easily. Here is an example how you can do that with PostSharp. Note that there is an Express edition available which you can use for free even for commercial projects.

@@ -1,0 +1,37 @@
+What to put in a session variable
+asp.net asp-classic
+I recently came across a ASP 1.1 web application that put a whole heap of stuff in the session variable - including all the DB data objects and even the DB connection object. It ends up being huge. When the web session times out (four hours after the user has finished using the application) sometimes their database transactions get rolled back. I'm assuming this is because the DB connection is not being closed properly when IIS kills the session.
+Anyway, my question is what should be in the session variable? Clearly some things need to be in there. The user selects which plan they want to edit on the main screen, so the plan id goes into the session variable. Is it better to try and reduce the load on the DB by storing all the details about the user (and their manager etc.) and the plan they are editing in the session variable or should I try to minimise the stuff in the session variable and query the DB for everything I need in the Page_Load event?
+
+
+This is pretty hard to answer because it's so application-specific, but here are a few guidelines I use:
+
+Put as little as possible in the session.
+User-specific selections that should only last during a given visit are a good choice
+often, variables that need to be accessible to multiple pages throughout the user's visit to your site (to avoid passing them from page to page) are also good to put in the session.
+
+From what little you've said about your application, I'd probably select your data from the db and try to find ways to minimize the impact of those queries instead of loading down the session.
+
+DO NOT put UI objects in session.
+beyond that, i'd say it varies. too much in session can slow you down if you aren't using the in process session because you are going to be serializing a lot + the speed of the provider. Cache and Session should be used sparingly and carefully. Don't just put in session because you can or is convenient. Sit down and analyze if it makes sense.
+
+Do not put database connection information in the session.
+As far as caching, I'd avoid using the session for caching if possible -- you'll run into issues where someone else changes the data a user is using, plus you can't share the cached data between users.  Use the ASP.NET Cache, or some other caching utility (like Memcached or Velocity).
+As far as what should go in the session, anything that applies to all browser windows a user has open to your site (login, security settings, etc.) should be in the session.  Things like what object is being viewed/edited should really be GET/POST variables passed around between the screens so a user can use multiple browser windows to work with your application (unless you'd like to prevent that).
+
+A very similar question was asked regarding PHP sessions earlier.  Basically, Sessions are a great place to store user-specific data that you need to access across several page loads.  Sessions are NOT a great place to store database connection references; you'd be better to use some sort of connection pooling software or open/close your connection on each page load.  As far as caching data in the session, this depends on how session data is being stored, how much security you need, and whether or not the data is specific to the user.  A better bet would be to use something else for caching data.
+
+storing navigation cues in sessions is tricky. The same user can have multiple windows open and then changes get propagated in a confusing manner. DB connections should definitely not be stored. ASP.NET maintains the connection pool for you, no need to resort to your own sorcery. If you need to cache stuff for short periods and the data set size is relatively small, look into ViewState as a possible option (at the cost of loading more bulk onto the page size) 
+
+A: Data that is only relative to one user. IE: a username, a user ID. At most an object representing a user. Sometimes URL-relative data (like where to take somebody) or an error message stack are useful to push into the session.
+If you want to share stuff potentially between different users, use the Application store or the Cache. They're far superior.
+
+Stephen,
+Do you work for a company that starts with "I", that has a website that starts with "BC"? That sounds exactly like what I did when I first started developing in .net (and was young and stupid) -- I crammed everything I could think of in session and application. Needless to say, that was double-plus ungood.
+In general, eschew session as much as possible. Certainly, non-serializable objects shouldn't be stored there (database connections and such), but even big, serializable objects shouldn't be either. You just don't want the overhead.
+
+Ideally, the session in ASP should store the least amount of data that you can get away with. Storing a reference to any object that is holding system resources open (particularly a database connection) is a definite scalability killer. Also, storing uncommitted data in a session variable is just a bad idea in most cases. Overall it sounds like the current implementation is abusively using session objects to try and simulate a stateful application in a supposedly stateless environment. 
+Although it is much maligned, the ASP.NET model of managing state automatically through hidden fields should really eliminate the majority of the need to keep anything in session variables.
+My rule of thumb is that the more scalable (in terms of users/hits) that the app needs to be, the less you can get away with using session state. There is, however, a trade-off. For web applications where the user is repeatedly accessing the same data and typically has a fairly long session per use of the site, some caching (if necessary in session objects) can actually help scalability by reducing the load on the DB server. The idea here is that it is much cheaper and less complex to farm the presentation layer than the back-end DB. Of course, with all things, this advice should be taken in moderation and doesn't apply in all situations, but for a fairly simple in-house CRUD app, it should serve you well.
+
+I would always keep very little information in session. Sessions use server memory resources which is expensive. Saving too many values in session increases the load on server and eventualy the performance of the site will go down. When you use load balance servers, usage of session can run into problems. So what I do is use minimal or no sessions, use cookies if the information is not very critical, use hidden fields more and database sessions.

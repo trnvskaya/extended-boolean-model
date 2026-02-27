@@ -1,0 +1,59 @@
+Stack Overflow Exploit in C
+c stack-overflow buffer-overflow exploit
+The question is actually about stack overflows in C. 
+I have an assigment that I can not get done for the life of me, I've looked at everything in the gdb and I just cant figure it.
+The question is the following:
+int i,n;
+
+void confused()
+{
+    printf("who called me");
+    exit(0);
+}
+
+void shell_call(char *c)
+{
+    printf(" ***Now calling \"%s\" shell command *** \n",c);
+    system(c);
+    exit(0);
+}
+
+void victim_func()
+{
+    int a[4];
+    printf("[8]:%x\n", &a[8]);
+    printf("Enter n: "); scanf("%d",&n);
+    printf("Enter %d HEX Values \n",n);
+    for(i=0;i<n;i++) scanf("%x",&a[i]);
+    printf("Done reading junk numbers\n");
+}
+
+int main()
+{
+    printf("ls=736c --- ps = 7370 --- cal = 6c6163\n");
+    printf("location of confused %x \n", confused);
+    printf("location of shell_call %x \n", shell_call);
+    victim_func();
+    printf("Done, thank you\n");
+
+}
+
+Ok, so I managed to get the first question correctly, which is to arbitrarily call one of the two functions not explicitly called in the main path. By the way, this has to be done while running the program without any modifications.
+I did this by running the program, setting N to 7, which gets me to the Function Pointer of the victim_func frame, I write a[7] with the memory address of confused or shell_call, and it works. (I have a 64 bit machine, thats why I have to get it to 7, since the EBI pointer is 2 ints wide, instead of 1)
+My question is the following, how could I control which argument gets passed to the shell_code funcion? ie. how do I write a string to char* c.
+The whole point is executing unix commands like ps etc, by running only the program.
+I figured writing the EBI pointer with the hex representation of ps and setting the arg list of shell_call to that, but that didn't work. I also tried inputing argsv arguments and setting the arg list of shell_call to the arg_list of main, but didn't work either. 
+I think the second version should work, but I believe I'm not setting the arg list of the new stack frame correctly ( I did it by writing a[8] to 0, since its the first part of the function pointer, and writing a[9]=736c and a[10]=0000, but its probably not right since those are the parameters of victim_func. So how do I access the parameters of shell_call? 
+
+
+I probably shouldn't do your homework for you.  But the basically:
+You need to get a character buffer somewhere in memory to store the string you want to execute.  Obviously, you can do this the same way you are getting the other functions called (i.e. you put the text on the stack as well).  After you have that written, you need to write a pointer to it on to the stack in the location that the shell_code function expects to find its arguments.
+The best way to figure this out without me doing all of the work for you is to write down your stack/memory contents on a piece of paper/whiteboard.  Write down how it would look if you called shell_code normally from inside the program.  Then write down what the stack looks like inside victum_func and figure out which things to change to get it to look like it would look "naturally" (of course keeping in mind some things are "don't cares" like the return address).
+That's all the charity you're gonna get from me today! :-P
+
+You need to manipulate the stack-frame of the caller (main()), and arrange it in such a way that returning to shell_call() from the epilog of the overflowed victim_func() the latter could find a settled stack as it was been called by the main. 
+In doing so you probably have to mangle the frame-pointer in the stackframe of the victim, that will be restored in %ebp by means of leave.
+
+SoapBox already did a great job of leading you in the right direction.
+For more information;
+http://www.skullsecurity.org/wiki/index.php/Example_4

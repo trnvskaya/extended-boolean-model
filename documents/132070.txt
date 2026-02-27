@@ -1,0 +1,37 @@
+How do I check that I removed required data only?
+postgresql constraints referential-integrity pg-dump
+I have a really big database (running on PostgreSQL) containing a lot of tables with sophisticated relations between them (foreign keys, on delete cascade and so on).
+I need remove some data from a number of tables, but I'm not sure what amount of data will be really deleted from database due to cascade removals.
+How can I check that I'll not delete data that should not be deleted?
+I have a test database - just a copy of real one where I can do what I want :)
+The only idea I have is dump database before and after and check it. But it not looks comfortable.
+Another idea - dump part of database, that, as I think, should not be affected by my DELETE statements and check this part before and after data removal. But I see no simple ways to do it (there are hundreds of tables and removal should work with ~10 of them). Is there some way to do it?
+Any other ideas how to solve the problem?
+
+
+If the worry is keys left dangling (i.e.: pointing to a deleted record) then run the deletion on your test database, then use queries to find any keys that now point to invalid targets.  (while you're doing this you can also make sure the part that should be unaffected did not change)
+A better solution would be to spend time mapping out the delete cascades so you know what to expect - knowing how your database works is pretty valuable so the effort spent on this will be useful beyond this particular deletion.
+And no matter how sure you are back the DB up before doing big changes!
+
+You can query the information_schema to draw yourself a picture on how the constraints are defined in the database. Then you'll know what is going to happen when you delete. This will be useful not only for this case, but always. 
+Something like (for constraints)
+select table_catalog,table_schema,table_name,column_name,rc.* from
+information_schema.constraint_column_usage ccu, 
+information_schema.referential_constraints rc 
+where ccu.constraint_name = rc.constraint_name
+
+
+Thanks for answers!
+Vinko, your answer is very useful for me and I'll study it dipper. 
+actually, for my case, it was enough to compare tables counts before and after records deletion and check what tables were affected by it.
+it was done by simple commands described below 
+psql -U U_NAME -h`hostname` -c '\d' | awk '{print $3}' > tables.list
+
+for i in `cat tables.list `; do echo -n "$i: " >> tables.counts; psql -U U_NAME -h`hostname` -t -c "select count(*) from $i" >> tables.counts; done
+
+for i in `cat tables.list `; do echo -n "$i: " >> tables.counts2; psql -U U_NAME -h`hostname` -t -c "select count(*) from $i" >> tables.counts2; done
+
+diff tables.counts tables.counts2
+
+
+Using psql, start a transaction, perform your deletes, then run whatever checking queries you can think of. You can then either rollback or commit.

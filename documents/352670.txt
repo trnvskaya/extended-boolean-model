@@ -1,0 +1,161 @@
+Weighted random selection with and without replacement
+python algorithm random random-sample
+Recently I needed to do weighted random selection of elements from a list, both with and without replacement. While there are well known and good algorithms for unweighted selection, and some for weighted selection without replacement (such as modifications of the resevoir algorithm), I couldn't find any good algorithms for weighted selection with replacement. I also wanted to avoid the resevoir method, as I was selecting a significant fraction of the list, which is small enough to hold in memory.
+Does anyone have any suggestions on the best approach in this situation? I have my own solutions, but I'm hoping to find something more efficient, simpler, or both.
+
+
+I'd recommend you start by looking at section 3.4.2 of Donald Knuth's Seminumerical Algorithms. 
+If your arrays are large, there are more efficient algorithms in chapter 3 of Principles of Random Variate Generation by John Dagpunar.  If your arrays are not terribly large or you're not concerned with squeezing out as much efficiency as possible, the simpler algorithms in Knuth are probably fine.
+
+Here's what I came up with for weighted selection without replacement:
+def WeightedSelectionWithoutReplacement(l, n):
+  """Selects without replacement n random elements from a list of (weight, item) tuples."""
+  l = sorted((random.random() * x[0], x[1]) for x in l)
+  return l[-n:]
+
+This is O(m log m) on the number of items in the list to be selected from. I'm fairly certain this will weight items correctly, though I haven't verified it in any formal sense.
+Here's what I came up with for weighted selection with replacement:
+def WeightedSelectionWithReplacement(l, n):
+  """Selects with replacement n random elements from a list of (weight, item) tuples."""
+  cuml = []
+  total_weight = 0.0
+  for weight, item in l:
+    total_weight += weight
+    cuml.append((total_weight, item))
+  return [cuml[bisect.bisect(cuml, random.random()*total_weight)] for x in range(n)]
+
+This is O(m + n log m), where m is the number of items in the input list, and n is the number of items to be selected.
+
+One of the fastest ways to make many with replacement samples from an unchanging list is the alias method.  The core intuition is that we can create a set of equal-sized bins for the weighted list that can be indexed very efficiently through bit operations, to avoid a binary search.  It will turn out that, done correctly, we will need to only store two items from the original list per bin, and thus can represent the split with a single percentage.
+Let's us take the example of five equally weighted choices, (a:1, b:1, c:1, d:1, e:1)
+To create the alias lookup:
+
+Normalize the weights such that they sum to 1.0.  (a:0.2 b:0.2 c:0.2 d:0.2 e:0.2)  This is the probability of choosing each weight.
+Find the smallest power of 2 greater than or equal to the number of variables, and create this number of partitions, |p|.  Each partition represents a probability mass of 1/|p|.  In this case, we create 8 partitions, each able to contain 0.125.
+Take the variable with the least remaining weight, and place as much of it's mass as possible in an empty partition.  In this example, we see that a fills the first partition.  (p1{a|null,1.0},p2,p3,p4,p5,p6,p7,p8) with (a:0.075, b:0.2 c:0.2 d:0.2 e:0.2)
+If the partition is not filled, take the variable with the most weight, and fill the partition with that variable.  
+
+Repeat steps 3 and 4, until none of the weight from the original partition need be assigned to the list.
+For example, if we run another iteration of 3 and 4, we see 
+(p1{a|null,1.0},p2{a|b,0.6},p3,p4,p5,p6,p7,p8) with (a:0, b:0.15 c:0.2 d:0.2 e:0.2) left to be assigned
+At runtime:
+
+Get a U(0,1) random number, say binary 0.001100000
+bitshift it lg2(p), finding the index partition.  Thus, we shift it by 3, yielding 001.1, or position 1, and thus partition 2.
+If the partition is split, use the decimal portion of the shifted random number to decide the split. In this case, the value is 0.5, and 0.5 < 0.6, so return a.
+
+Here is some code and another explanation, but unfortunately it doesn't use the bitshifting technique, nor have I actually verified it.
+
+The following is a description of random weighted selection of an element of a 
+set (or multiset, if repeats are allowed), both with and without replacement in O(n) space 
+and O(log n) time.
+It consists of implementing a binary search tree, sorted by the elements to be 
+selected, where each node of the tree contains:
+
+the element itself (element)
+the un-normalized weight of the element (elementweight), and
+the sum of all the un-normalized weights of the left-child node and all of 
+its children (leftbranchweight).
+the sum of all the un-normalized weights of the right-child node and all of
+its chilren (rightbranchweight).
+
+Then we randomly select an element from the BST by descending down the tree. A 
+rough description of the algorithm follows. The algorithm is given a node of
+the tree. Then the values of leftbranchweight, rightbranchweight, 
+and elementweight of node is summed, and the weights are divided by this 
+sum, resulting in the values leftbranchprobability, 
+rightbranchprobability, and elementprobability, respectively. Then a 
+random number between 0 and 1 (randomnumber) is obtained.
+
+if the number is less than elementprobability,
+
+
+remove the element from the BST as normal, updating leftbranchweight
+and rightbranchweight of all the necessary nodes, and return the 
+element.
+
+else if the number is less than (elementprobability + leftbranchweight)
+
+
+recurse on leftchild (run the algorithm using leftchild as node)
+
+else 
+
+
+recurse on rightchild
+
+
+When we finally find, using these weights, which element is to be returned, we either simply return it (with replacement) or we remove it and update relevant weights in the tree (without replacement).
+DISCLAIMER: The algorithm is rough, and a treatise on the proper implementation 
+of a BST is not attempted here; rather, it is hoped that this answer will help 
+those who really need fast weighted selection without replacement (like I do).
+
+A simple approach that hasn't been mentioned here is one proposed in Efraimidis and Spirakis. In python you could select m items from n >= m weighted items with strictly positive weights stored in weights, returning the selected indices, with:
+import heapq
+import math
+import random
+
+def WeightedSelectionWithoutReplacement(weights, m):
+    elt = [(math.log(random.random()) / weights[i], i) for i in range(len(weights))]
+    return [x[1] for x in heapq.nlargest(m, elt)]
+
+This is very similar in structure to the first approach proposed by Nick Johnson. Unfortunately, that approach is biased in selecting the elements (see the comments on the method). Efraimidis and Spirakis proved that their approach is equivalent to random sampling without replacement in the linked paper.
+
+It is possible to do Weighted Random Selection with replacement in O(1) time, after first creating an additional  O(N)-sized data structure in O(N) time.  The algorithm is based on the Alias Method developed by Walker and Vose, which is well described here.   
+The essential idea is that each bin in a histogram would be chosen with probability 1/N by a uniform RNG. So we will walk through it, and for any underpopulated bin which would would receive excess hits, assign the excess to an overpopulated bin.  For each bin, we store the percentage of hits which belong to it, and the partner bin for the excess. This version tracks small and large bins in place, removing the need for an additional stack.  It uses the index of the partner (stored in bucket[1]) as an indicator that they have already been processed.
+Here is a minimal python implementation, based on the C implementation here
+def prep(weights):
+    data_sz = len(weights)
+    factor = data_sz/float(sum(weights))
+    data = [[w*factor, i] for i,w in enumerate(weights)]
+    big=0
+    while big<data_sz and data[big][0]<=1.0: big+=1
+    for small,bucket in enumerate(data):
+        if bucket[1] is not small: continue
+        excess = 1.0 - bucket[0]
+        while excess > 0:
+            if big==data_sz: break
+            bucket[1] = big
+            bucket = data[big]
+            bucket[0] -= excess
+            excess = 1.0 - bucket[0]
+            if (excess >= 0):
+                big+=1
+                while big<data_sz and data[big][0]<=1: big+=1
+    return data
+
+def sample(data):
+    r=random.random()*len(data)
+    idx = int(r)
+    return data[idx][1] if r-idx > data[idx][0] else idx
+
+Example usage:
+TRIALS=1000
+weights = [20,1.5,9.8,10,15,10,15.5,10,8,.2];
+samples = [0]*len(weights)
+data = prep(weights)
+
+for _ in range(int(sum(weights)*TRIALS)):
+    samples[sample(data)]+=1
+
+result = [float(s)/TRIALS for s in samples]
+err = [a-b for a,b in zip(result,weights)]
+print(result)
+print([round(e,5) for e in err])
+print(sum([e*e for e in err]))
+
+
+Suppose you want to sample 3 elements without replacement from the list ['white','blue','black','yellow','green'] with a prob. distribution [0.1, 0.2, 0.4, 0.1, 0.2]. Using numpy.random module it is as easy as this:
+    import numpy.random as rnd
+
+    sampling_size = 3
+    domain = ['white','blue','black','yellow','green']
+    probs = [.1, .2, .4, .1, .2]
+    sample = rnd.choice(domain, size=sampling_size, replace=False, p=probs)
+    # in short: rnd.choice(domain, sampling_size, False, probs)
+    print(sample)
+    # Possible output: ['white' 'black' 'blue']
+
+Setting the replace flag to True, you have a sampling with replacement.
+More info here:
+http://docs.scipy.org/doc/numpy/reference/generated/numpy.random.choice.html#numpy.random.choice

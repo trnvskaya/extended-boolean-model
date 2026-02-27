@@ -1,0 +1,96 @@
+How can I embed one file into another with Ant?
+ant groovy build
+I am developing a small web app project (ColdFusion) and I am trying to keep my project split into multiple files during development, but deploy just one file on completion.
+I have references to external files, for instance:
+<script type="text/javascript" src="jquery-1.2.6.pack.js"></script>
+<link type="text/css" rel="stylesheet" href="project.css" />
+
+And when I build my project, I want to have the files included and embedded within the single finished product file.
+<script type="text/javascript">eval(function(p,a,c,k,e,r) [...]</script>
+<style type="text/css">div{font:normal;} [...]</style>
+
+Anyway, it doesn't look like there is a basic way for Ant to do this. Anyone know?
+
+
+Does this do what you want?
+<property
+    name="filename"
+    value="jquery-1.2.6.pack.js"
+/>
+
+<loadfile
+    property="contents"
+    srcfile="${filename}"
+/>
+
+<replace dir=".">
+    <include name="index.cfm"/>
+    <replacetoken><![CDATA[<script type="text/javascript" src="${filename}"></script>]]></replacetoken>
+    <replacevalue><![CDATA[<script type="text/javascript">${contents}</script>]]></replacevalue>
+</replace>
+
+
+Answering my own question after a few hours of hacking...
+<script language="groovy" src="build.groovy" />
+
+and this groovy script replaces any referenced javascript or css file with the file contents itself.
+f = new File("${targetDir}/index.cfm")
+fContent = f.text
+fContent = jsReplace(fContent)
+fContent = cssReplace(fContent)
+f.write(fContent)
+
+// JS Replacement
+def jsReplace(htmlFileText) {
+    println "Groovy: Replacing Javascript includes"
+    // extract all matched javascript src links
+    def jsRegex = /<script [^>]*src=\"([^\"]+)\"><\/script>/
+    def matcher = (htmlFileText =~ jsRegex)
+    for (i in matcher) {
+        // read external files in
+        def includeText = new File(matcher.group(1)).text
+        // sanitize the string for being regex replace string (dollar signs like jQuery/Prototype will screw it up)
+        includeText = java.util.regex.Matcher.quoteReplacement(includeText)
+        // weak compression (might as well)
+        includeText = includeText.replaceAll(/\/\/.*/, "") // remove single-line comments (like this!)
+        includeText = includeText.replaceAll(/[\n\r\f\s]+/, " ") // replace all whitespace with single space
+        // return content with embedded file
+        htmlFileText = htmlFileText.replaceFirst('<script [^>]*src="'+ matcher.group(1) +'"[^>]*></script>', '<script type="text/javascript">'+ includeText+'</script>');
+    }
+    return htmlFileText;
+}
+
+// CSS Replacement
+def cssReplace(htmlFileText) {
+    println "Groovy: Replacing CSS includes"
+    // extract all matched CSS style href links
+    def cssRegex = /<link [^>]*href=\"([^\"]+)\"[^>]*>(<\/link>)?/
+    def matcher = (htmlFileText =~ cssRegex)
+    for (i in matcher) {
+        // read external files in
+        def includeText = new File(matcher.group(1)).text
+        // compress CSS
+        includeText = includeText.replaceAll(/[\n\r\t\f\s]+/, " ")
+        // sanitize the string for being regex replace string (dollar signs like jQuery/Prototype will screw it up)
+        includeText = java.util.regex.Matcher.quoteReplacement(includeText)
+        // return content with embedded file
+        htmlFileText = htmlFileText.replaceFirst('<link [^>]*href="'+ matcher.group(1) +'"[^>]*>(<\\/link>)?', '<style type=\"text/css\">'+ includeText+'</style>');
+    }
+    return htmlFileText;
+}
+
+So I guess that does it for me. It's been working pretty well, and it's extensible. Definitely not the best Groovy ever, but it's one of my first. Also, it required a few classpathed jars for it to compile. I lost track of which, but I believe it is the javax.scripting engine, groovy-engine.jar and groovy-all-1.5.6.jar
+
+For a solution in pure ant, try the following:
+<target name="replace">
+    <property name="js-filename" value="jquery-1.2.6.pack.js"/>
+    <property name="css-filename" value="project.css"/>
+    <loadfile property="js-file" srcfile="${js-filename}"/>
+    <loadfile property="css-file" srcfile="${css-filename}"/>
+    <replace file="input.txt">
+    	<replacefilter token="&lt;script type=&quot;text/javascript&quot; src=&quot;${js-filename}&quot;&gt;&lt;/script&gt;" value="&lt;script type=&quot;text/javascript&quot;&gt;${js-file}&lt;/script&gt;"/>
+    	<replacefilter token="&lt;link type=&quot;text/css&quot; rel=&quot;stylesheet&quot; href=&quot;${css-filename}&quot; /&gt;" value="&lt;style type=&quot;text/css&quot;&gt;${css-file}&lt;/style&gt;"/>
+    </replace>
+</target>
+
+I tested it, and it worked as expected. In the text to replace and the value you insert instead all characters '<', '>' and '"' should be quoted as &lt;, &gt; and &quot.

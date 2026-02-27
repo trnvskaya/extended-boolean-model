@@ -1,0 +1,44 @@
+Why does Hibernate/JDBC/MySQL drop connections after a day or so?
+mysql hibernate
+I have several server processes that once in a while respond to messages from the clients and perform read-only transactions.
+After about a few days that the servers are running, they stop working correctly and when I check it turns out that there's a whole bunch of messages about the connection being closed.
+When I checked it out, it turned out that hibernate by default works in some sort of development mode where connections are dropped after a few hours, and I started using c3po for connection pooling. 
+However, even with c3po, I get that problem about 24 hours or so after the servers are started.
+Has anyone encountered that problem and knows how to address it? I'm not familiar enough with the intricacies of configuring hibernate.
+
+
+The MySQL JDBC driver times out after 8 hours of inactivity and drops the connection.
+You can set autoReconnect=true in your JDBC URL, and this causes the driver to reconnect if you try to query after it has disconnected.  But this has side effects; for instance session state and transactions cannot be maintained over a new connection.
+If you use autoReconnect, the JDBC connection is reestablished, but it doesn't automatically re-execute your query that got the exception.  So you do need to catch SQLException in your application and retry queries.
+Read http://dev.mysql.com/doc/refman/5.0/en/connector-j-reference-configuration-properties.html for more details.
+
+I would suggest that, in almost any client/server set-up, it's a bad idea to leave connections open when they're not needed.
+I'm thinking specifically about DB2/z connections but it applies equally to all servers (database and otherwise).  These connections consume resources at the server that could be best utilized elsewhere.
+If you were to hold connections open in a corporate environment where tens of thousand of clients connect to the database, you would probably even bring a mainframe to its knees.
+I'm all for the idea of connection pooling but not so much for the idea of trying to hold individual sessions open for ever.
+My advice would be as follows:
+1/ Have three sorts of connections in your connection pool:
+
+closed (so not actually in your pool).
+ready, meaning open but not in use by a client.
+active, meaning in use by a client.
+
+2/ Have your connection pooling maintain a small number of ready connections, minimum of N and maximum of M.  N can be adjusted depending on the peak speed at which your clients request connections. If the number of ready connections ever drops to zero, you need a bigger N.
+3/ When a client wants a connection, give them one of the ready ones (making it active), then immediately open a new one if there's now less than N ready (but don't make the client wait for this to complete, or you'll lose the advantage of pooling). This ensures there will always be at least N ready connections.  If none are ready when the client wants one, they will have to wait around while you create a new one.
+4/ When the client finishes with an active connection, return it to the ready state if there's less than M ready connections. Otherwise close it. This prevents you from having more than M ready connections.
+5/ Periodically recycle the ready connections to prevent stale connections. If there's more than N ready connections, just close the oldest connection.  Otherwise close it and re-open another.
+This has the advantage of having enough ready AND youthful connections available in your connection pool without overloading the server.
+
+MySql basically timeouts by default in 8 hours.
+I got the same exception & resolved the issue after 3 hectic days.Check if you are using I hibernate3. In this version it is required to explicitly mention the connection class name. Also check if the jar is in classpath. Check steps & comments in below link 
+http://hibernatedb.blogspot.com/2009/05/automatic-reconnect-from-hibernate-to.html
+Remove autoReconnect=true
+
+I changed my hibernate configuration file by adding thoses lines and it works for now:
+    <property name="connection.autoReconnect">true</property>
+    <property name="connection.autoReconnectForPools">true</property>
+    <property name="connection.is-connection-validation-required">true</property>
+
+I think that using c3p0 pool is better and recomanded but this solution is working for now and don't present ant problem.
+I let the Tomcat On for 24hours and the connection wasn't lost .
+Please try it .

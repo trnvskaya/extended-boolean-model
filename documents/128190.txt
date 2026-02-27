@@ -1,0 +1,45 @@
+Retrieve Error text from SQL Server 2000 error
+asp.net sql-server error-handling
+I need help logging errors from T-SQL in SQL Server 2000.  We need to log errors that we trap, but are having trouble getting the same information we would have had sitting in front of SQL Server Management Studio.
+I can get a message without any argument substitution like this:
+SELECT MSG.description from master.dbo.sysmessages MSG
+INNER JOIN sys.syslanguages LANG ON MSG.msglangID=LANG.msglangid
+WHERE MSG.error=@err AND LANG.langid=@@LANGID
+
+But I have not found any way of finding out the error arguments.  I want to see:
+Constraint violation MYCONSTRAINT2 on table MYTABLE7
+not
+Constraint violation %s on table %s
+Googling has only turned up exotic schemes using DBCC OUTPUTBUFFER that require admin access and aren't appropriate for production code.  How do I get an error message with argument replacement?
+
+
+Any chance you'll be upgrading to SQL2005 soon? If so, you could probably leverage their TRY/CATCH model to more easily accomplish what you're trying to do.
+The variables exposed in the catch can give you the object throwing the error, the line number, error message, severity, etc.  From there, you can log it, send an email, etc.
+
+In .Net, retrieving error messages (and anything output from print or raiserror) from sql server is as simple as setting one property on your SqlConnection ( .FireInfoMessageEventOnUserErrors = True) and handling the connection's InfoMessage event.  The data received by .Net matches what you get in the Messages window in the SQL Server Management Studio results grid.
+All the code goes in the function that handles the event, and you can abstract that so that all your connections point to the same method, so there's nothing else to change in the rest of the app aside from the two lines of code when you create new connections to set the property and event (and you have that abstracted away so you only need to do it in one place, right?)
+Here is a link to what I consider the definitive error guide for SQL Server.
+http://www.sommarskog.se/error-handling-I.html
+In certain circumstances SQL Server will continue processing even after an error.  See the heading labeled What Happens when an Error Occurs? from the previous link.
+
+Look in Books on-line for Raiserror (Described)  
+You will find the syntax looks like this:
+RAISERROR ( { msg_id | msg_str } { , severity , state } 
+    [ , argument [ ,...n ] ] ) 
+    [ WITH option [ ,...n ] ]
+
+and the error arguments are as follows:
+d or I Signed integer 
+o Unsigned octal 
+p Pointer 
+s String 
+u Unsigned integer 
+x or X Unsigned hexadecimal
+
+Any language from VB onwards has the ability to catch these and let you to take the appropriate action.
+Dave J
+
+FORMATMESSAGE (it also exists in SQL Server 2000) allows you to build up messages into their final format from the sysmessages templates like above.
+However, the RAISERROR command (which is pretty much what the database engine itself uses internally calls when you have an error) already sends the completed text which can be trapped and logged in the client. SSMS is a client and does not generate it's own messages: all message come from the database engine.
+However, I gather you want to log the T-SQL error using T-SQL. Frankly, you can't on SQL Server 2000. Too many errors are batch and scope aborting to reliably log anything.
+You have to be on SQL Server 2005 to use TRY/CATCH/ERROR_MESSAGE, or you trap in the client and then using something like log4net to log back to SQL Server. 

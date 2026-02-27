@@ -1,0 +1,73 @@
+How to escape text for regular expression in Java
+java regex escaping
+Does Java have a built-in way to escape arbitrary text so that it can be included in a regular expression? For example, if my users enter "$5", I'd like to match that exactly rather than a "5" after the end of input.
+
+
+Since Java 1.5, yes:
+Pattern.quote("$5");
+
+
+I think what you're after is \Q$5\E.  Also see Pattern.quote(s) introduced in Java5.
+See Pattern javadoc for details.
+
+Difference between Pattern.quote and Matcher.quoteReplacement was not clear to me before I saw following example
+s.replaceFirst(Pattern.quote("text to replace"), 
+               Matcher.quoteReplacement("replacement text"));
+
+
+First off, if
+
+you use replaceAll()
+you DON'T use Matcher.quoteReplacement()
+the text to be substituted in includes a $1
+
+it won't put a 1 at the end.  It will look at the search regex for the first matching group and sub THAT in.  That's what $1, $2 or $3 means in the replacement text: matching groups from the search pattern.
+I frequently plug long strings of text into .properties files, then generate email subjects and bodies from those.  Indeed, this appears to be the default way to do i18n in Spring Framework.  I put XML tags, as placeholders, into the strings and I use replaceAll() to replace the XML tags with the values at runtime.
+I ran into an issue where a user input a dollars-and-cents figure, with a dollar sign.  replaceAll() choked on it, with the following showing up in a stracktrace:
+java.lang.IndexOutOfBoundsException: No group 3
+at java.util.regex.Matcher.start(Matcher.java:374)
+at java.util.regex.Matcher.appendReplacement(Matcher.java:748)
+at java.util.regex.Matcher.replaceAll(Matcher.java:823)
+at java.lang.String.replaceAll(String.java:2201)
+
+In this case, the user had entered "$3" somewhere in their input and replaceAll() went looking in the search regex for the third matching group, didn't find one, and puked.
+Given:
+// "msg" is a string from a .properties file, containing "<userInput />" among other tags
+// "userInput" is a String containing the user's input
+
+replacing
+msg = msg.replaceAll("<userInput \\/>", userInput);
+
+with 
+msg = msg.replaceAll("<userInput \\/>", Matcher.quoteReplacement(userInput));
+
+solved the problem.  The user could put in any kind of characters, including dollar signs, without issue.  It behaved exactly the way you would expect.
+
+To have protected pattern you may replace all symbols with "\\\\", except digits and letters.  And after that you can put in that protected pattern your special symbols to make this pattern working not like stupid quoted text, but really like a patten, but your own.  Without user special symbols.
+public class Test {
+    public static void main(String[] args) {
+        String str = "y z (111)";
+        String p1 = "x x (111)";
+        String p2 = ".* .* \\(111\\)";
+
+        p1 = escapeRE(p1);
+
+        p1 = p1.replace("x", ".*");
+
+        System.out.println( p1 + "-->" + str.matches(p1) ); 
+            //.*\ .*\ \(111\)-->true
+        System.out.println( p2 + "-->" + str.matches(p2) ); 
+            //.* .* \(111\)-->true
+    }
+
+    public static String escapeRE(String str) {
+        //Pattern escaper = Pattern.compile("([^a-zA-z0-9])");
+        //return escaper.matcher(str).replaceAll("\\\\$1");
+        return str.replaceAll("([^a-zA-Z0-9])", "\\\\$1");
+    }
+}
+
+
+It may be too late to respond, but you can also use Pattern.LITERAL, which would ignore all special characters while formatting:
+Pattern.compile(textToFormat, Pattern.LITERAL);
+

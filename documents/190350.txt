@@ -1,0 +1,35 @@
+Windows swapping redundantly?
+windows memory windows-vista operating-system
+This may not be strictly programming related but more OS-structure related.
+Running Vista 32 bit on a brand new laptop with 3GB of memory, Running idle the system consumes about 40% of its memory. Other then the fact that this is outrageous on its own right, the OS should be able to fit all of the processes nicely into memory and not need to swap to disk EVER.
+Yet looking at the task manager I see processes having page faults all the time. Not many but still. for instance explorer.exe has one every second approximately.
+Why is that? Why does the OS feel the need to swap out pages although it has plenty of physical memory?
+
+
+A page fault doesn't necessarily mean that something was paged to disk. A modern OS has many levels of state that a page might be in, for example Windows will probably distinguish between a page of memory that is being actively used, and a page of memory that hasn't been touched in a while and could be paged to disk if needed. (This makes the pager's job easier, because it only has to look at the second kind of page to find out which ones it can page.) Now, how does a page get from the second state back to the first one? The kernel sets a bit on that page indicating that if anything accesses it, then the page will be marked as "active" and moved back to the first state. This results in a page fault.
+Other things that might cause a page fault are things like memory mapped files. An application requests that a file be mapped to memory, that is it just appears in memory whenever the app wants to read from it. Obviously it would be tremendously expensive to load the whole file into memory all at once, so the kernel just marks the memory space with the "please page fault if this is ever accessed" bit, and reads from the disk if the app ever touches that page.
+The real situation is a lot more complex than the above, but that should give you a general idea of what might be going on.
+
+Of course Vista uses the memory your computer has to boot and run faster. It will release/swap the memory when some other program needs it.
+Why not use the ressource if it is there and available and can be released later on without problems?
+About the page faults, see this explanation, the task manager creates those:
+http://blogs.msdn.com/oldnewthing/archive/2008/08/21/8880075.aspx 
+(short abstract, there is one page fault every time the task manager updates the system tray icon. Set the task managers update speed to high, you'll get even more page faults. No memory is swapped on these page faults)
+
+
+Running idle the system consumes about 40% of its memory.
+
+Whenever I hear this anymore, I wonder why people complain about software taking advantage of system resources.  As a user, I much prefer that the OS take up 40% of my memory (assuming it's not otherwise used) for aggressive pre-fetching and caching; it makes the end experience that much better since the system will have more in-memory hits (and less page faults) than it might otherwise have.
+As for the extensive paging, I think (but am not certain) that this is another aggressive caching strategy.  If the system memory were to become full (which would be pretty easy on say 1 GB with a couple large apps, such as Visual Studio, or even on 4GB if you're running a VM or two), the system will have to page some chunk of memory out to disk before it can read a page from disk into memory.  If the OS is aggressively paging non-active memory out to disk during idle time, it can save that operation when another process has a page fault.
+
+It's perfectly logical that explorer has a pagefault every second when you are looking at task manager.  Task manager updates every second, which will also update the graph in the notification area.  It is explorer.exe that manages the notification area and it's icons.  So every time task manager updates it's little graph, explorer needs to load the appropriate icon from taskmgr.exe which causes a page fault. (Read more on Raymond Chen's excellent blog)
+I'm pretty sure Raymond Chen explains a couple of other "issues" with page faults, but I can't find the article(s) right now.  Basically a page fault doesn't always mean that something has to be loaded from disk.
+
+Yes, I noticed the same thing. It also happens with Windows XP.
+Basically it seems that Windows has a "fast-allocation" policy regarding to swapping: keep a lot of memory free so it is available when needed. This, on computer where memory is a limitation, is a strategy with some sense. Loading large programs would result in some swapping anyways, so the system does that in advance.
+Of course, on systems with a lot of memory this does not make any sense. On one of my computers I have XP with 3 GB of RAM. The computer is way faster if I just turn off the page file!
+Also this strategy has a consequence on "shell load" time: by shell load I mean whatever happens between when you log in and when you are actually able to use the computer. Swapping is taking place at the same time that a lot of resident tray icon programs are being loaded, resulting in a very inefficient use of the disk.
+On other computers I have Linux installed, which has a different policy: never use swap unless there is no more memory. Since Linux is generally pretty small in memory consumption (the application are the real hogs), this is a good strategy, which results in faster "shell load" time. If you have enough memory, the swap file is basically turned off until it's needed.
+
+"Free memory" is a problematic term. At any given moment, it would be best if all bytes are both on disk and in RAM. That way, if any program suddenly 2GB, the OS can satisfy that request without disk I/O. Just zero out the RAM. This holds true, whether the bytes are logically "file bytes" (ie the RAM is cache) or "process bytes" (ie the disk bytes are paged).
+Obviously, for engineering reasons you can't have all bytes both on disk and in RAM. But you certainly shouldn't be throwing bytes out of RAM just because they are also on disk. And if you have both a spinning disk and RAM pages that haven't changed in a minute, it makes sense to pre-emptively write out the bytes. You would want an OS to do this at a low prio, but prioritized I/O is less common on Windows (new with Vista, and honestly that's a 1.0 implementation)

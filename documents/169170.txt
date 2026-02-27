@@ -1,0 +1,39 @@
+what is the best way to do keep alive socket checking in .NET?
+.net sockets
+I am looking for a way to do a keep alive check in .NET. The scenario is for both UDP and TCP.
+Currently in TCP what I do is that one side connects and when there is no data to send it sends a keep alive every X seconds.
+I want the other side to check for data, and if non was received in X seconds, to raise an event or so.
+One way i tried to do was do a blocking receive and set the socket's RecieveTimeout to X seconds. But the problem was whenever the Timeout happened, the socket's Receive would throw an SocketExeception and the socket on this side would close, is this the correct behaviour ? why does the socket close/die after the timeout instead of just going on ?
+A check if there is data and sleep isn't acceptable (since I might be lagging on receiving data while sleeping).
+So what is the best way to go about this, and why is the method i described on the other side failing ?
+
+
+Since you cannot use the blocking (synchronous) receive, you will have to settle for the asynchronous handling. Fortunately that's quite easy to do with .NET. Look for the description of BeginReceive() and EndReceive(). Or check out this article or this.
+As for the timeout behaviour I found no conclusive description of this. Since it's not documented otherwise you have to assume that it's the intended behaviour.
+
+According to MSDN, a SocketException thrown when ReceiveTimeout is exceeded in Receive call will not close the socket. There is something else going on in your code.
+Check the caught SocketException details - maybe it's not a timeout after all. Maybe the other side of the connection shuts down the socket.
+Consider enabling network tracing to diagnose the exact source of your problems: look for "Network Tracing" on MSDN (can't provide you with a link, since right now MSDN is down).
+
+If you literally mean "KeepAlive", try the following.
+	public static void SetTcpKeepAlive(Socket socket, uint keepaliveTime, uint keepaliveInterval)
+	{
+		/* the native structure
+		struct tcp_keepalive {
+		ULONG onoff;
+		ULONG keepalivetime;
+		ULONG keepaliveinterval;
+		};
+		*/
+
+		// marshal the equivalent of the native structure into a byte array
+		uint dummy = 0;
+		byte[] inOptionValues = new byte[Marshal.SizeOf(dummy) * 3];
+		BitConverter.GetBytes((uint)(keepaliveTime)).CopyTo(inOptionValues, 0);
+		BitConverter.GetBytes((uint)keepaliveTime).CopyTo(inOptionValues, Marshal.SizeOf(dummy));
+		BitConverter.GetBytes((uint)keepaliveInterval).CopyTo(inOptionValues, Marshal.SizeOf(dummy) * 2);
+
+		// write SIO_VALS to Socket IOControl
+		socket.IOControl(IOControlCode.KeepAliveValues, inOptionValues, null);
+	}
+

@@ -1,0 +1,737 @@
+How do I prevent and/or handle a StackOverflowException?
+c# .net stack-overflow xslcompiledtransform
+I would like to either prevent or handle a StackOverflowException that I am getting from a call to the XslCompiledTransform.Transform method within an Xsl Editor I am writing. The problem seems to be that the user can write an Xsl script that is infinitely recursive, and it just blows up on the call to the Transform method.  (That is, the problem is not just the typical programmatic error, which is usually the cause of such an exception.)
+Is there a way to detect and/or limit how many recursions are allowed?  Or any other ideas to keep this code from just blowing up on me?
+
+
+From Microsoft:
+
+Starting with the .NET Framework
+  version 2.0, a StackOverflowException
+  object cannot be caught by a try-catch
+  block and the corresponding process is
+  terminated by default. Consequently,
+  users are advised to write their code
+  to detect and prevent a stack
+  overflow. For example, if your
+  application depends on recursion, use
+  a counter or a state condition to
+  terminate the recursive loop.
+
+I'm assuming the exception is happening within an internal .NET method, and not in your code.
+You can do a couple things.
+
+Write code that checks the xsl for infinite recursion and notifies the user prior to applying a transform (Ugh).
+Load the XslTransform code into a separate process (Hacky, but less work).
+
+You can use the Process class to load the assembly that will apply the transform into a separate process, and alert the user of the failure if it dies, without killing your main app.
+EDIT: I just tested, here is how to do it:
+MainProcess:
+// This is just an example, obviously you'll want to pass args to this.
+Process p1 = new Process();
+p1.StartInfo.FileName = "ApplyTransform.exe";
+p1.StartInfo.UseShellExecute = false;
+p1.StartInfo.WindowStyle = ProcessWindowStyle.Hidden;
+
+p1.Start();
+p1.WaitForExit();
+
+if (p1.ExitCode == 1)    
+   Console.WriteLine("StackOverflow was thrown");
+
+ApplyTransform Process:
+class Program
+{
+    static void Main(string[] args)
+    {
+        AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(CurrentDomain_UnhandledException);
+        throw new StackOverflowException();
+    }
+
+    // We trap this, we can't save the process, 
+    // but we can prevent the "ILLEGAL OPERATION" window 
+    static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+    {
+        if (e.IsTerminating)
+        {
+            Environment.Exit(1);
+        }
+    }
+}
+
+
+I would suggest creating a wrapper around XmlWriter object, so it would count amount of calls to WriteStartElement/WriteEndElement, and if you limit amount of tags to some number (f.e. 100), you would be able to throw a different exception, for example - InvalidOperation.
+That should solve the problem in the majority of the cases
+public class LimitedDepthXmlWriter : XmlWriter
+{
+    private readonly XmlWriter _innerWriter;
+    private readonly int _maxDepth;
+    private int _depth;
+
+    public LimitedDepthXmlWriter(XmlWriter innerWriter): this(innerWriter, 100)
+    {
+    }
+
+    public LimitedDepthXmlWriter(XmlWriter innerWriter, int maxDepth)
+    {
+        _maxDepth = maxDepth;
+        _innerWriter = innerWriter;
+    }
+
+    public override void Close()
+    {
+        _innerWriter.Close();
+    }
+
+    public override void Flush()
+    {
+        _innerWriter.Flush();
+    }
+
+    public override string LookupPrefix(string ns)
+    {
+        return _innerWriter.LookupPrefix(ns);
+    }
+
+    public override void WriteBase64(byte[] buffer, int index, int count)
+    {
+        _innerWriter.WriteBase64(buffer, index, count);
+    }
+
+    public override void WriteCData(string text)
+    {
+        _innerWriter.WriteCData(text);
+    }
+
+    public override void WriteCharEntity(char ch)
+    {
+        _innerWriter.WriteCharEntity(ch);
+    }
+
+    public override void WriteChars(char[] buffer, int index, int count)
+    {
+        _innerWriter.WriteChars(buffer, index, count);
+    }
+
+    public override void WriteComment(string text)
+    {
+        _innerWriter.WriteComment(text);
+    }
+
+    public override void WriteDocType(string name, string pubid, string sysid, string subset)
+    {
+        _innerWriter.WriteDocType(name, pubid, sysid, subset);
+    }
+
+    public override void WriteEndAttribute()
+    {
+        _innerWriter.WriteEndAttribute();
+    }
+
+    public override void WriteEndDocument()
+    {
+        _innerWriter.WriteEndDocument();
+    }
+
+    public override void WriteEndElement()
+    {
+        _depth--;
+
+        _innerWriter.WriteEndElement();
+    }
+
+    public override void WriteEntityRef(string name)
+    {
+        _innerWriter.WriteEntityRef(name);
+    }
+
+    public override void WriteFullEndElement()
+    {
+        _innerWriter.WriteFullEndElement();
+    }
+
+    public override void WriteProcessingInstruction(string name, string text)
+    {
+        _innerWriter.WriteProcessingInstruction(name, text);
+    }
+
+    public override void WriteRaw(string data)
+    {
+        _innerWriter.WriteRaw(data);
+    }
+
+    public override void WriteRaw(char[] buffer, int index, int count)
+    {
+        _innerWriter.WriteRaw(buffer, index, count);
+    }
+
+    public override void WriteStartAttribute(string prefix, string localName, string ns)
+    {
+        _innerWriter.WriteStartAttribute(prefix, localName, ns);
+    }
+
+    public override void WriteStartDocument(bool standalone)
+    {
+        _innerWriter.WriteStartDocument(standalone);
+    }
+
+    public override void WriteStartDocument()
+    {
+        _innerWriter.WriteStartDocument();
+    }
+
+    public override void WriteStartElement(string prefix, string localName, string ns)
+    {
+        if (_depth++ > _maxDepth) ThrowException();
+
+        _innerWriter.WriteStartElement(prefix, localName, ns);
+    }
+
+    public override WriteState WriteState
+    {
+        get { return _innerWriter.WriteState; }
+    }
+
+    public override void WriteString(string text)
+    {
+        _innerWriter.WriteString(text);
+    }
+
+    public override void WriteSurrogateCharEntity(char lowChar, char highChar)
+    {
+        _innerWriter.WriteSurrogateCharEntity(lowChar, highChar);
+    }
+
+    public override void WriteWhitespace(string ws)
+    {
+        _innerWriter.WriteWhitespace(ws);
+    }
+
+    private void ThrowException()
+    {
+        throw new InvalidOperationException(string.Format("Result xml has more than {0} nested tags. It is possible that xslt transformation contains an endless recursive call.", _maxDepth));
+    }
+}
+
+
+With .NET 4.0 You can add the HandleProcessCorruptedStateExceptions attribute from System.Runtime.ExceptionServices to the method containing the try/catch block. This really worked! Maybe not recommended but works.
+using System;
+using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Runtime.ExceptionServices;
+
+namespace ExceptionCatching
+{
+    public class Test
+    {
+        public void StackOverflow()
+        {
+            StackOverflow();
+        }
+
+        public void CustomException()
+        {
+            throw new Exception();
+        }
+
+        public unsafe void AccessViolation()
+        {
+            byte b = *(byte*)(8762765876);
+        }
+    }
+
+    class Program
+    {
+        [HandleProcessCorruptedStateExceptions]
+        static void Main(string[] args)
+        {
+            Test test = new Test();
+            try {
+                //test.StackOverflow();
+                test.AccessViolation();
+                //test.CustomException();
+            }
+            catch
+            {
+                Console.WriteLine("Caught.");
+            }
+
+            Console.WriteLine("End of program");
+
+        }
+
+    }      
+}
+
+
+If you application depends on 3d-party code (in Xsl-scripts) then you have to decide first do you want to defend from bugs in them or not.
+If you really want to defend then I think you should execute your logic which prone to external errors in separate AppDomains.
+Catching StackOverflowException is not good.
+Check also this question.
+
+You can read up this property every few calls, Environment.StackTrace , and if the stacktrace exceded a specific threshold that you preset, you can return the function.
+You should also try to replace some recursive functions with loops.
+
+I had a stackoverflow today and i read some of your posts and decided to help out the Garbage Collecter. 
+I used to have a near infinite loop like this:
+    class Foo
+    {
+        public Foo()
+        {
+            Go();
+        }
+
+        public void Go()
+        {
+            for (float i = float.MinValue; i < float.MaxValue; i+= 0.000000000000001f)
+            {
+                byte[] b = new byte[1]; // Causes stackoverflow
+            }
+        }
+    }
+
+Instead let the resource run out of scope like this:
+class Foo
+{
+    public Foo()
+    {
+        GoHelper();
+    }
+
+    public void GoHelper()
+    {
+        for (float i = float.MinValue; i < float.MaxValue; i+= 0.000000000000001f)
+        {
+            Go();
+        }
+    }
+
+    public void Go()
+    {
+        byte[] b = new byte[1]; // Will get cleaned by GC
+    }   // right now
+}
+
+It worked for me, hope it helps someone.
+
+
+NOTE The question in the bounty by @WilliamJockusch and the original question are different.
+This answer is about StackOverflow's in the general case of third-party libraries and what you can/can't do with them. If you're looking about the special case with XslTransform, see the accepted answer.
+
+
+Stack overflows happen because the data on the stack exceeds a certain limit (in bytes). The details of how this detection works can be found here.
+
+I'm wondering if there is a general way to track down StackOverflowExceptions. In other words, suppose I have infinite recursion somewhere in my code, but I have no idea where. I want to track it down by some means that is easier than stepping through code all over the place until I see it happening. I don't care how hackish it is.
+
+As I mentioned in the link, detecting a stack overflow from static code analysis would require solving the halting problem which is undecidable. Now that we've established that there is no silver bullet, I can show you a few tricks that I think helps track down the problem.
+I think this question can be interpreted in different ways, and since I'm a bit bored :-), I'll break it down into different variations. 
+Detecting a stack overflow in a test environment
+Basically the problem here is that you have a (limited) test environment and want to detect a stack overflow in an (expanded) production environment. 
+Instead of detecting the SO itself, I solve this by exploiting the fact that the stack depth can be set. The debugger will give you all the information you need. Most languages allow you to specify the stack size or the max recursion depth. 
+Basically I try to force a SO by making the stack depth as small as possible. If it doesn't overflow, I can always make it bigger (=in this case: safer) for the production environment. The moment you get a stack overflow, you can manually decide if it's a 'valid' one or not. 
+To do this, pass the stack size (in our case: a small value) to a Thread parameter, and see what happens. The default stack size in .NET is 1 MB, we're going to use a way smaller value:
+class StackOverflowDetector
+{
+    static int Recur()
+    {
+        int variable = 1;
+        return variable + Recur();
+    }
+
+    static void Start()
+    {
+        int depth = 1 + Recur();
+    }
+
+    static void Main(string[] args)
+    {
+        Thread t = new Thread(Start, 1);
+        t.Start();
+        t.Join();
+        Console.WriteLine();
+        Console.ReadLine();
+    }
+}
+
+Note: we're going to use this code below as well.
+Once it overflows, you can set it to a bigger value until you get a SO that makes sense. 
+Creating exceptions before you SO
+The StackOverflowException is not catchable. This means there's not much you can do when it has happened. So, if you believe something is bound to go wrong in your code, you can make your own exception in some cases. The only thing you need for this is the current stack depth; there's no need for a counter, you can use the real values from .NET:
+class StackOverflowDetector
+{
+    static void CheckStackDepth()
+    {
+        if (new StackTrace().FrameCount > 10) // some arbitrary limit
+        {
+            throw new StackOverflowException("Bad thread.");
+        }
+    }
+
+    static int Recur()
+    {
+        CheckStackDepth();
+        int variable = 1;
+        return variable + Recur();
+    }
+
+    static void Main(string[] args)
+    {
+        try
+        {
+            int depth = 1 + Recur();
+        }
+        catch (ThreadAbortException e)
+        {
+            Console.WriteLine("We've been a {0}", e.ExceptionState);
+        }
+        Console.WriteLine();
+        Console.ReadLine();
+    }
+}
+
+Note that this approach also works if you are dealing with third-party components that use a callback mechanism. The only thing required is that you can intercept some calls in the stack trace.
+Detection in a separate thread
+You explicitly suggested this, so here goes this one.
+You can try detecting a SO in a separate thread.. but it probably won't do you any good. A stack overflow can happen fast, even before you get a context switch. This means that this mechanism isn't reliable at all... I wouldn't recommend actually using it. It was fun to build though, so here's the code :-)
+class StackOverflowDetector
+{
+    static int Recur()
+    {
+        Thread.Sleep(1); // simulate that we're actually doing something :-)
+        int variable = 1;
+        return variable + Recur();
+    }
+
+    static void Start()
+    {
+        try
+        {
+            int depth = 1 + Recur();
+        }
+        catch (ThreadAbortException e)
+        {
+            Console.WriteLine("We've been a {0}", e.ExceptionState);
+        }
+    }
+
+    static void Main(string[] args)
+    {
+        // Prepare the execution thread
+        Thread t = new Thread(Start);
+        t.Priority = ThreadPriority.Lowest;
+
+        // Create the watch thread
+        Thread watcher = new Thread(Watcher);
+        watcher.Priority = ThreadPriority.Highest;
+        watcher.Start(t);
+
+        // Start the execution thread
+        t.Start();
+        t.Join();
+
+        watcher.Abort();
+        Console.WriteLine();
+        Console.ReadLine();
+    }
+
+    private static void Watcher(object o)
+    {
+        Thread towatch = (Thread)o;
+
+        while (true)
+        {
+            if (towatch.ThreadState == System.Threading.ThreadState.Running)
+            {
+                towatch.Suspend();
+                var frames = new System.Diagnostics.StackTrace(towatch, false);
+                if (frames.FrameCount > 20)
+                {
+                    towatch.Resume();
+                    towatch.Abort("Bad bad thread!");
+                }
+                else
+                {
+                    towatch.Resume();
+                }
+            }
+        }
+    }
+}
+
+Run this in the debugger and have fun of what happens.
+Using the characteristics of a stack overflow
+Another interpretation of your question is: "Where are the pieces of code that could potentially cause a stack overflow exception?". Obviously the answer of this is: all code with recursion. For each piece of code, you can then do some manual analysis.
+It's also possible to determine this using static code analysis. What you need to do for that is to decompile all methods and figure out if they contain an infinite recursion. Here's some code that does that for you:
+// A simple decompiler that extracts all method tokens (that is: call, callvirt, newobj in IL)
+internal class Decompiler
+{
+    private Decompiler() { }
+
+    static Decompiler()
+    {
+        singleByteOpcodes = new OpCode[0x100];
+        multiByteOpcodes = new OpCode[0x100];
+        FieldInfo[] infoArray1 = typeof(OpCodes).GetFields();
+        for (int num1 = 0; num1 < infoArray1.Length; num1++)
+        {
+            FieldInfo info1 = infoArray1[num1];
+            if (info1.FieldType == typeof(OpCode))
+            {
+                OpCode code1 = (OpCode)info1.GetValue(null);
+                ushort num2 = (ushort)code1.Value;
+                if (num2 < 0x100)
+                {
+                    singleByteOpcodes[(int)num2] = code1;
+                }
+                else
+                {
+                    if ((num2 & 0xff00) != 0xfe00)
+                    {
+                        throw new Exception("Invalid opcode: " + num2.ToString());
+                    }
+                    multiByteOpcodes[num2 & 0xff] = code1;
+                }
+            }
+        }
+    }
+
+    private static OpCode[] singleByteOpcodes;
+    private static OpCode[] multiByteOpcodes;
+
+    public static MethodBase[] Decompile(MethodBase mi, byte[] ildata)
+    {
+        HashSet<MethodBase> result = new HashSet<MethodBase>();
+
+        Module module = mi.Module;
+
+        int position = 0;
+        while (position < ildata.Length)
+        {
+            OpCode code = OpCodes.Nop;
+
+            ushort b = ildata[position++];
+            if (b != 0xfe)
+            {
+                code = singleByteOpcodes[b];
+            }
+            else
+            {
+                b = ildata[position++];
+                code = multiByteOpcodes[b];
+                b |= (ushort)(0xfe00);
+            }
+
+            switch (code.OperandType)
+            {
+                case OperandType.InlineNone:
+                    break;
+                case OperandType.ShortInlineBrTarget:
+                case OperandType.ShortInlineI:
+                case OperandType.ShortInlineVar:
+                    position += 1;
+                    break;
+                case OperandType.InlineVar:
+                    position += 2;
+                    break;
+                case OperandType.InlineBrTarget:
+                case OperandType.InlineField:
+                case OperandType.InlineI:
+                case OperandType.InlineSig:
+                case OperandType.InlineString:
+                case OperandType.InlineTok:
+                case OperandType.InlineType:
+                case OperandType.ShortInlineR:
+                    position += 4;
+                    break;
+                case OperandType.InlineR:
+                case OperandType.InlineI8:
+                    position += 8;
+                    break;
+                case OperandType.InlineSwitch:
+                    int count = BitConverter.ToInt32(ildata, position);
+                    position += count * 4 + 4;
+                    break;
+
+                case OperandType.InlineMethod:
+                    int methodId = BitConverter.ToInt32(ildata, position);
+                    position += 4;
+                    try
+                    {
+                        if (mi is ConstructorInfo)
+                        {
+                            result.Add((MethodBase)module.ResolveMember(methodId, mi.DeclaringType.GetGenericArguments(), Type.EmptyTypes));
+                        }
+                        else
+                        {
+                            result.Add((MethodBase)module.ResolveMember(methodId, mi.DeclaringType.GetGenericArguments(), mi.GetGenericArguments()));
+                        }
+                    }
+                    catch { } 
+                    break;
+
+
+                default:
+                    throw new Exception("Unknown instruction operand; cannot continue. Operand type: " + code.OperandType);
+            }
+        }
+        return result.ToArray();
+    }
+}
+
+class StackOverflowDetector
+{
+    // This method will be found:
+    static int Recur()
+    {
+        CheckStackDepth();
+        int variable = 1;
+        return variable + Recur();
+    }
+
+    static void Main(string[] args)
+    {
+        RecursionDetector();
+        Console.WriteLine();
+        Console.ReadLine();
+    }
+
+    static void RecursionDetector()
+    {
+        // First decompile all methods in the assembly:
+        Dictionary<MethodBase, MethodBase[]> calling = new Dictionary<MethodBase, MethodBase[]>();
+        var assembly = typeof(StackOverflowDetector).Assembly;
+
+        foreach (var type in assembly.GetTypes())
+        {
+            foreach (var member in type.GetMembers(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance).OfType<MethodBase>())
+            {
+                var body = member.GetMethodBody();
+                if (body!=null)
+                {
+                    var bytes = body.GetILAsByteArray();
+                    if (bytes != null)
+                    {
+                        // Store all the calls of this method:
+                        var calls = Decompiler.Decompile(member, bytes);
+                        calling[member] = calls;
+                    }
+                }
+            }
+        }
+
+        // Check every method:
+        foreach (var method in calling.Keys)
+        {
+            // If method A -> ... -> method A, we have a possible infinite recursion
+            CheckRecursion(method, calling, new HashSet<MethodBase>());
+        }
+    }
+
+Now, the fact that a method cycle contains recursion, is by no means a guarantee that a stack overflow will happen - it's just the most likely precondition for your stack overflow exception. In short, this means that this code will determine the pieces of code where a stack overflow can occur, which should narrow down most code considerably.
+Yet other approaches
+There are some other approaches you can try that I haven't described here.
+
+Handling the stack overflow by hosting the CLR process and handling it. Note that you still cannot 'catch' it.
+Changing all IL code, building another DLL, adding checks on recursion. Yes, that's quite possible (I've implemented it in the past :-); it's just difficult and involves a lot of code to get it right.
+Use the .NET profiling API to capture all method calls and use that to figure out stack overflows. For example, you can implement checks that if you encounter the same method X times in your call tree, you give a signal. There's a project here that will give you a head start.
+
+
+This answer is for @WilliamJockusch.
+
+I'm wondering if there is a general way to track down
+  StackOverflowExceptions. In other words, suppose I have infinite
+  recursion somewhere in my code, but I have no idea where. I want to
+  track it down by some means that is easier than stepping through code
+  all over the place until I see it happening. I don't care how hackish
+  it is. For example, It would be great to have a module I could
+  activate, perhaps even from another thread, that polled the stack
+  depth and complained if it got to a level I considered "too high." For
+  example, I might set "too high" to 600 frames, figuring that if the
+  stack were too deep, that has to be a problem. Is something like that
+  possible. Another example would be to log every 1000th method call
+  within my code to the debug output. The chances this would get some
+  evidence of the overlow would be pretty good, and it likely would not
+  blow up the output too badly. The key is that it cannot involve
+  writing a check wherever the overflow is happening. Because the entire
+  problem is that I don't know where that is. Preferrably the solution
+  should not depend on what my development environment looks like; i.e,
+  it should not assumet that I am using C# via a specific toolset (e.g.
+  VS).
+
+It sounds like you're keen to hear some debugging techniques to catch this StackOverflow so I thought I would share a couple for you to try.
+1. Memory Dumps.
+Pro's: Memory Dumps are a sure fire way to work out the cause of a Stack Overflow. A C# MVP & I worked together troubleshooting a SO and he went on to blog about it here.
+This method is the fastest way to track down the problem.
+This method wont require you to reproduce problems by following steps seen in logs.
+Con's: Memory Dumps are very large and you have to attach AdPlus/procdump the process.
+2. Aspect Orientated Programming.
+Pro's: This is probably the easiest way for you to implement code that checks the size of the call stack from any method without writing code in every method of your application. There are a bunch of AOP Frameworks that allow you to Intercept before and after calls.
+Will tell you the methods that are causing the Stack Overflow.
+Allows you to check the StackTrace().FrameCount at the entry and exit of all methods in your application.
+Con's: It will have a performance impact - the hooks are embedded into the IL for every method and you cant really "de-activate" it out.
+It somewhat depends on your development environment tool set.
+3. Logging User Activity.
+A week ago I was trying to hunt down several hard to reproduce problems. I posted this QA User Activity Logging - see Variables in a Global Exception Handler . The conclusion I came to was a really simple user-actions-logger to see how to reproduce problems in a debugger when any unhandled exception occurs.
+Pro's: You can turn it on  or off at will (ie subscribing to events). 
+Tracking the user actions doesn't require intercepting every method.
+You can count the number of events methods are subscribed too far more simply than with AOP. 
+The log files are relatively small and focus on what actions you need to perform to reproduce the problem.
+It can help you to understand how users are using your application.
+Con's: Isn't suited to a Windows Service and I'm sure there are better tools like this for web apps.
+Doesn't necessarily tell you the methods that cause the Stack Overflow.
+Requires you to step through logs manually reproducing problems rather than a Memory Dump where you can get it and debug it straight away.
+   
+
+Maybe you might try all techniques I mention above and some that @atlaste posted and tell us which one's you found were the easiest/quickest/dirtiest/most acceptable to run in a PROD environment/etc. 
+Anyway good luck tracking down this SO.
+
+By the looks of it, apart from starting another process, there doesn't seem to be any way of handling a StackOverflowException. Before anyone else asks, I tried using AppDomain, but that didn't work:
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Threading;
+
+namespace StackOverflowExceptionAppDomainTest
+{
+    class Program
+    {
+        static void recrusiveAlgorithm()
+        {
+            recrusiveAlgorithm();
+        }
+        static void Main(string[] args)
+        {
+            if(args.Length>0&&args[0]=="--child")
+            {
+                recrusiveAlgorithm();
+            }
+            else
+            {
+                var domain = AppDomain.CreateDomain("Child domain to test StackOverflowException in.");
+                domain.ExecuteAssembly(Assembly.GetEntryAssembly().CodeBase, new[] { "--child" });
+                domain.UnhandledException += (object sender, UnhandledExceptionEventArgs e) =>
+                {
+                    Console.WriteLine("Detected unhandled exception: " + e.ExceptionObject.ToString());
+                };
+                while (true)
+                {
+                    Console.WriteLine("*");
+                    Thread.Sleep(1000);
+                }
+            }
+        }
+    }
+}
+
+If you do end up using the separate-process solution, however, I would recommend using Process.Exited and Process.StandardOutput and handle the errors yourself, to give your users a better experience.
+
+@WilliamJockusch, if I understood correctly your concern, it's not possible (from a mathematical point of view) to always identify an infinite recursion as it would mean to solve the Halting problem. To solve it you'd need a Super-recursive algorithm (like Trial-and-error predicates for example) or a machine that can hypercompute (an example is explained in the following section - available as preview - of this book).
+From a practical point of view, you'd have to know:
+
+How much stack memory you have left at the given time
+How much stack memory your recursive method will need at the given time for the specific output.
+
+Keep in mind that, with the current machines, this data is extremely mutable due to multitasking and I haven't heard of a software that does the task.
+Let me know if something is unclear.

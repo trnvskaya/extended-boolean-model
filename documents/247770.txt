@@ -1,0 +1,291 @@
+Retrieving python module path
+python module inotify
+I want to detect whether module has changed. Now, using inotify is simple, you just need to know the directory you want to get notifications from.
+How do I retrieve a module's path in python?
+
+
+This was trivial.
+Each module has a __file__ variable that shows its relative path from where you are right now.
+Therefore, getting a directory for the module to notify it is simple as:
+os.path.dirname(__file__)
+
+
+import a_module
+print a_module.__file__
+
+Will actually give you the path to the .pyc file that was loaded, at least on Mac OS X. So I guess you can do
+import os
+path = os.path.dirname(amodule.__file__)
+
+You can also try
+path = os.path.abspath(amodule.__file__)
+
+To get the directory to look for changes.
+
+import os
+path = os.path.abspath(__file__)
+dir_path = os.path.dirname(path)
+
+
+As the other answers have said, the best way to do this is with __file__ (demonstrated again below). However, there is an important caveat, which is that __file__ does NOT exist if you are running the module on its own  (i.e. as __main__).
+For example, say you have two files (both of which are on your PYTHONPATH):
+#/path1/foo.py
+import bar
+print bar.__file__
+
+and
+#/path2/bar.py
+import os
+print os.getcwd()
+print __file__
+
+Running foo.py will give the output:
+/path1        # "import bar" causes the line "print os.getcwd()" to run
+/path2/bar.py # then "print __file__" runs
+/path2/bar.py # then the import statement finishes and "print bar.__file__" runs
+
+HOWEVER if you try to run bar.py on its own, you will get:
+/path2                              # "print os.getcwd()" still works fine
+Traceback (most recent call last):  # but __file__ doesn't exist if bar.py is running as main
+  File "/path2/bar.py", line 3, in <module>
+    print __file__
+NameError: name '__file__' is not defined 
+
+Hope this helps. This caveat cost me a lot of time and confusion while testing the other solutions presented.
+
+So I spent a fair amount of time trying to do this with py2exe
+The problem was to get the base folder of the script whether it was being run as a python script or as a py2exe executable. Also to have it work whether it was being run from the current folder, another folder or (this was the hardest) from the system's path.
+Eventually I used this approach, using sys.frozen as an indicator of running in py2exe:
+import os,sys
+if hasattr(sys,'frozen'): # only when running in py2exe this exists
+    base = sys.prefix
+else: # otherwise this is a regular python script
+    base = os.path.dirname(os.path.realpath(__file__))
+
+
+There is inspect module in python.
+Official documentation
+
+The inspect module provides several useful functions to help get
+  information about live objects such as modules, classes, methods,
+  functions, tracebacks, frame objects, and code objects. For example,
+  it can help you examine the contents of a class, retrieve the source
+  code of a method, extract and format the argument list for a function,
+  or get all the information you need to display a detailed traceback.
+
+Example:
+>>> import os
+>>> import inspect
+>>> inspect.getfile(os)
+'/usr/lib64/python2.7/os.pyc'
+>>> inspect.getfile(inspect)
+'/usr/lib64/python2.7/inspect.pyc'
+>>> os.path.dirname(inspect.getfile(inspect))
+'/usr/lib64/python2.7'
+
+
+I will try tackling a few variations on this question as well:
+
+finding the path of the called script  
+finding the path of the currently executing script  
+finding the directory of the called script
+
+(Some of these questions have been asked on SO, but have been closed as duplicates and redirected here.)
+Caveats of Using __file__
+For a module that you have imported:
+import something
+something.__file__ 
+
+will return the absolute path of the module.  However, given the folowing script foo.py:
+#foo.py
+print '__file__', __file__
+
+Calling it with 'python foo.py' Will return simply 'foo.py'.  If you add a shebang:
+#!/usr/bin/python 
+#foo.py
+print '__file__', __file__
+
+and call it using ./foo.py, it will return './foo.py'.  Calling it from a different directory, (eg put foo.py in directory bar), then calling either
+python bar/foo.py
+
+or adding a shebang and executing the file directly:
+bar/foo.py
+
+will return 'bar/foo.py' (the relative path).
+Finding the directory
+Now going from there to get the directory, os.path.dirname(__file__) can also be tricky.  At least on my system, it returns an empty string if you call it from the same directory as the file.  ex.
+# foo.py
+import os
+print '__file__ is:', __file__
+print 'os.path.dirname(__file__) is:', os.path.dirname(__file__)
+
+will output:
+__file__ is: foo.py
+os.path.dirname(__file__) is: 
+
+In other words, it returns an empty string, so this does not seem reliable if you want to use it for the current file (as opposed to the file of an imported module).  To get around this, you can wrap it in a call to abspath:
+# foo.py
+import os
+print 'os.path.abspath(__file__) is:', os.path.abspath(__file__)
+print 'os.path.dirname(os.path.abspath(__file__)) is:', os.path.dirname(os.path.abspath(__file__))
+
+which outputs something like:
+os.path.abspath(__file__) is: /home/user/bar/foo.py
+os.path.dirname(os.path.abspath(__file__)) is: /home/user/bar
+
+Note that abspath() does NOT resolve symlinks.  If you want to do this, use realpath() instead.  For example, making a symlink file_import_testing_link pointing to file_import_testing.py, with the following content:
+import os
+print 'abspath(__file__)',os.path.abspath(__file__)
+print 'realpath(__file__)',os.path.realpath(__file__)
+
+executing will print absolute paths something like:
+abspath(__file__) /home/user/file_test_link
+realpath(__file__) /home/user/file_test.py
+
+file_import_testing_link -> file_import_testing.py
+Using inspect
+@SummerBreeze mentions using the inspect module.
+This seems to work well, and is quite concise, for imported modules:
+import os
+import inspect
+print 'inspect.getfile(os) is:', inspect.getfile(os)
+
+obediently returns the absolute path.  However for finding the path of the currently executing script, I did not see a way to use it.
+
+If the only caveat of using __file__ is when current, relative directory is blank (ie, when running as a script from the same directory where the script is), then a trivial solution is:
+import os.path
+mydir = os.path.dirname(__file__) or '.'
+full  = os.path.abspath(mydir)
+print __file__, mydir, full
+
+And the result:
+$ python teste.py 
+teste.py . /home/user/work/teste
+
+The trick is in or '.' after the dirname() call. It sets the dir as ., which means current directory and is a valid directory for any path-related function.
+Thus, using abspath() is not truly needed. But if you use it anyway, the trick is not needed: abspath() accepts blank paths and properly interprets it as the current directory.
+
+
+Packages support one more special attribute, __path__. This is
+  initialized to be a list containing the name of the directory holding
+  the packageâs __init__.py before the code in that file is executed.
+  This variable can be modified; doing so affects future searches for
+  modules and subpackages contained in the package.
+While this feature is not often needed, it can be used to extend the
+  set of modules found in a package.
+
+Source
+import module
+print module.__path__
+
+
+If you wish to do this dynamically in a "program" try this code:
+My point is, you may not know the exact name of the module to "hardcode" it.
+It may be selected from a list or may not be currently running to use __file__.
+(I know, it will not work in Python 3)
+global modpath
+modname = 'os' #This can be any module name on the fly
+#Create a file called "modname.py"
+f=open("modname.py","w")
+f.write("import "+modname+"\n")
+f.write("modpath = "+modname+"\n")
+f.close()
+#Call the file with execfile()
+execfile('modname.py')
+print modpath
+<module 'os' from 'C:\Python27\lib\os.pyc'>
+
+I tried to get rid of the "global" issue but found cases where it did not work
+I think "execfile()" can be emulated in Python 3
+Since this is in a program, it can easily be put in a method or module for reuse.
+
+I don't get why no one is talking about this, but to me the simplest solution is using imp.find_module("modulename") (documentation here):
+import imp
+imp.find_module("os")
+
+It gives a tuple with the path in second position:
+(<open file '/usr/lib/python2.7/os.py', mode 'U' at 0x7f44528d7540>,
+'/usr/lib/python2.7/os.py',
+('.py', 'U', 1))
+
+The advantage of this method over the "inspect" one is that you don't need to import the module to make it work, and you can use a string in input. Useful when checking modules called in another script for example.
+EDIT:
+In python3, importlib module should do:
+Doc of importlib.util.find_spec:
+
+Return the spec for the specified module.
+First, sys.modules is checked to see if the module was already imported. If so, then sys.modules[name].spec is returned. If that happens to be
+  set to None, then ValueError is raised. If the module is not in
+  sys.modules, then sys.meta_path is searched for a suitable spec with the
+  value of 'path' given to the finders. None is returned if no spec could
+  be found.
+If the name is for submodule (contains a dot), the parent module is
+  automatically imported.
+The name and package arguments work the same as importlib.import_module().
+  In other words, relative module names (with leading dots) work.
+
+
+From within modules of a python package I had to refer to a file that resided in the same directory as package. Ex.
+some_dir/
+  maincli.py
+  top_package/
+    __init__.py
+    level_one_a/
+      __init__.py
+      my_lib_a.py
+      level_two/
+        __init__.py
+        hello_world.py
+    level_one_b/
+      __init__.py
+      my_lib_b.py
+
+So in above I had to call maincli.py from my_lib_a.py module knowing that top_package and maincli.py are in the same directory. Here's how I get the path to maincli.py:
+import sys
+import os
+import imp
+
+
+class ConfigurationException(Exception):
+    pass
+
+
+# inside of my_lib_a.py
+def get_maincli_path():
+    maincli_path = os.path.abspath(imp.find_module('maincli')[1])
+    # top_package = __package__.split('.')[0]
+    # mod = sys.modules.get(top_package)
+    # modfile = mod.__file__
+    # pkg_in_dir = os.path.dirname(os.path.dirname(os.path.abspath(modfile)))
+    # maincli_path = os.path.join(pkg_in_dir, 'maincli.py')
+
+    if not os.path.exists(maincli_path):
+        err_msg = 'This script expects that "maincli.py" be installed to the '\
+        'same directory: "{0}"'.format(maincli_path)
+        raise ConfigurationException(err_msg)
+
+    return maincli_path
+
+Based on posting by PlasmaBinturong I modified the code.
+
+Command Line Utility
+You can tweak it to a command line utility,
+python-which <package name>
+
+
+
+Create /usr/local/bin/python-which
+#!/usr/bin/env python
+
+import importlib
+import os
+import sys
+
+args = sys.argv[1:]
+if len(args) > 0:
+    module = importlib.import_module(args[0])
+    print os.path.dirname(module.__file__)
+
+Make it executable 
+sudo chmod +x /usr/local/bin/python-which
+

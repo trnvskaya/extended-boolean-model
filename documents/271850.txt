@@ -1,0 +1,64 @@
+How to track down tricky memory leak with fastMM?
+delphi memory-leaks delphi-2009 fastmm
+After upgrading a project from Delphi 2007 to Delphi 2009 I'm getting an Unknown memory leak, so far I've been tryin to track it down using fastMM, here is what fastMM stack trace reports:
+A memory block has been leaked. The size is: 20
+
+This block was allocated by thread 0x111C, and the stack trace (return addresses) 
+  at the time was:
+40339E [System.pas][System][@GetMem][3412] 534873 [crtl][_malloc]
+56D1C4 [canex.cpp][MidasLib][DllGetDataSnapClassObject][3918]
+56D316 [canex.cpp][MidasLib][DllGetDataSnapClassObject][3961]
+56D5EE [canex.cpp][MidasLib][DllGetDataSnapClassObject][4085]
+562D48 [DBCommon.pas][DBCommon][TFilterExpr.PutExprNode][1583]
+408E46 [System.pas][System][DynArraySetLength][20464]
+56D5EE [canex.cpp][MidasLib][DllGetDataSnapClassObject][4085]
+408E92 [System.pas][System][@DynArraySetLength][20486]
+528C1B [Forms.pas][Forms][TCustomForm.DoCreate][3260]
+171A1A [GetRawStackTrace]
+
+The block is currently used for an object of class: Unknown
+
+The allocation number is: 302844
+
+And sometimes I get this:
+A memory block has been leaked. The size is: 20
+
+This block was allocated by thread 0x111C, and the stack trace (return addresses) 
+  at the time was:
+40339E [System.pas][System][@GetMem][3412]
+534873 [crtl][_malloc]
+56D1C4 [canex.cpp][MidasLib][DllGetDataSnapClassObject][3918]
+56D316 [canex.cpp][MidasLib][DllGetDataSnapClassObject][3961]
+77DC921A [RtlAnsiStringToUnicodeString]
+56D5EE [canex.cpp][MidasLib][DllGetDataSnapClassObject][4085]
+7726B8F5 [GetProcAddress]
+7726B907 [GetProcAddress]
+589B1E [ossrv.cpp][MidasLib][DllGetDataSnapClassObject][3163]
+56D5EE [canex.cpp][MidasLib][DllGetDataSnapClassObject][4085]
+408E92 [System.pas][System][@DynArraySetLength][20486]
+
+The block is currently used for an object of class: Unknown
+
+Is there some better way to figure out what really is causing the Memory leak?
+
+
+IIRC VCL had a few very small leaks like this that you can ignore without much worry. This might be one of them!? Hope somebody clarifies this point.
+
+I don't know if there are any leaks in D2009 VCL, so presuming leak is in your code, first I would check following:
+
+is there any array or list (because of @DynArraySetLength) created in that form that is not released when you dispose form.
+is there any function that creates and returns some object that should be freed by outside caller, and if you have that kind of function check if caller frees that object. 
+if this does not reveal leak, then you should check if each object that you create in your form code, gets destroyed when you destroy the form. 
+
+
+As long as the size of the memory block leaked does not grow the longer/more your program is used, then it isn't a concern.  If you have long lived objects that are only freed when you terminate the application it is the same as if you leaked them - all memory is reclaimed on termination (Unless of course they have handles resources beyond memory).
+The memory leaks you want to be concerned with are the ones that accumulate over time or usage.  If it is 20 bytes everytime then don't sweat it.
+
+I would say you have something happening in your Form OnCreate event handler that is growing a DynArray.
+And that DynArray is not released at the end.
+But without seeing the code and actually debugging it with FastMM, it's close to impossible to guess what's really happening.  
+
+The last time I had a puzzling leak along these lines I looked over the raw memory of the offending object--and saw text that showed me what sort of data it was.  When it says it doesn't know what sort of object it is that likely means it isn't an object in the first place--so look at dynamically allocated things, including strings.
+
+This memory leak was being caused by a Delphi bug, QC #67709
+It was fixed by the last Delphi 2009 update, no wonder I wasn't able to fix it.

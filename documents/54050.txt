@@ -1,0 +1,54 @@
+How do you get the logged in Windows domain account from an ASP.NET application?
+asp.net webforms login ntlm
+We have an ASP.NET application that manages it's own User, Roles and Permission database and we have recently added a field to the User table to hold the Windows domain account.  
+I would like to make it so that the user doesn't have to  physically log in to our application, but rather would be automatically logged in based on the currently logged in Windows domain account DOMAIN\username.  We want to authenticate the Windows domain account against our own User table.  
+This is a piece of cake to do in Windows Forms, is it possible to do this in Web Forms?
+I don't want the user to be prompted with a Windows challenge screen,  I want our system to handle the log in.
+Clarification: We are using our own custom Principal object.
+Clarification: Not sure if it makes a difference or not, but we are using IIS7.
+
+
+using System.Security.Principal;
+...
+WindowsPrincipal wp = (WindowsPrincipal)HttpContext.Current.User;
+
+to get the current domain user. Of course you have to make sure that the IIS is set up to handle Windows Authentication.
+
+This might be helpful:    
+WindowsIdentity myIdentity = WindowsIdentity.GetCurrent();
+
+WindowsPrincipal myPrincipal = new WindowsPrincipal(myIdentity);
+
+string name = myPrincipal.Identity.Name;
+string authType = myPrincipal.Identity.AuthenticationType;
+string isAuth = myPrincipal.Identity.IsAuthenticated.ToString();
+
+string identName = myIdentity.Name;
+string identType = myIdentity.AuthenticationType;
+string identIsAuth = myIdentity.IsAuthenticated.ToString();
+string iSAnon = myIdentity.IsAnonymous.ToString();
+string isG = myIdentity.IsGuest.ToString();
+string isSys = myIdentity.IsSystem.ToString();
+string token = myIdentity.Token.ToString();
+
+Disclaimer: I got this from a technet article, but I can't find the link.
+
+I did pretty much exactly what you want to do a few years ago. Im trying to find some code for it, though it was at a previous job so that code is at home.
+I do remember though i used this article as my starting point. You set up the LDAP provider so you can actually run a check of the user vs the LDAP. One thing to make sure of if you try the LDAP approach. In the setting file where you set up the LDAP make sure LDAP is all caps, if it is not it will not resolve.
+
+You can use System.Threading.Thread.CurrentPrincipal.
+
+Request.ServerVariables["REMOTE_USER"]
+This is unverified for your setup, but I recall using this awhile back.
+
+Integration of this sort is at the server level, it's IIS that decides that the user is not logged in; and it's IIS that sends back the authentication prompt to the user, to which the browser reacts.
+As you want to use the domain login there is only one way to do this; integrated windows authentication. This will only work if the IIS server is also part of the domain and the users are accessing the machine directly, not through a proxy, and from machines which are also part of the domain (with the users suitably logged in).
+However your custom principal object may create fun and games; authentication of this type will be a WindowsPrincipal and a WindowsIdentity; which you can access via the User object (see How To: Use Windows Authentication in ASP.NET 2.0)
+I assume you want a custom principal because of your custom roles? I doubt you can get the two to play nicely; you could create a custom role provider which looks at your data store or look at you could look at ADAM, an extension to AD which provides roles on a per program basis and comes with nice management tools.
+
+Try Request.ServerVariables("LOGON_USER").
+If the directory security options are set so that this directory does not allow anonymous users, when the surfer hits this page they will be prompted with the standard modal dialog asking for username and password.  Request.ServerVariables("LOGON_USER") will return that user.
+However, this will probably not work for you because you are using your own custom security objects.  If you can figure out how to get around that logon box, or pass in NT credentials to the site before it askes for them, then you would be all set.
+
+Have you thought about impersonation?  You could store the user's NT logon credentials in your custom security object, and then just impseronate the user via code when appropriate.
+http://msdn.microsoft.com/en-us/library/aa292118(VS.71).aspx

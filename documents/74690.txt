@@ -1,0 +1,79 @@
+How do I store the window size between sessions in Qt?
+qt window size restore
+I have a QMainWindow in a Qt application. When I close it I want it to store its current restore size (the size of the window when it is not maximized). This works well when I close the window in restore mode (that is, not maximized). But if I close the window if it is maximized, then next time i start the application and restore the application (because it starts in maximized mode), then it does not remember the size it should restore to. Is there a way to do this?
+
+
+I've encountered this problem as well.
+What you can do: in addition to the window's size, save whether it's maximized or not (QWidget::isMaximized()). 
+Then next time you start the application, first set the size (QWidget::resize()) and then maximize it if appropriate (QWidget::showMaximized()). When it's restored, it should return to the correct size.
+
+Use the QWidget::saveGeometry feature to write the current settings into the registry.(The registry is accessed using QSettings).  Then use restoreGeometry() upon startup to return to the previous state.
+
+I found that a combination of all the previous answers here was necessary on Fedora 14. Be careful not to save the size and position when the window is maximized!
+void MainWindow::writePositionSettings()
+{
+    QSettings qsettings( "iforce2d", "killerapp" );
+
+    qsettings.beginGroup( "mainwindow" );
+
+    qsettings.setValue( "geometry", saveGeometry() );
+    qsettings.setValue( "savestate", saveState() );
+    qsettings.setValue( "maximized", isMaximized() );
+    if ( !isMaximized() ) {
+        qsettings.setValue( "pos", pos() );
+        qsettings.setValue( "size", size() );
+    }
+
+    qsettings.endGroup();
+}
+
+void MainWindow::readPositionSettings()
+{
+    QSettings qsettings( "iforce2d", "killerapp" );
+
+    qsettings.beginGroup( "mainwindow" );
+
+    restoreGeometry(qsettings.value( "geometry", saveGeometry() ).toByteArray());
+    restoreState(qsettings.value( "savestate", saveState() ).toByteArray());
+    move(qsettings.value( "pos", pos() ).toPoint());
+    resize(qsettings.value( "size", size() ).toSize());
+    if ( qsettings.value( "maximized", isMaximized() ).toBool() )
+        showMaximized();
+
+    qsettings.endGroup();
+}
+
+In main(), the position settings are read before showing the window the first time...
+MainWindow mainWindow;
+mainWindow.readPositionSettings();
+mainWindow.show();
+
+...and these event handlers update the settings as necessary. (This causes a writes to the settings file for every mouse movement during the move and resize which is not ideal.)
+void MainWindow::moveEvent( QMoveEvent* )
+{
+    writePositionSettings();
+}
+
+void MainWindow::resizeEvent( QResizeEvent* )
+{
+    writePositionSettings();
+}
+
+void MainWindow::closeEvent( QCloseEvent* )
+{
+    writePositionSettings();
+}
+
+Still, the vertical component of the position is not quite right, it seems to be ignoring the height of the window title bar... if anyone knows how to deal with that let me know :)
+
+The image at http://qt-project.org/doc/qt-4.8/application-windows.html shows, that geometry.x() and geometry.y() are not equal to x() and y(), which are the same as pos().
+In my case, I use:
+x()
+y()
+width()
+height()
+
+and restore these successfully with: 
+move()
+resize()
+

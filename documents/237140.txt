@@ -1,0 +1,74 @@
+abstract methods in skeletal implementations of interfaces
+java interface abstract-class
+I was re-reading Effective Java (2nd edition) item 18, prefer interfaces to abstract classes.  In that item Josh Bloch provides an example of a skeletal implementation of the Map.Entry<K,V> interface:
+// Skeletal Implementation
+public abstract class AbstractMapEntry<K,V>
+        implements Map.Entry<K,V> {
+    // Primitive operations
+    public abstract K getKey();
+    public abstract V getValue();
+
+ // ... remainder omitted
+}
+
+Two questions stem from this example:
+
+Why are getKey and getValue explicitly declared here as abstract methods?  They are part of the Map.Entry interface, so I don't see a reason for the redundant declaration in the abstract class.
+Why use the idiom of leaving these primitives methods, as Mr. Bloch refers to them, as abstract?  Why not just do this:
+// Skeletal Implementation
+public abstract class AbstractMapEntry
+            implements Map.Entry {
+        private K key;
+        private V value;
+    // Primitive operations
+    public K getKey() {return key;}
+    public V getValue() {return value;}
+
+
+ // ... remainder omitted
+
+}
+
+The benefits of this are that each subclass doesn't have to define its own set of fields, and can still access the key and value by their accessors.  If a subclass truly needs to define its own behavior for the accessors, it can implement the Map.Entry interface directly.  The other downside is that in the equals method provided by the skeletal implementation, the abstract accessors are called:
+// Implements the general contract of Map.Entry.equals
+@Override public boolean equals(Object o) {
+    if (o == this)
+        return true;
+    if (! (o instanceof Map.Entry))
+        return false;
+    Map.Entry<?,?> arg = (Map.Entry) o;
+    return equals(getKey(),   arg.getKey()) &&
+           equals(getValue(), arg.getValue());
+}
+
+Bloch warns against calling overridable methods (item 17) from classes designed for inheritance as it leaves the superclass vulnerable to changes made by subclasses.
+Maybe this is a matter of opinion, but I was hoping to determine whether there's more to the story, as Bloch doesn't really elaborate on this in the book.
+
+
+One reason that AbstractMapEntry#getKey and getValue are abstract (i.e. unimplemented) is that Map.Entry is an inner interface to Map. Using nested classes/interfaces is how Java implements composition. The idea in composition is that the composed part is not a first-class concept. Rather, the composed part only make sense if it is contained in the whole. In this case, the composed part is Map.Entry and the root object of the composite is Map. Obviously the concept expressed is that a Map has many Map.Entrys. 
+Therefore the semantics of AbstractMapEntry#getKey and getValue will depend essentially on the implementation of Map that we're talking about. A plain old getter implementation as you've written will work just fine for HashMap. It won't work for something like ConcurrentHashMap which demands thread-safety. It's likely that ConcurrentHashMap's implementation of getKey and getValue make defensive copies. (Recommend checking the source code for yourself).
+Another reason not to implement getKey and getValue is that the characters that implement Map are radically different ranging from ones that should have never belonged (i.e. Properties) to completely different universes from an intuitive impls of Map (e.g. Provider, TabularDataSupport).
+In conclusion, not implementing AbstractMapEntry#getKey and getValue, because of this golden rule of API design:
+
+When in doubt, leave it out (see here)
+
+
+
+I don't see any reason
+Allows the implementation to define how the key and value are stored.
+
+
+
+I would say it helps emphasize what the concrete class is intended to deal with, instead of just leaving it up to the compiler to tell you (or you having to compare both to see what is missing). Kind of self-documenting code. But it certainly isn't necessary, it is more of a style thing, as far as I can see.
+There is more significant logic in returning these values than simple getter and setting. Every class I spot checked in the standard JDK(1.5) did something non-simple on at least one of the methods, so I would guess that he views such an implementation as too naive and it would encourage subclasses to use it instead of thinking through the problem on their own.
+
+Regarding the issue with equals, nothing would change if the abstract class implemented them because the issue is overrid**able**. In this case I would say that the equals is attempting to be carefully implemented to anticipate implementations. Normally equals in general should not be implemented to return true between itself and its subclass (although there are plenty that do) due to covariance issues (the superclass will think it equals the subclass, but the subclass won't think it equals the superclass), so this type of implementation of equals is tricky no matter what you do.
+
+
+Bloch warns against calling
+  overridable methods (item 17) from
+  classes designed for inheritance as it
+  leaves the superclass vulnerable to
+  changes made by subclasses
+
+He warns about calling overridable methods in the constructor, not in other methods.

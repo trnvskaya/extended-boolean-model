@@ -1,0 +1,45 @@
+Dynamically look up column names for a table while in an sql query
+sql oracle select insert
+I'm writing SQL (for Oracle) like:
+
+INSERT INTO Schema1.tableA SELECT * FROM Schema2.tableA;
+
+where Schema1.tableA and Schema2.tableA have the same columns. However, it seems like this is unsafe, since the order of the columns coming back in the SELECT is undefined. What I should be doing is:
+
+INSERT INTO Schema1.tableA (col1, col2, ... colN) 
+SELECT (col1, col2, ... colN) FROM Schema2.tableA;
+
+I'm doing this for lots of tables using some scripts, so what I'd like to do is write something like:
+
+INSERT INTO Schema1.tableA (foo(Schema1.tableA)) 
+SELECT (foo(Schema1.tableA)) FROM Schema2.tableA;
+
+Where foo is some nifty magic that extracts the column names from table one and packages them in the appropriate syntax. Thoughts?
+
+
+You may need to construct the insert statements dynamically using USER_TAB_COLUMNS and execute them using EXECUTE IMMEDIATE.
+
+This PL/SQL should do it:
+declare
+    l_cols long;
+    l_sql  long;
+begin
+    for r in (select column_name from all_tab_columns
+              where  table_name = 'TABLEA'
+              and    owner = 'SCHEMA1'
+             )
+    loop
+       l_cols := l_cols || ',' || r.column_name;
+    end loop;
+
+    -- Remove leading comma
+    l_cols := substr(l_cols, 2);
+
+    l_sql := 'insert into schema1.tableA (' || l_cols || ') select ' 
+             || l_cols || ' from schema2.tableA';
+
+    execute immediate l_sql;
+
+end;
+/
+

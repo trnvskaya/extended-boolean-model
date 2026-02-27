@@ -1,0 +1,63 @@
+Has and belongs to many relationship with multiple databases
+ruby-on-rails ruby database has-and-belongs-to-many
+I have a situation where I have two models, companies and permissions, where companies is in a separate database from my permissions database.  This is a has and belongs to many relationship because each company can have many permissions and each permission can belong to many companies.
+The reason the two databases are split is because the company database runs a high demand production application and the permissions database controls the permissions for another application.
+With rails, it looks for the join table in the same database as the primary table.  For instance, if I do company.permissions, it looks in the company database for company_permissions.  If I do permission.companies it looks in the permissions database.
+What is the best solution to using a has and belongs to many relationship with multiple databases?
+
+
+If the companies data does not change very often, perhaps you could synchronize the data into the permissions database, then do your join naturally. A CMS I inherited is doing something like that where the user authentication is in its own database, and the permissions and such are all stored there, and user accounts are synch'd to the local database for each site. This way user accounts could be shared (especially for administration) across multiple sites with 1 login.
+May not be the best because a synch is involved. Ideally you should just store the company data in the permissions db if you can't move permissions out. Unless of course you are joining on company elsewhere.
+
+Has and belongs to many is old, clunky, and problematic.  I recommend using has_many instead.
+You can specify the relationship table with the ":through" option; just pick which database you want it to reside in and create a model to represent it.
+http://apidock.com/rails/ActiveRecord/Associations/ClassMethods/has_many
+
+Interesting question. For the sake of my own reference, let me try to summarize the solution proposed in the Rails Recipe book in this question's context.
+1) First add in database.yml
+permissions:
+  adapter: mysql
+  database: permissions
+  username: root
+  password: 
+  socket: /tmp/mysql.sock
+
+2) Make Permission model to call external database
+class Permission < ActiveRecord::Base
+
+  establish_connection :permissions
+
+end
+
+3) Create (migrate) a Permission Reference table with Permission Id column
+4) Use PermissionReference model as a link to Permission model
+class PermissionReference < ActiveRecord::Base
+
+  belongs_to :permission
+  has_and_belongs_to_many :companies,
+                          :join_table => 'companies_permissions',
+                          :foreign_key => 'permission_id'
+
+end
+
+5) Lastly associate Company to Permission
+class Company < ActiveRecord::Base
+
+  has_and_belongs_to_many :permissions, 
+                          :class_name => 'PermissionReference', 
+                          :join_table => 'companies_permissions', 
+                          :association_foreign_key => 'permission_id'
+
+end
+
+You might wanna consider refactoring by subclassing models that calls an external database
+class External < ActiveRecord::Base
+
+  self.abstract_class = true
+  establish_connection :permissions
+
+end
+
+class Permission < External
+end
+

@@ -1,0 +1,81 @@
+Can record field updates in OCaml be generalized?
+macros ocaml records
+I'm a very novice OCaml programmer so please forgive me if this is a stupid/obvious question.  There's a lot to absorb and I may have missed this in the documentation.
+I have a base of code that's starting to look like this:
+let update_x p x =
+  add_delta p;
+  p.x <- x;
+  refresh p
+
+let update_y p y =
+  add_delta p;
+  p.y <- y;
+  refresh p
+
+let update_z p z =
+  add_delta p;
+  p.z <- z;
+  refresh p
+
+The duplication is starting to bug me because I want to write something like this:
+let update_scalar p scalar value =
+    add_delta p;
+    magic_reflection (p, scalar) <- value;
+    refresh p
+
+This way when I update x I can simply call:
+update_scalar p 'x' value
+
+This calls out "macros!" to me but I don't believe OCaml has a macro system.  What else can I do?
+
+
+No, you can't do what you want in plain OCaml. You could write a syntax extension with camlp4 (which is a kind of a macro system, though a different kind than you're probably accustomed to) that would transform
+UPDATE_FIELD x f y
+
+into
+x.f <- y
+
+Alternatively, you could stuff things into a hash table and forgo type safety.
+NOTE: The version of camlp4 included in OCaml version 3.10 and later is different than and incompatible with the previous version. For information about the latest version, see the OCaml tutorial site.
+
+You can't do quite what you want, but you can greatly reduce the boilerplate with a higher-order function:
+let update_gen set p x =
+  add_delta p;
+  set p x;
+  refresh p
+
+let update_x = update_gen (fun p v -> p.x <- v)
+let update_y = update_gen (fun p v -> p.y <- v)
+let update_z = update_gen (fun p v -> p.z <- v)
+
+OCaml does have a macro system (camlp4) and it does allow you to implement this kind of thing, with some work.
+
+As noted above ocaml has macro system. And for this task only small fraction of it is needed :
+open Printf
+
+type t = { mutable x : float; mutable y : float; mutable z : float; mutable t : int; }
+
+let add_delta p = p.t <- p.t + 1
+let refresh p = printf "%d) %.2f %.2f %.2f\n" p.t p.x p.y p.z
+
+DEFINE UPD(x) = fun p v ->
+  add_delta p;
+  p.x <- v;
+  refresh p
+
+let update_x = UPD(x)
+let update_y = UPD(y)
+let update_z = UPD(z)
+
+let () =
+  let p = { x = 0.; y = 0.; z = 0.; t = 0; } in
+  update_x p 0.1;
+  update_y p 0.3;
+  update_z p 2.0
+
+Compile with:
+ocamlfind ocamlc -package camlp4.macro -syntax camlp4o q.ml -o q
+
+See the generated code with :
+camlp4o Camlp4MacroParser.cmo q.ml
+

@@ -1,0 +1,52 @@
+How can I record what process or kernel activity is using the disk in GNU/Linux?
+linux io gnu disk
+On a particular Debian server, iostat (and similar) report an unexpectedly high volume (in bytes) of disk writes going on.  I am having trouble working out which process is doing these writes.
+Two interesting points:
+
+Tried turning off system services one at a time to no avail.  Disk activity remains fairly constant and unexpectedly high.
+Despite the writing, do not seem to be consuming more overall space on the disk.
+
+Both of those make me think that the writing may be something that the kernel is doing, but I'm not swapping, so it's not clear to me what Linux might try to write.
+Could try out atop:
+http://www.atcomputing.nl/Tools/atop/
+but would like to avoid patching my kernel.
+Any ideas on how to track this down?
+
+
+You could try to use SystemTap , it has a lot of examples , and if I'm not mistaken , it shows how to do this sort of thing .
+
+You can use the UNIX-command lsof (list open files). That prints out the process, process-id, user for any open file.
+
+You may want to investigate iotop for Linux. There are some Solaris versions floating around, but there is a Debian package for example.
+
+If you are using a kernel newer than 2.6.20 that is very easy, as that is the first version of Linux kernel that includes I/O accounting. If you are compiling your own kernel, be sure to include:
+CONFIG_TASKSTATS=y
+CONFIG_TASK_IO_ACCOUNTING=y
+
+Kernels from Debian packages already include these flags, so there is no need for recompiling your kernel. Standard utility for accessing I/O accounting data in real time is iotop(1). It gives you a complete list of processes managed by I/O scheduler, and displays per process statistics for read, write and total I/O bandwidth used.
+
+iotop is good (great, actually). 
+If you have a kernel from before 2.6.20, you can't use most of these tools.
+Instead, you can try the following (which should work for almost any 2.6 kernel IIRC):
+    
+sudo -s
+dmesg -c
+/etc/init.d/klogd stop
+echo 1 > /proc/sys/vm/block_dump
+rm /tmp/disklog
+watch "dmesg -c >> /tmp/disklog"
+   CTRL-C when you're done collecting data
+echo 0 > /proc/sys/vm/block_dump
+/etc/init.d/klogd start
+exit (quit root shell)
+
+cat /tmp/disklog | awk -F"[() \t]" '/(READ|WRITE|dirtied)/ {activity[$1]++} END {for (x in activity) print x, activity[x]}'| sort -nr -k2
+
+The dmesg -c lines clear your kernel log . The logger is then shut off, manually (using watch) dumped to a disk (the memory buffer is small, which is why we need to do this). Let it run for about five minutes or so, and then CTRL-c the watch process. After shutting off the logging and restarting klogd, analyze  the results using the little bit of awk at the end.
+
+You could also use htop, enabling IO_RATR column. Htop is an exelent top replacement.
+
+I've recently heard about Mortadelo, a Filemon clone, but have not checked it out myself yet:
+http://gitorious.org/mortadelo
+
+Brendan Gregg's iosnoop script can (heuristically) tell you about currently using the disk on recent kernels (example iosnoop output).

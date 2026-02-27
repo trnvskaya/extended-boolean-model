@@ -1,0 +1,86 @@
+How do I un-escape XML entities easily in .NET
+.net asp.net xml
+I have some code which returns InnerXML for a XMLNode.
+The node can contain just some text (with HTML) or XML.
+For example:
+<XMLNode>
+    Here is some &lt;strong&gt;HTML&lt;/strong&gt;
+<XMLNode>
+
+or
+<XMLNode>
+    <XMLContent>Here is some content</XMLContnet>
+</XMLNode>
+
+if I get the InnerXML for <XmlNode> the HTML tags are returned as XML entities.
+I cannot use InnerText because I need to be able to get the XML contents. So all I really need is a way to un-escape the HTML tags, because I can detect if it's XML or not and act accordingly.
+I guess I could use HTMLDecode, but will this decode all the XML encoded entities?
+Update: I guess I'm rambling a bit above so here is a clarified scenario:
+I have a XML document that looks like this:
+<content id="1">
+    <data>&lt;p&gt;A Test&lt;/p&gt;</data>
+</content id="2">
+<content>
+    <data>
+        <dataitem>A test</dataitem>
+    </data>
+</content>
+
+If I do:
+XmlNode xn1 = document.SelectSingleNode("/content[@id=1]/data");
+XmlNode xn2 = document.SelectSingleNode("/content[@id=2]/data");
+
+Console.WriteLine(xn1.InnerXml);
+Console.WriteLine(xn2.InnerXml);
+
+xn1 will return 
+ &lt;p&gt;A Test&lt;/p&gt;
+
+xn2 will return <dataitem>A test</dataitem>
+I am already checking to see if what is returned is XML (in the case of xn2) so all I need to do is un-escape the &lt; etc in xn1.
+HTMLDecode does this, but I'm not sure it would work for everything. So the question remains would HTMLDecode handle all the possible entities or is there a class somewhere that will do it for me.
+
+
+why not inserting them as &lt; and &gt; ? you avoid mixing xml and custom markup stuff with this...
+
+Your question is a bit hard to follow. Here are the things that I did not fully understand:
+
+If you are using XmlNode/XmlElement objects, you are working with XML, not HTML. So all you can have are XML elements. These may have HTML element names, but they are XML.
+InnerXml returns a string, at least for the XmlElement object. What are you working with?
+What data are you expecting to get out of the operation? Can you give an example on what you need?
+What exactly are you intending to do with the data when you have it? Maybe there is a better way to your goal than what have in mind?
+
+
+EDIT
+I think I get the picture, but correct me if I'm still wrong. You want to pluck "<p>A Test</p>" out of xn1, but "A test" out of xn2. 
+So InnerXml is the way to go for xn1, and InnerText would be right for xn2.
+Well do it that way then - test for the existence of dataitem and decide what to do when you know.
+XmlNode xn = document.SelectSingleNode("/content[@id=1]/data");
+
+if (xn.SelectSingleNode("dataitem") == null)
+  Console.WriteLine(xn.InnerXml);
+else
+  Console.WriteLine(xn.InnerText);
+
+To answer your question regarding HttpUtility.HtmlDecode, I just looked at the implementation and it looks like it would "work for everything", but it seems superfluous to me if the string you are looking for is coming out of InnerXml.
+
+I think Tomalak is on the right track, but I'd write the code a little differently:
+        XmlNode xn = document.SelectSingleNode("/content[@id=1]/data");
+        if (xn.ChildNodes.Count != 1)
+        {
+            throw new InvalidOperationException("I don't know what to do if there's not exactly one child node.");
+        }
+        XmlNode child = xn.ChildNodes[0];
+        switch (child.NodeType)
+        {
+            case XmlNodeType.Element:
+                Console.WriteLine(xn.InnerXml);
+                break;
+            case XmlNodeType.Text:
+                Console.WriteLine(xn.Value);
+                break;
+            default:
+                throw new InvalidOperationException("I can only handle elements and text nodes.");
+        }
+
+This code makes a lot of your implicit assumptions explicit, and when you encounter data that's not in the form you expect, it will tell you why it failed.

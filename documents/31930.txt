@@ -1,0 +1,165 @@
+Sending e-mail from a Custom SQL Server Reporting Services Delivery Extension
+c# reporting-services
+I've developed my own delivery extension for Reporting Services 2005, to integrate this with our SaaS marketing solution.
+It takes the subscription, and takes a snapshot of the report with a custom set of parameters. It then renders the report, sends an e-mail with a link and the report attached as XLS.
+Everything works fine, until mail delivery...
+Here's my code for sending e-mail:
+ public static List<string> SendMail(SubscriptionData data, Stream reportStream, string reportName, string smptServerHostname, int smtpServerPort)
+{
+  List<string> failedRecipients = new List<string>();
+
+  MailMessage emailMessage = new MailMessage(data.ReplyTo, data.To);
+  emailMessage.Priority = data.Priority;
+  emailMessage.Subject = data.Subject;
+  emailMessage.IsBodyHtml = false;
+  emailMessage.Body = data.Comment;
+
+  if (reportStream != null)
+  {
+    Attachment reportAttachment = new Attachment(reportStream, reportName);
+    emailMessage.Attachments.Add(reportAttachment);
+    reportStream.Dispose();
+  }
+
+  try
+  {
+    SmtpClient smtp = new SmtpClient(smptServerHostname, smtpServerPort);
+
+    // Send the MailMessage
+    smtp.Send(emailMessage);
+  }
+  catch (SmtpFailedRecipientsException ex)
+  {
+    // Delivery failed for the recipient. Add the e-mail address to the failedRecipients List
+    failedRecipients.Add(ex.FailedRecipient);
+  }
+  catch (SmtpFailedRecipientException ex)
+  {
+    // Delivery failed for the recipient. Add the e-mail address to the failedRecipients List
+    failedRecipients.Add(ex.FailedRecipient);
+  }
+  catch (SmtpException ex)
+  {
+    throw ex;
+  }
+  catch (Exception ex)
+  {
+    throw ex;
+  }
+
+  // Return the List of failed recipient e-mail addresses, so the client can maintain its list.
+  return failedRecipients;
+}
+
+Values for SmtpServerHostname is localhost, and port is 25.
+I veryfied that I can actually send mail, by using Telnet. And it works.
+Here's the error message I get from SSRS:
+ReportingServicesService!notification!4!08/28/2008-11:26:17:: Notification 6ab32b8d-296e-47a2-8d96-09e81222985c completed.  Success: False, Status: Exception Message: Failure sending mail. Stacktrace:    at MyDeliveryExtension.MailDelivery.SendMail(SubscriptionData data, Stream reportStream, String reportName, String smptServerHostname, Int32 smtpServerPort) in C:\inetpub\wwwroot\CustomReporting\MyDeliveryExtension\MailDelivery.cs:line 48
+   at MyDeliveryExtension.MyDelivery.Deliver(Notification notification) in C:\inetpub\wwwroot\CustomReporting\MyDeliveryExtension\MyDelivery.cs:line 153, DeliveryExtension: My Delivery, Report: Clicks Development, Attempt 1
+ReportingServicesService!dbpolling!4!08/28/2008-11:26:17:: NotificationPolling finished processing item 6ab32b8d-296e-47a2-8d96-09e81222985c
+Could this have something to do with Trust/Code Access Security?
+My delivery extension is granted full trust in rssrvpolicy.config:
+   <CodeGroup 
+    class="UnionCodeGroup"
+    version="1"
+    PermissionSetName="FullTrust"
+    Name="MyDelivery_CodeGroup"
+    Description="Code group for MyDelivery extension">
+    <IMembershipCondition class="UrlMembershipCondition" version="1" Url="C:\Program Files\Microsoft SQL Server\MSSQL.2\Reporting Services\ReportServer\bin\MyDeliveryExtension.dll" />
+   </CodeGroup>
+
+Could trust be an issue here?
+Another theory: SQL Server and SSRS was installed in the security context of Local System. Am I right, or is this service account restricted access to any network resource? Even its own SMTP Server?
+I tried changing all SQL Server Services logons to Administrator - but still without any success.
+I also tried logging onto the SMTP server in my code, by proviiding: NetworkCredential("Administrator", "password") and also NetworkCredential("Administrator", "password", "MyRepServer")
+Can anyone help here, please?
+
+
+What's at:
+at MyDeliveryExtension.MailDelivery.SendMail(SubscriptionData data, Stream reportStream, String reportName, String smptServerHostname, Int32 smtpServerPort) 
+  in C:\inetpub\wwwroot\CustomReporting\MyDeliveryExtension\MailDelivery.cs:line 48 
+
+at MyDeliveryExtension.MyDelivery.Deliver(Notification notification) 
+  in C:\inetpub\wwwroot\CustomReporting\MyDeliveryExtension\MyDelivery.cs:line 153
+
+Also you seem to be disposing the report stream, but that should be done by whatever opened that stream, not your method (it won't be obvious that attaching a stream disposes it).
+You're losing part of your stack trace due to how you re-throw exceptions. Don't throw the ex variable, just throw is enough.
+Try this tweak:
+public static List<string> SendMail(SubscriptionData data, Stream reportStream, string reportName, string smptServerHostname, int smtpServerPort)
+{
+  List<string> failedRecipients = new List<string>();
+
+  MailMessage emailMessage = new MailMessage(data.ReplyTo, data.To) {
+      Priority = data.Priority,
+      Subject = data.Subject,
+      IsBodyHtml = false,
+      Body = data.Comment
+  };
+
+  if (reportStream != null)
+    emailMessage.Attachments.Add(new Attachment(reportStream, reportName));
+
+  try
+  {
+      SmtpClient smtp = new SmtpClient(smptServerHostname, smtpServerPort);
+
+      // Send the MailMessage
+      smtp.Send(emailMessage);
+  }
+  catch (SmtpFailedRecipientsException ex)
+  {
+    // Delivery failed for the recipient. Add the e-mail address to the failedRecipients List
+    failedRecipients.Add(ex.FailedRecipient);
+
+    //are you missing a loop here? only one failed address will ever be returned
+  }
+  catch (SmtpFailedRecipientException ex)
+  {
+    // Delivery failed for the recipient. Add the e-mail address to the failedRecipients List
+    failedRecipients.Add(ex.FailedRecipient);
+  }
+
+  // Return the List of failed recipient e-mail addresses, so the client can maintain its list.
+  return failedRecipients;
+}
+
+
+I tried to remove the reportStream Attachment:
+  //if (reportStream != null)    
+     //emailMessage.Attachments.Add(new Attachment(reportStream, reportName));
+
+And now it works fine.
+So it is something to do with the reportStream.
+
+After fooling around with the tunctionallity that gets the reportStream, I was able to fix the mail sending problem.
+The error wasn't in the SendMail method, but somewehere else. The exception was thrown in the context, of SendMail though. Buggered!
+
+That's why you have to avoid:
+catch (Exception ex)
+{
+    throw ex;
+}
+
+As that basically cloaks your exception in a new one.
+If you use:
+catch (Exception ex)
+{
+    throw; //note: no ex
+}
+
+It keeps the original exception and stack trace.
+
+FileStream m_fileStream = null;
+
+m_files = notification.Report.Render(format, null);
+RenderedOutputFile m_renderedOutputFile = m_files[0];
+m_fileStream = new FileStream(fileName, FileMode.Create, FileAccess.Write);
+m_renderedOutputFile.Data.Seek((long)0, SeekOrigin.Begin);
+byte[] arr = new byte[(int)m_renderedOutputFile.Data.Length + 1];
+
+m_renderedOutputFile.Data.Read(arr, 0, (int)m_renderedOutputFile.Data.Length);
+
+m_fileStream.Write(arr, 0, (int)m_renderedOutputFile.Data.Length);
+
+m_fileStream.Close();
+

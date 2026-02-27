@@ -1,0 +1,63 @@
+How do I perform query filtering in django templates
+python django django-templates
+I need to perform a filtered query from within a django template, to get a set of objects equivalent to python code within a view:
+queryset = Modelclass.objects.filter(somekey=foo)
+
+In my template I would like to do
+{% for object in data.somekey_set.FILTER %}
+
+but I just can't seem to find out how to write FILTER.
+
+
+You can't do this, which is by design.  The Django framework authors intended a strict separation of presentation code from data logic.  Filtering models is data logic, and outputting HTML is presentation logic.
+So you have several options.  The easiest is to do the filtering, then pass the result to render_to_response.  Or you could write a method in your model so that you can say {% for object in data.filtered_set %}.  Finally, you could write your own template tag, although in this specific case I would advise against that.
+
+I run into this problem on a regular basis and often use the "add a method" solution. However, there are definitely cases where "add a method" or "compute it in the view" don't work (or don't work well). E.g. when you are caching template fragments and need some non-trivial DB computation to produce it. You don't want to do the DB work unless you need to, but you won't know if you need to until you are deep in the template logic.
+Some other possible solutions:
+
+Use the {% expr <expression> as <var_name> %} template tag found at http://www.djangosnippets.org/snippets/9/ The expression is any legal Python expression with your template's Context as your local scope.
+Change your template processor. Jinja2 (http://jinja.pocoo.org/2/) has syntax that is almost identical to the Django template language, but with full Python power available. It's also faster. You can do this wholesale, or you might limit its use to templates that you are working on, but use Django's "safer" templates for designer-maintained pages.
+
+
+The other option is that if you have a filter that you always want applied, to add a custom manager on the model in question which always applies the filter to the results returned.
+A good example of this is a Event model, where for 90% of the queries you do on the model you are going to want something like Event.objects.filter(date__gte=now), i.e. you're normally interested in Events that are upcoming. This would look like:
+class EventManager(models.Manager):
+    def get_query_set(self):
+        now = datetime.now()
+        return super(EventManager,self).get_query_set().filter(date__gte=now)
+
+And in the model:
+class Event(models.Model):
+    ...
+    objects = EventManager()
+
+But again, this applies the same filter against all default queries done on the Event model and so isn't as flexible some of the techniques described above. 
+
+This can be solved with an assignment tag:
+from django import template
+
+register = template.Library()
+
+@register.assignment_tag
+def query(qs, **kwargs):
+    """ template tag which allows queryset filtering. Usage:
+          {% query books author=author as mybooks %}
+          {% for book in mybooks %}
+            ...
+          {% endfor %}
+    """
+    return qs.filter(**kwargs)
+
+
+I just add an extra template tag like this:
+@register.filter
+def in_category(things, category):
+    return things.filter(category=category)
+
+Then I can do:
+{% for category in categories %}
+  {% for thing in things|in_category:category %}
+    {{ thing }}
+  {% endfor %}
+{% endfor %}
+

@@ -1,0 +1,46 @@
+Convert memory address range in running Linux process to symbols in object file?
+linux memory debugging symbols elf
+Here is a snippet of the file /proc/self/smaps:
+00af8000-00b14000 r-xp 00000000 fd:00 16417      /lib/ld-2.8.so
+Size:                112 kB
+Rss:                  88 kB
+Pss:                   1 kB
+Shared_Clean:         88 kB
+Shared_Dirty:          0 kB
+Private_Clean:         0 kB
+Private_Dirty:         0 kB
+Referenced:           88 kB
+Swap:                  0 kB
+00b14000-00b15000 r--p 0001c000 fd:00 16417      /lib/ld-2.8.so
+Size:                  4 kB
+Rss:                   4 kB
+Pss:                   4 kB
+Shared_Clean:          0 kB
+Shared_Dirty:          0 kB
+Private_Clean:         0 kB
+Private_Dirty:         4 kB
+Referenced:            4 kB
+Swap:                  0 kB
+
+It shows that this process (self) is linked to /lib/ld-2.8.so and two (of the many) byte ranges mapped into memory.
+The first range of 88kb (22 4kb pages) is shared and clean, that is it has not been written to. This is probably code.
+The second range of 4kb (a single page) is not shared and it is dirty -- the process has written to it since it was memory mapped from the file on disk. This is probably data.
+But what is in that memory?
+How do you convert the memory range 00b14000-00b15000 into useful information such as the line number of the file in which a large static structure is declared?
+The technique will need to take account of prelinking and address space randomization, such as from execshield, and also separate debugging symbols.
+(The motivation is to identify popular libraries which also create dirty memory and to fix them, for example by by declaring structures const).
+
+
+You'll need to extract information from Linux's memory handler to determine how the application's virtual memory map relates to the pages given.  It gets trickier if you also want to track information in pages that have been swapped out of memory.
+You'll find some information here which will get you started.  The process table includes some paging information, but you'll likely have to poke around to several different areas to get all the deep information you're looking for.
+
+The format of smaps is: 
+[BOTTOM]-[TOP] [PERM] [FILE OFFSET]
+b80e9000-b80ea000 rw-p 0001b000 08:05 605294     /lib/ld-2.8.90.so
+So there the actual content of the file '/lib/ld-2.8.90.so' at file offset 0x0001b000 is mapped at 0xb80e9000 in that program's memory.
+To extract the line number or C code of the mapped address you need to match it with the ELF section of the executable or library file and then extract the GDB symbols (if said executable or library still has them).
+The GDB file formats are documented (superficially) at http://sourceware.org/gdb/current/onlinedocs/gdbint_7.html#SEC60
+
+Look at SymtabAPI from the ParaDyn project (U. Wisc/U. Maryland).  It runs on a number of platforms, and supports more than just ELF files (I believe it also supports COFF and a few others).  There's documentation here.
+Specifically, you might take a look at the AddressLookup class; I think it does exactly what you want.  There are also some facilities (getLoadAddresses()) for finding out what .so's are loaded at any given time, and I believe you can also extract the extent of the code sections of loaded modules, so you can tell what's in certain parts of memory.
+Caveat: I think it will handle address space randomization properly, but I am not entirely sure.

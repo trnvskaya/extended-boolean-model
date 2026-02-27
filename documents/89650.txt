@@ -1,0 +1,140 @@
+How do you pass arguments to define_method?
+ruby metaprogramming
+I would like to pass an argument(s) to a method being defined using define_method, how would I do that?
+
+
+The block that you pass to define_method can include some parameters.  That's how your defined method accepts arguments.  When you define a method you're really just nicknaming the block and keeping a reference to it in the class.  The parameters come with the block.  So:
+define_method(:say_hi) { |other| puts "Hi, " + other }
+
+
+In addition to Kevin Conner's answer: block arguments do not support the same semantics as method arguments. You cannot define default arguments or block arguments.
+This is only fixed in Ruby 1.9 with the new alternative "stabby lambda" syntax which supports full method argument semantics.
+Example:
+# Works
+def meth(default = :foo, *splat, &block) puts 'Bar'; end
+
+# Doesn't work
+define_method :meth { |default = :foo, *splat, &block| puts 'Bar' }
+
+# This works in Ruby 1.9 (modulo typos, I don't actually have it installed)
+define_method :meth, ->(default = :foo, *splat, &block) { puts 'Bar' }
+
+
+... and if you want optional parameters
+ class Bar
+   define_method(:foo) do |arg=nil|                  
+     arg                                                                                          
+   end   
+ end
+
+ a = Bar.new
+ a.foo
+ #=> nil
+ a.foo 1
+ # => 1
+
+... as many arguments as you want
+ class Bar
+   define_method(:foo) do |*arg|                  
+     arg                                                                                          
+   end   
+ end
+
+ a = Bar.new
+ a.foo
+ #=> []
+ a.foo 1
+ # => [1]
+ a.foo 1, 2 , 'AAA'
+ # => [1, 2, 'AAA']
+
+...combination of 
+ class Bar
+   define_method(:foo) do |bubla,*arg|
+     p bubla                  
+     p arg                                                                                          
+   end   
+ end
+
+ a = Bar.new
+ a.foo
+ #=> wrong number of arguments (0 for 1)
+ a.foo 1
+ # 1
+ # []
+
+ a.foo 1, 2 ,3 ,4
+ # 1
+ # [2,3,4]
+
+... all of them
+ class Bar
+   define_method(:foo) do |variable1, variable2,*arg, &block|  
+     p  variable1     
+     p  variable2
+     p  arg
+     p  block.inspect                                                                              
+   end   
+ end
+ a = Bar.new      
+ a.foo :one, 'two', :three, 4, 5 do
+   'six'
+ end
+
+Update
+Ruby 2.0 introduced double splat ** (two stars) which (I quote) does: 
+
+Ruby 2.0 introduced keyword arguments, and ** acts like *, but for keyword arguments. It returns a Hash with key / value pairs.
+
+...and of course you can use it in define method too :) 
+ class Bar 
+   define_method(:foo) do |variable1, variable2,*arg,**options, &block|
+     p  variable1
+     p  variable2
+     p  arg
+     p  options
+     p  block.inspect
+   end 
+ end 
+ a = Bar.new
+ a.foo :one, 'two', :three, 4, 5, ruby: 'is awesome', foo: :bar do
+   'six'
+ end
+# :one
+# "two"
+# [:three, 4, 5]
+# {:ruby=>"is awesome", :foo=>:bar}
+
+Named attributes example:
+ class Bar
+   define_method(:foo) do |variable1, color: 'blue', **other_options, &block|
+     p  variable1
+     p  color
+     p  other_options
+     p  block.inspect
+   end
+ end
+ a = Bar.new
+ a.foo :one, color: 'red', ruby: 'is awesome', foo: :bar do
+   'six'
+ end
+# :one
+# "red"
+# {:ruby=>"is awesome", :foo=>:bar}
+
+I was trying to create example with keyword argument, splat and double splat all in one:
+ define_method(:foo) do |variable1, variable2,*arg, i_will_not: 'work', **options, &block|
+    # ...
+
+or 
+ define_method(:foo) do |variable1, variable2, i_will_not: 'work', *arg, **options, &block|
+    # ...
+
+... but this will not work, it looks like there is a limitation. When you think about it makes sense as splat operator is "capturing all remaining arguments" and double splat is "capturing all remaining keyword arguments" therefore mixing them would break expected logic. (I don't have any reference to prove this point doh! )
+
+With 2.2 you can now use keyword arguments:
+https://robots.thoughtbot.com/ruby-2-keyword-arguments
+define_method(:method) do |refresh: false|
+  ..........
+end
+

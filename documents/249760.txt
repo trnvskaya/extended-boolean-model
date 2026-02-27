@@ -1,0 +1,277 @@
+How to convert a Unix timestamp to DateTime and vice versa?
+c# datetime unix epoch data-conversion
+There is this example code, but then it starts talking about millisecond / nanosecond problems.
+The same question is on MSDN, Seconds since the Unix epoch in C#.
+This is what I've got so far:
+public Double CreatedEpoch
+{
+  get
+  {
+    DateTime epoch = new DateTime(1970, 1, 1, 0, 0, 0, 0).ToLocalTime();
+    TimeSpan span = (this.Created.ToLocalTime() - epoch);
+    return span.TotalSeconds;
+  }
+  set
+  {
+    DateTime epoch = new DateTime(1970, 1, 1, 0, 0, 0, 0).ToLocalTime();
+    this.Created = epoch.AddSeconds(value);
+  }
+}
+
+
+
+A Unix tick is 1 second (if I remember well), and a .NET tick is 100 nanoseconds. 
+If you've been encountering problems with nanoseconds, you might want to try using AddTick(10000000 * value).
+
+Here's what you need:
+public static DateTime UnixTimeStampToDateTime( double unixTimeStamp )
+{
+    // Unix timestamp is seconds past epoch
+    System.DateTime dtDateTime = new DateTime(1970,1,1,0,0,0,0,System.DateTimeKind.Utc);
+    dtDateTime = dtDateTime.AddSeconds( unixTimeStamp ).ToLocalTime();
+    return dtDateTime;
+}
+
+Or, for Java (which is different):
+public static DateTime JavaTimeStampToDateTime(double javaTimeStamp)
+{
+    // Java timestamp is millisecods past epoch
+    System.DateTime dtDateTime = new DateTime(1970,1,1,0,0,0,0,System.DateTimeKind.Utc);
+    dtDateTime = dtDateTime.AddSeconds(Math.Round(javaTimeStamp / 1000)).ToLocalTime();
+    return dtDateTime;
+}
+
+
+I found the right answer just by comparing the conversion to 1/1/1970 w/o the local time adjustment;
+DateTime date = new DateTime(2011, 4, 1, 12, 0, 0, 0);
+DateTime epoch = new DateTime(1970, 1, 1, 0, 0, 0, 0);
+TimeSpan span = (date - epoch);
+double unixTime =span.TotalSeconds;
+
+
+DateTime to UNIX timestamp:
+public static double DateTimeToUnixTimestamp(DateTime dateTime)
+{
+    return (TimeZoneInfo.ConvertTimeToUtc(dateTime) - 
+           new DateTime(1970, 1, 1, 0, 0, 0, 0, System.DateTimeKind.Utc)).TotalSeconds;
+}
+
+
+"UTC does not change with a change of seasons, but local time or civil time may change if a time zone jurisdiction observes daylight saving time (summer time). For example, UTC is 5 hours ahead of (that is, later in the day than) local time on the east coast of the United States during winter, but 4 hours ahead while daylight saving is observed there."
+So this is my code:
+TimeSpan span = (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, 0,DateTimeKind.Utc));
+double unixTime = span.TotalSeconds;
+
+
+To supplement ScottCher's answer, I recently found myself in the annoying scenario of having both seconds and milliseconds UNIX timestamps arbitrarily mixed together in an input data set.  The following code seems to handle this well:
+static readonly DateTime UnixEpoch = new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc);
+static readonly double MaxUnixSeconds = (DateTime.MaxValue - UnixEpoch).TotalSeconds;
+
+public static DateTime UnixTimeStampToDateTime(double unixTimeStamp)
+{
+   return unixTimeStamp > MaxUnixSeconds
+      ? UnixEpoch.AddMilliseconds(unixTimeStamp)
+      : UnixEpoch.AddSeconds(unixTimeStamp);
+}
+
+
+I needed to convert a timeval struct (seconds, microseconds) containing UNIX time to DateTime without losing precision and haven't found an answer here so I thought I just might add mine:
+DateTime _epochTime = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+private DateTime UnixTimeToDateTime(Timeval unixTime)
+{
+    return _epochTime.AddTicks(
+        unixTime.Seconds * TimeSpan.TicksPerSecond +
+        unixTime.Microseconds * TimeSpan.TicksPerMillisecond/1000);
+}
+
+
+Be careful!
+AddSeconds and AddMilliseconds cut off the microseconds in the double.
+These versions have high precision.
+Unix -> DateTime
+public static DateTime UnixTimestampToDateTime(double unixTime)
+{
+    DateTime unixStart = new DateTime(1970, 1, 1, 0, 0, 0, 0, System.DateTimeKind.Utc);
+    long unixTimeStampInTicks = (long) (unixTime * TimeSpan.TicksPerSecond);
+    return new DateTime(unixStart.Ticks + unixTimeStampInTicks, System.DateTimeKind.Utc);
+}
+
+DateTime -> Unix
+public static double DateTimeToUnixTimestamp(DateTime dateTime)
+{
+    DateTime unixStart = new DateTime(1970, 1, 1, 0, 0, 0, 0, System.DateTimeKind.Utc);
+    long unixTimeStampInTicks = (dateTime.ToUniversalTime() - unixStart).Ticks;
+    return (double) unixTimeStampInTicks / TimeSpan.TicksPerSecond;
+}
+
+
+DateTime unixEpoch = DateTime.ParseExact("1970-01-01", "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+DateTime convertedTime = unixEpoch.AddMilliseconds(unixTimeInMillisconds);
+
+Of course, one can make unixEpoch a global static, so it only needs to appear once in your project, and one can use AddSeconds if the UNIX time is in seconds.
+To go the other way:
+double unixTimeInMilliseconds = timeToConvert.Subtract(unixEpoch).TotalMilliseconds;
+
+Truncate to Int64 and/or use TotalSeconds as needed.
+
+The latest version of .NET (v4.6) has added built-in support for Unix time conversions. That includes both to and from Unix time represented by either seconds or milliseconds.
+
+Unix time in seconds to DateTimeOffset:
+
+
+DateTimeOffset dateTimeOffset = DateTimeOffset.FromUnixTimeSeconds(1000);
+
+
+DateTimeOffset to Unix time in seconds:
+
+
+long unixTimeStampInSeconds = dateTimeOffset.ToUnixTimeSeconds();
+
+
+Unix time in milliseconds to DateTimeOffset:
+
+
+DateTimeOffset dateTimeOffset = DateTimeOffset.FromUnixTimeMilliseconds(1000000);
+
+
+DateTimeOffset to Unix time in milliseconds:
+
+
+long unixTimeStampInMilliseconds= dateTimeOffset.ToUnixTimeMilliseconds();
+
+
+Note: These methods convert to and from DateTimeOffset. To get a DateTime representation simply use the DateTimeOffset.DateTime property:
+DateTime dateTime = dateTimeOffset.UtcDateTime;
+
+
+See IdentityModel.EpochTimeExtensions
+public static class EpochTimeExtensions
+{
+    /// <summary>
+    /// Converts the given date value to epoch time.
+    /// </summary>
+    public static long ToEpochTime(this DateTime dateTime)
+    {
+        var date = dateTime.ToUniversalTime();
+        var ticks = date.Ticks - new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc).Ticks;
+        var ts = ticks / TimeSpan.TicksPerSecond;
+        return ts;
+    }
+
+    /// <summary>
+    /// Converts the given date value to epoch time.
+    /// </summary>
+    public static long ToEpochTime(this DateTimeOffset dateTime)
+    {
+        var date = dateTime.ToUniversalTime();
+        var ticks = date.Ticks - new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero).Ticks;
+        var ts = ticks / TimeSpan.TicksPerSecond;
+        return ts;
+    }
+
+    /// <summary>
+    /// Converts the given epoch time to a <see cref="DateTime"/> with <see cref="DateTimeKind.Utc"/> kind.
+    /// </summary>
+    public static DateTime ToDateTimeFromEpoch(this long intDate)
+    {
+        var timeInTicks = intDate * TimeSpan.TicksPerSecond;
+        return new DateTime(1970, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc).AddTicks(timeInTicks);
+    }
+
+    /// <summary>
+    /// Converts the given epoch time to a UTC <see cref="DateTimeOffset"/>.
+    /// </summary>
+    public static DateTimeOffset ToDateTimeOffsetFromEpoch(this long intDate)
+    {
+        var timeInTicks = intDate * TimeSpan.TicksPerSecond;
+        return new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero).AddTicks(timeInTicks);
+    }
+}
+
+
+For .NET 4.6 and later:
+public static class UnixDateTime
+{
+    public static DateTimeOffset FromUnixTimeSeconds(long seconds)
+    {
+        if (seconds < -62135596800L || seconds > 253402300799L)
+            throw new ArgumentOutOfRangeException("seconds", seconds, "");
+
+        return new DateTimeOffset(seconds * 10000000L + 621355968000000000L, TimeSpan.Zero);
+    }
+
+    public static DateTimeOffset FromUnixTimeMilliseconds(long milliseconds)
+    {
+        if (milliseconds < -62135596800000L || milliseconds > 253402300799999L)
+            throw new ArgumentOutOfRangeException("milliseconds", milliseconds, "");
+
+        return new DateTimeOffset(milliseconds * 10000L + 621355968000000000L, TimeSpan.Zero);
+    }
+
+    public static long ToUnixTimeSeconds(this DateTimeOffset utcDateTime)
+    {
+        return utcDateTime.Ticks / 10000000L - 62135596800L;
+    }
+
+    public static long ToUnixTimeMilliseconds(this DateTimeOffset utcDateTime)
+    {
+        return utcDateTime.Ticks / 10000L - 62135596800000L;
+    }
+
+    [Test]
+    public void UnixSeconds()
+    {
+        DateTime utcNow = DateTime.UtcNow;
+        DateTimeOffset utcNowOffset = new DateTimeOffset(utcNow);
+
+        long unixTimestampInSeconds = utcNowOffset.ToUnixTimeSeconds();
+
+        DateTimeOffset utcNowOffsetTest = UnixDateTime.FromUnixTimeSeconds(unixTimestampInSeconds);
+
+        Assert.AreEqual(utcNowOffset.Year, utcNowOffsetTest.Year);
+        Assert.AreEqual(utcNowOffset.Month, utcNowOffsetTest.Month);
+        Assert.AreEqual(utcNowOffset.Date, utcNowOffsetTest.Date);
+        Assert.AreEqual(utcNowOffset.Hour, utcNowOffsetTest.Hour);
+        Assert.AreEqual(utcNowOffset.Minute, utcNowOffsetTest.Minute);
+        Assert.AreEqual(utcNowOffset.Second, utcNowOffsetTest.Second);
+    }
+
+    [Test]
+    public void UnixMilliseconds()
+    {
+        DateTime utcNow = DateTime.UtcNow;
+        DateTimeOffset utcNowOffset = new DateTimeOffset(utcNow);
+
+        long unixTimestampInMilliseconds = utcNowOffset.ToUnixTimeMilliseconds();
+
+        DateTimeOffset utcNowOffsetTest = UnixDateTime.FromUnixTimeMilliseconds(unixTimestampInMilliseconds);
+
+        Assert.AreEqual(utcNowOffset.Year, utcNowOffsetTest.Year);
+        Assert.AreEqual(utcNowOffset.Month, utcNowOffsetTest.Month);
+        Assert.AreEqual(utcNowOffset.Date, utcNowOffsetTest.Date);
+        Assert.AreEqual(utcNowOffset.Hour, utcNowOffsetTest.Hour);
+        Assert.AreEqual(utcNowOffset.Minute, utcNowOffsetTest.Minute);
+        Assert.AreEqual(utcNowOffset.Second, utcNowOffsetTest.Second);
+        Assert.AreEqual(utcNowOffset.Millisecond, utcNowOffsetTest.Millisecond);
+    }
+}
+
+
+Unix time conversion is new in .NET Framework 4.6.
+You can now more easily convert date and time values to or from .NET Framework types and Unix time. This can be necessary, for example, when converting time values between a JavaScript client and .NET server. The following APIs have been added to the DateTimeOffset structure:
+static DateTimeOffset FromUnixTimeSeconds(long seconds)
+static DateTimeOffset FromUnixTimeMilliseconds(long milliseconds)
+long DateTimeOffset.ToUnixTimeSeconds()
+long DateTimeOffset.ToUnixTimeMilliseconds()
+
+
+DateTime to Unix timestamp including daylight saving time (DST)
+    public static double DateTimeToUnixTimestamp(DateTime dateTime)
+    {
+        double unixTime = (dateTime - new DateTime(1970, 1, 1).ToLocalTime()).TotalSeconds;
+        if(dateTime.IsDaylightSavingTime()) {
+            unixTime -= 3600;
+        }
+        return unixTime;
+    }
+

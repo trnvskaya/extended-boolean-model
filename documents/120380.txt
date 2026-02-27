@@ -1,0 +1,63 @@
+Irretrievably destroying data in Java
+java security
+Is there anyway in Java to delete data (e.g., a variable value, object) and be sure it can't be recovered from memory? Does assigning null to a variable in Java delete the value from memory? Any ideas? Answers applicable to other languages are also acceptable.
+
+
+Nope, unless you have direct answer to hardware. There is a chance that variable will be cached somewhere. Sensitive data can even be stored in swap :) If you're concerning only about RAM, you can play with garbage collector. In high level langs usually you don't have a direct access to memory, so it's not possible to control this aspect. For example in .NET there is a class SecureString which uses interop and direct memory access.
+
+Due to the wonders virtual memory, it is nearly impossible to delete something from memory in a completely irretrievable manner. Your best bet is to zero out the value fields; however: 
+
+This does not mean that an old (unzeroed) copy of the object won't be left on an unused swap page, which could persist across reboots.
+Neither does it stop someone from attaching a debugger to your application and poking around before the object gets zeroed or crashing the VM and poking around in the heap dump.
+
+
+Nothing gets deleted, its just about being accessible or not to the application.
+Once inaccessible, the space becomes a candidate for subsequent usage when need arises and the space will be overwritten.
+In case of direct memory access, something is always there to read but it might be junk and wont make sense. 
+
+By setting your Object to null doesn't mean that your object is removed from memory. The Virtual Machine will flag that Object as ready for Garbage Collection if there are no more references to that Object. Depending on your code it might still be referenced even though you have set it to null in which case it will not be removed. (Essentially if you expect it to be garbage collected and it is not you have a memory leak!) 
+Once it is flagged as ready for collection you have no control over when the Garbage Collector will remove it. You can mess around with Garbage Collection strategies but I wouldn't advise it. 
+Profile your application and look at the object and it's id and you can see what is referencing it. Java provide VisualVM with 1.6.0_07 and above or you can use NetBeans
+
+Totally and completely irretrievable is something almost impossible in this day and age.
+When you normally delete something, the onlything that happens is that the first spot in your memory is emptied. This first spot used to contain the information as to howfar the memory had to be reserved for that program or something else.
+But all the other info is still there untill it's overwritten by someone else.
+i sudgest either TinyShredder, or using CCleaner set to the Gutmann-pass
+
+As zacherates said, zero out the sensitive fields of your Object before removing references to it. Note that you can't zero out the contents of a String, so use char arrays and zero each element.
+
+I would think that your best bet (that isn't complex) is to use a char[] and then change each position in the array.  The other comments about it being possible for it to be copied in memory still apply.
+
+Primitive data (byte, char, int, double) and arrays of them (byte[], ...) are erasable by writing new random content into them.
+Object data have to be sanitized by overwriting their primitive properties; setting a variable to null just makes the object available for GC, but not immediately dead. A dump of VM will contain them for anyone to see.
+Immutable data such as String cannot be overwritten in any way. Any modification just makes a copy. You shall avoid keeping sensitive data in such objects.
+P.S. If we talk about passwords, it's better to use crypto-strong hash functions (MD5, SHA1, ...), and never ever work with passwords in clear text.
+
+If you're thinking about securing password/key management, you could write some JNI code that uses platform-specific API to store the keys in a secure way and not leak the data into the memory managed by the JVM. For example, you could store the keys in a page locked in physical memory and could prevent the IO bus from accessing the memory.
+EDIT: To comment on some of the previous answers, the JVM could relocate your objects in memory without erasing their previous locations, so, even char[], bytes, ints and other "erasable" data types aren't an answer if you really want to make sure that no sensitive information is stored in the memory managed by the JVM or swapped on to the hard drive.
+
+Store sensitive data in an array, then "zero" it out as soon as possible.
+Any data in RAM can be copied to the disk by a virtual memory system. Data in RAM (or a core dump) can also be inspected by debugging tools. To minimize the chance of this happening, you should strive for the following
+
+keep the time window a secret is
+present in memory as short as
+possible
+be careful about IO pipelines (e.g., 
+BufferedInputStream) that internally 
+buffer data
+keep the references to the secret on the stack and out of the heap
+don't use immutable types, like 
+String, to hold secrets
+
+The cryptographic APIs in Java use this approach, and any APIs you create should support it too. For example, KeyStore.load allows a caller to clear a password char[], and  when the call completes, as does the KeySpec for password-based encryption.
+Ideally, you would use a finally block to zero the array, like this:
+KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+InputStream is = â¦
+char[] pw = System.console().readPassword();
+try {
+ ks.load(is, pw);
+}
+finally {
+  Arrays.fill(pw, '\0');
+}
+

@@ -1,0 +1,99 @@
+VB.Net (or C#) 2008 Multi Threaded Import
+sql-server vb.net visual-studio multithreading import
+I am looking to build a multi-threaded text import  facility (generally CSV into SQL Server 2005) and would like to do this in VB.NET but I am not against C#.  I have VS 2008 trial and just dont know where to begin.  Can anyone point me in the direction of where I can look at and play with the source of a VERY simple multi-threaded application for VS 2008?
+Thanks!
+
+
+This is a great article:
+http://www.devx.com/DevX/10MinuteSolution/20365
+In particular:
+Dim t As Thread
+t = New Thread(AddressOf Me.BackgroundProcess)
+t.Start()
+
+Private Sub BackgroundProcess()
+   Dim i As Integer = 1
+   Do While True
+        ListBox1.Items.Add("Iterations: " + i)
+        i += 1
+        Thread.CurrentThread.Sleep(2000)
+   Loop
+End Sub
+
+
+The referenced DevX article is from 2001 and .Net Framework 1.1, but today .Net Framework 2.0 provides the BackgroundWorker class.  This is the recommended threading class if your application includes a foreground UI component.
+From MSDN Threads and Threading:
+
+If you need to run background threads
+  that interact with the user interface,
+  the .NET Framework version 2.0
+  provides a BackgroundWorker component
+  that communicates using events, with
+  cross-thread marshaling to the
+  user-interface thread.
+
+This example from MSDN BackgroundWorker Class shows a background task, progress %, and cancel option.  (The example is longer than the DevX sample, but has a lot more functionality.)
+Imports System.ComponentModel
+
+Partial Public Class Page
+    Inherits UserControl
+    Private bw As BackgroundWorker = New BackgroundWorker
+
+    Public Sub New()
+        InitializeComponent()
+
+        bw.WorkerReportsProgress = True
+        bw.WorkerSupportsCancellation = True
+        AddHandler bw.DoWork, AddressOf bw_DoWork
+        AddHandler bw.ProgressChanged, AddressOf bw_ProgressChanged
+        AddHandler bw.RunWorkerCompleted, AddressOf bw_RunWorkerCompleted
+
+    End Sub
+    Private Sub buttonStart_Click(ByVal sender As System.Object, ByVal e As System.Windows.RoutedEventArgs)
+        If Not bw.IsBusy = True Then
+            bw.RunWorkerAsync()
+        End If
+    End Sub
+    Private Sub buttonCancel_Click(ByVal sender As System.Object, ByVal e As System.Windows.RoutedEventArgs)
+        If bw.WorkerSupportsCancellation = True Then
+            bw.CancelAsync()
+        End If
+    End Sub
+    Private Sub bw_DoWork(ByVal sender As Object, ByVal e As DoWorkEventArgs)
+        Dim worker As BackgroundWorker = CType(sender, BackgroundWorker)
+
+        For i = 1 To 10
+            If bw.CancellationPending = True Then
+                e.Cancel = True
+                Exit For
+            Else
+                ' Perform a time consuming operation and report progress.
+                System.Threading.Thread.Sleep(500)
+                bw.ReportProgress(i * 10)
+            End If
+        Next
+    End Sub
+    Private Sub bw_RunWorkerCompleted(ByVal sender As Object, ByVal e As RunWorkerCompletedEventArgs)
+        If e.Cancelled = True Then
+            Me.tbProgress.Text = "Canceled!"
+        ElseIf e.Error IsNot Nothing Then
+            Me.tbProgress.Text = "Error: " & e.Error.Message
+        Else
+            Me.tbProgress.Text = "Done!"
+        End If
+    End Sub
+    Private Sub bw_ProgressChanged(ByVal sender As Object, ByVal e As ProgressChangedEventArgs)
+        Me.tbProgress.Text = e.ProgressPercentage.ToString() & "%"
+    End Sub
+End Class
+
+
+About the best threading document I ever found was this http://www.albahari.com/threading/
+If I may, the problem with simple examples is that that they're often too simple.  Once you get past the counting or sort in background demos you generally need to update the UI or similar and there are some gotchas.  Similarly you rarely have to deal with resource contention in simple examples and having threads degrade gracefully when a resource isn't available (such as a Db connection) requires thought.
+Conceptually you need to decide how you're going to distribute your work across the threads and how many do you want.  There's overhead associated with managing threads and some mechanisms use a shared thread pool that could be subject to resource contention itself (for example, any time you run a program that simply displays an empty form, how many threads do you see under task manager).
+So for your case, you threads doing the actual uploading need to signal back if they've completed, if they've failed (and what the failure was).  The controller needs to be able to deal with those and manage the start/stop processes and so on.
+Finally (almost), assuming that making something multithread will increase performance doesn't always hold true.  If for example, you chop a file up into segments but it has to travel across a low speed link (ADSL say), you're constrained by external forces and no amount of threading trickery is going to get around that.  The same can apply for database updates, web requests, anything invloving large amounts of disk i/o and so on.
+Despite all this, I'm not the prophet of doom.  The references here are more than adequate to help you achieve what you want but be aware that one of the reasons threading seems complicated is because it can be :)
+If you want more control than the BackgroundWorker/Threadpool but don't want to do everything yourself there are at least two very good freebie threading libraries knocking around the place (Wintellect & PowerThreading)
+Cheers
+Simon

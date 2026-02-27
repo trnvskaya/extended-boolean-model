@@ -1,0 +1,39 @@
+Cross-references and garbage collection
+java
+There is an application with an extensive object graph. This graph mainly consists of a set of subgraphs which are connected to the rest of the graph through the only reference. But internally each such subgraph has some number of cross-references among objects. Once in a while such a sub graph needs to be thrown away. Would it be enough just to set to null the only referece which points to that subgraph to make it eligible for garbage collection?
+My concern is that internal cross-references may "protect" the entire subgraph from garbage collection. In other words, is the garbage collector wise enough to figure out that all references in a subgraph do not leave the boundaries of the subgraph and therefore entire subgraph can be purged.
+
+
+Yes - the garbage collector can cope with circular references etc.
+
+As stated in this SO question, circular reference is well managed.
+Java does not do reference counting, it does "mark and sweep" garbage collecting. If follows all the active references to find out what objects are "reachable" and then it cleans up everything else.
+References in objects not themselves reachable don't affect reachability so it doesn't matter if they are null or not.
+About the only case in which setting a reference to null might, conceivably, have a significant effect is in discarding a very large object in the middle of a long running method. 
+In that case, setting null to the reference of the graph will help making an island of isolation (even for internal circular references) as described in this article.
+You will find more details about the unreachable state in The Truth About Garbage Collection:
+Unreachable
+An object enters an unreachable state when no more strong references to it exist.
+When an object is unreachable, it is a candidate for collection. 
+Note the wording:
+Just because an object is a candidate for collection doesnât mean it will be immediately
+collected. The JVM is free to delay collection until there is an immediate need for thememory being consumed by the object.
+Itâs important to note that not just any strong reference will hold an object in memory. These must be references that chain from a garbage collection root. GC roots are a special class of variable that includes:
+
+Temporary variables on the stack (of any thread)
+Static variables (from any class)
+Special references from JNI native code
+
+Circular strong references donât necessarily cause memory leaks. 
+Consider a code creating two objects, and assigns them references to each other.
+public void buidDog() {
+   Dog newDog = new Dog();
+   Tail newTail = new Tail();
+   newDog.tail = newTail;
+   newTail.dog = newDog;
+}
+
+Before the method returns, there are strong references from the temporary stack variables in the buildDog method pointing to both the Dog and the Tail.
+After the buildDog method returns, the Dog and Tail both become unreachable from a root and are candidates for collection (although the VM might not actually collect these objects for an indefinite amount of time).
+
+The JVM operates on the notion of "islands of unreachability". If there is an unreachable 'island' of interconnected objects then that set of objects is eligible for garbage collection in its entirety.

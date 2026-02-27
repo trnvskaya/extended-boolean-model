@@ -1,0 +1,117 @@
+Is there a built-in method to compare collections in C#?
+c# .net
+I would like to compare the contents of a couple of collections in my Equals method.  I have a Dictionary and an IList.  Is there a built-in method to do this?
+Edited:
+I want to compare two Dictionaries and two ILists, so I think what equality means is clear - if the two dictionaries contain the same keys mapped to the same values, then they're equal.
+
+
+No, because the framework doesn't know how to compare the contents of your lists.
+Have a look at this:
+http://blogs.msdn.com/abhinaba/archive/2005/10/11/479537.aspx
+
+Enumerable.SequenceEqual
+
+Determines whether two sequences are equal by comparing their elements by using a specified IEqualityComparer(T).
+
+You can't directly compare the list & the dictionary, but you could compare the list of values from the Dictionary with the list
+
+Take a look at the Enumerable.SequenceEqual  method
+var dictionary = new Dictionary<int, string>() {{1, "a"}, {2, "b"}};
+var intList = new List<int> {1, 2};
+var stringList = new List<string> {"a", "b"};
+var test1 = dictionary.Keys.SequenceEqual(intList);
+var test2 = dictionary.Values.SequenceEqual(stringList);
+
+
+I didn't know about Enumerable.SequenceEqual method (you learn something every day....), but I was going to suggest using an extension method; something like this:
+    public static bool IsEqual(this List<int> InternalList, List<int> ExternalList)
+    {
+        if (InternalList.Count != ExternalList.Count)
+        {
+            return false;
+        }
+        else
+        {
+            for (int i = 0; i < InternalList.Count; i++)
+            {
+                if (InternalList[i] != ExternalList[i])
+                    return false;
+            }
+        }
+
+        return true;
+
+    }
+
+Interestingly enough, after taking 2 seconds to read about SequenceEqual, it looks like Microsoft has built the function I described for you.
+
+No. The collection framework doesn't have any concept of equality. If you think about it there is no way of comparing collections which isn't subjective. For instance comparing your IList to your Dictionary, would they be equal if all the keys were in the IList, all the values were in the IList or if both were in the IList? There is no obvious way of comparing these two collections without knowledge of what they are to be used for so a general purpose equals method makes no sense. 
+
+.NET Lacks any powerful tools for comparing collections. I've developed a simple solution you can find at the link below:
+http://robertbouillon.com/2010/04/29/comparing-collections-in-net/
+This will perform an equality comparison regardless of order:
+var list1 = new[] { "Bill", "Bob", "Sally" };
+var list2 = new[] { "Bob", "Bill", "Sally" };
+bool isequal = list1.Compare(list2).IsSame;
+
+This will check to see if items were added / removed:
+var list1 = new[] { "Billy", "Bob" };
+var list2 = new[] { "Bob", "Sally" };
+var diff = list1.Compare(list2);
+var onlyinlist1 = diff.Removed; //Billy
+var onlyinlist2 = diff.Added;   //Sally
+var inbothlists = diff.Equal;   //Bob
+
+This will see what items in the dictionary changed:
+var original = new Dictionary<int, string>() { { 1, "a" }, { 2, "b" } };
+var changed = new Dictionary<int, string>() { { 1, "aaa" }, { 2, "b" } };
+var diff = original.Compare(changed, (x, y) => x.Value == y.Value, (x, y) => x.Value == y.Value);
+foreach (var item in diff.Different)
+  Console.Write("{0} changed to {1}", item.Key.Value, item.Value.Value);
+//Will output: a changed to aaa
+
+
+As others have suggested and have noted, SequenceEqual is order-sensitive. To solve that, you can sort the dictionary by key (which is unique, and thus the sort is always stable) and then use SequenceEqual. The following expression checks if two dictionaries are equal regardless of their internal order:
+dictionary1.OrderBy(kvp => kvp.Key).SequenceEqual(dictionary2.OrderBy(kvp => kvp.Key))
+
+
+EDIT: As pointed out by Jeppe Stig Nielsen, some object have an IComparer<T> that is incompatible with their IEqualityComparer<T>, yielding incorrect results. When using keys with such an object, you must specify a correct IComparer<T> for those keys. For example, with string keys (which exhibit this issue), you must do the following in order to get correct results:
+dictionary1.OrderBy(kvp => kvp.Key, StringComparer.Ordinal).SequenceEqual(dictionary2.OrderBy(kvp => kvp.Key, StringComparer.Ordinal))
+
+
+In addition to the mentioned SequenceEqual, which 
+
+is true if two lists are of equal length and their corresponding
+  elements compare equal according to a comparer
+
+(which may be the default comparer, i.e. an overriden Equals())
+it is worth mentioning that in .Net4 there is SetEquals on ISet objects, 
+which
+
+ignores the order of elements and any duplicate elements.
+
+So if you want to have a list of objects, but they don't need to be in a specific order, consider that an ISet (like a HashSet) may be the right choice.
+
+This is not directly answering your questions, but both the MS' TestTools and NUnit provide 
+ CollectionAssert.AreEquivalent
+
+which does pretty much what you want. 
+
+public bool CompareStringLists(List<string> list1, List<string> list2)
+{
+    if (list1.Count != list2.Count) return false;
+
+    foreach(string item in list1)
+    {
+        if (!list2.Contains(item)) return false;
+    }
+
+    return true;
+}
+
+
+To compare collections you can also use LINQ. Enumerable.Intersect returns all pairs that are equal. You can comparse two dictionaries like this:
+(dict1.Count == dict2.Count) && dict1.Intersect(dict2).Count() == dict1.Count
+
+The first comparison is needed because dict2 can contain all the keys from dict1 and more.
+You can also use think of variations using Enumerable.Except and Enumerable.Union that lead to similar results. But can be used to determine the exact differences between sets.

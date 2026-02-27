@@ -1,0 +1,227 @@
+How can I get jQuery to perform a synchronous, rather than asynchronous, Ajax request?
+javascript jquery ajax asynchronous
+I have a JavaScript widget which provides standard extension points. One of them is the beforecreate function. It should return false to prevent an item from being created. 
+I've added an Ajax call into this function using jQuery:
+beforecreate: function (node, targetNode, type, to) {
+  jQuery.get('http://example.com/catalog/create/' + targetNode.id + '?name=' + encode(to.inp[0].value),
+
+  function (result) {
+    if (result.isOk == false) 
+        alert(result.message);
+  });
+}
+
+But I want to prevent my widget from creating the item, so I should return false in the mother-function, not in the callback. Is there a way to perform a synchronized Ajax request using jQuery or any other API?
+
+
+From the jQuery documentation: you specify the asynchronous option to be false to get a synchronous Ajax request. Then your callback can set some data before your mother function proceeds.
+Here's what your code would look like if changed as suggested:
+beforecreate: function (node, targetNode, type, to) {
+    jQuery.ajax({
+        url: 'http://example.com/catalog/create/' + targetNode.id + '?name=' + encode(to.inp[0].value),
+        success: function (result) {
+            if (result.isOk == false) alert(result.message);
+        },
+        async: false
+    });
+}
+
+
+Excellent solution!  I noticed when I tried to implement it that if I returned a value in the success clause, it came back as undefined.  I had to store it in a variable and return that variable.  This is the method I came up with:
+function getWhatever() {
+  // strUrl is whatever URL you need to call
+  var strUrl = "", strReturn = "";
+
+  jQuery.ajax({
+    url: strUrl,
+    success: function(html) {
+      strReturn = html;
+    },
+    async:false
+  });
+
+  return strReturn;
+}
+
+
+You can put the jQuery's Ajax setup in synchronous mode by calling
+jQuery.ajaxSetup({async:false});
+
+and then perform your Ajax calls using jQuery.get( ... );
+then just turning it on again once 
+jQuery.ajaxSetup({async:true});
+
+I guess it works out the same thing as suggested by @Adam, but it might be helpful to someone that does want to reconfigure their jQuery.get() or jQuery.post() to the more elaborate jQuery.ajax() syntax.
+
+function getURL(url){
+    return $.ajax({
+        type: "GET",
+        url: url,
+        cache: false,
+        async: false
+    }).responseText;
+}
+
+
+//example use
+var msg=getURL("message.php");
+alert(msg);
+
+
+All of these answers miss the point that doing an Ajax call with async:false will cause the browser to hang until the Ajax request completes. Using a flow control library will solve this problem without hanging up the browser. Here is an example with Frame.js:
+beforecreate: function(node,targetNode,type,to) {
+
+    Frame(function(next)){
+
+        jQuery.get('http://example.com/catalog/create/', next);
+    });
+
+    Frame(function(next, response)){
+
+        alert(response);
+        next();
+    });
+
+    Frame.init();
+}
+
+
+This is example:
+$.ajax({
+  url: "test.html",
+  async: false
+}).done(function(data) {
+   // Todo something..
+}).fail(function(xhr)  {
+   // Todo something..
+});
+
+
+I used the answer given by Carcione and modified it to use JSON.
+ function getUrlJsonSync(url){
+
+    var jqxhr = $.ajax({
+        type: "GET",
+        url: url,
+        dataType: 'json',
+        cache: false,
+        async: false
+    });
+
+    // 'async' has to be 'false' for this to work
+    var response = {valid: jqxhr.statusText,  data: jqxhr.responseJSON};
+
+    return response;
+}    
+
+function testGetUrlJsonSync()
+{
+    var reply = getUrlJsonSync("myurl");
+
+    if (reply.valid == 'OK')
+    {
+        console.dir(reply.data);
+    }
+    else
+    {
+        alert('not valid');
+    }    
+}
+
+I added the dataType of 'json' and changed the .responseText to responseJSON.
+I also retrieved the status using the statusText property of the returned object. Note, that this is the status of the Ajax response, not whether the JSON is valid.
+The backend has to return the response in correct (well-formed) JSON, otherwise the returned object will be undefined.
+There are two aspects to consider when answering the original question. One is telling Ajax to perform synchronously (by setting async: false) and the other is returning the response via the calling function's return statement, rather than into a callback function. 
+I also tried it with POST and it worked. 
+I changed the GET to POST and added data: postdata
+function postUrlJsonSync(url, postdata){
+
+    var jqxhr = $.ajax({
+        type: "POST",
+        url: url,
+        data: postdata,
+        dataType: 'json',
+        cache: false,
+        async: false
+    });
+
+    // 'async' has to be 'false' for this to work
+    var response = {valid: jqxhr.statusText,  data: jqxhr.responseJSON};
+
+    return response;
+}
+
+Note that the above code only works in the case where async is false. If you were to set async:true the returned object jqxhr would not be valid at the time the ajax call returns, only later when the asynchronous call has finished, but that is much too late to set the response variable.
+
+JavaScript client-side code
+function isValidLogin() {
+    var flag = false;
+    var Response = $.ajax({
+        type: "POST",
+        dataType: "json",
+        contentType: "application/json; charset=utf-8",
+        url: "UPSLabelFormCA.aspx/IsValidLogin",
+        async: false
+    }).responseText;
+
+    var toJson = jQuery.parseJSON(Response);
+    if (toJson.d[0].Message == 'SUCCESS') {
+        flag = true;
+    }
+    return flag;
+}
+
+ASP.NET server side code
+[WebMethod]
+public static List<ShipInfo> IsValidLogin()
+{
+    List<ShipInfo> loginStatus = new List<ShipInfo>();
+    if (HttpContext.Current.User.Identity.IsAuthenticated && HttpContext.Current.Session["Email"] != null)
+    {
+        loginStatus.Add(new ShipInfo() { Success = true, Message = "SUCCESS" });
+    }
+    else
+    {
+
+        loginStatus.Add(new ShipInfo() { Success = false, Message = "FAILED" });
+    }
+    return loginStatus;
+
+}
+
+
+Keep in mind that if you're doing a cross-domain Ajax call (by using JSONP) - you can't do it asynchronously, the "async" flag will be ignored by jQuery.
+$.ajax({
+    url: "testserver.php",
+    dataType: 'jsonp', // jsonp
+    async: false //IGNORED!!
+});
+
+For JSONP-calls you could use:
+
+Ajax-call to your own domain - and do the cross-domain call server-side
+Change your code to work asynchronously
+Use a "function sequencer" library like Frame.js (this answer)
+Block the UI instead of blocking the execution (this answer) (my favourite way)
+
+
+With async: false you get yourself a blocked browser.
+For a non blocking synchronous solution you can use the following:
+ES6/ECMAScript2015
+With ES6 you can use a generator & the co library:
+beforecreate: function (node, targetNode, type, to) {
+    co(function*(){  
+        let result = yield jQuery.get('http://example.com/catalog/create/' + targetNode.id + '?name=' + encode(to.inp[0].value));
+        //Just use the result here
+    });
+}
+
+ES7
+With ES7 you can just use asyc await:
+beforecreate: function (node, targetNode, type, to) {
+    (async function(){
+        let result = await jQuery.get('http://example.com/catalog/create/' + targetNode.id + '?name=' + encode(to.inp[0].value));
+        //Just use the result here
+    })(); 
+}
+

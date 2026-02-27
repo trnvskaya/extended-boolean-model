@@ -1,0 +1,79 @@
+Enabling controls at moment of opening a form in Access
+ms-access forms combobox recordset access-control
+I have a form whose controls I want to enable/disable depending on the values in a ComboBox control.  This ComboBox control is linked, like all the other controls in the form, to a table.  Inside the ComboBox's Change event, I placed the code that enables/disables the other controls.
+The problem I have is that when I open the form, the controls are not enabled/disabled.  I have to re-choose the ComboBox value to make all other controls enable or disable.
+One thing I noticed is that the RecordSet control inside the ComboBox often does not change to the value shown in the value property of the ComboBox.
+I tried using 
+combobox.recordset.filter = "Key = " & combobox.value
+ but I get the error 
+Operation is not supported for this type of object.
+
+Update
+I think my problem has to do more in how I'm accessing the values in the combobox.recordset.  I was under the impression that combobox.recordset held the value received from the table.  But, it seems to hold the first record from the recordsource.
+I'm guessing that I will need to search those values I need by using another recordset object.
+
+
+One way to do what you are trying here is to put the combobox.change() inside the form.current() method.
+This will then act as if the combobox had been changed as soon as the form is up and running.
+I have done something similar to this before but I dont have the code in front of me at the moment. As soon as I get a look at it I'll post it here in more detail, but off the top of my head I believe this was the way I did it.
+
+Most Access control events are not triggered by programmatic changes to the control. You may wish to call the code to enable the control(s) from the load event of the form.
+You do not mention the version of Access that you are using, but I do not believe that any version has a Recordset property for comboboxes. 
+Did you wish to set the combobox to a specific value?
+
+Can you explain what type of combobox you have and what you want to do, please? For example, have you an unbound combobox that is used to find records for your form, or have you a bound combobox that is used to update fields in a table? This is controlled by the RowSource and ControlSource properties, Comboboxes do not have a recordset property. An unbound combobox will not have a value when you open the form, nor will the value change when you move from record to record, but it is easy enough to assign a value using the current event. 
+EDIT
+I am still not clear on what you want to do. Are you having problems modifying the controls when an option is chosen, as per your comment, or are you having problems setting the value of the combo when the form opens? Do you want to change the RowSource of the combo, perhaps, as implied by your original post?
+
+'Check your Key Preview on the forms properties
+'Debug here for combobox.value (Ctrl+G for debug window )
+Debug.print combobox.value
+me.filter = "Key = " & combobox.value
+'Potential me.reload or me.refresh depending on ms access version
+
+In a comment, lamcro observes in regard to the question of whether or not a comb box box has a Recordset:
+
+When I break into the forms VB code
+  and "Add Watch" the CB control, the
+  recordset property is in there. I can
+  even enter and see it's own
+  properties. 
+
+I see it when I set a watch list, but the recordset of a combo box is not accessible or alterable via code. In order to filter a combo box, you need to work with its Rowsource.
+This can be accomplished one of two ways:
+
+use an event to assign a new Rowsource to your combo boxes on the fly, OR
+use a reference to the control whose value you want to filter on in the WHERE clause of the Rowsource of your other combo boxes.
+
+Say you have cmbComboBox1 and when you select a value in it, you want the values listed in cmbCombBox2 to be filtered according to the value selected in cmbComboBox1. For method 1, you'd use the first combo box's AfterUpdate to set the rowsource of the second:
+  Private Sub cmbComboBox1_AfterUpdate()
+    Dim strRowsource As String
+
+    strRowsource  = "SELECT * FROM MyTable"
+    If Not IsNull(Me!cmbComboBox1) Then
+       strRowsource  = strRowsource & " WHERE MyField = " & Me!cmbComboBox1
+    End If
+    Me!cmbComboBox2.Rowsource = strRowsource
+  End Sub
+
+To use the second method, you'd instead define the Rowsource of the second combo box to be based on testing the value of the first:
+SELECT * FROM MyTable 
+WHERE (MyField=[Forms]![MyForm]![cmbComboBox1] 
+        AND IsNull([Forms]![MyForm]![cmbComboBox1])=False) 
+   OR IsNull([Forms]![MyForm]![cmbComboBox1])=True
+
+What this does is filter the rowsource if the first combo box has a value and doesn't filter it if there is a value. That is, you get an unfiltered list until there's a value chosen for the first combo box.
+Then, in the Afterupdate event of cmbComboBox1, you'd requery the second combo box:
+  Private Sub cmbComboBox1_AfterUpdate()
+    Me!cmbComboBox2.Requery
+  End Sub
+
+It's also probably a good idea to define a parameter in order to insure that the reference to the form control gets appropriately resolved, so your Rowsource would be this:
+PARAMETERS [Forms]![MyForm]![cmbComboBox1] Long;
+SELECT * FROM MyTable 
+WHERE (MyField=[Forms]![MyForm]![cmbComboBox1] 
+        AND IsNull([Forms]![MyForm]![cmbComboBox1])=False) 
+   OR IsNull([Forms]![MyForm]![cmbComboBox1])=True
+
+(assuming you're filtering on an Autonumber PK -- if the data type is different, you'd use a different data type, of course)
+I would tend to use the dynamic Rowsource assignment, simply because I've found it to be less problematic across different Access versions (i.e., references to controls on forms are not resolved the same way in all versions of Access).

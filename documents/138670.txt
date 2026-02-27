@@ -1,0 +1,56 @@
+How unique is the php session id
+php session guid
+How unique is the php session id? I got the impression from various things that I've read that I should not rely on two users never getting the same sessionid. Isn't it a GUID?
+
+
+No, session id is not a GUID, but two users should not get the same session id as they are stored on the server side.
+
+I have not found a confirmation on this but i believe php checks if a session id already exists before creating one with that id.
+The session hijacking issue people are worried about is when someone finds out the session id of an active user. This can be prevented in many ways, for more info on that you can see this page on php.net and this paper on session fixation
+
+You can install an alternative hash generation function if you want to customise the way the ID is generated (it's a 128bit number generated via MD5 by default). See http://www.php.net/manual/en/session.configuration.php#ini.session.hash-function
+For more information on PHP sessions, try this excellent article http://shiflett.org/articles/the-truth-about-sessions which also links to other articles about session fixation and hijack.
+
+It's not very unique as shipped.  In the default configuration it's the result of a hash of various things including the result of gettimeofday (which isn't terribly unique), but if you're worried, you should configure it to draw some entropy from /dev/urandom, like so
+ini_set("session.entropy_file", "/dev/urandom");
+ini_set("session.entropy_length", "512");
+
+search for "php_session_create_id" in the code for the actual algorithm they're using.
+Edited to add: 
+There's a DFA random-number generator seeded by the pid, mixed with the time in usecs.  It's not a firm uniqueness condition especially from a security perspective.  Use the entropy config above.
+Update: 
+
+As of PHP 5.4.0 session.entropy_file defaults to /dev/urandom or
+  /dev/arandom if it is available. In PHP 5.3.0 this directive is left
+  empty by default. PHP Manual
+
+
+Session_id can indeed be duplicated, but the probability is very low. If you have a website with a fair traffic, it may happens once in you web site life, and will just annoy one user for one session.
+This is not worth to care about unless you expect to build a very high traffic website or a service for the bank industry.
+
+Size of session_id
+Assume that seesion_id is uniformly distributed and has size=128 bits. Assume that every person on the planet logs in once a day with a persistent an new session for 1000 years. 
+num_sesion_ids  = 1000*365.25 *7*10**9 < 2**36
+collission_prob < 1 - (1-1/2**82)**(2**36)  â 1 - e**-(1/2**46) 
+                â 1/2**46 
+
+So the the probability of one or more collision is less than one in 70 thousand billions. Hence the a 128-bit-size of the session_id should be big enough. As mentioned in other comments, the session_manager might also check that new session_id does not already exist.
+Randomness
+Therefore the big question I think is whether the session_id:s are generated with good pseudo randomness. On that you can never be sure, but I would recommend using a well known, and frequently used standard solution for this purpose (as you probably already do). 
+Even if collisions are avoided due to checking, randomness and size of session_id is important, so that hackers can not, somehow do qualified guessing and find active session_id:s with large probability.
+
+If you want to know how PHP generates a session ID by default check out the source code on Github. It is certainly not random and is based on a hash (default: md5) of these ingredients (see line 310 of code snippet):
+
+IP address of the client
+Current time
+PHP Linear Congruence Generator - a pseudo random number generator (PRNG)
+OS-specific random source - if the OS has a random source available (e.g. /dev/urandom)
+
+If the OS has a random source available then strength of the generated ID for the purpose of being a session ID is high (/dev/urandom and other OS random sources are (usually) cryptographically secure PRNGs). If however it does not then it is satisfactory. 
+The goal with session identification generation is to: 
+
+minimise the probability of generating two session IDs with the same value
+make it very challenging computationally to generate random keys and hit an in use one. 
+
+This is achieved by PHP's approach to session generation.
+You cannot absolutely guarantee uniqueness, but the probabilities are so low of hitting the same hash twice that it is, generally speaking, not worth worrying about.

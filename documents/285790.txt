@@ -1,0 +1,52 @@
+irritating select() behaviour in c
+c sockets select timeout
+while (xxx) {
+    timeout.tv_sec=TIMEOUT;
+    timeout.tv_usec=0;
+    FD_ZERO(&set); 
+    FD_SET(sd,&set);
+
+    switch (select(FD_SETSIZE,&set,NULL,NULL,&timeout))
+    xxxxx
+}
+
+works fine, however
+FD_ZERO(&set); 
+FD_SET(sd,&set);
+
+while (xxx) {
+    timeout.tv_sec=TIMEOUT;
+    timeout.tv_usec=0;
+
+    switch (select(FD_SETSIZE,&set,NULL,NULL,&timeout))
+    xxxxx
+}
+
+doesn't. It works the first time around, but the next time it runs through the while loop it gets a timeout even if the sd socket receives data. It seems to me to be a waste of resources to have to empty and fill set every time.
+Anybody have a good explanation why this is, and even better, perhaps a suggestion how to avoid it?
+
+
+Read the select man page. The returned set is only the file descriptors that are ready to be used. You are supposed to use FD_ISSET to check each one if it is set or not.
+Always initialize the fd_set right before using it.
+
+That's the way select works.  It works best, and makes more sense, if you have more than one socket. That's kind of the point: you are selecting across many sockets.  If you want to read from one socket, just read or recv it.
+
+select modifies its arguments. You really do have to re-initialize it each time.
+If you're concerned about overhead, the cost of processing the complete FD_SET in the kernel is somewhat more significant than the cost of FD_ZERO. You'd want to only pass in your maximum fd, not FD_SETSZIZE, to minimize the kernel processing. In your example:
+switch (select((sd + 1),&set,NULL,NULL,&timeout))
+
+For a more complex case with multiple fds, you typically end up maintaining a max variable:
+FD_SET(sd,&set);
+if (sd > max) max = sd;
+... repeat many times...
+
+switch (select((max + 1),&set,NULL,NULL,&timeout))
+
+
+If you will have a large number of file descriptors and are concerned about the overhead of schlepping them about, you should look at some of the alternatives to select(). You don't mention the OS you're using, but for Unix-like OSes there are a few:
+
+for Linux, epoll()
+for FreeBSD/NetBSD/OpenBSD/MacOS X, kqueue()
+for Solaris, /dev/poll
+
+The APIs are different, but they are all essentially a stateful kernel interface to maintain a set of active file descriptions. Once an fd is added to the set, you will be notified of events on that fd without having to continually pass it in again.

@@ -1,0 +1,451 @@
+Get real image width and height with JavaScript in Safari/Chrome?
+javascript jquery safari google-chrome webkit
+I am creating a jQuery plugin.
+How do I get real image width and height with Javascript in Safari?
+Following works with Firefox 3, IE7 and Opera 9:
+var pic = $("img")
+
+// need to remove these in of case img-element has set width and height
+pic.removeAttr("width"); 
+pic.removeAttr("height");
+
+var pic_real_width = pic.width();
+var pic_real_height = pic.height();
+
+But in Webkit browsers like Safari and Google Chrome values are 0...
+Doing this on server side is not an option.
+
+
+this works for me (safari 3.2), by firing from within the window.onload event:
+$(window).load(function() {
+  var pic = $('img');
+
+  pic.removeAttr("width"); 
+  pic.removeAttr("height");
+
+  alert( pic.width() );
+  alert( pic.height() );
+});
+
+
+The root problem is that WebKit browsers (Safari and Chrome) load JavaScript and CSS information in parallel. Thus, JavaScript may execute before the styling effects of CSS have been computed, returning the wrong answer. In jQuery, I've found that the solution is to wait until document.readyState == 'complete', .e.g.,
+jQuery(document).ready(function(){
+  if (jQuery.browser.safari && document.readyState != "complete"){
+    //console.info('ready...');
+    setTimeout( arguments.callee, 100 );
+    return;
+  } 
+  ... (rest of function)
+
+As far as width and height goes... depending on what you are doing you may want offsetWidth and offsetHeight, which include things like borders and padding.
+
+Webkit browsers set the height and width property after the image is loaded.  Instead of using timeouts, I'd recommend using an image's onload event.  Here's a quick example:
+var img = $("img")[0]; // Get my img elem
+var pic_real_width, pic_real_height;
+$("<img/>") // Make in memory copy of image to avoid css issues
+    .attr("src", $(img).attr("src"))
+    .load(function() {
+        pic_real_width = this.width;   // Note: $(this).width() will not
+        pic_real_height = this.height; // work for in memory images.
+    });
+
+To avoid any of the effects CSS might have on the image's dimensions, the code above makes an in memory copy of the image.  This is a very clever solution suggested by FDisk.
+
+For functions where you do not want to alter the original placement or image.
+$(this).clone().removeAttr("width").attr("width");
+$(this).clone().removeAttr("height").attr("height);
+
+
+As Luke Smith says, image load is a mess. It's not reliable on all browsers. This fact has given me great pain. A cached image will not fire the event at all in some browsers, so those who said "image load is better than setTimeout" are wrong.
+Luke Smith's solution is here.
+And there is an interesting discussion about how this mess might be handled in jQuery 1.4.
+I have found that it's pretty reliable to set the width to 0, then wait for the "complete" property to go true and the width property to come in greater than zero. You should watch for errors, too.
+
+
+function getOriginalWidthOfImg(img_element) {
+    var t = new Image();
+    t.src = (img_element.getAttribute ? img_element.getAttribute("src") : false) || img_element.src;
+    return t.width;
+}
+
+You don't need to remove style from the image or image dimensions attributes. Just create an element with javascript and get the created object width.
+
+$("#myImg").one("load",function(){
+  //do something, like getting image width/height
+}).each(function(){
+  if(this.complete) $(this).trigger("load");
+});
+
+From Chris' comment: http://api.jquery.com/load-event/
+
+There is now a jQuery plugin, event.special.load, to deal with cases where the load event on a cached image doesn't fire: http://github.com/peol/jquery.imgloaded/raw/master/ahpi.imgload.js
+
+How we get right real dimensions without a blink real image:
+(function( $ ){
+   $.fn.getDimensions=function(){
+         alert("First example:This works only for HTML code without CSS width/height definition.");
+         w=$(this, 'img')[0].width;
+         h=$(this, 'img')[0].height;
+
+         alert("This is a width/height on your monitor: " + $(this, 'img')[0].width+"/"+$(this, 'img')[0].height);
+
+         //This is bad practice - it shows on your monitor
+         $(this, 'img')[0].removeAttribute( "width" );
+         $(this, 'img')[0].removeAttribute( "height" );
+         alert("This is a bad effect of view after attributes removing, but we get right dimensions: "+  $(this, 'img')[0].width+"/"+$(this, 'img')[0].height);
+         //I'am going to repare it
+         $(this, 'img')[0].width=w;
+         $(this, 'img')[0].height=h;
+         //This is a good practice - it doesn't show on your monitor
+         ku=$(this, 'img').clone(); //We will work with a clone
+         ku.attr( "id","mnbv1lk87jhy0utrd" );//Markup clone for a final removing
+         ku[0].removeAttribute( "width" );
+         ku[0].removeAttribute( "height" );
+         //Now we still get 0
+         alert("There are still 0 before a clone appending to document: "+ $(ku)[0].width+"/"+$(ku)[0].height);
+         //Hide a clone
+         ku.css({"visibility" : "hidden",'position':'absolute','left':'-9999px'}); 
+         //A clone appending
+         $(document.body).append (ku[0]);
+         alert("We get right dimensions: "+ $(ku)[0].width+"/"+$(ku)[0].height);
+         //Remove a clone
+         $("#mnbv1lk87jhy0utrd").remove();
+
+         //But a next resolution is the best of all. It works in case of CSS definition of dimensions as well.
+         alert("But if you want to read real dimensions for image with CSS class definition outside of img element, you can't do it with a clone of image. Clone method is working with CSS dimensions, a clone has dimensions as well as in CSS class. That's why you have to work with a new img element.");
+         imgcopy=$('<img src="'+ $(this, 'img').attr('src') +'" />');//new object 
+         imgcopy.attr( "id","mnbv1lk87jhy0aaa" );//Markup for a final removing
+         imgcopy.css({"visibility" : "hidden",'position':'absolute','left':'-9999px'});//hide copy 
+         $(document.body).append (imgcopy);//append to document 
+         alert("We get right dimensions: "+ imgcopy.width()+"/"+imgcopy.height());
+         $("#mnbv1lk87jhy0aaa").remove();
+
+
+   }
+})( jQuery );
+
+$(document).ready(function(){
+
+   $("img.toreaddimensions").click(function(){$(this).getDimensions();});
+});
+
+It works with <img class="toreaddimensions"... 
+
+I checked out the answer of Dio and it works great for me.
+$('#image').fadeIn(10,function () {var tmpW = $(this).width(); var tmpH = $(this).height(); });
+Make sure that you call all your functions aso. that handle with the image size in the recaller function of fadeIn().
+Thanks for this.
+
+I use different approach, simply make Ajax call to server to get image size when image object is in use.
+//make json call to server to get image size
+$.getJSON("http://server/getimagesize.php",
+{"src":url},
+SetImageWidth
+);
+
+//callback function
+function SetImageWidth(data) {
+
+    var wrap = $("div#image_gallery #image_wrap");
+
+    //remove height
+     wrap.find("img").removeAttr('height');
+    //remove height
+     wrap.find("img").removeAttr('width');
+
+    //set image width
+    if (data.width > 635) {
+        wrap.find("img").width(635);
+    }
+    else {
+         wrap.find("img").width(data.width);
+    }
+}
+
+and of course server side code:
+<?php
+
+$image_width = 0;
+$image_height = 0;
+
+if (isset ($_REQUEST['src']) && is_file($_SERVER['DOCUMENT_ROOT'] . $_REQUEST['src'])) {
+
+    $imageinfo = getimagesize($_SERVER['DOCUMENT_ROOT'].$_REQUEST['src']);
+    if ($imageinfo) {
+       $image_width=  $imageinfo[0];
+       $image_height= $imageinfo[1];
+    }
+}
+
+$arr = array ('width'=>$image_width,'height'=>$image_height);
+
+echo json_encode($arr);
+
+?>
+
+
+Recently I needed to find width and height for setting default size of .dialog representing graph. Solution I use was : 
+ graph= $('<img/>', {"src":'mySRC', id:'graph-img'});
+    graph.bind('load', function (){
+        wid = graph.attr('width');
+        hei = graph.attr('height');
+
+        graph.dialog({ autoOpen: false, title: 'MyGraphTitle', height:hei, width:wid })
+    })
+
+For me this works in FF3, Opera 10, IE 8,7,6
+P.S. You may be find some more solutions looking inside some plugins like LightBox or ColorBox
+
+There's a lot of discussion in the accepted answer about a problem where the onload event doesn't fire if an image is loaded from the WebKit cache.
+In my case, onload fires for cached images, but the height and width are still 0.  A simple setTimeout resolved the issue for me:
+$("img").one("load", function(){
+    var img = this;
+    setTimeout(function(){
+        // do something based on img.width and/or img.height
+    }, 0);
+});
+
+I can't speak as to why the onload event is firing even when the image is loaded from the cache (improvement of jQuery 1.4/1.5?) â but if you are still experiencing this problem, maybe a combination of my answer and the var src = img.src; img.src = ""; img.src = src; technique will work.
+(Note that for my purposes, I'm not concerned about pre-defined dimensions, either in the image's attributes or CSS styles â but you might want to remove those, as per Xavi's answer.  Or clone the image.)
+
+Use the naturalHeight and naturalWidth attributes from HTML5.
+For example:
+var h = document.querySelector('img').naturalHeight;
+
+Works in IE9+, Chrome, Firefox, Safari and Opera.
+
+To add to Xavi's answer, Paul Irish's github David Desandro's gitgub offers a function called imagesLoaded() that works on the same principles, and gets around the problem of some browser's cached images not firing the .load() event (with clever original_src -> data_uri -> original_src switching).
+It's is widely used and updated regularly, which contributes to it being the most robust solution to the problem, IMO.
+
+As stated before, Xavi answer won't work if images are in the cache. The issue responds to webkit not firing the load event on cached images, so if the width/height attrs are no explicitly set in the img tag, the only reliable way to get the images is to wait for the window.load event to be fired.
+The window.load event will fire always, so it's safe to access the width/height of and img after that without any trick.
+$(window).load(function(){
+
+   //these all work
+
+   $('img#someId').css('width');
+   $('img#someId').width();
+   $('img#someId').get(0).style.width;
+   $('img#someId').get(0).width; 
+
+});
+
+If you need to get the size of dynamically loaded images that might get cached (previously loaded), you can use Xavi method plus a query string to trigger a cache refresh. The downside is that it will cause another request to the server, for an img that is already cached and should be already available. Stupid Webkit.
+var pic_real_width   = 0,
+    img_src_no_cache = $('img#someId').attr('src') + '?cache=' + Date.now();
+
+$('<img/>').attr('src', img_src_no_cache).load(function(){
+
+   pic_real_width = this.width;
+
+});
+
+ps: if you have a QueryString in the img.src already, you will have to parse it and add the extra param to clear the cache. 
+
+Another suggestion is to use imagesLoaded plugin.
+$("img").imagesLoaded(function(){
+alert( $(this).width() );
+alert( $(this).height() );
+});
+
+
+This works cross browser
+var img = new Image();
+$(img).bind('load error', function(e)
+{
+    $.data(img, 'dimensions', { 'width': img.width, 'height': img.height });                    
+});
+img.src = imgs[i];              
+
+get the dimensions by using 
+$(this).data('dimensions').width;
+$(this).data('dimensions').height;
+
+Cheers!
+
+What about image.naturalHeight and image.naturalWidth properties?
+Seems to work fine back quite a few versions in Chrome, Safari and Firefox, but not at all in IE8 or even IE9.
+
+This works for both cached and dynamically loaded images.
+function LoadImage(imgSrc, callback){
+  var image = new Image();
+  image.src = imgSrc;
+  if (image.complete) {
+    callback(image);
+    image.onload=function(){};
+  } else {
+    image.onload = function() {
+      callback(image);
+      // clear onLoad, IE behaves erratically with animated gifs otherwise
+      image.onload=function(){};
+    }
+    image.onerror = function() {
+        alert("Could not load image.");
+    }
+  }
+}
+
+To use this script:
+function AlertImageSize(image) {
+  alert("Image size: " + image.width + "x" + image.height);
+}
+LoadImage("http://example.org/image.png", AlertImageSize);
+
+Demo: http://jsfiddle.net/9543z/2/
+
+I've done some workaround utility function, using imagesLoaded jquery plugin:
+https://github.com/desandro/imagesloaded
+            function waitForImageSize(src, func, ctx){
+                if(!ctx)ctx = window;
+                var img = new Image();
+                img.src = src;
+                $(img).imagesLoaded($.proxy(function(){
+                    var w = this.img.innerWidth||this.img.naturalWidth;
+                    var h = this.img.innerHeight||this.img.naturalHeight;
+                    this.func.call(this.ctx, w, h, this.img);
+                },{img: img, func: func, ctx: ctx}));
+            },
+
+You can use this by passing url, function and its context. Function is performed after image is loaded and return created image, its width and height.
+waitForImageSize("image.png", function(w,h){alert(w+","+h)},this)
+
+
+You can programmatically get the image and check the dimensions using Javascript without having to mess with the DOM at all.
+var img = new Image();
+img.onload = function() {
+  console.log(this.width + 'x' + this.height);
+}
+img.src = 'http://www.google.com/intl/en_ALL/images/logo.gif';
+
+
+$(document).ready(function(){
+                            var image = $("#fix_img");
+                            var w = image.width();
+                            var h = image.height();
+                            var mr = 274/200;
+                            var ir = w/h
+                            if(ir > mr){
+                                image.height(200);
+                                image.width(200*ir);
+                            } else{
+                                image.width(274);
+                                image.height(274/ir);
+                            }
+                        }); 
+
+// This code helps to show image with 200*274 dimention
+
+My situation is probably a little different. I am dynamically changing the src of an image via javascript and needed to ensure that the new image is sized proportionally to fit a fixed container (in a photo gallery). I initially just removed the width and height attributes of the image after it is loaded (via the image's load event) and reset these after calculating the preferred dimensions. However, that does not work in Safari and possibly IE (I have not tested it in IE thoroughly, but the image doesn't even show, so...). 
+Anyway, Safari keeps the dimensions of the previous image so the dimensions are always one image behind. I assume that this has something to do with cache. So the simplest solution is to just clone the image and add it to the DOM (it is important that it be added to the DOM the get the with and height). Give the image a visibility value of hidden (do not use display none because it will not work). After you get the dimensions remove the clone.
+Here is my code using jQuery:
+// Hack for Safari and others
+// clone the image and add it to the DOM
+// to get the actual width and height
+// of the newly loaded image
+
+var cloned, 
+    o_width, 
+    o_height, 
+    src = 'my_image.jpg', 
+    img = [some existing image object];
+
+$(img)
+.load(function()
+{
+    $(this).removeAttr('height').removeAttr('width');
+    cloned = $(this).clone().css({visibility:'hidden'});
+    $('body').append(cloned);
+    o_width = cloned.get(0).width; // I prefer to use native javascript for this
+    o_height = cloned.get(0).height; // I prefer to use native javascript for this
+    cloned.remove();
+    $(this).attr({width:o_width, height:o_height});
+})
+.attr(src:src);
+
+This solution works in any case.
+
+Here's a cross browser solution that triggers an event when your selected images are loaded: http://desandro.github.io/imagesloaded/ you can look up the height and width within the imagesLoaded() function.
+
+Stumbled upon this thread trying to find an answer for my own question. I was trying to get an image's width/height in a function AFTER the loader, and kept coming up with 0. I feel like this might be what you're looking for, though, as it works for me:
+tempObject.image = $('<img />').attr({ 'src':"images/prod-" + tempObject.id + ".png", load:preloader });
+xmlProjectInfo.push(tempObject);
+
+function preloader() {
+    imagesLoaded++;
+    if (imagesLoaded >= itemsToLoad) { //itemsToLoad gets set elsewhere in code
+        DetachEvent(this, 'load', preloader); //function that removes event listener
+        drawItems();
+    }   
+}
+
+function drawItems() {
+    for(var i = 1; i <= xmlProjectInfo.length; i++)
+        alert(xmlProjectInfo[i - 1].image[0].width);
+}
+
+
+If the image is already used, you sholud:
+
+set image simensions to initial
+image.css('width', 'initial');
+image.css('height', 'initial');
+get dimensions
+var originalWidth = $(this).width();
+var originalHeight = $(this).height();
+
+
+Jquery has two properties called naturalWidth and naturalHeight, you can use in this way.
+$('.my-img')[0].naturalWidth 
+$('.my-img')[0].naturalHeight
+
+Where my-img is a class name used to select my image.
+
+Check out this repository in github!
+Great Example to check the Width and Height using Javascript
+https://github.com/AzizAK/ImageRealSize
+---Edited is requested from some comments ..
+Javascript code: 
+ function CheckImageSize(){
+var image = document.getElementById("Image").files[0];
+           createReader(image, function (w, h) {
+
+                alert("Width is: " + w + " And Height is: "+h);
+});            
+}
+
+
+  function  createReader(file, whenReady) {
+        var reader = new FileReader;
+        reader.onload = function (evt) {
+            var image = new Image();
+            image.onload = function (evt) {
+                var width = this.width;
+                var height = this.height;
+                if (whenReady) whenReady(width, height);
+            };
+            image.src = evt.target.result;
+        };
+        reader.readAsDataURL(file);
+    }
+
+and HTML code :
+<html>
+<head>
+<title>Image Real Size</title>
+<script src="ImageSize.js"></script>
+</head>
+<body>
+<input type="file" id="Image"/>
+<input type="button" value="Find the dimensions" onclick="CheckImageSize()"/>
+</body>
+<html>
+
+
+use this code
+
+function srcget(srcget)
+{
+var originalWidth = srcget.naturalWidth; 
+var originalHeight = srcget.naturalHeight;
+
+}

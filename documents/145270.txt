@@ -1,0 +1,212 @@
+Calling C/C++ from python?
+c++ python c
+What would be the quickest way to construct a python binding to a C or C++ library?
+(using windows if this matters)
+
+
+The quickest way to do this is using SWIG.
+Example from SWIG tutorial:
+/* File : example.c */
+int fact(int n) {
+    if (n <= 1) return 1;
+    else return n*fact(n-1);
+}
+
+Interface file:
+/* example.i */
+%module example
+%{
+/* Put header files here or function declarations like below */
+extern int fact(int n);
+%}
+
+extern int fact(int n);
+
+Building a Python module on Unix:
+swig -python example.i
+gcc -fPIC -c example.c example_wrap.c -I/usr/local/include/python2.7
+gcc -shared example.o example_wrap.o -o _example.so
+
+Usage:
+>>> import example
+>>> example.fact(5)
+120
+
+Note that you have to have python-dev. Also in some systems python header files will be in /usr/include/python2.7 based on the way you have installed it.
+From the tutorial:
+
+SWIG is a fairly complete C++ compiler with support for nearly every language feature. This includes preprocessing, pointers, classes, inheritance, and even C++ templates. SWIG can also be used to package structures and classes into proxy classes in the target language â exposing the underlying functionality in a very natural manner.
+
+
+Iâve never used it but Iâve heard good things about ctypes. If youâre trying to use it with C++, be sure to evade name mangling via extern "C". Thanks for the comment, Florian BÃ¶sch.
+
+This paper, claiming python to be all a scientist needs, basically says: first prototype everything in Python. Then when you need to speed a part up, use SWIG and translate this part to C.
+
+One of the official Python documents contains details on extending Python using C/C++.
+Even without the use of SWIG, itâs quite straightforward and works perfectly well on Windows.
+
+Check out pyrex or cython.  They're python-like languages for interfacing between C/C++ and python.
+
+You should have a look at Boost.Python, here is the short introdution taken from their website:
+
+The Boost Python Library is a framework for interfacing Python and
+  C++. It allows you to quickly and seamlessly expose C++ classes
+  functions and objects to Python, and vice-versa, using no special
+  tools -- just your C++ compiler. It is designed to wrap C++ interfaces
+  non-intrusively, so that you should not have to change the C++ code at
+  all in order to wrap it, making Boost.Python ideal for exposing
+  3rd-party libraries to Python. The library's use of advanced
+  metaprogramming techniques simplifies its syntax for users, so that
+  wrapping code takes on the look of a kind of declarative interface
+  definition language (IDL).
+
+
+I like ctypes a lot, swig always tended to give me problems. Also ctypes has the advantage that you don't need to satisfy any compile time dependency on python, and your binding will work on any python that has ctypes, not just the one it was compiled against.
+Suppose you have a simple C++ example class you want to talk to in a file called foo.cpp:
+#include <iostream>
+
+class Foo{
+    public:
+        void bar(){
+            std::cout << "Hello" << std::endl;
+        }
+};
+
+Since ctypes can only talk to C functions, you need to provide those declaring them as extern "C"
+extern "C" {
+    Foo* Foo_new(){ return new Foo(); }
+    void Foo_bar(Foo* foo){ foo->bar(); }
+}
+
+Next you have to compile this to a shared library
+g++ -c -fPIC foo.cpp -o foo.o
+g++ -shared -Wl,-soname,libfoo.so -o libfoo.so  foo.o
+
+And finally you have to write your python wrapper (e.g. in fooWrapper.py)
+from ctypes import cdll
+lib = cdll.LoadLibrary('./libfoo.so')
+
+class Foo(object):
+    def __init__(self):
+        self.obj = lib.Foo_new()
+
+    def bar(self):
+        lib.Foo_bar(self.obj)
+
+Once you have that you can call it like
+f = Foo()
+f.bar() #and you will see "Hello" on the screen
+
+
+I think cffi for python can be an option.
+
+The goal is to call C code from Python. You should be able to do so
+  without learning a 3rd language: every alternative requires you to
+  learn their own language (Cython, SWIG) or API (ctypes). So we tried
+  to assume that you know Python and C and minimize the extra bits of
+  API that you need to learn.
+
+http://cffi.readthedocs.org/en/release-0.7/
+
+I started my journey in the python <-> C++ binding from this page, with the objective of linking high level data types (multidimensional STL vectors with python lists) :-)
+Having tried the solutions based on both ctypes and boost.python (and not being a software engineer) I have found them complex when high level datatypes binding is required, while I have found swig much more simple for such cases.
+This example uses therefore SWIG and it has been tested in Linux (but swig is available and is widely used in Windows too).
+The objective is to make available to python a C++ function that takes a matrix in form of a 2D STL vector and returns an average of each row (as a 1D STL vector).
+The code in C++ ("code.cpp") is as follow:
+#include <vector>
+#include "code.h"
+
+using namespace std;
+
+vector<double> average (vector< vector<double> > i_matrix) {
+  // compute average of each row..
+  vector <double> averages; 
+  for (int r = 0; r < i_matrix.size(); r++){
+    double rsum = 0.0;
+    double ncols= i_matrix[r].size();
+    for (int c = 0; c< i_matrix[r].size(); c++){
+      rsum += i_matrix[r][c];
+    }
+    averages.push_back(rsum/ncols);    
+  }
+  return averages;
+}
+
+The equivalent header ("code.h") is:
+#ifndef _code
+#define _code
+
+#include <vector>
+
+std::vector<double> average (std::vector< std::vector<double> > i_matrix);
+
+#endif
+
+We first compile the C++ code to create an object file:
+g++ -c -fPIC code.cpp
+
+We then define a swig interface definition file ("code.i") for our C++ functions.
+%module code
+%{
+#include "code.h"
+%}
+%include "std_vector.i"
+namespace std {
+  /* On a side note, the names VecDouble and VecVecdouble can be changed, but the order of first the inner vector matters !*/
+  %template(VecDouble) vector<double>;
+  %template(VecVecdouble) vector< vector<double> >;
+}
+
+%include "code.h"
+
+Using swig, we generate a C++ interface source code from the swig interface definition file..
+swig -c++ -python code.i
+
+We finally compile the generated C++ interface source file and link everything together to generate a shared library that is directly importable by python (the "_" matters):
+g++ -c -fPIC code_wrap.cxx  -I/usr/include/python2.7 -I/usr/lib/python2.7
+g++ -shared -Wl,-soname,_code.so -o _code.so code.o code_wrap.o
+
+We can now use the function in python scripts:
+#!/usr/bin/env python
+
+import code
+a= [[3,5,7],[8,10,12]]
+print a
+b = code.average(a)
+print "Assignment done"
+print a
+print b 
+
+
+First you should decide what is your particular purpose. The official Python documentation on extending and embedding the Python interpreter was mentioned above, I can add a good overview of binary extensions. The use cases can be divided into 3 categories:
+
+accelerator modules: to run faster than the equivalent pure Python code runs in CPython.
+wrapper modules: to expose existing C interfaces to Python code.
+low level system access: to access lower level features of the CPython runtime, the operating system, or the underlying hardware.
+
+In order to give some broader perspective for other interested and since your initial question is a bit vague ("to a C or C++ library") I think this information might be interesting to you. On the link above you can read on disadvantages of using binary extensions and its alternatives. 
+Apart from the other answers suggested, if you want an accelerator module, you can try Numba. It works "by generating optimized machine code using the LLVM compiler infrastructure at import time, runtime, or statically (using the included pycc tool)". 
+
+The question is how to call a C function from Python, if I understood correctly. Then the best bet are Ctypes (BTW portable across all variants of Python).
+>>> from ctypes import *
+>>> libc = cdll.msvcrt
+>>> print libc.time(None)
+1438069008
+>>> printf = libc.printf
+>>> printf("Hello, %s\n", "World!")
+Hello, World!
+14
+>>> printf("%d bottles of beer\n", 42)
+42 bottles of beer
+19
+
+For a detailed guide you may want to refer to my blog article.
+
+Cython is definitely the way to go, unless you anticipate writing Java wrappers, in which case SWIG may be preferable.  
+I recommend using the runcython command line utility, it makes the process of using Cython extremely easy.  If you need to pass structured data to C++, take a look at Google's protobuf library, it's very convenient.  
+Here is a minimal examples I made that uses both tools: 
+https://github.com/nicodjimenez/python2cpp
+Hope it can be a useful starting point.  
+
+There is also pybind11, which is like a lightweight version of Boost and compatible with all modern C++ compilers : 
+https://pybind11.readthedocs.io/en/latest/ 

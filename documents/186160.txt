@@ -1,0 +1,59 @@
+How do I add to a list with Linq to SQL?
+c# .net sql linq linq-to-sql
+I have a table in the database that I'm retrieving using LINQ to SQL, and as a part of my processing I want to add to this list, then update the database with the new items + any changes I've made.
+What I thought I could do was this:
+var list = (from item in db.Table
+            select item).ToList();
+
+[do processing where I modify items & add to the list]
+
+list = list.Distinct();
+
+db.SubmitChanges();
+
+What happens is that the modifications happed (ie. SQL updates) but any new items I add to the list don't get added.
+Obviously I'm doing this wrong, what is the correct way to modify & add to a list of DB entities, then commit all the updates & inserts?
+
+
+You have to add the new items via InsertOnSubmit.
+
+The List is meaningless.  It's just happens to hold objects that the DataContext knows about.  We need to make sure that the DataContext knows about the new ones.  The important thing is that they don't have to be complete when we alert the DataContext to them:
+Item item;
+if (needNewOne)
+{
+     item = new Item();
+     db.InsertOnSubmit(item);
+}
+else
+{
+     item = list[i];
+}
+///  build new or modify existing item
+///   :
+db.SubmitChanges();
+
+
+You've got to tell LINQ to insert the new row on submit, using InsertOnSubmit:
+db.InsertOnSubmit(newrow);
+db.SubmitChanges();
+
+You do not need a new DataContext, you can use the one you are using for updates.
+Same for delete DeleteOnSubmit(row). Modifications will be tracked, though.
+
+You can create an extension method for it:
+static void EnsureInsertedOnSubmit<TEntity>( this Table<TEntity>  table
+                                            ,IEnumerable<TEntity> entities)
+ { foreach(var entity in entities) 
+    { if  (   table.GetModifiedMembers(entity).Length == 0     
+           && table.GetOriginalEntityState(entity) == default(TEntity))
+       { table.InsertOnSubmit(entity);
+       }
+    }
+ }
+
+And then you can do this:
+ var list = db.Table1.ToList();
+ list.Add(new Item());
+ db.Table1.EnsureInsertedOnSubmit(list);
+ db.SubmitChanges();
+

@@ -1,0 +1,166 @@
+Which .Net collection for adding multiple objects at once and getting notified?
+c# .net-3.5 collections
+Was considering the System.Collections.ObjectModel ObservableCollection<T> class. This one is strange because  
+
+it has an Add Method which takes one item only. No AddRange or equivalent. 
+the Notification event arguments has a NewItems property, which is a IList (of objects.. not T)
+
+My need here is to add a batch of objects to a collection and the listener also gets the batch as part of the notification. Am I missing something with ObservableCollection ? Is there another class that meets my spec?
+Update: Don't want to roll my own as far as feasible. I'd have to build in add/remove/change etc.. a whole lot of stuff.
+
+Related Q:
+http://stackoverflow.com/questions/670577/observablecollection-doesnt-support-addrange-method-so-i-get-notified-for-each
+
+
+Inherit from List<T> and override the Add() and AddRange() methods to raise an event?
+
+If you're wanting to inherit from a collection of some sort, you're probably better off inheriting from System.Collections.ObjectModel.Collection because it provides virtual methods for override. You'll have to shadow methods off of List if you go that route.
+I'm not aware of any built-in collections that provide this functionality, though I'd welcome being corrected :)
+
+It seems that the INotifyCollectionChanged interface allows for updating when multiple items were added, so I'm not sure why ObservableCollection<T> doesn't have an AddRange.  You could make an extension method for AddRange, but that would cause an event for every item that is added.  If that isn't acceptable you should be able to inherit from ObservableCollection<T> as follows:
+public class MyObservableCollection<T> : ObservableCollection<T>
+{
+    // matching constructors ...
+
+    bool isInAddRange = false;
+
+    protected override void OnCollectionChanged(NotifyCollectionChangedEventArgs e)
+    {
+        // intercept this when it gets called inside the AddRange method.
+        if (!isInAddRange) 
+            base.OnCollectionChanged(e);
+    }
+
+
+    public void AddRange(IEnumerable<T> items)
+    {
+         isInAddRange = true;
+         foreach (T item in items)
+            Add(item);
+         isInAddRange = false;
+
+         var e = new NotifyCollectionChangedEventArgs(
+             NotifyCollectionChangedAction.Add,
+             items.ToList());
+         base.OnCollectionChanged(e);
+    }
+}
+
+
+Extension Method Man to the rescue!
+    /// <summary>
+	/// Adds all given items to the collection
+	/// </summary>
+	/// <param name="collection">The collection.</param>
+	/// <param name="toAdd">Objects to add.</param>
+	public static void AddAll<T>(this IList<T> collection, params T[] toAdd)
+	{
+		foreach (var o in toAdd)
+			collection.Add(o);
+	}
+
+
+Not only is System.Collections.ObjectModel.Collection<T> a good bet, but in the help docs there's an example of how to override its various protected methods in order to get notification.  (Scroll down to Example 2.)
+
+Well the idea is same as that of fryguybob - kinda weird that ObservableCollection is kinda half-done. The event args for this thing do not even use Generics.. making me use an IList (that's so.. yesterday :)
+Tested Snippet follows...
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+
+namespace MyNamespace
+{
+    public class ObservableCollectionWithBatchUpdates<T> : ObservableCollection<T>
+    {
+        public void AddRange(ICollection<T> obNewItems)
+        {
+            IList<T> obAddedItems = new List<T>();
+            foreach (T obItem in obNewItems)
+            {
+                Items.Add(obItem);
+                obAddedItems.Add(obItem);
+            }
+            NotifyCollectionChangedEventArgs obEvtArgs = new NotifyCollectionChangedEventArgs(
+               NotifyCollectionChangedAction.Add, 
+               obAddedItems as System.Collections.IList);
+            base.OnCollectionChanged(obEvtArgs);
+        }
+
+    }
+}
+
+
+If you use any of the above implementations that send an add range command and bind the observablecolletion to a listview you will get this nasty error. 
+
+NotSupportedException
+   at System.Windows.Data.ListCollectionView.ValidateCollectionChangedEventArgs(NotifyCollectionChangedEventArgs e)
+   at System.Windows.Data.ListCollectionView.ProcessCollectionChanged(NotifyCollectionChangedEventArgs args)
+   at System.Collections.Specialized.NotifyCollectionChangedEventHandler.Invoke(Object sender, NotifyCollectionChangedEventArgs e)
+   at System.Collections.ObjectModel.ObservableCollection`1.OnCollectionChanged(NotifyCollectionChangedEventArgs e)
+
+The implementation I have gone with uses the Reset event that is more evenly implemented around the WPF framework: 
+    public void AddRange(IEnumerable<T> collection)
+    {
+        foreach (var i in collection) Items.Add(i);
+        OnPropertyChanged("Count");
+        OnPropertyChanged("Item[]");
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+
+
+Take a look at Observable collection with AddRange, RemoveRange and Replace range methods in both C# and VB.
+In VB: INotifyCollectionChanging implementation.
+
+For fast adding you could use:
+((List<Person>)this.Items).AddRange(NewItems);
+
+
+I have seen this kind of question many times, and I wonder why even Microsoft is promoting ObservableCollection everywhere where else there is a better collection already available thats.. 
+
+BindingList<T>
+
+Which allows you to turn off notifications and do bulk operations and then turn on the notifications. 
+
+Another solution that is similar to the CollectionView pattern:
+public class DeferableObservableCollection<T> : ObservableCollection<T>
+{
+    private int deferLevel;
+
+    private class DeferHelper<T> : IDisposable
+    {
+        private DeferableObservableCollection<T> owningCollection;
+        public DeferHelper(DeferableObservableCollection<T> owningCollection)
+        {
+            this.owningCollection = owningCollection;
+        }
+
+        public void Dispose()
+        {
+            owningCollection.EndDefer();
+        }
+    }
+
+    private void EndDefer()
+    {
+        if (--deferLevel <= 0)
+        {
+            deferLevel = 0;
+            OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+        }
+    }
+
+    public IDisposable DeferNotifications()
+    {
+        deferLevel++;
+        return new DeferHelper<T>(this);
+    }
+
+    protected override void OnCollectionChanged(NotifyCollectionChangedEventArgs e)
+    {
+        if (deferLevel == 0) // Not in a defer just send events as normally
+        {
+            base.OnCollectionChanged(e);
+        } // Else notify on EndDefer
+    }
+}
+

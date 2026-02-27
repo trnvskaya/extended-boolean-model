@@ -1,0 +1,58 @@
+Web Application Time Zone Issue
+c# asp.net timezone
+We have a ASP.Net 2.0 web application up and running with the server in the Midwest (Eastern Standard Time). At this moment all of our customers are in the same time zone as the server. We are bringing another server online in Arizona (Mountain Standard Time).
+We are storing all our times in a SQL 2005 database via C# codebehind DateTime.UtcNow.
+During testing we encountered some time zone conversion issues.
+Our problem is that in the web browser our times are displaying the Mountain Standard Time instead of the time zone we are testing from which is Eastern Standard Time. 
+When we enter new information it gets stored as UTC in the database, but when we go to view that info in the browser it is displaying the Mountain Standard Time.
+Below is the code which takes the UTC value from the database and displays it in the browser.
+lblUpdatedDate.Text = Convert.ToDateTime(dr["UpdatedDate"]).ToLocalTime().ToString();
+
+The above code returns Mountain Standard Time where the server is, not Eastern Standard Time where the browser is running from. How do we get the time to display where the user is?
+
+
+If you're using .NET 3.5 and you know the timezone that the user is in, TimeZoneInfo is your friend. If you're not using .NET 3.5 there are some P/Invoke samples around to get instances of TimeZone, but it's worth avoiding that if you've got access to 3.5. (TimeZoneInfo has historical data etc, and is generally the preferred way to go.)
+Now ascertaining which timezone your users are in is a different problem - the simplest way of avoiding confusion is to give them options. (Getting the offset "now" only gives you limited information.)
+
+To local time will always on the server side convert to the physical location.  You have a few options.
+
+Store the offset value from UTC to the Users, keep times in UTC
+Do the conversion client side via JS (Not elegant, nor appropriate, In my opinion)
+Look at some MSDN recommendations and the Timezone namespace
+
+
+I encountered something like this prior to using ASP.NET. Here was my general methodology.
+I sent JavaScript to do a document.write. The JavaScript determines the client's offset from GMT. So you can send a particular time and then let the JavaScript do a plus/minus on it.
+
+I had the same issue. We sold our application to a user that was in a different time zone than the web server. We did not store any time information in UTC, but it was actually working correctly. Time displayed in the server's time zone was displaying exactly 3 hours behind. All we had to do was add a time zone drop down so they could select their time zone for the entire site (since the only users of the application would be in their time zone). We saved this setting and then inserted a function to take all datetime displays and convert from one time zone to the other using the TimeZoneInfo namespace. It works perfectly.
+
+We ran into the same or similar problem with remote clients calling to our database through webservices where the database and clients are in different timezones.
+We found it easiest to instruct the dataset to not care about timezones so the times aren't changed across timezone borders...
+We built a utility method (SetAllDateModes) that converts all date-time fields in the dataset by table - here's the business end (Foreach) and the call that sets the dateMode:
+foreach (DataColumn dc in dt.Columns)
+{
+  if (dc.DataType == typeof(DateTime))
+  {
+    dc.DateTimeMode = dateMode;
+  }
+}
+SetAllDateModes(dt, DataSetDateTime.Unspecified);
+
+DateSetDateTime.Unspecified does not include an offset so there is no conversion.
+
+I thought the general idea was to not localize the date & time until you present it the user. So unless a human is going to read it, it stays in UTC, GMT, CUT. One additional note use the Date/Time library so you don't have to worry to much about Daylight Savings time change problems.
+
+Just always store datetime as GMT format.
+There are 2 steps:
+Detect different timezone at client side using Javascript:
+var dt = new Date();
+var diffInMinutes = -dt.getTimezoneOffset();
+
+Then at server side, C# code to convert server time to client time based on detected timezone offset above:
+string queryStr = Request.QueryString["diffInMinutes"];
+int diffInMinutes = 0;
+if (Int32.TryParse(queryStr, out diffInMinutes))
+{
+    clientTime = serverTime.ToUniversalTime().AddMinutes(diffInMinutes);
+}
+

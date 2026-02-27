@@ -1,0 +1,171 @@
+Private module methods in Ruby
+ruby private-methods access-specifier
+I have a two part question
+Best-Practice
+
+I have an algorithm that performs some operation on a data structure using the public interface
+It is currently a module with numerous static methods, all private except for the one public interface method.
+There is one instance variable that needs to be shared among all the methods.
+
+These are the options I can see, which is the best?:
+
+Module with static ('module' in ruby) methods 
+Class with static methods
+Mixin module for inclusion into the data structure
+Refactor out the part of the algorithm that modifies that data structure (very small) and make that a mixin that calls the static methods of the algorithm module
+
+Technical part
+Is there any way to make a private Module method?
+module Thing
+  def self.pub; puts "Public method"; end
+  private
+  def self.priv; puts "Private method"; end
+end
+
+The private in there doesn't seem to have any effect, I can still call Thing.priv without issue.
+
+
+Unfortunately, private only applies to instance methods. The general way to get private "static" methods in a class is to do something like:
+class << self
+  private
+
+  def foo()
+   ....
+  end
+end
+
+Admittedly I haven't played with doing this in modules.
+
+You can use the "included" method to do fancy things when a module is mixed in.  This does about what you want I think:
+module Foo
+  def self.included(base)
+    class << base 
+      def public_method
+        puts "public method"
+      end
+      def call_private
+        private_method
+      end
+      private
+      def private_method
+        puts "private"
+      end
+    end
+  end
+end
+
+class Bar
+  include Foo
+end
+
+Bar.public_method
+
+begin
+  Bar.private_method
+rescue
+  puts "couldn't call private method"
+end
+
+Bar.call_private
+
+
+There's also Module.private_class_method, which arguably expresses more intent.
+module Foo
+  def self.included(base)
+    base.instance_eval do
+      def method_name
+        # ...
+      end
+      private_class_method :method_name
+    end
+  end
+end
+
+For the code in the question:
+module Thing
+  def self.pub; puts "Public method"; end
+  def self.priv; puts "Private method"; end
+  private_class_method :priv
+end
+
+Ruby 2.1 or newer:
+module Thing
+  def self.pub; puts "Public method"; end
+  private_class_method def self.priv; puts "Private method"; end
+end
+
+
+I think the best way (and mostly how existing libs are written) do this by making a class within the module that deals with all the logic, and the module just provides a convenient method, e.g.
+module GTranslate
+  class Translator
+    def perform( text ); 'hola munda'; end
+  end
+
+  def self.translate( text )
+    t = Translator.new
+    t.perform( text )
+  end
+end
+
+
+What's about storing methods as lambdas within class variables/constants?
+module MyModule
+    @@my_secret_method = lambda {
+        # code
+    }
+    # code
+end
+
+For test:  
+module A
+    @@C = lambda{ puts "C" }
+    def self.B ; puts "B"; @@C[] ; end
+    private # <- yeah, has no sense, just for experiment
+    def self.D ; puts "D"; @@C[] ; end
+end
+
+for expr in %w{A::B A.B A::C A.C A::D A.D}
+    eval expr rescue puts expr
+end
+
+Here we see that C can be successfully used by B and D, but not from outside.
+
+A nice way is like this
+module MyModule
+  class << self
+    def public_method
+      # you may call the private method here
+      tmp = private_method
+      :public
+    end
+
+    private def private_method
+      :private
+    end
+  end
+end
+
+# calling from outside the module
+puts MyModule::public_method
+
+
+module Writer
+  class << self
+    def output(s)
+      puts upcase(s)
+    end
+
+    private
+
+    def upcase(s)
+      s.upcase
+    end
+  end
+end
+
+Writer.output "Hello World"
+# -> HELLO WORLD
+
+Writer.upcase "Hello World"
+# -> so.rb:16:in `<main>': private method `upcase' called for Writer:Module (NoMethodError)
+

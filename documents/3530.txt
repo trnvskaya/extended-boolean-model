@@ -1,0 +1,74 @@
+How do I run Rake tasks within a Ruby script?
+ruby rake command-line-interface
+I have a Rakefile with a Rake task that I would normally call from the command line:
+rake blog:post Title
+
+I'd like to write a Ruby script that calls that Rake task multiple times, but the only solution I see is shelling out using `` (backticks) or system.
+What's the right way to do this?
+
+
+from timocracy.com:
+require 'rake'
+require 'rake/rdoctask'
+require 'rake/testtask'
+require 'tasks/rails'
+
+def capture_stdout
+  s = StringIO.new
+  oldstdout = $stdout
+  $stdout = s
+  yield
+  s.string
+ensure
+  $stdout = oldstdout
+end
+
+Rake.application.rake_require '../../lib/tasks/metric_fetcher'
+results = capture_stdout {Rake.application['metric_fetcher'].invoke}
+
+You can use invoke and reenable to execute the task a second time.
+Your example call rake blog:post Title seems to have a parameter. This parameter can be used as a parameter in invoke:
+Example:
+require 'rake'
+task 'mytask', :title do |tsk, args|
+  p "called #{tsk} (#{args[:title]})"
+end
+
+
+
+Rake.application['mytask'].invoke('one')
+Rake.application['mytask'].reenable
+Rake.application['mytask'].invoke('two')
+
+Please replace mytask with blog:post and instead the task definition you can require your rakefile.
+This solution will write the result to stdout - but you did not mention, that you want to suppress output.
+
+Interesting experiment:
+You can call the reenable also inside the task definition. This allows a task to reenable himself.
+Example:
+require 'rake'
+task 'mytask', :title do |tsk, args|
+  p "called #{tsk} (#{args[:title]})"
+  tsk.reenable  #<-- HERE
+end
+
+Rake.application['mytask'].invoke('one')
+Rake.application['mytask'].invoke('two')
+
+The result (tested with rake 10.4.2):
+"called mytask (one)"
+"called mytask (two)"
+
+
+This works with Rake version 10.0.3:
+require 'rake'
+app = Rake.application
+app.init
+# do this as many times as needed
+app.add_import 'some/other/file.rake'
+# this loads the Rakefile and other imports
+app.load_rakefile
+
+app['sometask'].invoke
+
+As knut said, use reenable if you want to invoke multiple times. 

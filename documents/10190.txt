@@ -1,0 +1,169 @@
+How to return a page of results from SQL?
+.net sql linq pagination
+Many applications have grids that display data from a database table one page at a time. Many of them also let the user pick the number of records per page, sort by any column, and navigate back and forth through the results.
+What's a good algorithm to implement this pattern without bringing the entire table to the client and then filtering the data on the client. How do you bring just the records you want to display to the user?
+Does LINQ simplify the solution?
+
+
+On MS SQL Server 2005 and above, ROW_NUMBER() seems to work:
+T-SQL: Paging with ROW_NUMBER()
+DECLARE @PageNum AS INT;
+DECLARE @PageSize AS INT;
+SET @PageNum = 2;
+SET @PageSize = 10;
+
+WITH OrdersRN AS
+(
+    SELECT ROW_NUMBER() OVER(ORDER BY OrderDate, OrderID) AS RowNum
+          ,OrderID
+          ,OrderDate
+          ,CustomerID
+          ,EmployeeID
+      FROM dbo.Orders
+)
+
+SELECT * 
+  FROM OrdersRN
+ WHERE RowNum BETWEEN (@PageNum - 1) * @PageSize + 1 
+                  AND @PageNum * @PageSize
+ ORDER BY OrderDate
+         ,OrderID;
+
+
+Actually, LINQ has Skip and Take methods which can be combined to choose which records are fetched.
+Check those out.
+For DB: Pagination In SQL Server 2005
+
+Oracle Solution:
+select * from (
+    select a.*, rownum rnum from (
+        YOUR_QUERY_GOES_HERE -- including the order by
+    ) a
+    where rownum <= MAX_ROW
+ ) where rnum >= MIN_ROW
+
+
+I'd recommend either using LINQ, or try to copy what it does. I've got an app where I use the LINQ Take and Skip methods to retrieve paged data. The code looks something like this:
+MyDataContext db = new MyDataContext();
+var results = db.Products
+    .Skip((pageNumber - 1) * pageSize)
+    .Take(pageSize);
+
+Running SQL Server Profiler reveals that LINQ is converting this query into SQL similar to:
+SELECT [ProductId], [Name], [Cost], and so on...
+FROM (
+    SELECT [ProductId], [Name], [Cost], [ROW_NUMBER]
+    FROM (
+       SELECT ROW_NUMBER() OVER (ORDER BY [Name]) AS [ROW_NUMBER], 
+           [ProductId], [Name], [Cost]
+       FROM [Products]
+    )
+    WHERE [ROW_NUMBER] BETWEEN 10 AND 20
+)
+ORDER BY [ROW_NUMBER]
+
+In plain English:
+1. Filter your rows and use the ROW_NUMBER function to add row numbers in the order you want.
+2. Filter (1) to return only the row numbers you want on your page.
+3. Sort (2) by the row number, which is the same as the order you wanted (in this case, by Name).
+
+There are a few solutions which I use with MS SQL 2005.
+One of them is ROWNUMBER(). But, personally, I don't like ROWNUMBER() because it doesn't work for big results (DB which I work on is really big -- over 1TB data running thousands of queries in second -- you know -- big social networking site).
+Here are my favourite solution.
+I will use kind of pseudo code of T-SQL.
+Let's find 2nd page of users sorted by forename, surname, where each page has 10 records.
+@page = 2 -- input parameter
+@size = 10 -- can be optional input parameter
+
+if @page < 1 then begin
+    @page = 1 -- check page number
+end
+@start = (@page-1) * @size + 1 -- @page starts at record no @start
+
+-- find the beginning of page @page
+SELECT TOP (@start)
+    @forename = forename,
+    @surname = surname
+    @id = id
+FROM
+    users
+ORDER BY
+    forename,
+    surname,
+    id -- to keep correct order in case of have two John Smith.
+
+-- select @size records starting from @start
+SELECT TOP (@size)
+    id,
+    forename,
+    surname
+FROM
+    users
+WHERE
+    (forename = @forename and surname = @surname and id >= @id) -- the same name and surname, but bigger id
+    OR (forename = @forename and surname > @surname) -- the same name, but bigger surname, id doesn't matter
+    OR (forename > @forename) -- bigger forename, the rest doesn't matter
+ORDER BY
+    forename,
+    surname,
+    id
+
+
+LINQ combined with lambda expressions and anonymous classes in .Net 3.5 hugely simplifies this sort of thing.
+Querying the database:
+var customers = from c in db.customers
+                join p in db.purchases on c.CustomerID equals p.CustomerID
+                where p.purchases > 5
+                select c;
+
+Number of records per page:
+customers = customers.Skip(pageNum * pageSize).Take(pageSize);
+
+Sorting by any column:
+customers = customers.OrderBy(c => c.LastName);
+
+Getting only selected fields from server:
+var customers = from c in db.customers
+                join p in db.purchases on c.CustomerID equals p.CustomerID
+                where p.purchases > 5
+                select new
+                {
+                    CustomerID = c.CustomerID,
+                    FirstName = c.FirstName,
+                    LastName = c.LastName
+                };
+
+This creates a statically-typed anonymous class in which you can access its properties:
+var firstCustomer = customer.First();
+int id = firstCustomer.CustomerID;
+
+Results from queries are lazy-loaded by default, so you aren't talking to the database until you actually need the data. LINQ in .Net also greatly simplifies updates by keeping a datacontext of any changes you have made, and only updating the fields which you change.
+
+There is a discussion about this Here
+The technique gets page number 100,000 from a 150,000 line database in 78ms
+
+Using optimizer knowledge and SET ROWCOUNT, the first EmployeeID in the page that is requested is stored in a local variable for a starting point. Next, SET ROWCOUNT to the maximum number of records that is requested in @maximumRows. This allows paging the result set in a much more efficient manner. Using this method also takes advantage of pre-existing indexes on the table as it goes directly to the base table and not to a locally created table. 
+
+I am afraid I am not able to judge if it is better than the current accepted answer.
+
+There are essentially two ways of doing pagination in the database (I'm assuming you're using SQL Server):
+Using OFFSET
+Others have explained how the ROW_NUMBER() OVER() ranking function can be used to perform pages. It's worth mentioning that SQL Server 2012 finally included support for the SQL standard OFFSET .. FETCH clause:
+SELECT first_name, last_name, score
+FROM players
+ORDER BY score DESC
+OFFSET 40 ROWS FETCH NEXT 10 ROWS ONLY
+
+If you're using SQL Server 2012 and backwards-compatibility is not an issue, you should probably prefer this clause as it will be executed more optimally by SQL Server in corner cases.
+Using the SEEK Method
+There is an entirely different, much faster, but less known way to perform paging in SQL. This is often called the "seek method" as described in this blog post here.
+SELECT TOP 10 first_name, last_name, score
+FROM players
+WHERE (score < @previousScore)
+   OR (score = @previousScore AND player_id < @previousPlayerId)
+ORDER BY score DESC, player_id DESC
+
+The @previousScore and @previousPlayerId values are the respective values of the last record from the previous page. This allows you to fetch the "next" page. If the ORDER BY direction is ASC, simply use > instead.
+With the above method, you cannot immediately jump to page 4 without having first fetched the previous 40 records. But often, you do not want to jump that far anyway. Instead, you get a much faster query that might be able to fetch data in constant time, depending on your indexing. Plus, your pages remain "stable", no matter if the underlying data changes (e.g. on page 1, while you're on page 4).
+This is the best way to implement paging when lazy loading more data in web applications, for instance.
+Note, the "seek method" is also called keyset paging.

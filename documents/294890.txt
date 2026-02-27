@@ -1,0 +1,117 @@
+ASP.NET MVC - User Input and Service/Repository - Where to do Validation?
+asp.net-mvc design-patterns
+This might be too opinionated a question, but looking for help!
+I have been trying to refine my ASP.NET MVC program structure.  I just started using it at preview 5 and it is my first foray into business application development -- so everyting is new!
+At the controller level, I have a service object responsible for talking to the repository and taking care of all business logic.  At the action level, I have an object that holds all view data -- user input and generated output -- that I'll call view object (is there a general term for this?).  Unlike most examples I see, this object is not a database object, but an object specific to the view.
+So now I want to add user validation.  The problem is, I'm not sure where to put it.  It makes the most sense to me to do it in the Service layer.  The Service layer is responsible for all the business logic and validation is business logic.  On the other hand, most validation frameworks that I see are for validating an object, which makes me think the view object should be validation aware.  Finally, there are some validation methods that would require a database connection (checking if a user input field has a corresponding database record for example), and the view object has no concept of a database, only the Service.
+So some options I see are:
+
+Do validation in the Service.Method on the parameters passed to the method.
+Do validation in the view object before calling Service.Method.
+Do validation in the view object but make the Service.Method require a view object reference so it is initiating the validation on the object.
+
+I'm sure there are more.  I'm curious of how other people handle user input validation in the MVC sense.  I've previously used the Enterprise Validation Block and liked being able to use stock validators for everything, but I'm not sure how to make it fit into a seperate view object and service layer.  It would be easy if they (view object / service) were the same object, which is maybe what people do?  Like I said, its all new to me and I'm looking for best practice / patterns.
+
+
+I typically do basic validation (required fields, email format, etc.) in the controller action when the form is submitted. I then let the business layer handle validation that requires business knowledge. I usually double check the basic stuff in the business layer as well, so if I expose that logic through web services or use it in another application later, I still have validation where it is most important (IMO).
+
+Take a look at the S#arp Architecture project.  Validation is handled on the model to ensure that no entity is persisted to the database in an invalid state.  It does this by using NHibernate.Validator and attaching it to NHibernate's save and update events.
+Personally, this approach makes the most sense to me since you don't have to duplicate your validation logic in multiple controllers.
+
+Check the following blog posts
+http://blog.codeville.net/2008/09/08/thoughts-on-validation-in-aspnet-mvc-applications/
+http://www.emadibrahim.com/2008/09/08/client-server-side-validation-in-aspnet-mvc/
+
+There are some interesting links on this
+
+MVC & MS Validation Application Block
+MVC & Data Annotation Validators
+Form Validation video
+
+Personally, i've added validation to my Service layer objects (first two links). This way, if any method in any controller decides to call my service method .. the logic is all checked and boxed in one location. DRY.
+That said, i also have some UI validation (3rd link) .. to reduce the roundtrip time.
+Lastly, the current MVC dll's have the ability to pass error messages back to the UI .. so the view can display them nicely. Check out :-
+
+ViewData.ModelState.AddModelError(key, message)
+
+hth!
+
+I was afraid I'd get no replies for my post, happy to be wrong!
+I've read those links before, but probably a month or more ago, and re-reading them with what I understand now has been very helpful.  I really like Steve Sanderson's post with the sliding scale, but wish he would show an example of validating something at the right-end of the spectrum.
+As an example in his blog he gives: " 'usernames must be unique' will probably be enforced in your database".  So would this be something like:
+public static void SavePerson(Person person)
+{
+    // make sure it meets some format requirement
+    // in this case the object is responsible for validation and the service layer is the caller
+    person.EnsureValid();
+
+    // todo: action to verify username is unique by checking database
+    // in this case the service layer is responsible for calling and implementing validation
+
+    // todo: action to save to database
+}
+
+This makes sense, and would show my trouble grasping where to put validation as it is inside both the service layer (very unique name) and view-object (verify formats).
+Another concern I have is the service layer starts to balloon with validation logic.  Maybe split it out to a different class or something?  In my case some validation logic might be shared between services, so I would like to think of a DRY way to implement this.  Fun stuff to think about!
+Emad Ibrahim's link is great in that once I start to understand this process a bit more I was going to look for a way to generate javascript client-side validation using the same set of rules without having to repeat code.  He already has that :)
+I have heard about S#arp but not sat down and seen how it works (I'm not sure if there is much in the way of demos on it, or if downloading the code is the demo!).  I'm not sure if doing validation on the database model only would be sufficient.  It seems to me there would be plenty of valid model states with regards to the database that business logic would say are invalid (such as date ranges / must be before / after / etc).  Those are the cases that are wracking my brain :)
+Also, a link I liked (googled it after I saw Emad reply to Steves post with BLL and no idea what it meant... duh):
+http://en.wikipedia.org/wiki/Business_logic_layer
+So I didn't know it, but I think this is the model I'm writing to:  Business Process object that handles data interactions, and Business Entities that are logical models rather than database models.  I think I need to start reading some more fundamental patterns and practices with this stuff to better understand the concepts (it seems like a lot of this is stuff Java people write vs. .NET people).  It might be time to take a step back :)
+
+I have come across this same issue in a recent project.  First, to restate the problem, I am trying to follow the domain-centric approach of DDD. I have entities composed into aggregates that can validate themselves, and the repositories verify validity on save. The UI can also get validity information from an aggregate in order to display error feedback to the client. The general approach is to leverage as much as possible ASP.NET MVC's model binding, and validation/form UI helpers. This creates the simple UI flow: 1) bind, 2) validate, 3) if valid, save, else re-populate view.
+However, it is not directly obvious how to do leverage ASP.NET MVC and this simple flow when DDD services are involved. Originally, I developed my services as such:
+public class SomeProcessService 
+{
+  public Result Execute(int anAggregateID, int anotherAggregateID, string someData) 
+  {
+    // validate input
+
+    // if invalid, return failures
+
+    // else 
+    //   modify aggregates
+    //   using (transaction)
+    //   {
+    //     save aggregates
+    //     commit
+    //   }
+
+    // return success
+  }
+}
+
+The problem is that the validation and the save are inextricably linked in the method. To leverage the MVC model binding, we need something that serves as a model to bind to. I am refactoring to this:
+public class SomeProcessService 
+{
+  public class Request : IValidateable
+  {
+    public int AggregateID {get;set;}
+    public int AnotherAggregateID {get;set;}
+    public string SomeData {get;set;}
+
+    public Result Validate() 
+    {
+      // validation
+    }
+  }
+
+  public void Execute(Request request) 
+  {
+    // validate input by calling request.Validate()
+
+    // if invalid, throw new ValidationException(request)
+
+    // else 
+    //   modify aggregates
+    //   using (transaction)
+    //   {
+    //     save aggregates
+    //     commit
+    //   }
+
+    // return success
+  }
+}
+
+This repurposes the Parameter Object pattern to separate method input validation. I can bind to a SomeProcessService.Request object in my controller, as well as get validation information there. If all is well, from my controller I initiate the service call using the Request object as the parameter. This approach seems to happily marry DDD services with ASP.NET MVC validation requirements.

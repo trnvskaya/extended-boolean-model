@@ -1,0 +1,68 @@
+SQL - Temp Table: Storing all columns in temp table versus only Primary key
+sql sql-server sql-server-2005
+I would need to create a temp table for paging purposes. I would be selecting all records into a temp table and then do further processing with it.
+I am wondering which of the following is a better approach:
+1) Select all the columns of my Primary Table into the Temp Table and then being able to select the rows I would need
+OR
+2) Select only the primary key of the Primary Table into the Temp Table and then joining with the Primary Table later on?
+Is there any size consideration when working with approach 1 versus approach 2?
+[EDIT]
+I am asking because I would have done the first approach but looking at PROCEDURE [dbo].[aspnet_Membership_FindUsersByName], that was included with ASP.NET Membership, they are doing Approach 2
+[EDIT2]
+With people without access to the Stored procedure:
+  -- Insert into our temp table
+INSERT INTO #PageIndexForUsers (UserId)
+    SELECT u.UserId
+    FROM   dbo.aspnet_Users u, dbo.aspnet_Membership m
+    WHERE  u.ApplicationId = @ApplicationId AND m.UserId = u.UserId AND u.LoweredUserName LIKE LOWER(@UserNameToMatch)
+    ORDER BY u.UserName
+
+
+SELECT  u.UserName, m.Email, m.PasswordQuestion, m.Comment, m.IsApproved,
+        m.CreateDate,
+        m.LastLoginDate,
+        u.LastActivityDate,
+        m.LastPasswordChangedDate,
+        u.UserId, m.IsLockedOut,
+        m.LastLockoutDate
+FROM   dbo.aspnet_Membership m, dbo.aspnet_Users u, #PageIndexForUsers p
+WHERE  u.UserId = p.UserId AND u.UserId = m.UserId AND
+       p.IndexId >= @PageLowerBound AND p.IndexId <= @PageUpperBound
+ORDER BY u.UserName
+
+
+
+With approach 1, the data in the temp table may be out of step with the real data, i.e. if other sessions make changes to the real data.  This may be OK if you are just viewing a snapshot of the data taken at a certain point, but would be dangerous if you were also updating the real table based on changes made to the temporary copy.
+
+A Table Variable would be preferred over a temp table, if its within your constraints. 
+Option 2 would use less resources, because there is less data duplication. 
+Tony's points about this being a dirty read are really something you should be considering.  
+Can you explain how you are 'paging' with temp tables? Its not a paging method I am familiar with. 
+EDIT: 
+After looking at your post edit, you should definately use a table variable in this case. Its less to cleanup and you wont blow out the tempdb so much. 
+Also, its kind of unclear what benefit this temp table gives. If your aim is to stop a user from accessing an object/applicaiton, then why are you adding the part about it being "only restricted if on this particular data table page". It seems kind of hole-y from a security perspective.
+The temp table can be pretty much eliminated also, since it selects from the same tables.
+
+This is exactly the approach I use for Paging on the server,
+Create a Table Variable (why incur the overhead of transaction logging ?)  With just the key values.  (Create the table with an autonum Identity column Primary Key - this will be RowNum. )
+Insert keys into the table based on users sort/filtering criteria.. Identity column is now a row number which can be used for paging.
+Select from table variable joined to other tables with real data required, Joined on key value, 
+Where RowNum Between ((PageNumber-1) * PageSize) + 1 And PageNumber * PageSize
+
+
+Think about it this way. Suppose your query would return enough records to populate 1000 pages. How many users do you think would really look at all those pages? By returning only the ids, you aren't returning a lot of information you may or may not need to see. So it should save on network and server resources. And if they really do go through a lot of pages, it would take enough time that the data details might indeed need to be refreshed.
+
+An alternative to paging (the way my company does it) is to use CTE's. 
+Check out this example from http://softscenario.blogspot.com/2007/11/sql-2005-server-side-paging-using-cte.html
+CREATE PROC GetPagedEmployees (@NumbersOnPage INT=25,@PageNumb INT = 1)
+AS BEGIN
+
+WITH AllEmployees AS
+(SELECT ROW_NUMBER() OVER (Order by [Person].[Contact].[LastName]) AS RowID,
+[FirstName],[MiddleName],[LastName],[EmailAddress] FROM [Person].[Contact])
+
+SELECT [FirstName],[MiddleName],[LastName],[EmailAddress]
+FROM AllEmployees WHERE RowID BETWEEN
+((@PageNumb - 1) * @NumbersOnPage) + 1 AND @PageNumb * NumbersOnPage
+ORDER BY RowID
+

@@ -1,0 +1,140 @@
+How to serialize an object to XML without getting xmlns="..."?
+.net xml-serialization xml-namespaces
+Is there a way for me to serialize an object in .NET without the XML Namespaces automatically serializing also?  It seems that by default .NET believes the XSI and XSD namespaces should be included, but I don't want them there.
+
+
+Ahh... nevermind.  It's always the search after the question is posed that yields the answer.  My object that is being serialized is obj and has already been defined.  Adding an XMLSerializerNamespace with a single empty namespace to the collection does the trick.
+In VB like this:
+Dim xs As New XmlSerializer(GetType(cEmploymentDetail))
+Dim ns As New XmlSerializerNamespaces()
+ns.Add("", "")
+
+Dim settings As New XmlWriterSettings()
+settings.OmitXmlDeclaration = True
+
+Using ms As New MemoryStream(), _
+    sw As XmlWriter = XmlWriter.Create(ms, settings), _
+    sr As New StreamReader(ms)
+xs.Serialize(sw, obj, ns)
+ms.Position = 0
+Console.WriteLine(sr.ReadToEnd())
+End Using
+
+in C# like this:
+//Create our own namespaces for the output
+XmlSerializerNamespaces ns = new XmlSerializerNamespaces();
+
+//Add an empty namespace and empty value
+ns.Add("", "");
+
+//Create the serializer
+XmlSerializer slz = new XmlSerializer(someType);
+
+//Serialize the object with our own namespaces (notice the overload)
+slz.Serialize(myXmlTextWriter, someObject, ns);
+
+
+If you want to get rid of the extra xmlns:xsi=âhttp://www.w3.org/2001/XMLSchema-instanceâ and xmlns:xsd=âhttp://www.w3.org/2001/XMLSchemaâ, but still keep your own namespace xmlns=âhttp://schemas.YourCompany.com/YourSchema/â, you use the same code as above except for this simple change:
+//  Add lib namespace with empty prefix  
+ns.Add("", "http://schemas.YourCompany.com/YourSchema/");   
+
+You can find more Xml Serialization tips & tricks here.
+
+If you are unable to get rid of extra xmlns attributes for each element, when serializing to xml from generated classes (e.g.: when xsd.exe was used), so you have something like:
+<manyElementWith xmlns="urn:names:specification:schema:xsd:one" />
+
+then i would share with you what worked for me (a mix of previous answers and what i found here) 
+explicitly set all your different xmlns as follows:
+Dim xmlns = New XmlSerializerNamespaces()
+xmlns.Add("one", "urn:names:specification:schema:xsd:one")
+xmlns.Add("two",  "urn:names:specification:schema:xsd:two")
+xmlns.Add("three",  "urn:names:specification:schema:xsd:three")
+
+then pass it to the serialize 
+serializer.Serialize(writer, object, xmlns);
+
+you will have the three namespaces declared  in the root element and no more needed to be generated in the other elements which will be prefixed accordingly
+<root xmlns:one="urn:names:specification:schema:xsd:one" ... />
+   <one:Element />
+   <two:ElementFromAnotherNameSpace /> ...
+
+
+I Suggest this helper class:
+public static class Xml
+{
+    #region Fields
+
+    private static readonly XmlWriterSettings WriterSettings = new XmlWriterSettings {OmitXmlDeclaration = true, Indent = true};
+    private static readonly XmlSerializerNamespaces Namespaces = new XmlSerializerNamespaces(new[] {new XmlQualifiedName("", "")});
+
+    #endregion
+
+    #region Methods
+
+    public static string Serialize(object obj)
+    {
+        if (obj == null)
+        {
+            return null;
+        }
+
+        return DoSerialize(obj);
+    }
+
+    private static string DoSerialize(object obj)
+    {
+        using (var ms = new MemoryStream())
+        using (var writer = XmlWriter.Create(ms, WriterSettings))
+        {
+            var serializer = new XmlSerializer(obj.GetType());
+            serializer.Serialize(writer, obj, Namespaces);
+            return Encoding.UTF8.GetString(ms.ToArray());
+        }
+    }
+
+    public static T Deserialize<T>(string data)
+        where T : class
+    {
+        if (string.IsNullOrEmpty(data))
+        {
+            return null;
+        }
+
+        return DoDeserialize<T>(data);
+    }
+
+    private static T DoDeserialize<T>(string data) where T : class
+    {
+        using (var ms = new MemoryStream(Encoding.UTF8.GetBytes(data)))
+        {
+            var serializer = new XmlSerializer(typeof (T));
+            return (T) serializer.Deserialize(ms);
+        }
+    }
+
+    #endregion
+}
+
+:)
+
+If you want to remove the namespace you may also want to remove the version, to save you searching I've added that functionality so the below code will do both.
+I've also wrapped it in a generic method as I'm creating very large xml files which are too large to serialize in memory so I've broken my output file down and serialize it in smaller "chunks":
+    public static string XmlSerialize<T>(T entity) where T : class
+    {
+        // removes version
+        XmlWriterSettings settings = new XmlWriterSettings();
+        settings.OmitXmlDeclaration = true;
+
+        XmlSerializer xsSubmit = new XmlSerializer(typeof(T));
+        StringWriter sw = new StringWriter();
+        using (XmlWriter writer = XmlWriter.Create(sw, settings))
+        {
+            // removes namespace
+            var xmlns = new XmlSerializerNamespaces();
+            xmlns.Add(string.Empty, string.Empty);
+
+            xsSubmit.Serialize(writer, entity, xmlns);
+            return sw.ToString(); // Your XML
+        }
+    }
+

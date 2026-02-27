@@ -1,0 +1,73 @@
+Find out where your PHP code is slowing down (Performance Issue)
+php mysql performance profiling
+Here's my first question at SO.
+I have a internal application for my company which I've been recently ask to maintain. The applications is built in PHP and its fairly well coded (OO, DB Abstraction, Smarty) nothing WTF-ish. 
+The problem is the applications is very slow.
+How do I go about finding out what's slowing the application down? I've optimized the code to make very few DB queries, so I know that it is the PHP code which is taking a while to execute. I need to get some tools which can help me with this and need to devise a strategy for checking my code.
+I can do the checking/strategy work myself, but I need more PHP tools to figure out where my app is crapping up. 
+Thoughts?
+
+
+I've used XDebug profiling recently in a similiar situation. It outputs a full profile report that can be read with many common profiling apps ( Can't give you a list though, I just used the one that came with slackware ). 
+
+We use Zend Development Environment (windows). We resolved a memory usage spike yesterday by stepping through the debugger while running Process Explorer to watch the memory/cpu/disk activity as each line was executed. 
+Process Explorer: http://technet.microsoft.com/en-us/sysinternals/bb896653.aspx. 
+ZDE includes a basic performance profiler that can show time spent in each function call during page requests.
+
+I use a combination of PEAR Benchmark and log4php. 
+At the top of scripts I want to profile I create an object that wraps around a Benchmark_Timer object. Throughout the code, I add in $object->setMarker("name"); calls, especially around suspect code.
+The wrapper class has a destroy method that takes the logging information and writes it to log4php. I typically send this to syslog (many servers, aggregates to one log file on one server). 
+In debug, I can watch the log files and see where I need to improve things. Later on in production, I can parse the log files and do performance analysis.
+It's not xdebug, but it's always on and gives me the ability to compare any two executions of the code.
+
+As Juan mentioned, xDebug is excellent.  If you're on Windows, WinCacheGrind will let you look over the reports.
+
+Watch this presentation by Rasmus Lerdorf (creator of PHP). He goes into some good examples of testing PHP speed and what to look for as well as some internals that can slow things down. XDebug is one tool he uses. He also makes a very solid point about knowing what performance cost you're getting into with frameworks.
+Video:
+http://www.archive.org/details/simple_is_hard
+Slides (since it's hard to see on the video):
+http://talks.php.net/show/drupal08/1
+
+ifs its a large code base try apc if you're not already.
+http://pecl.php.net/package/APC
+
+phpED (http://www.nusphere.com/products/phped.htm) also offers great debugging and profiling, and the ability to add watches, breakpoints, etc in PHP code. The integrated profiler directly offers a time breakdown of each function call and class method from within the IDE. Browser plugins also enable quick integration with Firefox or IE (i.e. visit slow URL with browser, then click button to profile or debug).
+It's been very useful in pointing out where the app is slow in order to concentrate most coding effort; and it avoids wasting time optimising already fast code. Having tried Zend and Eclipse, I've now been sold on the ease of use of phpED.
+Bear in mind both Xdebug and phpED (with DBG) will require an extra PHP module installed when debugging against a webserver. phpED also offers (untried by me) a local debugging option too.
+
+you can also try using the register_tick_function function in php. which tells php to call a certain function periodcally through out your code. You could then keep track of which function is currently running and the amount of time between calls. then you could see what's taking the most time. 
+http://www.php.net/register_tick_function
+
+Xdebug profile is definitely the way to go.  Another tip - WincacheGrind is good, but not been updated recently.  http://code.google.com/p/webgrind/ - in a browser may be an easy and quick alternative.
+Chances are though, it's still the database anyway.  Check for relevant indexes - and that it has sufficient memory to cache as much of the working data as possible.
+
+There are many variables that can impact your application's performance. I recommend that you do not instantly assume PHP is the problem.
+First, how are you serving PHP? Have you tried basic optimization of Apache or IIS itself? Is the server busy processing other kinds of requests? Have you taken advantage of a PHP code accelerator? One way to test whether the server is your bottleneck is to try running the application on another server.
+Second, is performance of the entire application slow, or does it only seem to affect certain pages? This could give you an indication of where to start analyzing performance. If the entire application is slow, the problem is more likely in the underlying server/platform or with a global SQL query that is part of every request (user authentication, for example). 
+Third, you mentioned minimizing the number of SQL queries, but what about optimizing the existing queries? If you are using MySQL, are you taking advantage of the various strengths of each storage system? Have you run EXPLAIN on your most important queries to make sure they are properly indexed? This is critical on queries that access big tables; the larger the dataset, the more you will notice the effects of poor indexing. Luckily, there are many articles such as this one which explain how to use EXPLAIN.
+Fourth, a common mistake is to assume that your database server will automatically use all of the resources available to the system. You should check to make sure you have explicitly allocated sufficient resources to your database application. In MySQL, for example, you'll want to add custom settings (in your my.cnf file) for things like key buffer, temp table size, thread concurrency, innodb buffer pool size, etc.
+If you've double-checked all of the above and are still unable to find the bottleneck, a code profiler like Xdebug can definitely help. Personally, I prefer the Zend Studio profiler, but it may not be the best option unless you are already taking advantage of the rest of the Zend Platform stack. However, in my experience it is very rare that PHP itself is the root cause of slow performance. Often, a code profiler can help you determine with more precision which DB queries are to blame.
+
+Also You could use APD (Advanced PHP Debugger). 
+It's quite easy to make it work.
+$ php apd-test.php
+
+$ pprofp -l pprof.SOME_PID
+
+Trace for /Users/martin/develop/php/apd-test/apd-test.php
+Total Elapsed Time = 0.12
+Total System Time  = 0.01
+Total User Time    = 0.07
+
+
+         Real         User        System             secs/    cumm
+%Time (excl/cumm)  (excl/cumm)  (excl/cumm) Calls    call    s/call  Memory Usage Name
+--------------------------------------------------------------------------------------
+71.3 0.06 0.06  0.05 0.05  0.01 0.01  10000  0.0000   0.0000            0 in_array
+27.3 0.02 0.09  0.02 0.07  0.00 0.01  10000  0.0000   0.0000            0 my_test_function
+ 1.5 0.03 0.03  0.00 0.00  0.00 0.00      1  0.0000   0.0000            0 apd_set_pprof_trace
+ 0.0 0.00 0.12  0.00 0.07  0.00 0.01      1  0.0000   0.0000            0 main
+
+There is a nice tutorial how to compile APD and make profiling with it : http://martinsikora.com/compiling-apd-for-php-54
+
+You can also look at the HA Proxy or any other load balancing solution if your server degraded performance is the cause of the application slow processing. server. 

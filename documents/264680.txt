@@ -1,0 +1,214 @@
+Best way to automagically migrate tests from JUnit 3 to JUnit 4?
+java junit migration
+I have a bunch of JUnit 3 classes which extend TestCase and would like to automatically migrate them to be JUnit4 tests with annotations such as @Before, @After, @Test, etc.
+Any tool out there to do this in a big batch run?
+
+
+I don't know of a tool that would do this at the moment - I'd expect Eclipse to provide some plugin fairly shortly - but you could knock up a simple source tree exploring Java class that would do it for you if you only want to do a basic conversion. I had to write something similar to automatically generate skeleton test cases for a legacy application so I've got a fair amount of the support code already. You're welcome to use it. 
+
+There are, to my best knowledge, no available migration tools (yet). What I know is this:
+
+Last year, at OOPSLA in Nashville, was a paper about API migration but alas their tools seems not be openly available. I'll provide the link to the paper, (even though I dare it is of little use for you since it is rather theory heavy): "Annotation Refactoring: Inferring Upgrade Transformations for Legacy Applications".
+Above, I wrote "no available tool (yet)" because my student Lea HÃ¤nsenberger is currently working on an auotmated API migration from, not onyl, JUnit 4 a to JExample, but also from JUnit 3 to JUnit 4. Please follow JExample on Twitter to get notified when she releases a first beta.
+
+I hope this information was of help for you.
+
+In my opinion, it cannot be that hard. So let's try it:
+0. Imports
+You need to import three annotations:
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Test;`
+
+After you've made the next few changes, you won't need import junit.framework.TestCase;.
+1. Annotate test* Methods
+All methods beginning with public void test must be preceded by the @Test annotation.
+This task is easy with a regex.
+2. Annotate SetUp and TearDown methods
+Eclipse generates following setUp() method:
+@Override
+protected void setUp() throws Exception { }
+
+Must be replaced by:
+@Before
+public void setUp() throws Exception { }
+
+Same for tearDown():
+@Override
+protected void tearDown() throws Exception { }
+
+replaced by
+@After
+public void tearDown() throws Exception { }
+
+3. Get rid of extends TestCase
+Remove exactly one occurence per file of the string
+" extends TestCase"
+
+4. Remove main methods?
+Probably it's necessary to remove/refactor existing main methods that will execute the test.
+5. Convert suite() method to @RunWithClass
+According to saua's comment, there must be a conversion of the suite() method. Thanks, saua!
+@RunWith(Suite.class)
+@Suite.SuiteClasses({
+  TestDog.class
+  TestCat.class
+  TestAardvark.class
+})
+
+Conclusion
+I think, it's done very easy via a set of regular expressions, even if it will kill my brain ;)
+
+Nice post. I did the upgrade using Netbeans with the following RegEx strings:
+(First line search-string, second one replace-string)
+public void test
+@Test\n    public void test
+
+@Override\n.*protected void onSetUp
+@Before\n    protected void onSetUp
+
+@Override\n.*protected void onTearDown
+@After\n    protected void onTearDown
+
+Don't forget to flag the Regular Expression checkbox!
+
+Here are the actual regular expressions I used to execute furtelwart's suggestions:
+// Add @Test
+Replace:
+^[ \t]+(public +void +test)
+With:
+    @Test\n    $1
+Regular Expression: on
+Case sensitive: on
+File name filter:
+*Test.java
+
+// Remove double @Test's on already @Test annotated files
+Replace:
+^[ \t]+@Test\n[ \t]+@Test
+With:
+    @Test
+Regular Expression: on
+Case sensitive: on
+File name filter:
+*Test.java
+
+
+// Remove all empty setUp's
+Replace:
+^[ \*]+((public|protected) +)?void +setUp\(\)[^\{]*\{\s*(super\.setUp\(\);)?\s*\}\n([ \t]*\n)?
+With nothing
+Regular Expression: on
+Case sensitive: on
+File name filter:
+*Test.java
+
+// Add @Before to all setUp's
+Replace:
+^([ \t]+@Override\n)?[ \t]+((public|protected) +)?(void +setUp\(\))
+With:
+    @Before\n    public void setUp()
+Regular Expression: on
+Case sensitive: on
+File name filter:
+*Test.java
+
+// Remove double @Before's on already @Before annotated files
+Replace:
+^[ \t]+@Before\n[ \t]+@Before
+With:
+    @Before
+Regular Expression: on
+Case sensitive: on
+File name filter:
+*Test.java
+
+
+// Remove all empty tearDown's
+Replace:
+^[ \*]+((public|protected) +)?void +tearDown\(\)[^\{]*\{\s*(super\.tearDown\(\);)?\s*\}\n([ \t]*\n)?
+With nothing
+Regular Expression: on
+Case sensitive: on
+File name filter:
+*Test.java
+
+// Add @After to all tearDown's
+Replace:
+^([ \t]+@Override\n)?[ \t]+((public|protected) +)?(void +tearDown\(\))
+With:
+    @After\n    public void tearDown()
+Regular Expression: on
+Case sensitive: on
+File name filter:
+*Test.java
+
+// Remove double @After's on already @After annotated files
+Replace:
+^[ \t]+@After\n[ \t]+@After
+With:
+    @After
+Regular Expression: on
+Case sensitive: on
+File name filter:
+*Test.java
+
+
+// Remove old imports, add new imports
+Replace:
+^([ \t]*import[ \t]+junit\.framework\.Assert;\n)?[ \t]*import[ \t]+junit\.framework\.TestCase;
+With:
+import org.junit.After;\nimport org.junit.Before;\nimport org.junit.Test;\nimport static org.junit.Assert.*;
+Regular Expression: on
+Case sensitive: on
+File name filter:
+*Test.java
+
+
+// Remove all extends TestCase
+Replace:
+[ \t]+extends[ \t]+TestCase[ \t]+\{
+With:
+ {
+Regular Expression: on
+Case sensitive: on
+File name filter:
+*Test.java
+
+
+
+// Look for import junit.framework;
+Find:
+import junit\.framework
+Manually fix
+Regular Expression: on
+Case sensitive: on
+
+
+// Look for ignored tests (FIXME, disabled, ...)
+Find:
+public[ \t]+void[ \t]+\w+test
+Manually fix
+Regular Expression: on
+Case sensitive: on
+
+
+// Look for dummy/empty tests
+Find:
+public[ \t]+void[ \t]+test[\w\d]*\(\s*\)\s*\{\s*(//[^\n]*)?\s*\}
+Manually fix
+Regular Expression: on
+Case sensitive: on
+
+Note: it's important to do them in the order shown above.
+
+We are in the middle of migrating a reasonably large code base to JUnit4. Since this is the second time I'm doing a migration such as this, I decided to save the code somewhere:
+https://github.com/FranciscoBorges/junit3ToJunit4
+It deals with more corner cases than the ones enumerated in answers above. Such as:
+
+calls to TestCase.setUp() and TestCase.tearDown()
+calls to TestCase(String) constructor within a sub-class constructor
+calls to TestCase.assert* methods that moved to Assert.
+fixing package names junit.framework to org.junit
+etc
+

@@ -1,0 +1,59 @@
+How to version control the build tools and libraries?
+version-control build-process build-automation clearcase
+What are the recommendations for including your compiler, libraries, and other tools in your source control system itself?
+In the past, I've run into issues where, although we had all the source code, building an old version of the product was an exercise in scurrying around trying to get the exact correct configuration of Visual Studio, InstallShield and other tools (including the correct patch version) used to build the product.  On my next project, I'd like to avoid this by checking these build tools into source control, and then build using them. This would also simplify things in terms of setting up a new build machine -- 1) install our source control tool, 2) point at the right branch, and 3) build -- that's it.
+Options I've considered include:
+
+Copying the install CD ISO to source control - although this provides the backup we need if we have to go back to an older version, it isn't a good option for "live" use (each build would need to start with an install step, which could easily turn a 1 hour build into 3 hours).
+Installing the software to source control.  ClearCase maps your branch to a drive letter; we could install the software under this drive.  This doesn't take into account non-file part of installing your tools, like registry settings.
+Installing all the software and setting up the build process inside a virtual machine, storing the virtual machine in source control, and figuring out how to get the VM to do a build on boot.  While we capture the state of the "build machine" with ease, we get the overhead of a VM, and it doesn't help with the "make the same tools available to developers issue."
+
+It seems such a basic idea of configuration management, but I've been unable to track down any resources for how to do this.  What are the suggestions?
+
+
+My organisation has a "read-only" filesystem, where everything is put into releases and versions. Releaselinks (essentially symlinks) point to the version being used by your project. When a new version comes along it is just added to the filesystem and you can swing your symlink to it. There is full audit history of the symlinks, and you can create new symlinks for different versions.
+This approach works great on Linux, but it doesn't work so well for Windows apps that tend to like to use things local to the machine such as the registry to store things like configuration.
+
+I think the VM is your best solution.  We always used dedicated build machines to get consistency.  In the old COM DLL Hell days, there were dependencies on (COMCAT.DLL, anyone) on non-development software installed (Office).  Your first two options don't solve anything that has shared COM components.  If you don't have any shared components issue, maybe they will work.
+There is no reason the developers couldn't take a copy of the same VM to be able to debug in a clean environment.  Your issues would be more complex if there are a lot of physical layers in your architecture, like mail server, database server, etc.
+
+Are you using a continuous integration (CI) tool like NAnt to do your builds?
+As a .Net example, you can specify specific frameworks for each build.
+Perhaps the popular CI tool for whatever you're developing in has options that will allow you to avoid storing several IDEs in your version control system.
+
+I would definitely consider the legal/licensing issues surrounding the idea. Would it be permissible according to the various licenses of your toolchain?
+Have you considered ghosting a fresh development machine that is able to build the release, if you don't like the idea of a VM image? Of course, keeping that ghosted image running as hardware changes might be more trouble than it's worth...
+
+This is something that is very specific to your environment. That's why you won't see a guide to handle all situations. All the different shops I've worked for have handled this differently. I can only give you my opinion on what I think has worked best for me.
+
+Put everything needed to build the
+application on a new workstation
+under source control.
+Keep large
+applications out of source control,
+stuff like IDEs, SDKs, and database
+engines. Keep these in a directory as ISO files.
+Maintain a text document, with the source code, that has a list of the ISO files that will be needed to build the app.
+
+
+In many cases, you can force your build to use compilers and libraries checked into your source control rather than relying on global machine settings that won't be repeatable in the future. For example, with the C# compiler, you can use the /nostdlib switch and manually /reference all libraries to point to versions checked in to source control. And of course check the compilers themselves into source control as well.
+
+Following up on my own question, I came across this posting referenced in the answer to another question.  Although more of a discussion of the issue than an aswer, it does mention the VM idea.
+
+As for "figuring out how to build on boot": I've developed using a build farm system custom-created very quickly by one sysadmin and one developer. Build slaves query a taskmaster for suitable queued build requests. It's pretty nice.
+A request is 'suitable' for a slave if its toolchain requirements match the toolchain versions on the slave - including what OS, since the product is multi-platform and a build can include automated tests. Normally this is "the current state of the art", but doesn't have to be.
+When a slave is ready to build, it just starts polling the taskmaster, telling it what it's got installed. It doesn't have to know in advance what it's expected to build. It fetches a build request, which tells it to check certain tags out of SVN, then run a script from one of those tags to take it from there. Developers don't have to know how many build slaves are available, what they're called, or whether they're busy, just how to add a request to the build queue. The build queue itself is a fairly simple web app. All very modular.
+Slaves needn't be VMs, but usually are. The number of slaves (and the physical machines they're running on) can be scaled to satisfy demand. Slaves can obviously be added to the system any time, or nuked if the toolchain crashes. That'ss actually the main point of this scheme, rather than your problem with archiving the state of the toolchain, but I think it's applicable. 
+Depending how often you need an old toolchain, you might want the build queue to be capable of starting VMs as needed, since otherwise someone who wants to recreate an old build has to also arrange for a suitable slave to appear. Not that this is necessarily difficult - it might just be a question of starting the right VM on a machine of their choosing.
+
+Just a note on the versionning of libraries in your version control system:
+
+it is a good solution but it implies packaging (i.e. reducing the number of files of that library to a minimum)
+it does not solves the 'configuration aspect' (that is "what specific set of libraries does my '3.2' projects need ?").
+Do not forget that set will evolves with each new version of your project. UCM and its 'composite baseline' might give the beginning of an answer for that.
+
+The packaging aspect (minimum number of files) is important because:
+
+you do not want to access your libraries through the network (like though dynamic view), because the compilation times are much longer than when you use local accessed library files.
+you do want to get those library on your disk, meaning snapshot view, meaning downloading those files... and this is where you might appreciate the packaging of your libraries: the less files you have to download, the better you are ;)
+

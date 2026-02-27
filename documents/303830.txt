@@ -1,0 +1,117 @@
+what's the best way to parse a body of text against multiple (15+) regexes on each line?
+ruby regex performance parsing peg
+I have a body of text that I have to scan and each line contains at least 2 and sometimes four parts of information. The problem is that each line can be 1 out of 15-20 different actions.
+in ruby the current code looks somewhat like this:
+
+text.split("\n").each do |line|  #around 20 times..
+
+..............
+
+      expressions['actions'].each do |pat, reg| #around 20 times
+
+.................
+
+this obviously is 'THE PROBLEM'
+I did manage to make it faster (in c++ by a 50% margin) by combining all the regexen into one but that is still not the speed I require -- I need to parse thousands of these files FAST!
+Right now I match them with regexes -- however this is intolerably slow. I started with ruby and hopped over to c++ in hopes that I'd get a speed boost and it just isn't happening.
+I've casually read on PEGs and grammar based parsing but it looks somewhat difficult to implement. Is this the direction I should head or are there different routes?
+basically I'm parsing poker hand histories and each line of the hand history usually contains 2-3 bits of information that I need to collect:
+who the player was, how much money or what cards the action entailed.. etc..
+sample text that needs to be parsed:
+
+buriedtens posts $5
+The button is in seat #4
+*** HOLE CARDS ***
+Dealt to Mayhem 31337 [8s Ad]
+Sherwin7 folds
+OneMiKeee folds
+syhg99 calls $5
+buriedtens raises to $10
+
+after I collect this information each action is turned into an xml node
+right now my ruby implementation of this is much faster than my c++ one but that's prob. just cause I have not written in c code for well over 4-5 years
+UPDATE:
+I don't want to post all the code here but so far my hands/second look like the following:
+
+588 hands/second -- boost::spirit in c++
+60 hands/second -- 1 very long and complicated regex in c++ (all the regexen put together)
+33 hands/second -- normal regex style in ruby
+
+I'm currently testing antlr to see if we can go any further but as of right now I'm very very happy with spirit's results.
+Related question: Efficiently querying one string against multiple regexes.
+
+
+I would suggest 
+
+Boost Spirit or 
+Antlr if the grammar is complex; 
+Xpressive if it's a little simpler,
+Tokenizer and handmade code if it's trivial. 
+
+Good luck
+
+Boost.Spirit is a fantastic library that allows you to make detailed parser analysis, and since the parser is generated and compiled right into your code, should be much faster than a dynamically-calculated solution. The syntax is mostly done with expression templates (a fancy term for lots of overloaded operators), which means you actually write them right into your code.
+
+See Regular Expression Matching Can Be Simple And Fast 
+(but is slow in Java, Perl, PHP, Python, Ruby, ...). Depending on the volume of your data and how complex your regex is, it might be just faster to write your own parsing logic.
+
+Do the regular expression matches ever overlap?  That is, when two or more regexes match the same line, do they always match different parts of the line (no overlap)?
+If the matches never overlap, run your search using one regular expression that combines the 15 regexes you have now:
+regex1|regex2|regex3|...|regex15
+
+Use capturing groups if you need to be able to determine which of the 15 regexes matched.
+Searching your data once for a long regex will be faster than searching it 15 times.  How much faster depends on the regex engine you're using and the complexity of your regular expressions.
+
+Here is one way of doing it, if you were using Perl.
+copied from perldoc perlfaq6
+while (<>) {
+	chomp;
+	PARSER: {
+		m/ \G( \d+\b    )/gcx   && do { print "number: $1\n";  redo; };
+		m/ \G( \w+      )/gcx   && do { print "word:   $1\n";  redo; };
+		m/ \G( \s+      )/gcx   && do { print "space:  $1\n";  redo; };
+		m/ \G( [^\w\d]+ )/gcx   && do { print "other:  $1\n";  redo; };
+	}
+}
+
+For each line, the PARSER loop first tries to match a series of digits followed by a word boundary. This match has to start at the place the last match left off (or the beginning of the string on the first match). Since m/ \G( \d+\b )/gcx uses the c flag, if the string does not match that regular expression, perl does not reset pos() and the next match starts at the same position to try a different pattern.
+
+Try a simple test in Perl.  Read about the "study" function.  What I might try is:
+
+Read the entire file or a large number of lines if these files are very large into a single string
+Add a line number to the beginning of each line as you go.
+"study" the string.  This builds a lookup table by character, can be large.
+Run regular expression matches on the string, bounded by newlines (use the m and s regex modifiers).  The expression should extract the line number along with the data.
+Set an array item indexed by line number to the data found on that line, or do something even smarter.
+Finally you can process the data stored in the array.
+
+I have not tried it, but it might be interesting.
+
+Another idea if you have a spiffy quad or oct core server to use for this.
+Build a processing pipeline that divides out the work.  Stage One could cut files into one game or hand each, then write each one to one of the eight Stage Two pipes which read the data, process it and produce output somehow, probably to a database on another machine.
+In my experience these pipe based multi-process designs are nearly as fast and much easier to debug than multi-threading designs.  It would also be easy to set up a cluster of machines using network sockets instead of pipes.
+
+OK, this makes things clearer (Poker hand histories).  I guess that you are making a statistics tool (aggression factor, went to showdown, voluntarily put $ into pot etc.).  I am not sure why you need excessive speeds for that; even if you are multitabling with 16 tables, the hands should only tickle in at a moderate rate.
+I don't know Ruby, but in Perl I'd do a little switch statement, at the same time as getting the significant parts into $1, $2 etc..  In my experience, this is not slower than making string comparisons and then splitting the line with other means.
+HAND_LINE: for ($Line)
+    { /^\*\*\* ([A-Z ]+)/ and do 
+        { # parse the string that is captured in $1
+          last HAND_LINE; };
+      /^Dealt to (.+) \[(.. ..)\]$/ and do
+        { # $1 contains the name, $2 contains the cards as string
+          last HAND_LINE; };
+      /(.+) folds$/ and do
+        { # you get the drift
+          last HAND_LINE; }; };
+
+I do no think that you can really make it faster.  Put the checks for the lines that occur the most at a first position (likely the fold statements) and those that only occur sparsely at last (starting new hand, "*** NEXT PHASE ***").
+If you find out that the actual file reading is a bottleneck, you can perhaps take a look at what modules you can use to address large files; for Perl, Tie::File comes to mind.
+Make sure that you read each hand only once.  Do not read all data again after each hand, instead keep e.g. a hash table of the hand IDs already parsed.
+
+
+I've casually read on PEGs and grammar based parsing but it looks somewhat difficult to implement. Is this the direction I should head or are there different routes?
+
+Personally I've grown to love PEGs. It will perhaps take a bit to get comfortable with them, however I think they're so much more maintainable that it's a clear win. I find parsing code  is the source of a lot of unexpected bugs as you find new edge cases in inputs. Declarative grammars with nonterminals are easier for me to update when this happens compared to loop and condition heavy regex code. Naming is powerful.
+In Ruby there's Treetop which is a parser generator that uses PEGs. I recently found it quite pleasant in replacing a regex heavy hand written parser with a short grammar.
+
+For a problem like this, I'd just close my eyes and use a Lexer+Parser generator. You can beat that with hand-optimization probably, but it is much easier to use a generator. Also, it is way more flexible when the input suddenly changes.

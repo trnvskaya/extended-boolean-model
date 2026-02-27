@@ -1,0 +1,24 @@
+Does NetworkStream.DataAvailable see buffered data?
+.net stream networkstream
+Does NetworkStream.DataAvialable know whether the sender's send buffer is empty? Or does it simply indicate whether the receiver's read buffer has data? My assumption is the latter...
+Specifically, for some socket work involving an ongoing conversation, I currently use a length-prefix so the the receiver knows exactly how much data is in the current batch; however, I've been sent a .patch suggesting I use NetworkStream.DataAvailable instead. My concern is that this will just tell me what the reciever has got - not what the sender originally sent - but I'm not a sockets expert.
+Am I wrong? Or is length-prefix the way to go?
+(note I can't simply Read() until the stream is closed, since multiple batches are sent on the same connection, and it is vital that I treat each batch as separate; if I read too much in one batch (even if it gets buffered and discarded) then the conversation will break).
+
+
+One side of a connection is not going to know whether the other side's send buffer is empty.
+DataAvailable only indicates whether there is incoming data to be read. You could use that prior to Read(), but it alone doesn't give you the information you want. It doesn't tell you the beginning and ending of each batch.
+I've coded back-and-forth conversation before, and I used length-prefixes in the data. What I did was write helper functions that read an exact number of bytes (chunks at a time) and no more.
+The only alternative to length-of-batch values in the stream is some way of examining the incoming data and recognizing the beginnings and endings of batches.
+
+If you are needing to know when the receiver has received all of the data for a particular message then you definitely need to length prefix.
+I typically define a struct similar to this that goes out at the front of any binary messages i send.
+struct Header
+{
+  int packetIdentifier;
+  int protocolVersion;
+  int messageType;
+  int payloadSize;
+}
+
+The identifier lets you determine if you have a valid message of your protocol type.  The version lets you revision your protocol.  The message type is the type of message (ie: CommsOnline).  The payload size is the size of the body of the message.

@@ -1,0 +1,61 @@
+Acegi Security: How do i add another GrantedAuthority to Authentication to anonymous user
+spring-security roles anonymous
+i give users special URL with access key in it. users accessing the public page via this special url should be able to see some additional data as compared to simple anonymous user. 
+i want to give some additional role to anonymous user based on parameters provided in request so i can do something like this in my template:
+<@sec.authorize ifAnyGranted="ROLE_ADMIN, ROLE_USER, ROLE_INVITED_VISITOR">
+...some additional stuff for invited user to see
+</@sec.authorize>
+
+currently i'm implementing Spring's OncePerRequestfilter:
+protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
+    if (null != request.getParameter("accessKey")) {
+        if(isValid(request.getParameter("accessKey"))) {
+            Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+            //how do i add additional roles to authenticated (potentially anonymous) user?
+        }
+    }
+}
+
+
+
+Why not just create a wrapper class that delegates to the original, but adds on a couple of extra GrantedAuthorities:
+public class AuthenticationWrapper implements Authentication
+{
+   private Authentication original;
+   private GrantedAuthority[] extraRoles;
+
+   public AuthenticationWrapper( Authentication original, GrantedAuthority[] extraRoles )
+   {
+      this.original = original;
+      this.extraRoles = extraRoles;
+   }
+
+   public GrantedAuthority[] getAuthorities()
+   {
+      GrantedAuthority[] originalRoles = original.getAuthorities();
+      GrantedAuthority[]  roles = new GrantedAuthority[originalRoles.length + extraRoles.length];
+      System.arraycopy( originalRoles, 0, roles, 0, originalRoles.length );
+      System.arraycopy( extraRoles, 0, roles, originalRoles.length, extraRoles.length );
+      return roles;
+   }
+
+   public String getName() { return original.getName(); }
+   public Object getCredentials() { return original.getCredentials(); }
+   public Object getDetails() { return original.getDetails(); }   
+   public Object getPrincipal() { return original.getPrincipal(); }
+   public boolean isAuthenticated() { return original.isAuthenticated(); }
+   public void setAuthenticated( boolean isAuthenticated ) throws IllegalArgumentException
+   {
+      original.setAuthenticated( isAuthenticated );
+   }  
+}
+
+and then do this in your filter:
+Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+GrantedAuthority extraRoles = new GrantedAuthority[2];
+extraRoles[0] = new GrantedAuthorityImpl( "Role X" );
+extraRoles[1] = new GrantedAuthorityImpl( "Role Y" );
+AuthenticationWrapper wrapper = new AuthenticationWrapper( auth, extraRoles );
+SecurityContextHolder.getContext().setAuthentication( wrapper );
+
+The Authentication is now replaced by your version with the extra roles. NB You may have to handle the case where the Authentication has not yet been authenticated and so its getAuthorities() returns null. (The wrapper implementation currently assumes that it will always get a non-null array from its wrapped Authentication)

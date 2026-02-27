@@ -1,0 +1,68 @@
+Why can't I use a type argument in a type parameter with multiple bounds?
+java generics constraints
+So, I understand that the following doesn't work, but why doesn't it work?
+interface Adapter<E> {}
+
+class Adaptulator<I> {
+    <E, A extends I & Adapter<E>> void add(Class<E> extl, Class<A> intl) {
+        addAdapterFactory(new AdapterFactory<E, A>(extl, intl));
+    }
+}
+
+The add() method gives me a compile error, "Cannot specify any additional bound Adapter<E> when first bound is a type parameter" (in Eclipse), or "Type parameter cannot be followed by other bounds" (in IDEA), take your pick.
+Clearly you're just Not Allowed to use the type parameter I there, before the &, and that's that. (And before you ask, it doesn't work if you switch 'em, because there's no guarantee that I isn't a concrete class.) But why not? I've looked through Angelika Langer's FAQ and can't find an answer.
+Generally when some generics limitation seems arbitrary, it's because you've created a situation where the type system can't actually enforce correctness. But I don't see what case would break what I'm trying to do here. I'd say maybe it has something to do with method dispatch after type erasure, but there's only one add() method, so it's not like there's any ambiguity...
+Can someone demonstrate the problem for me?
+
+
+This probably does not answer the root question, but just want to point out that the spec unambiguously forbids it. Google search for the error message took me to this blog entry, which further points to jls 4.4:
+
+The bound consists of either a type variable, or a class or interface type T possibly followed by further interface types I1 , ..., In.
+
+So, if you use type parameter as bound you cannot use any other bound, just as the error message says. 
+Why the restriction? I have no idea.
+
+I'm also not sure why the restriction is there. You could try sending a friendly e-mail to the designers of Java 5 Generics (chiefly Gilad Bracha and Neal Gafter).
+My guess is that they wanted to support only an absolute minimum of intersection types (which is what multiple bounds essentially are), to make the language no more complex than needed. An intersection cannot be used as a type annotation; a programmer can only express an intersection when it appears as the upper bound of a type variable.
+And why was this case even supported? The answer is that multiple bounds allow you to control the erasure, which allows to maintain binary compatibility when generifying existing classes. As explained in section 17.4 of the book by Naftalin and Wadler, a max method would logically have the following signature:
+public static <T extends Comparable<? super T>> T max(Collection<? extends T> coll)
+
+However, this erases to:
+public static Comparable max(Collection coll)
+
+Which does not match the historical signature of max, and causes old clients to break.
+With multiple bounds, only the left-most bound is considered for the erasure, so if max is given the following signature:
+public static <T extends Object & Comparable<? super T>> T max(Collection<? extends T> coll)
+
+Then the erasure of its signature becomes:
+public static Object max(Collection coll)
+
+Which is equal to the signature of max before Generics.
+It seems plausible that the Java designers only cared about this simple case and restricted other (more advanced) uses of intersection types because they were just unsure of the complexity that it might bring. So the reason for this design decision does not need to be a possible safety problem (as the question suggests).
+More discussion on intersection types and restrictions of generics in an upcoming OOPSLA paper.
+
+Here's another quote from JLS:
+
+The form of a bound is restricted (only the first element may be a class or type variable, and only one type variable may appear in the bound) to preclude certain awkward situations coming into existence.  
+
+What exactly are those awkward situations, I don't know.
+
+Two possible reasons for outlawing this:
+
+Complexity.  Sun bug 4899305 suggests that a bound containing a type parameter plus additional parameterized types would allow for even more complicated mutually recursive types than already exist.  In short, Bruno's answer.
+The possibility of specifying illegal types.  Specifically, extending a generic interface twice with different parameters.  I can't come up with a non-contrived example, but:  /** Contains a Comparator<String> that also implements the given type T. */
+class StringComparatorHolder<T, C extends T & Comparator<String>> {
+  private final C comparator;
+  // ...
+}
+ 
+void foo(StringComparatorHolder<Comparator<Integer>, ?> holder) { ... }
+
+Now holder.comparator is a Comparator<Integer> and a Comparator<String>.  It's not clear to me exactly how much trouble this would cause for the compiler, but it's clearly not good.  Suppose in particular that Comparator had a method like this:void sort(List<? extends T> list);
+Our Comparator<Integer> / Comparator<String> hybrid now has two methods with the same erasure:void sort(List<? extends Integer> list);
+void sort(List<? extends String> list);
+It's for these kinds of reasons that you can't specify such a type directly:
+<T extends Comparator<Integer> & Comparator<String>> void bar() { ... }
+java.util.Comparator cannot be inherited with different arguments:
+    <java.lang.Integer> and <java.lang.String>
+Since <A extends I & Adapter<E>> allows you to do the same thing indirectly, it's out, too.

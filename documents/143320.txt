@@ -1,0 +1,169 @@
+Create cronjob with Zend Framework
+php zend-framework cron command-line-interface
+I am trying to write a cronjob controller, so I can call one website and have all modules cronjob.php executed. Now my problem is how do I do that?
+Would curl be an option, so I also can count the errors and successes?
+[Update]
+I guess I have not explained it enough. 
+What I want to do is have one file which I can call like from http://server/cronjob and then make it execute every /application/modules/*/controller/CronjobController.php or have another way of doing it so all the cronjobs aren't at one place but at the same place the module is located. This would offer me the advantage, that if a module does not exist it does not try to run its cronjob.
+Now my question is how would you execute all the modules CronjobController or would you do it a completly different way so it still stays modular?
+And I want to be able to giveout how many cronjobs ran successfully and how many didn't
+
+
+I would caution putting your cronjobs accessible to the public because they could be triggered outside their normal times and, depending on what they do, cause problems (I know that is not what you intend, but by putting them into an actual controller it becomes reachable from the browser). For example, I have one cron that sends e-mails. I would be spammed constantly if someone found the cron URL and just began hitting it.
+What I did was make a cron folder and in there created a heartbeat.php which bootstraps Zend Framework (minus MVC) for me. It checks a database which has a list of all the installed cron jobs and, if it is time for them to run, generates an instances of the cron job's class and runs it.
+The cron jobs are just child classes from an abstract cron class that has methods like install(), run(), deactivate(), etc.
+To fire off my job I just have a simple crontab entry that runs every 5 minutes that hits heartbeat.php. So far it's worked wonderful on two different sites.
+
+Someone mentioned this blog entry a couple days ago on fw-general (a mailinglist which I recommend reading when you use the Zend Framework).
+There is also a proposal for Zend_Controller_Request_Cli, which should address this sooner or later.
+
+http://framework.zend.com/wiki/display/ZFPROP/Zend_Scheduler+-+Matthew+Ratzloff?rootCommentId=1819 this link I found by googleing seems to be pretty interessting aswell. 
+Its not quiet what I am looking for but if I can't seem to find what I was looking for I will have to myself.
+
+Do you have filesystem access to the modules' directories? You could iterate over the directories and determine where a CronjobController.php is available. Then you could either use Zend_Http_Client to access the controller via HTTP or use an approach like Zend_Test_PHPUnit: simulate the actual dispatch process locally.
+
+You could set up a database table to hold references to the cronjob scripts (in your modules), then use a exec command with a return value on pass/fail. 
+
+Why not just create a crontab.php, including, or requiring the index.php bootstrap file? 
+Considering that the bootstrap is executing Zend_Loader::registerAutoload(), you can start working directly with the modules, for instance, myModules_MyClass::doSomething();
+That way you are skipping the controllers. The Controller job is to control the access via http. In this case, you don't need the controller approach because you are accessing locally.
+
+After some research and a lot procrastination I came to the simple conclusion that a ZF-ized cron script should contain all the functionality of you zend framework app - without all the view stuff.  I accomplished this by creating a new cronjobfoo.php file in my application directory. Then I took the bare minimum from:
+-my front controller (index.php) 
+-my bootstrap.php
+I took out all the view stuff and focused on keeping the environment setup, db setup, autoloader, & registry setup.  I had to take a little time to correct the document root variable and remove some of the OO functionality copied from my bootstrap.
+After that I just coded away.. in my case it was compiling and emailing out nightly reports.  It was great to use Zend_Mail. When I was confident that my script was working the way I wanted, I just added it my crontab.
+good luck!
+
+For Zend Framework I am currently using the code outlined bellow. The script only includes the portal file index.php, where all the paths, environment and other Zendy code is bootstrapped. By defining a constant in the cron script we cancel the final step , where the application is run.
+This means the application is only setup, not even bootstrapped. At this point we start bootstraping the resources we need and that is that
+//public/index.php
+
+if(!defined('DONT_RUN_APP') || DONT_RUN_APP == false) {  
+    $application->bootstrap()->run();
+}
+
+// application/../cron/cronjob.php
+
+define("DONT_RUN_APP",true);
+require(realpath('/srv/www/project/public/index.php'));
+$application->bootstrap('config');
+$application->bootstrap('db');
+
+//cron code follows
+
+
+Take a look at zf-cli:
+
+scripts at master from padraic/ZFPlanet - GitHub
+
+This handles well all cron jobs.
+
+I extended gregor answer with this post. This is what came out:
+//public/index.php 
+
+// Run application, only if not started from command line (cli)
+if (php_sapi_name() != 'cli' || !empty($_SERVER['REMOTE_ADDR'])) {
+    $application->run();
+}
+
+Thanks gregor!
+
+My solution:
+
+curl /cron
+Global cron method will include_once all controllers
+Check whether each of the controllors has ->cron method
+If they have, run those.
+
+Public cron url (for curl) is not a problem, there are many ways to avoid abuse. As said, checking remote IP is the easiest.
+
+I have access to a dedicated server and I initially had a different bootstrap for the cron jobs. I eventually hated the idea, just wishing I could do this within the existing MVC setup and not have to bother about moving things around.
+I created a file cron.sh, saved is within my site root (not public) and in it I put a series of commands I would like to run. As I wanted to run many commands at once I wrote the PHP within my controllers as usual and added curl calls to those urls within cron.sh. for example curl http://www.mysite.com/cron_controller/action Then on the cron interface I ran bash /path/to/cron.sh. 
+As pointed out by others your crons can be fired by anyone who guesses the url so there's always that caveat. You can find a solution to that in many different ways.
+
+This is my way to run Cron Jobs with Zend Framework
+In Bootstrap I will keep environment setup as it is minus MVC:
+public static function setupEnvironment()
+{
+     ...
+     self::setupFrontController();
+     self::setupDatabase();
+     self::setupRoutes();
+     ...
+     if (PHP_SAPI !== 'cli') { 
+          self::setupView();
+          self::setupDbCaches();
+     }
+     ...
+}
+
+Also in Bootstrap, I will modify setupRoutes and add a custom route:
+public function setupRoutes()
+{   
+    ...
+    if (PHP_SAPI == 'cli') { 
+        self::$frontController->setRouter(new App_Router_Cli());
+        self::$frontController->setRequest(new Zend_Controller_Request_Http());        
+    }
+}
+
+App_Router_Cli is a new router type which determines the controller, action, and optional parameters based on this type of request: script.php controller=mail action=send. I found this new router here: Setting up Cron with Zend Framework 1.11
+:
+class App_Router_Cli extends Zend_Controller_Router_Abstract 
+{
+    public function route (Zend_Controller_Request_Abstract $dispatcher) 
+    {
+        $getopt = new Zend_Console_Getopt (array());
+        $arguments = $getopt->getRemainingArgs();
+        $controller = "";
+        $action = "";
+        $params = array();
+
+        if ($arguments) {
+
+            foreach($arguments as $index => $command) {
+
+                $details = explode("=", $command);
+
+                if($details[0] == "controller") {
+                    $controller = $details[1];
+                } else if($details[0] == "action") {
+                    $action = $details[1];
+                } else {
+                    $params[$details[0]] = $details[1];
+                }
+            }
+
+            if($action == "" || $controller == "") {
+                die("Missing Controller and Action Arguments == You should have: 
+                     php script.php controller=[controllername] action=[action]");
+            }
+            $dispatcher->setControllerName($controller);
+            $dispatcher->setActionName($action);
+            $dispatcher->setParams($params);
+
+            return $dispatcher;
+        }
+        echo "Invalid command.\n", exit;
+        echo "No command given.\n", exit;
+    }
+
+    public function assemble ($userParams, $name = null, $reset = false, $encode = true)
+    {
+        throw new Exception("Assemble isnt implemented ", print_r($userParams, true));
+    }
+}
+
+In CronController I do a simple check:
+public function sendEmailCliAction()
+{   
+    if (PHP_SAPI != 'cli' || !empty($_SERVER['REMOTE_ADDR'])) { 
+        echo "Program cannot be run manually\n";
+        exit(1);
+    } 
+    // Each email sent has its status set to 0;
+
+Crontab runs a command of this kind:
+    * * * * * php /var/www/projectname/public/index.php controller=name action=send-email-cli >> /var/www/projectname/application/data/logs/cron.log
+

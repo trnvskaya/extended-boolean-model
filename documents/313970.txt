@@ -1,0 +1,350 @@
+How to convert std::string to lower case?
+c++ string c++-standard-library
+I want to convert a std::string to lowercase. I am aware of the function tolower(), however in the past I have had issues with this function and it is hardly ideal anyway as use with a string would require iterating over each character.
+Is there an alternative which works 100% of the time?
+
+
+There is a Boost string algorithm for this:
+#include <boost/algorithm/string.hpp>    
+
+std::string str = "HELLO, WORLD!";
+boost::algorithm::to_lower(str);
+
+
+From http://notfaq.wordpress.com/2007/08/04/cc-convert-string-to-upperlower-case/:
+#include <algorithm>
+#include <string> 
+
+std::string data = "Abc"; 
+std::transform(data.begin(), data.end(), data.begin(), ::tolower);
+
+You're really not going to get away with not iterating through each character.  There's no way to know whether the character is lowercase or uppercase otherwise.
+If you really hate tolower(), here's a non-portable alternative that I don't recommend you use:
+char easytolower(char in){
+  if(in<='Z' && in>='A')
+    return in-('Z'-'z');
+  return in;
+} 
+
+std::transform(data.begin(), data.end(), data.begin(), easytolower);
+
+Be aware that ::tolower() can only do a per-single-byte-character substitution, which is ill-fitting for many scripts, especially if using a multi-byte-encoding like UTF-8.
+
+As far as I see Boost libraries are really bad performance-wise. I have tested their unordered_map to STL and it was average 3 times slower (best case 2, worst was 10 times). Also this algorithm looks too low.
+The difference is so big that I am sure whatever addition you will need to do to tolower to make it equal to boost "for your needs" will be way faster than boost.
+I have done these tests on an Amazon EC2, therefore performance varied during the test but you still get the idea.
+./test
+Elapsed time: 12365milliseconds
+Elapsed time: 1640milliseconds
+./test
+Elapsed time: 26978milliseconds
+Elapsed time: 1646milliseconds
+./test
+Elapsed time: 6957milliseconds
+Elapsed time: 1634milliseconds
+./test
+Elapsed time: 23177milliseconds
+Elapsed time: 2421milliseconds
+./test
+Elapsed time: 17342milliseconds
+Elapsed time: 14132milliseconds
+./test
+Elapsed time: 7355milliseconds
+Elapsed time: 1645milliseconds
+
+-O2 made it like this:
+./test
+Elapsed time: 3769milliseconds
+Elapsed time: 565milliseconds
+./test
+Elapsed time: 3815milliseconds
+Elapsed time: 565milliseconds
+./test
+Elapsed time: 3643milliseconds
+Elapsed time: 566milliseconds
+./test
+Elapsed time: 22018milliseconds
+Elapsed time: 566milliseconds
+./test
+Elapsed time: 3845milliseconds
+Elapsed time: 569milliseconds
+
+Source:
+string str;
+bench.start();
+for(long long i=0;i<1000000;i++)
+{
+    str="DSFZKMdskfdsjfsdfJDASFNSDJFXCKVdnjsafnjsdfjdnjasnJDNASFDJDSFSDNJjdsanjfsdnfjJNFSDJFSD";
+    boost::algorithm::to_lower(str);
+}
+bench.end();
+
+bench.start();
+for(long long i=0;i<1000000;i++)
+{
+    str="DSFZKMdskfdsjfsdfJDASFNSDJFXCKVdnjsafnjsdfjdnjasnJDNASFDJDSFSDNJjdsanjfsdnfjJNFSDJFSD";
+    for(unsigned short loop=0;loop < str.size();loop++)
+    {
+        str[loop]=tolower(str[loop]);
+    }
+}
+bench.end();
+
+I guess I should to the tests on a dedicated machine but I will be using this EC2 so I do not really need to test it on my machine.
+
+If the string contains UTF-8 characters outside of the ASCII range, then boost::algorithm::to_lower will not convert those. Better use boost::locale::to_lower when UTF-8 is involved. See http://www.boost.org/doc/libs/1_51_0/libs/locale/doc/html/conversions.html
+
+This is a follow-up to Stefan Mai's response: if you'd like to place the result of the conversion in another string, you need to pre-allocate its storage space prior to calling std::transform. Since STL stores transformed characters at the destination iterator (incrementing it at each iteration of the loop), the destination string will not be automatically resized, and you risk memory stomping.
+#include <string>
+#include <algorithm>
+#include <iostream>
+
+int main (int argc, char* argv[])
+{
+  std::string sourceString = "Abc";
+  std::string destinationString;
+
+  // Allocate the destination space
+  destinationString.resize(sourceString.size());
+
+  // Convert the source string to lower case
+  // storing the result in destination string
+  std::transform(sourceString.begin(),
+                 sourceString.end(),
+                 destinationString.begin(),
+                 ::tolower);
+
+  // Output the result of the conversion
+  std::cout << sourceString
+            << " -> "
+            << destinationString
+            << std::endl;
+}
+
+
+//You can really just write one on the fly whenever you need one.
+#include <string>
+void _lower_case(std::string& s){
+for(unsigned short l = s.size();l;s[--l]|=(1<<5));
+}
+//Here is an example.
+//http://ideone.com/mw2eDK
+
+
+An alternative to Boost is POCO (pocoproject.org).
+POCO provides two variants:
+
+The first variant makes a copy without altering the original string.
+The second variant changes the original string in place. 
+"In Place" versions always have "InPlace" in the name. 
+
+Both versions are demonstrated below:
+#include "Poco/String.h"
+using namespace Poco;
+
+std::string hello("Stack Overflow!");
+
+// Copies "STACK OVERFLOW!" into 'newString' without altering 'hello.'
+std::string newString(toUpper(hello));
+
+// Changes newString in-place to read "stack overflow!"
+toLowerInPlace(newString);
+
+
+Using range-based for loop of C++11 a simpler code would be :
+#include <iostream>       // std::cout
+#include <string>         // std::string
+#include <locale>         // std::locale, std::tolower
+
+int main ()
+{
+  std::locale loc;
+  std::string str="Test String.\n";
+
+ for(auto elem : str)
+    std::cout << std::tolower(elem,loc);
+}
+
+
+There is a way to convert upper case to lower WITHOUT doing if tests, and it's pretty straight-forward. The isupper() function/macro's use of clocale.h should take care of problems relating to your location, but if not, you can always tweak the UtoL[] to your heart's content. 
+Given that C's characters are really just 8-bit ints (ignoring the wide character sets for the moment) you can create a 256 byte array holding an alternative set of characters, and in the conversion function use the chars in your string as subscripts into the conversion array. 
+Instead of a 1-for-1 mapping though, give the upper-case array members the BYTE int values for the lower-case characters. You may find islower() and isupper() useful here. 
+
+The code looks like this...
+#include <clocale>
+static char UtoL[256];
+// ----------------------------------------------------------------------------
+void InitUtoLMap()  {
+    for (int i = 0; i < sizeof(UtoL); i++)  {
+        if (isupper(i)) {
+            UtoL[i] = (char)(i + 32);
+        }   else    {
+            UtoL[i] = i;
+        }
+    }
+}
+// ----------------------------------------------------------------------------
+char *LowerStr(char *szMyStr) {
+    char *p = szMyStr;
+    // do conversion in-place so as not to require a destination buffer
+    while (*p) {        // szMyStr must be null-terminated
+        *p = UtoL[*p];  
+        p++;
+    }
+    return szMyStr;
+}
+// ----------------------------------------------------------------------------
+int main() {
+    time_t start;
+    char *Lowered, Upper[128];
+    InitUtoLMap();
+    strcpy(Upper, "Every GOOD boy does FINE!");
+
+    Lowered = LowerStr(Upper);
+    return 0;
+}
+
+This approach will, at the same time, allow you to remap any other characters you wish to change. 
+This approach has one huge advantage when running on modern processors, there is no need to do branch prediction as there are no if tests comprising branching. This saves the CPU's branch prediction logic for other loops, and tends to prevent pipeline stalls. 
+Some here may recognize this approach as the same one used to convert EBCDIC to ASCII.
+
+tl;dr
+Use the ICU library.
+
+First you have to answer a question: What is the encoding of your std::string? Is it ISO-8859-1? Or perhaps ISO-8859-8? Or Windows Codepage 1252? Does whatever you're using to convert upper-to-lowercase know that? (Or does it fail miserably for characters over 0x7f?)
+If you are using UTF-8 (the only sane choice among the 8-bit encodings) with std::string as container, you are already deceiving yourself into believing that you are still in control of things, because you are storing a multibyte character sequence in a container that is not aware of the multibyte concept. Even something as simple as .length() is lying to you, and .substr() is a ticking timebomb. (Because splitting a multibyte sequence will result in an invalid (sub-) string.)
+And as soon as you try something like std::toupper( 'Ã' ), in any encoding, you are in deep trouble. (Because it's simply not possible to do this "right" with the standard library, which can only deliver one result character, not the "SS" needed here.) Another example would be std::tolower( 'I' ), which should yield different results depending on the locale. In Germany, 'i' would be correct; in Turkey, 'Ä±' (LATIN SMALL LETTER DOTLESS I) is the expected result.
+Then there is the point that the standard library is depending on which locales are supported on the machine your software is running on... and what do you do if it isn't?
+So what you are really looking for is a string class that is capable of dealing with all this correctly, and that is not std::string.
+(C++11 note: std::u16string and std::u32string are better, but still not perfect.)
+While Boost looks nice, API wise, Boost.Locale is basically a wrapper around ICU. If Boost is compiled with ICU support... if it isn't, Boost.Locale is limited to the locale support compiled for the standard library.
+And believe me, getting Boost to compile with ICU can be a real pain sometimes. (There are no pre-compiled binaries for Windows, so you'd have to supply them together with your application, and that opens a whole new can of worms...)
+So personally I would recommend getting full Unicode support straight from the horse's mouth and using the ICU library directly:
+#include <unicode/unistr.h>
+#include <unicode/ustream.h>
+#include <unicode/locid.h>
+
+#include <iostream>
+
+int main()
+{
+    char const * someString = "Eidenges\xe4\xdf";
+    icu::UnicodeString someUString( someString, "ISO-8859-1" );
+    std::cout << someUString.toLower( "de_DE" ) << "\n";
+    std::cout << someUString.toUpper( "de_DE" ) << "\n";
+    return 0;
+}
+
+Compile (with G++ in this example):
+g++ -Wall example.cpp -licuuc -licuio
+
+This gives:
+eidengesÃ¤Ã
+EIDENGESÃSS
+
+
+I tried std::transform, all i get is abominable stl criptic compilation error that only druids from 200 years ago can understand  (cannot convert from to flibidi flabidi flu)
+this works fine and can be easily tweaked
+string LowerCase(string s)
+{
+    int dif='a'-'A';
+    for(int i=0;i<s.length();i++)
+    {
+        if((s[i]>='A')&&(s[i]<='Z'))
+            s[i]+=dif;
+    }
+   return s;
+}
+
+string UpperCase(string s)
+{
+   int dif='a'-'A';
+    for(int i=0;i<s.length();i++)
+    {
+        if((s[i]>='a')&&(s[i]<='z'))
+            s[i]-=dif;
+    }
+   return s;
+}
+
+
+On microsoft platforms you can use the strlwr family of functions: http://msdn.microsoft.com/en-us/library/hkxwh33z.aspx
+// crt_strlwr.c
+// compile with: /W3
+// This program uses _strlwr and _strupr to create
+// uppercase and lowercase copies of a mixed-case string.
+#include <string.h>
+#include <stdio.h>
+
+int main( void )
+{
+   char string[100] = "The String to End All Strings!";
+   char * copy1 = _strdup( string ); // make two copies
+   char * copy2 = _strdup( string );
+
+   _strlwr( copy1 ); // C4996
+   _strupr( copy2 ); // C4996
+
+   printf( "Mixed: %s\n", string );
+   printf( "Lower: %s\n", copy1 );
+   printf( "Upper: %s\n", copy2 );
+
+   free( copy1 );
+   free( copy2 );
+}
+
+
+Simplest way to convert string into loweercase without bothering about std namespace is as follows 
+1:string with/without spaces
+#include <algorithm>
+#include <iostream>
+#include <string>
+using namespace std;
+int main(){
+    string str;
+    getline(cin,str);
+//------------function to convert string into lowercase---------------
+    transform(str.begin(), str.end(), str.begin(), ::tolower);
+//--------------------------------------------------------------------
+    cout<<str;
+    return 0;
+}
+
+2:string without spaces
+#include <algorithm>
+#include <iostream>
+#include <string>
+using namespace std;
+int main(){
+    string str;
+    cin>>str;
+//------------function to convert string into lowercase---------------
+    transform(str.begin(), str.end(), str.begin(), ::tolower);
+//--------------------------------------------------------------------
+    cout<<str;
+    return 0;
+}
+
+
+std::ctype::tolower() from the standard C++ Localization library will correctly do this for you. Here is an example extracted from the tolower reference page
+#include <locale>
+#include <iostream>
+
+int main () {
+  std::locale::global(std::locale("en_US.utf8"));
+  std::wcout.imbue(std::locale());
+  std::wcout << "In US English UTF-8 locale:\n";
+  auto& f = std::use_facet<std::ctype<wchar_t>>(std::locale());
+  std::wstring str = L"HELLo, wORLD!";
+  std::wcout << "Lowercase form of the string '" << str << "' is ";
+  f.tolower(&str[0], &str[0] + str.size());
+  std::wcout << "'" << str << "'\n";
+}
+
+
+Here's a macro technique if you want something simple:
+#define STRTOLOWER(x) std::transform (x.begin(), x.end(), x.begin(), ::tolower)
+#define STRTOUPPER(x) std::transform (x.begin(), x.end(), x.begin(), ::toupper)
+#define STRTOUCFIRST(x) std::transform (x.begin(), x.begin()+1, x.begin(),  ::toupper); std::transform (x.begin()+1, x.end(),   x.begin()+1,::tolower)
+
+However, note that @AndreasSpindler's comment on this answer still is an important consideration, however, if you're working on something that isn't just ASCII characters.

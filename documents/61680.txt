@@ -1,0 +1,191 @@
+How to work around a very large 2d array in C++
+c++ arrays graphics 2d zbuffer
+I need to create a 2D int array of size 800x800.  But doing so creates a stack overflow (ha ha).
+I'm new to C++, so should I do something like a vector of vectors?  And just encapsulate the 2d array into a class?
+Specifically, this array is my zbuffer in a graphics program.  I need to store a z value for every pixel on the screen (hence the large size of 800x800).
+Thanks!
+
+
+You need about 2.5 megs, so just using the heap should be fine.  You don't need a vector unless you need to resize it.  See C++ FAQ Lite for an example of using a "2D" heap array.
+int *array = new int[800*800];
+
+(Don't forget to delete[] it when you're done.)
+
+You could do a vector of vectors, but that would have some overhead. For a z-buffer the more typical method would be to create an array of size 800*800=640000.
+const int width = 800;
+const int height = 800;
+unsigned int* z_buffer = new unsigned int[width*height];
+
+Then access the pixels as follows:
+unsigned int z = z_buffer[y*width+x];
+
+
+I might create a single dimension array of 800*800. It is probably more efficient to use a single allocation like this, rather than allocating 800 separate vectors.
+int *ary=new int[800*800];
+
+Then, probably encapsulate that in a class that acted like a 2D array.
+class _2DArray
+{
+  public:
+  int *operator[](const size_t &idx)
+  {
+    return &ary[idx*800];
+  }
+  const int *operator[](const size_t &idx) const
+  {
+    return &ary[idx*800];
+  }
+};
+
+The abstraction shown here has a lot of holes, e.g, what happens if you access out past the end of a "row"? The book "Effective C++" has a pretty good discussion of writing good multi dimensional arrays in C++.
+
+There's the C like way of doing:
+const int xwidth = 800;
+const int ywidth = 800;
+int* array = (int*) new int[xwidth * ywidth];
+// Check array is not NULL here and handle the allocation error if it is
+// Then do stuff with the array, such as zero initialize it
+for(int x = 0; x < xwidth; ++x)
+{
+    for(int y = 0; y < ywidth; ++y)
+    {
+         array[y * xwidth + x] = 0;
+    }
+}
+// Just use array[y * xwidth + x] when you want to access your class.
+
+// When you're done with it, free the memory you allocated with
+delete[] array;
+
+You could encapsulate the y * xwidth + x inside a class with an easy get and set method (possibly with overloading the [] operator if you want to start getting into more advanced C++). I'd recommend getting to this slowly though if you're just starting with C++ and not start creating re-usable fully class templates for n-dimension arrays which will just confuse you when you're starting off.
+As soon as you get into graphics work you might find that the overhead of having extra class calls might slow down your code. However don't worry about this until your application isn't fast enough and you can profile it to show where the time is lost, rather than making it more difficult to use at the start with possible unnecessary complexity.
+I found that the C++ lite FAQ was great for information such as this. In particular your question is answered by:
+http://www.parashift.com/c++-faq-lite/freestore-mgmt.html#faq-16.16
+
+Well, building on what Niall Ryan started, if performance is an issue, you can take this one step further by optimizing the math and encapsulating this into a class.
+So we'll start with a bit of math. Recall that 800 can be written in powers of 2 as:
+800 = 512 + 256 + 32 = 2^5 + 2^8 + 2^9
+
+So we can write our addressing function as:
+int index = y << 9 + y << 8 + y << 5 + x;
+
+So if we encapsulate everything into a nice class we get:
+class ZBuffer
+{
+public:
+    const int width = 800;
+    const int height = 800;
+
+    ZBuffer()
+    {
+        for(unsigned int i = 0, *pBuff = zbuff; i < width * height; i++, pBuff++)
+            *pBuff = 0;
+    }
+
+    inline unsigned int getZAt(unsigned int x, unsigned int y)
+    {
+        return *(zbuff + y << 9 + y << 8 + y << 5 + x);
+    }
+
+    inline unsigned int setZAt(unsigned int x, unsigned int y, unsigned int z)
+    {
+        *(zbuff + y << 9 + y << 8 + y << 5 + x) = z;
+    }
+private:
+    unsigned int zbuff[width * height];
+};
+
+
+Every post so far leaves the memory management for the programmer.  This can and should be avoided.  ReaperUnreal is darn close to what I'd do, except I'd use a vector rather than an array and also make the dimensions template parameters and change the access functions -- and oh just IMNSHO clean things up a bit:
+template <class T, size_t W, size_t H>
+class Array2D
+{
+public:
+    const int width = W;
+    const int height = H;
+    typedef typename T type;
+
+    Array2D()
+        : buffer(width*height)
+    {
+    }
+
+    inline type& at(unsigned int x, unsigned int y)
+    {
+        return buffer[y*width + x];
+    }
+
+    inline const type& at(unsigned int x, unsigned int y) const
+    {
+        return buffer[y*width + x];
+    }
+
+private:
+    std::vector<T> buffer;
+};
+
+Now you can allocate this 2-D array on the stack just fine:
+void foo()
+{
+    Array2D<int, 800, 800> zbuffer;
+
+    // Do something with zbuffer...
+}
+
+I hope this helps!
+EDIT: Removed array specification from Array2D::buffer. Thanks to Andreas for catching that!
+
+One thing you can do is change the stack size (if you really want the array on the stack) with VC the flag to do this is /F. 
+But the solution you probably want is to put the memory in the heap rather than on the stack, for that you should use a vector of vectors.
+The following line declares a vector of 800 elements, each element is a vector of 800 ints and saves you from managing the memory manually.
+std::vector<std::vector<int> > arr(800, std::vector<int>(800));
+
+Note the space between the two closing angle brackets (> >)  which is required in order disambiguate it from the shift right operator (which will no longer be needed in C++0x).
+
+Kevin's example is good, however:
+
+std::vector<T> buffer[width * height];
+
+
+Should be
+std::vector<T> buffer;
+
+Expanding it a bit you could of course add operator-overloads instead of the at()-functions:
+const T &operator()(int x, int y) const
+{
+  return buffer[y * width + x];
+}
+
+and
+T &operator()(int x, int y)
+{
+  return buffer[y * width + x];
+}
+
+Example:
+int main()
+{
+  Array2D<int, 800, 800> a;
+  a(10, 10) = 50;
+  std::cout << "A(10, 10)=" << a(10, 10) << std::endl;
+  return 0;
+}
+
+
+Or you could try something like:
+boost::shared_array<int> zbuffer(new int[width*height]);
+
+You should still be able to do this too:
+++zbuffer[0];
+
+No more worries about managing the memory, no custom classes to take care of, and it's easy to throw around.
+
+You can allocate array on static storage (in file's scope, or add static qualifier in function scope), if you need only one instance.
+int array[800][800];
+
+void fn()
+{
+    static int array[800][800];
+}
+
+This way it will not go to the stack, and you not have to deal with dynamic memory.

@@ -1,0 +1,88 @@
+Is there a Perl solution for lazy lists this side of Perl 6?
+perl lazylist source-filter
+Has anybody found a good solution for lazily-evaluated lists in Perl? I've tried a number of ways to turn something like  
+for my $item ( map { ... } @list ) { 
+}
+
+into a lazy evaluation--by tie-ing @list, for example. I'm trying to avoid breaking down and writing a source filter to do it, because they mess with your ability to debug the code. Has anybody had any success. Or do you just have to break down and use a while loop? 
+Note: I guess that I should mention that I'm kind of hooked on sometimes long grep-map chains for functionally transforming lists. So it's not so much the foreach loop or the while loop. It's that map expressions tend to pack more functionality into the same vertical space. 
+
+
+If I remember correctly, for/foreach do get the whole list first anyways, so a lazily evaluated list would be read completely and then it would start to iterate through the elements. Therefore, I think there's no other way than using a while loop. But I may be wrong.
+The advantage of a while loop is that you can fake the sensation of a lazily evaluated list with a code reference:
+my $list = sub { return calculate_next_element };
+while(defined(my $element = &$list)) {
+    ...
+}
+
+After all, I guess a tie is as close as you can get in Perl 5.
+
+Use an iterator or consider using Tie::LazyList from CPAN (which is a tad dated).
+
+There is at least one special case where for and foreach have been optimized to not generate the whole list at once.  And that is the range operator.  So you have the option of saying:
+for my $i (0..$#list) {
+  my $item = some_function($list[$i]);
+  ...
+}
+
+and this will iterate through the array, transformed however you like, without creating a long list of values up front.
+If you wish your map statement to return variable numbers of elements, you could do this instead:
+for my $i (0..$#array) {
+  for my $item (some_function($array[$i])) {
+    ...
+  }
+}
+
+If you wish more pervasive laziness than this, then your best option is to learn how to use closures to generate lazy lists.  MJD's excellent book Higher Order Perl can walk you through those techniques.  However do be warned that they will involve far larger changes to your code.
+
+As mentioned previously, for(each) is an eager loop, so it wants to evaluate the entire list before starting.
+For simplicity, I would recommend using an iterator object or closure rather than trying to have a lazily evaluated array.  While you can use a tie to have a lazily evaluated infinite list, you can run into troubles if you ever ask (directly or indirectly, as in the foreach above) for the entire list (or even the size of the entire list).
+Without writing a full class or using any modules, you can make a simple iterator factory just by using closures:
+sub make_iterator {
+    my ($value, $max, $step) = @_;
+
+    return sub {
+        return if $value > $max;    # Return undef when we overflow max.
+
+        my $current = $value;
+        $value += $step;            # Increment value for next call.
+        return $current;            # Return current iterator value.
+    };
+}
+
+And then to use it:
+# All the even numbers between 0 -  100.
+my $evens = make_iterator(0, 100, 2);
+
+while (defined( my $x = $evens->() ) ) {
+    print "$x\n";
+}
+
+There's also the Tie::Array::Lazy module on the CPAN, which provides a much richer and fuller interface to lazy arrays.  I've not used the module myself, so your mileage may vary.
+All the best,
+Paul
+
+[Sidenote: Be aware that each individual step along a map/grep chain is eager. If you give it a big list all at once, your problems start much sooner than at the final foreach.]
+What you can do to avoid a complete rewrite is to wrap your loop with an outer loop. Instead of writing this:
+for my $item ( map { ... } grep { ... } map { ... } @list ) { ... }
+
+â¦ write it like this:
+while ( my $input = calculcate_next_element() ) {
+    for my $item ( map { ... } grep { ... } map { ... } $input ) { ... }
+}
+
+This saves you from having to significantly rewrite your existing code, and as long as the list does not grow by several orders of magnitude during transformation, you get pretty nearly all the benefit that a rewrite to iterator style would offer.
+
+If you want to make lazy lists, you'll have to write your own iterator. Once you have that, you can use something like Object::Iterate which has iterator-aware versions of map and grep. Take a look at the source for that module: it's pretty simple and you'll see how to write your own iterator-aware subroutines.
+Good luck, :)
+
+I asked a similar question at perlmonks.org, and BrowserUk gave a really good framework in his answer. Basically, a convenient way to get lazy evaluation is to spawn threads for the computation, at least as long as you're sure you want the results, Just Not Now. If you want lazy evaluation not to reduce latency but to avoid calculations, my approach won't help because it relies on a push model, not a pull model. Possibly using Corooutines, you can turn this approach into a (single-threaded) pull model as well.
+While pondering this problem, I also investigated tie-ing an array to the thread results to make the Perl program flow more like map, but so far, I like my API of introducing the parallel "keyword" (an object constructor in disguise) and then calling methods on the result. The more documented version of the code will be posted as a reply to that thread and possibly released onto CPAN as well.
+
+Bringing this back from the dead to mention that I just wrote the module List::Gen on CPAN which does exactly what the poster was looking for:
+use List::Gen;
+
+for my $item ( @{gen { ... } \@list} ) {...}
+
+all computation of the lists are lazy, and there are map / grep equivalents along with a few other functions.
+each of the functions returns a 'generator' which is a reference to a tied array.  you can use the tied array directly, or there are a bunch of accessor methods like iterators to use.

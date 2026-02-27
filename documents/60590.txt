@@ -1,0 +1,121 @@
+Best way to initiate a download?
+php javascript download
+On a PHP-based web site, I want to send users a download package after they have filled out a short form. The site-initiated download should be similar to sites like download.com, which say "your download will begin in a moment."
+A couple of possible approaches I know about, and browser compatibility (based on a quick test):
+1) Do a window.open pointing to the new file. 
+- FireFox 3 blocks this.  
+ - IE6 blocks this.  
+ - IE7 blocks this.
+
+2) Create an iframe pointing to the new file. 
+- FireFox 3 seems to think this is OK. (Maybe it's because I already accepted it once?)  
+ - IE6 blocks this.  
+ - IE7 blocks this.
+
+How can I do this so that at least these three browsers will not object? 
+
+Bonus: is there a method that doesn't require browser-conditional statements? 
+(I believe that download.com employs both methods conditionally, but I can't get either one to work.)
+Responses and Clarifications:
+Q: "Why not point the current window to the file?"  
+A: That might work, but in this particular case, I want to show them some other content while their download starts - for example, "would you like to donate to this project?"
+
+UPDATE: I have abandoned this approach. See my answer below for reasons.
+
+
+How about changing the location to point to the new file? (e.g. by changing window.location)
+
+I usually just have a PHP script that outputs the file directly to the browser with the appropriate Content-Type
+if( file_exists($filename) ){
+        header("Pragma:  public");
+        header("Expires:  0");
+        header("Cache-Control:  must-revalidate, pre-check=0");
+        header("Cache-Control:  private", false);
+        header("Content-Type:  " . $content-type);
+        header("Content-Disposition:  attachment; filename=\"" . basename($filename) . "\";" );
+        header("Content-Transfer-Encoding:  binary");
+        header("Content-Length:  " . filesize($filename));
+
+        readfile("$filename");
+}else{
+        print "ERROR:  the file " . basename($filename) . " could not be downloaded because it did not exist.";
+}
+
+The only disadvantage is that, since this sets the HTTP header, it has be called before you have any other output.
+But you can have a link to the PHP download page and it will cause the browser to pop up a download box without messing up the content of the current page.
+
+You can also do a meta refresh, which most browsers support.  Download.com places one in a noscript tag.
+<meta http-equiv="refresh" content="5;url=/download.php?doc=123.zip"/>
+
+
+I've always just made an iframe which points to the file.
+<iframe src="/download.exe" frameborder="0" height="0" width="0"><a href="/download.exe">Click here to download.</a></iframe>
+
+
+Regarding not pointing the current window to the download.
+In my experience you can still show your "please donate" page, since downloads (as long as they send the correct headers) don't actually update the browser window.
+I do this for csv exports on one of my sites, and as far as the user is concerned it just pops up a safe file window.
+So i would recommend a simple meta-redirect as Soldarnal showed.
+
+Just to summarise, you have 2 goals: 
+
+start download process
+show user a page with a donate options
+
+To achieve this I would do the following:
+When your user submits the form, he gets the resulting page with a donate options and a text saying that his download will start in 5 seconds. And in the head section of this page you put the META code as Soldarnal said:
+<meta http-equiv="refresh" content="5;url=/download.php?doc=123.zip>
+And that's all.
+
+One catch is that you may encounter issues with IE (version 6 in particular) if the headers are not set up "correctly".
+Ensure you set the right Content-Type, but also consider setting the Cache options for IE (at least) to allow caching.  If the file is one the user can open rather than save (e.g. an MS Word document) early versions of IE need to cache the file, as they hand off the "open" request to the applicable app, pointing to the file that was downloaded in the cache.
+There's also a related issue, if the IE6 user's cache is full, it won't properly save the file (thus when the applicable app gets the hand off to open it, it will complain the file is corrupt.
+You may also want to turn of any gzip actions on the downloads too (for IE)
+IE6/IE7 both have issues with large downloads (e.g. 4.x Gigs...) not a likely scenario since IE doesn't even have a download manager, but something to be aware of.
+Finally, IE6 sometimes doesn't nicely handle a download "push" if it was initiated from within a nested iframe.  I'm not exactly sure what triggers the issue, but I find it is easier with IE6 to avoid this scenario.
+
+Update: I have decided to abandon this approach, and instead just present the user with a link to the actual file. My reasoning is this:
+My initial attempts at a server-initiated download were blocked by the browser. That got me thinking: "the browser is right. How does it know that this is a legitimate download? It should block a download that isn't obviously user-initiated."
+Any method that I can use for a server-initiated download could also be used by someone who wants to send malware. Therefore, downloads should only happen when the user specifically requests the file by clicking on a link for it.
+You're free to disagree, and if you still want to initiate a download, hopefully this thread will help you do it.
+
+Hoi!
+@Nathan:
+I decided to do exactly that: Have my "getfile.php" load all necessary stuff and then do a  
+header("Location: ./$path/$filename");
+
+to let the browser itself and directly do whatever it thinks is correct do with the file. This even works fine in Opera with me. 
+But this will be a problem in environments, where no direct access to the files is allowed, in that case you will have to find a different way! (Thank Discordia my files are public PDFs!)
+Best regards, Basty
+
+<a href="normaldownload.zip" onclick="use_dhtml_or_ajax_to_display_page()">
+
+Current page is unaffected if download is saved. Just ensure that download doesn't open in the same window (proper MIME type or Content-Disposition) and you'll be able to show anything.
+See more complete answer
+
+You can use Javascript/jQuery to initiate the download. Here's an example - you can get rid of the Ajax request and just use the setTimeout() block.
+$("btnDownloadCSV").on('click', function() {
+    $.ajax({
+        url: "php_backend/get_download_url",
+        type: 'post',
+        contentType: "application/x-www-form-urlencoded",
+        data: {somedata: "somedata"},
+        success: function(data) {
+            // If iFrame already exists, remove it.
+            if($("[id^='iframeTempCSV_"]).length) { 
+                $("[id^='iframeTempCSV_"]).remove();
+            }
+            setTimeout(function() {
+                //  If I'm creating an iframe with the same id, it will permit download only the first time.
+                // So randHashId appended to ID to trick the browser.
+                var randHashId = Math.random().toString(36).substr(2);
+                // Create a fresh iFrame for auto-downloading CSV
+                $('<iframe id="iframeTempCSV_'+randHashId+'" style="display:none;" src="'+data.filepath+'"></iframe>').appendTo('body');
+            }, 1000);
+        },
+        error: function(xhr, textStatus, errorThrown) {
+           console.error("Error downloading...");
+       }
+    });
+});
+

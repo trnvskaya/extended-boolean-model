@@ -1,0 +1,198 @@
+Safe stream update of file
+.net windows
+We perform updates of large text files by writing new records to a temp file, then replacing the old file with the temp file. A heavily abbreviated version:
+var tpath = Path.GetTempFileName();
+try
+{
+    using (var sf = new StreamReader(sourcepath))
+    using (var tf = new StreamWriter(tpath))
+    {
+        string line;
+        while ((line = sf.ReadLine()) != null)
+            tf.WriteLine(UpdateLine(line));
+    }
+
+    File.Delete(sourcepath);
+    File.Move(tpath, sourcepath);
+}
+catch
+{
+    File.Delete(tpath);
+    throw;
+}
+
+If anything throws an exception (file not found, no permission), the original file is left untouched, which is what we want.
+However, the code has the following problems:
+
+Is there a real-world situation where the Delete works but the Move fails? This would delete the original and updated data. This would be bad.
+The most common failure is the source file being open from another application, and the Delete fails. This means all the Update work is discarded. Is there a way to see if the source file is deletable at the start, and abandon the update if not?
+We have users putting Windows Explorer Summary properties, like Title or Comments, on files. These are discarded when we delete the file. Is there a way to copy the old file's Summary properties to a  new file? Should we do this?
+
+
+
+The normal way of avoiding the "delete then move fails problem" is:
+
+Write to file.new
+Move file.current to file.old
+Move file.new to file.current
+Delete file.new
+
+Then when you come to read, use file.new if file.current is missing, deleting file.old if you see it.
+Checking for whether or not the file is available: try opening it for write, but appending to the end. Of course, you'll need to close the handle before you then move it, and in-between someone else could open it - but it would at least be a reasonable optimisation.
+Not sure about copying summaries etc, I'm afraid.
+
+Some "dirty" trick.
+
+At first do not delete the original file, first move it to another location (temp path), then if moving of the updated file is successful delete the old one. If update fails, you would have the original file somewhere to restore it.
+I think that this article will help you there MSDN
+If the users need that "titles" and "comments" you should keep them. I've never tried to copy them from one file to another so I wouldn't know how to help you there.
+
+
+Transactional NTFS on Windows Vista or later might be useful for your scenario.
+
+I found it useful to wrap this pattern in it's own class.
+class Program {
+    static void Main( string[] args ) {
+        using( var ft = new FileTransaction( @"C:\MyDir\MyFile.txt" ) )
+        using( var sw = new StreamWriter( ft.TempPath ) ) {
+            sw.WriteLine( "Hello" );
+            ft.Commit();
+        }
+    }
+}
+
+public class FileTransaction :IDisposable {
+    public string TempPath { get; private set; }
+    private readonly string filePath;
+
+    public FileTransaction( string filePath ) {
+        this.filePath = filePath;
+        this.TempPath = Path.GetTempFileName();
+    }
+
+    public void Dispose() {
+        if( TempPath != null ) {
+            try {
+                File.Delete( TempPath );
+            }
+            catch { }
+        }
+    }
+
+    public void Commit() {
+        try {
+            var oldPath = filePath + ".old";
+            File.Move( filePath, oldPath );
+        }
+        catch {}
+
+        File.Move( TempPath, filePath );
+
+        TempPath = null;
+    }
+}
+
+
+Why not try checking the FileAttributes first? 
+Try something like this:
+//If File is readonly
+if ( (file.Attribute & System.FileAttributes.ReadOnly) == System.FileAttributes.ReadOnly ) 
+        //Don't delete.
+
+Also try using .OpenWrite(). If you can open the file to write to, it is not being accessed and is not currently in use. You can only open a file for writing if its currently in an un-open state. I dont recommend this but it may help you.
+  FileStream fs = File.OpenWrite(file);
+  fs.Close();
+  return false;
+
+You can also use a FileLock checking method. Something like this:
+protected virtual bool IsFileLocked(FileInfo file)
+{
+    try
+    {
+        using (file.Open(FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+           return false;
+        }
+    }
+
+    catch (IOException)
+    {
+        return true;
+    }
+
+}
+you may also want to check FileIOPermission.Write. This allows to see if the file is writable (and able for deletion).
+fileIOPerm = New FileIOPermission(FileIOPermissionAccess.Write, FileSpec);
+fileIOPerm.Demand();
+
+In regards to question #3 in the original post...You can always move the files to a temp folder, using File.Copy(path1,path2,true). You may want to consider using a temp folder and writing better logic for file manipulation.
+If you did decide to use a temp folder, or temp files/intermediate files, then you would also fix your question #2. Try moving the files first.
+
+As was already mentioned, you really should investigate ReplaceFile, which is designed to help with what you're doing.  The .NET function is just a wrapper on a Win32 function, where one might have some hope that the atomicity issues had been hammered-out.
+
+Lots of good suggestions. I was able to solve the problems with:
+var sInfo = new FileInfo(sourcePath);
+if (sInfo.IsReadOnly)
+    throw new IOException("File '" + sInfo.FullName + "' is read-only.");
+
+var tPath = Path.GetTempFileName();
+try
+{
+    // This throws if sourcePath does not exist, is opened, or is not readable.
+    using (var sf = sInfo.OpenText())
+    using (var tf = new StreamWriter(tPath))
+    {
+        string line;
+        while ((line = sf.ReadLine()) != null)
+            tf.WriteLine(UpdateLine(line));
+    }
+
+    string backupPath = sInfo.FullName + ".bak";
+    if (File.Exists(backupPath))
+        File.Delete(backupPath);
+
+    File.Move(tPath, backupPath);
+    tPath = backupPath;
+    File.Replace(tPath, sInfo.FullName, null);
+}
+catch (Exception ex)
+{
+    File.Delete(tPath);
+    throw new IOException("File '" + sInfo.FullName + "' could not be overwritten.", ex);
+}
+
+OpenText throws if the source file is open or not readable, and the update is not done. If anything throws, the original file is left unchanged. Replace copies the old files' Summary properties to the new file. This works even if the source file is on a different volume than the temp folder.
+
+This code snippet shows a technique for getting exclusive access to a file (read in this case):
+// Try to open a file exclusively
+FileInfo fi = new FileInfo(fullFilePath);
+
+int attempts = maxAttempts;
+do
+{
+    try
+    {
+        // Try to open for reading with exclusive access...
+        fs = fi.Open(FileMode.Open, FileAccess.Read, FileShare.None);
+    }
+    // Ignore any errors... 
+    catch { }
+
+    if (fs != null)
+    {
+        break;
+    }
+    else
+    {
+        Thread.Sleep(100);
+    }
+}
+while (--attempts > 0);
+
+// Did we manage to open file exclusively?
+if (fs != null)
+{
+    // use open file....
+
+}
+

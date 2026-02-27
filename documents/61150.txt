@@ -1,0 +1,142 @@
+Mocking Static Blocks in Java
+java unit-testing mocking static-block
+My motto for Java is "just because Java has static blocks, it doesn't mean that you should be using them." Jokes aside, there are a lot of tricks in Java that make testing a nightmare. Two of the most I hate are Anonymous Classes and Static Blocks. We have a lot of legacy code that make use of Static Blocks and these are one of the annoying points in our push in writing unit tests. Our goal is to be able to write unit tests for classes that depend on this static initialization with minimal code changes. 
+So far my suggestion to my colleagues is to move the body of the static block into a private static method and call it staticInit. This method can then be called from within the static block. For unit testing another class that depends on this class could easily mock staticInit with JMockit to not do anything. Let's see this in example.
+public class ClassWithStaticInit {
+  static {
+    System.out.println("static initializer.");
+  }
+}
+
+Will be changed to
+public class ClassWithStaticInit {
+  static {
+    staticInit();
+  }
+
+  private static void staticInit() {
+    System.out.println("static initialized.");
+  }
+}
+
+So that we can do the following in a JUnit.
+public class DependentClassTest {
+  public static class MockClassWithStaticInit {
+    public static void staticInit() {
+    }
+  }
+
+  @BeforeClass
+  public static void setUpBeforeClass() {
+    Mockit.redefineMethods(ClassWithStaticInit.class, MockClassWithStaticInit.class);
+  }
+}
+
+However this solution also comes with its own problems. You can't run DependentClassTest and ClassWithStaticInitTest on the same JVM since you actually want the static block to run for ClassWithStaticInitTest.
+What would be your way of accomplishing this task? Or any better, non-JMockit based solutions that you think would work cleaner?
+
+
+Sounds to me like you are treating a symptom: poor design with dependencies on static initialization.  Maybe some refactoring is the real solution.  It sounds like you've already done a little refactoring with your staticInit() function, but maybe that function needs to be called from the constructor, not from a static initializer.  If you can do away with static initializers period, you will be better off.  Only you can make this decision (I can't see your codebase) but some refactoring will definitely help.
+As for mocking, I use EasyMock, but I have run into the same issue.  Side effects of static initializers in legacy code make testing difficult.  Our answer was to refactor out the static initializer.
+
+I suppose you really want some kind of factory instead of the static initializer.
+Some mix of a singleton and an abstract factory would probably be able to get you the same functionality as today, and with good testability, but that would add quite a lot of boiler-plate code, so it might be better to just try to refactor the static stuff away completely or if you could at least get away with some less complex solution. 
+Hard to tell if itÂ´s possible without seeing your code though.
+
+You could write your test code in Groovy and easily mock the static method using metaprogramming.
+Math.metaClass.'static'.max = { int a, int b -> 
+    a + b
+}
+
+Math.max 1, 2
+
+If you can't use Groovy, you will really need to refactoring the code (maybe to inject something like a initializator).
+Kind Regards
+
+When I run into this problem, I usually do the same thing you describe, except I make the static method protected so I can invoke it manually.  On top of this, I make sure that the method can be invoked multiple times without problems (otherwise it is no better than the static initializer as far as the tests go).
+This works reasonably well, and I can actually test that the static initializer method does what I expect/want it to do.  Sometimes it is just easiest to have some static initialization code, and it just isn't worth it to build an overly complex system to replace it.
+When I use this mechanism, I make sure to document that the protected method is only exposed for testing purposes, with the hopes that it won't be used by other developers.  This of course may not be a viable solution, for example if the class' interface is externally visible (either as a sub-component of some kind for other teams, or as a public framework).  It is a simple solution to the problem though, and doesn't require a third party library to set up (which I like).
+
+I'm not super knowledgeable in Mock frameworks so please correct me if I'm wrong but couldn't you possibly have two different Mock objects to cover the situations that you mention? Such as
+public static class MockClassWithEmptyStaticInit {
+  public static void staticInit() {
+  }
+}
+
+and
+public static class MockClassWithStaticInit {
+  public static void staticInit() {
+    System.out.println("static initialized.");
+  }
+}
+
+Then you can use them in your different test cases
+@BeforeClass
+public static void setUpBeforeClass() {
+  Mockit.redefineMethods(ClassWithStaticInit.class, 
+                         MockClassWithEmptyStaticInit.class);
+}
+
+and
+@BeforeClass
+public static void setUpBeforeClass() {
+  Mockit.redefineMethods(ClassWithStaticInit.class, 
+                         MockClassWithStaticInit.class);
+}
+
+respectively.
+
+This is going to get into more "Advanced" JMockit. It turns out, you can redefine static initialization blocks in JMockit by creating a public void $clinit() method. So, instead of making this change
+public class ClassWithStaticInit {
+  static {
+    staticInit();
+  }
+
+  private static void staticInit() {
+    System.out.println("static initialized.");
+  }
+}
+
+we might as well leave ClassWithStaticInit as is and do the following in the MockClassWithStaticInit:
+public static class MockClassWithStaticInit {
+  public void $clinit() {
+  }
+}
+
+This will in fact allow us to not make any changes in the existing classes.
+
+PowerMock is another mock framework that extends EasyMock and Mockito. With PowerMock you can easily remove unwanted behavior from a class, for example a static initializer. In your example you simply add the following annotations to your JUnit test case:
+@RunWith(PowerMockRunner.class)
+@SuppressStaticInitializationFor("some.package.ClassWithStaticInit")
+
+PowerMock does not use a Java agent and therefore does not require modification of the JVM startup parameters. You simple add the jar file and the above annotations. 
+
+Occasionally, I find static initilizers in classes that my code depends on. If I cannot refactor the code, I use PowerMock's @SuppressStaticInitializationFor annotation to suppress the static initializer:
+@RunWith(PowerMockRunner.class)
+@SuppressStaticInitializationFor("com.example.ClassWithStaticInit")
+public class ClassWithStaticInitTest {
+
+    ClassWithStaticInit tested;
+
+    @Before
+    public void setUp() {
+        tested = new ClassWithStaticInit();
+    }
+
+    @Test
+    public void testSuppressStaticInitializer() {
+        asserNotNull(tested);
+    }
+
+    // more tests...
+}
+
+Read more about suppressing unwanted behaviour.
+Disclaimer: PowerMock is an open source project developed by two colleagues of mine. 
+
+Not really an answer, but just wondering - isn't there any way to "reverse" the call to Mockit.redefineMethods?
+If no such explicit method exists, shouldn't executing it again in the following fashion do the trick?
+Mockit.redefineMethods(ClassWithStaticInit.class, ClassWithStaticInit.class);
+
+If such a method exists, you could execute it in the class' @AfterClass method, and test ClassWithStaticInitTest with the "original" static initializer block, as if nothing has changed, from the same JVM.
+This is just a hunch though, so I may be missing something.

@@ -1,0 +1,64 @@
+java date format incompatible with xquery xs:date format, how to fix?
+java date time xquery
+In java, when using SimpleDateFormat with the pattern:
+yyyy-MM-dd'T'HH:mm:ss.SSSZ
+
+the date is outputted as:
+"2002-02-01T18:18:42.703-0700"
+
+In xquery, when using the xs:dateTime function, it gives the error:
+"Invalid lexical value [err:FORG0001]"
+
+with the above date. In order for xquery to parse properly, the date needs to look like:
+"2002-02-01T18:18:42.703-07:00" - node the ':' 3rd position from end of string
+
+which is based on the ISO 8601, whereas Java date is based on the RFC 822 standard.
+I would like to be able to easily specify the timezone in Java so that it will output the way that xquery wants.
+Thanks!
+
+
+Try this:
+static public String formatISO8601(Calendar cal) {
+MessageFormat format = new MessageFormat("{0,time}{1,number,+00;-00}:{2,number,00}");
+
+DateFormat df = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss");
+df.setTimeZone(cal.getTimeZone());
+format.setFormat(0, df);
+
+long zoneOff = cal.get(Calendar.ZONE_OFFSET) + cal.get(Calendar.DST_OFFSET) / 60000L;
+int zoneHrs = (int) (zoneOff / 60L);
+int zoneMins = (int) (zoneOff % 60L);
+if (zoneMins < 0)
+    zoneMins = -zoneMins;
+
+return (format.format(new Object[] { cal.getTime(), new Integer(zoneHrs), new Integer(zoneMins) }));
+}
+
+
+OK, the linked to forum post DID help, thank you. I did however find a simpler solution, which I include below:
+1) Use Apache commons.lang java library
+2) Use the following java code:  
+//NOTE: ZZ on end is not compatible with jdk, but allows for formatting  
+//dates like so (note the : 3rd from last spot, which is iso8601 standard):  
+//date=2008-10-03T10:29:40.046-04:00  
+private static final String DATE_FORMAT_8601 = "yyyy-MM-dd'T'HH:mm:ss.SSSZZ";  
+DateFormatUtils.format(new Date(), DATE_FORMAT_8601)  
+
+
+Well, I did run into a problem - it doesn't appear to me (and I could be wrong) that there was any way to convert from and ISO string that DateUtils (from apache commons lang) creates, back to a date!
+ie. apache commons will format it the way I would like, but not convert it back to a date again
+So, I switched to JodaTime, and its much easier since its based on ISO8601 - here is the code:
+public static void main(String[] args) {
+    Date date = new Date();  
+    DateTime dateTime = new DateTime(date);  
+    DateTimeFormatter fmt = ISODateTimeFormat.dateTime();  
+    String dateString = fmt.print(dateTime);  
+    System.out.println("dateString=" + dateString);  
+    DateTime dt = fmt.parseDateTime(dateString);  
+    System.out.println("converted date=" + dt.toDate());  
+} 
+
+
+Great find regarding commons.lang.java!  You can even save yourself from creating your own format string by doing the following:
+DateFormatUtils.ISO_DATETIME_TIME_ZONE_FORMAT.format(new Date());
+

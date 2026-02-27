@@ -1,0 +1,136 @@
+iPhone: Detecting user inactivity/idle time since last screen touch
+iphone objective-c
+Has anybody implemented a feature where if the user has not touched the screen for a certain time period, you take a certain action? I'm trying to figure out the best way to do that.
+There's this somewhat-related method in UIApplication:
+[UIApplication sharedApplication].idleTimerDisabled;
+
+It'd be nice if you instead had something like this:
+NSTimeInterval timeElapsed = [UIApplication sharedApplication].idleTimeElapsed;
+
+Then I could set up a timer and periodically check this value, and take some action when it exceeds a threshold.
+Hopefully that explains what I'm looking for. Has anyone tackled this issue already, or have any thoughts on how you would do it? Thanks.
+
+
+Ultimately you need to define what you consider to be idle - is idle the result of the user not touching the screen or is it the state of the system if no computing resources are being used? It is possible, in many applications, for the user to be doing something even if not actively interacting with the device through the touch screen.  While the user is probably familiar with the concept of the device going to sleep and the notice that it will happen via screen dimming, it is not necessarily the case that they'll expect something to happen if they are idle - you need to be careful about what you would do.  But going back to the original statement - if you consider the 1st case to be your definition, there is no really easy way to do this. You'd need to receive each touch event, passing it along on the responder chain as needed while noting the time it was received. That will give you some basis for making the idle calculation.  If you consider the second case to be your definition, you can play with an NSPostWhenIdle notification to try and perform your logic at that time.
+
+Here's the answer I had been looking for:
+Have your application delegate subclass UIApplication. In the implementation file, override the sendEvent: method like so:
+- (void)sendEvent:(UIEvent *)event {
+    [super sendEvent:event];
+
+    // Only want to reset the timer on a Began touch or an Ended touch, to reduce the number of timer resets.
+    NSSet *allTouches = [event allTouches];
+    if ([allTouches count] > 0) {
+        // allTouches count only ever seems to be 1, so anyObject works here.
+        UITouchPhase phase = ((UITouch *)[allTouches anyObject]).phase;
+        if (phase == UITouchPhaseBegan || phase == UITouchPhaseEnded)
+            [self resetIdleTimer];
+    }
+}
+
+- (void)resetIdleTimer {
+    if (idleTimer) {
+        [idleTimer invalidate];
+        [idleTimer release];
+    }
+
+    idleTimer = [[NSTimer scheduledTimerWithTimeInterval:maxIdleTime target:self selector:@selector(idleTimerExceeded) userInfo:nil repeats:NO] retain];
+}
+
+- (void)idleTimerExceeded {
+    NSLog(@"idle time exceeded");
+}
+
+where maxIdleTime and idleTimer are instance variables.
+In order for this to work, you also need to modify your main.m to tell UIApplicationMain to use your delegate class (in this example, AppDelegate) as the principal class:
+int retVal = UIApplicationMain(argc, argv, @"AppDelegate", @"AppDelegate");
+
+
+This thread was a great help, and I wrapped it up into a UIWindow subclass that sends out notifications.  I chose notifications to make it a real loose coupling, but you can add a delegate easily enough.
+Here's the gist:
+http://gist.github.com/365998
+Also, the reason for the UIApplication subclass issue is that the NIB is setup to then create 2 UIApplication objects since it contains the application and the delegate.   UIWindow subclass works great though.
+
+Actually the subclassing idea works great. Just don't make your delegate the UIApplication subclass. Create another file that inherits from UIApplication (e.g. myApp). In IB set the class of the fileOwner object to myApp and in myApp.m implement the sendEvent method as above. In main.m do:
+int retVal = UIApplicationMain(argc,argv,@"myApp.m",@"myApp.m")
+
+et voilÃ !
+
+I have a variation of the idle timer solution which doesn't require subclassing UIApplication. It works on a specific UIViewController subclass, so is useful if you only have one view controller (like an interactive app or game may have) or only want to handle idle timeout in a specific view controller.
+It also does not re-create the NSTimer object every time the idle timer is reset.  It only creates a new one if the timer fires.
+Your code can call resetIdleTimer for any other events that may need to invalidate the idle timer (such as significant accelerometer input).
+@interface MainViewController : UIViewController
+{
+    NSTimer *idleTimer;
+}
+@end
+
+#define kMaxIdleTimeSeconds 60.0
+
+@implementation MainViewController
+
+#pragma mark -
+#pragma mark Handling idle timeout
+
+- (void)resetIdleTimer {
+    if (!idleTimer) {
+        idleTimer = [[NSTimer scheduledTimerWithTimeInterval:kMaxIdleTimeSeconds
+                                                      target:self
+                                                    selector:@selector(idleTimerExceeded)
+                                                    userInfo:nil
+                                                     repeats:NO] retain];
+    }
+    else {
+        if (fabs([idleTimer.fireDate timeIntervalSinceNow]) < kMaxIdleTimeSeconds-1.0) {
+            [idleTimer setFireDate:[NSDate dateWithTimeIntervalSinceNow:kMaxIdleTimeSeconds]];
+        }
+    }
+}
+
+- (void)idleTimerExceeded {
+    [idleTimer release]; idleTimer = nil;
+    [self startScreenSaverOrSomethingInteresting];
+    [self resetIdleTimer];
+}
+
+- (UIResponder *)nextResponder {
+    [self resetIdleTimer];
+    return [super nextResponder];
+}
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    [self resetIdleTimer];
+}
+
+@end
+
+(memory cleanup code excluded for brevity.)
+
+I just ran into this problem with a game that is controlled by motions i.e. has screen lock disabled but should enable it again when in menu mode. Instead of a timer I encapsulated all calls to setIdleTimerDisabled within a small class providing the following methods:
+- (void) enableIdleTimerDelayed {
+    [self performSelector:@selector (enableIdleTimer) withObject:nil afterDelay:60];
+}
+
+- (void) enableIdleTimer {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
+    [[UIApplication sharedApplication] setIdleTimerDisabled:NO];
+}
+
+- (void) disableIdleTimer {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
+    [[UIApplication sharedApplication] setIdleTimerDisabled:YES];
+}
+
+disableIdleTimer deactivates idle timer, enableIdleTimerDelayed when entering the menu or whatever should run with idle timer active and enableIdleTimer is called from your AppDelegate's applicationWillResignActive method to ensure all your changes are reset properly to the system default behaviour.
+I wrote an article and provided the code for the singleton class IdleTimerManager Idle Timer Handling in iPhone Games
+
+Here is another way to detect activity:
+The timer is added in UITrackingRunLoopMode, so it can only fire if there is UITracking activity. It also has the nice advantage of not spamming you for all touch events, thus informing if there was activity in the last ACTIVITY_DETECT_TIMER_RESOLUTION seconds. I named the selector keepAlive as it seems an appropriate use case for this. You can of course do whatever you desire with the information that there was activity recently.
+_touchesTimer = [NSTimer timerWithTimeInterval:ACTIVITY_DETECT_TIMER_RESOLUTION
+                                        target:self
+                                      selector:@selector(keepAlive)
+                                      userInfo:nil
+                                       repeats:YES];
+[[NSRunLoop mainRunLoop] addTimer:_touchesTimer forMode:UITrackingRunLoopMode];
+

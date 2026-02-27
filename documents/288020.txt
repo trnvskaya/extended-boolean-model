@@ -1,0 +1,98 @@
+How does one - without inheritance - override a class method and call the original from within the new method?
+ruby class time override alias
+I found one source which successfully overrode Time.strftime like this:
+class Time
+  alias :old_strftime :strftime
+  def strftime
+    #do something
+    old_strftime
+  end
+end
+
+The trouble is, strftime is an instance method.  I need to override Time.now - a class method - in such away that any caller gets my new method, while the new method still calls the original .now method.  I've looked at alias_method and have met with no success.
+
+
+Class methods are just methods. I highly recommend against this, but you have two equivalent choices:
+class Time
+  class << self
+    alias_method :old_time_now, :now
+
+    def now
+      my_now = old_time_now
+      # new code
+      my_now
+    end
+  end
+end
+
+class << Time
+  alias_method :old_time_now, :now
+
+  def now
+    my_now = old_time_now
+    # new code
+    my_now
+  end
+end
+
+
+This is kinda hard to get your head around sometimes, but you need to open the "eigenclass" which is the singleton associated with a specific class object.  the syntax for this is class << self do...end.  
+class Time
+  alias :old_strftime :strftime
+
+  def strftime
+    puts "got here"
+    old_strftime
+  end
+end
+
+class Time
+  class << self
+    alias :old_now :now
+    def now
+      puts "got here too"
+      old_now
+    end
+  end
+end
+
+t = Time.now
+puts t.strftime
+
+
+If the you need to override it for testing purposes (the reason I normally want to override Time.now), Ruby mocking/stubbing frameworks will do this for you easily.  For instance, with RSpec (which uses flexmock):
+Time.stub!(:now).and_return(Time.mktime(1970,1,1))
+
+By the way, I highly recommend avoiding the need to stub out Time.now by giving your classes an overrideable clock:
+class Foo
+  def initialize(clock=Time)
+    @clock = clock
+  end
+
+  def do_something
+    time = @clock.now
+    # ...
+  end
+end
+
+
+I've been trying to figure out how to override an instance method using modules.
+module Mo
+  def self.included(base)
+    base.instance_eval do
+      alias :old_time_now :now
+      def now
+        my_now = old_time_now
+        puts 'overrided now'
+        # new code
+        my_now
+      end
+    end
+  end
+end
+Time.send(:include, Mo) unless Time.include?(Mo)
+
+> Time.now
+overrided now
+=> Mon Aug 02 23:12:31 -0500 2010
+

@@ -1,0 +1,83 @@
+Use GET or POST for a search form
+forms post get
+I have a couple search forms, 1 with ~50 fields and the other with ~100. Typically, as the HTML spec says, I do searches using the GET method as no data is changed. I haven't run into this problem yet, but I'm wondering if I will run out of URL space soon?
+The limit of Internet Explorer is 2083 characters. Other browsers, have a much higher limit. I'm running Apache, so the limit there is around 4000 characters, which IIS is 16384 characters.
+At 100 fields, say average field name length of 10 characters, that's already 5000 characters...amazing on the 100 field form, I haven't had any errors yet. (25% of the fields are multiple selects, so the field length is much longer.)
+So, I'm wondering what my options are. (Shortening the forms is not an option.) Here my ideas:
+
+Use POST. I don't like this as much because at the moment users can bookmark their searches and perform them again later--a really dang nice feature.
+Have JavaScript loop through the form to determine which fields are different than default, populate another form and submit that one. The user would of course bookmark the shortened version.
+
+Any other ideas?
+Also, does anyone know if the length is the encoded length or just plain text?
+I'm developing in PHP, but it probably doesn't make a difference.
+Edit: I am unable to remove any fields; I am unable to shorten the form. This is what the client has asked for and they often do use a range of fields, in the different categories. I know that it's hard to think of a form that looks nice with this many fields, but the users don't have a problem understanding how it works.
+
+
+Are your users actually going to be using all 50-100 fields to do their searches? If they're only using a few, why not POST the search to an "in between" page which header()-redirects them to the results page with only the user-changed fields in the URL? The results page would then use the default values for the fields that don't exist in the URL.
+
+To indirectly address your question, if I was faced with a 100-field form to fill in on one page, I'd most likely close my browser, it sounds like a complete usability nightmare.
+My answer is, if there's a danger that I'm getting anywhere near that limit for normal usage of the form, I'm probably Doing It Wrong.
+In order of preference, I would
+
+Split the form up and use some server-side state retention
+Switch to POST, and then generate and redirect to a shorter URL on POST that resolved to the same result
+Give up ;)
+
+
+You mention in a comment that many of the fields "are hidden and can be opened as required".
+If you are willing to discard graceful degradation, you could always actually add and remove the fields from the form, rather than just hiding and showing them: the browser won't submit the ones that aren't included in the form.
+This is a variant of the "Make and model" forms that online insurance etc. pages use -- select the make, submit back to the server and get the list of models for that manufacturer.
+
+If you don't mind using javascript then you could have it work out the length of the query string and if it is too long then switch to a post.  Then have some sort of url mapper to allow them to bookmark these posted searches.    
+
+Use post and if the user bookmarks the search, save it in a database and give it a unique token, then redirect to the search page using GET and passing the token as parameter.
+TinyURL is a nice example: You give it a very long URL, it saves it to a DB, gives you a unique identifier for that URL and later you can request the long URL using that identifier.
+In PHP it would be something along the lines of:
+<?php
+if (isset($_GET['token']))
+{
+    $token = addslashes($_GET['token']);
+    $qry = mysql_query("SELECT fields FROM searches WHERE token = '{$token}'");
+    if ($row = mysql_fetch_assoc($qry))
+    {
+        performSearch(unserialize($row['fields']));
+        exit;
+    }
+    showError('Your saved search has been removed because it hasn\'t been used in a while');
+    exit;
+}
+$fields = addslashes(serialize($_POST));
+$token = sha1($_SERVER['REMOTE_ADDR'].rand());
+mysql_query("INSERT INTO searches (token, fields, save_time) Values ('{$token}', '{$fields}', NOW())");
+header('Location: ?token='.$token);
+exit;
+?>
+
+And run a script daily:
+<?php
+mysql_query('DELETE FROM searches WHERE save_time < DATE_ADD(NOW(), INTERVAL -200 DAY)');
+?>
+
+
+
+Also, does anyone know if the length 
+  is the encoded length or just plain text?
+
+My guess was for encoded length. I made a simple test: a textarea and a submit button to a simplistic PHP script.
+Loaded the page in IE6, pasted some French text in the textarea, 2000 characters. If I hit the submit button, nothing. I had to reduce the length of the text to be able to submit.
+In other words, the 2083 character limit is exactly the maximal length of the URL found in the address bar after submitting the GET request.
+I would go for the JavaScript solution: on submit, analyze the form, create a secondary form with hidden attributes, and submit that.
+Some strategies on shortening the output: 
+
+As you point out, you can already skip all values left to default (no field, no value).
+If you have a form like the one at Processing forum search you can group all checkbox states in one variable only, eg. using letter encoding.
+Use short value attributes (in select for example).
+
+Note: if the search page is actually composed of several independent forms, where users fill only one section or another, you can make several separate forms.
+Might not apply to your case and might seems obvious but worth mentioning for the record... ^_^
+
+One could philosophically look at the search submission POST as the creation of a saved search (especially when a search is as complex an object as the one your users are making). In this case, you could accept the post for the creation of a search and then redirect using a GET to fetch the appropriate search results (post/redirect/get).
+This would also allow the users to bookmark the search results (GET) to coming back at any time to re-run the search.
+
+Get can have one advantage if your search results can be shared, in case of post request if you send the link to someone, that person won't see any search results

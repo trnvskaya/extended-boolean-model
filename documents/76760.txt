@@ -1,0 +1,123 @@
+VS2008 Setup Project: Shared (By All Users) Application Data Files?
+visual-studio-2008 deployment installation desktop projects-and-solutions
+fellow anthropoids and lily pads and paddlewheels!
+I'm developing a Windows desktop app in C#/.NET/WPF, using VS 2008. The app is required to install and run on Vista and XP machines. I'm working on a Setup/Windows Installer Project to install the app.
+My app requires read/modify/write access to a SQLCE database file (.sdf) and some other database-type files related to a third-party control I'm using. These files should be shared among all users/log-ins on the PC, none of which can be required to be an Administrator. This means, of course, that the files can't go in the program's own installation directory (as such things often did before the arrival of Vista, yes, yes!).
+I had expected the solution to be simple. Vista and XP both have shared-application-data folders intended for this purpose. ("\ProgramData" in Vista, "\Documents and Settings\All Users\Application Data" in XP.) The .NET Environment.GetFolderPath(SpecialFolder.CommonApplicationData) call exists to find the paths to these folders on a given PC, yes, yes!
+But I can't figure out how to specify the shared-application-data folder as a target in the Setup project.
+The Setup project offers a "Common Files" folder, but that's intended for shared program components (not data files), is usually located under "\Program Files," and has the same security restrictions anything else in "\Program files" does, yes, yes!
+The Setup project offers a "User's Application Data" folder, but that's a per-user folder, which is exactly what I'm trying to avoid, yes, yes!
+Is it possible to add files to the shared-app-data folder in a robust, cross-Windows-version way from a VS 2008 setup project? Can anyone tell me how?
+
+
+I have learned the answer to my question through other sources, yes, yes! Sadly, it didn't fix my problem! What's that make me -- a fixer-upper? Yes, yes!
+To put stuff in a sub-directory of the Common Application Data folder from a VS2008 Setup project, here's what you do:
+
+Right-click your setup project in the Solution Explorer and pick "View -> File System".
+Right-click "File system on target machine" and pick "Add Special Folder -> Custom Folder".
+Rename the custom folder to "Common Application Data Folder." (This isn't the name that will be used for the resulting folder, it's just to help you keep it straight.)
+Change the folder's DefaultLocation property to "[CommonAppDataFolder][Manufacturer]\[ProductName]". Note the similarity with the DefaultLocation property of the Application Folder, including the odd use of a single backslash.
+Marvel for a moment at the ridiculous (yet undeniable) fact that there is a folder property named "Property." 
+Change the folder's Property property to "COMMONAPPDATAFOLDER".
+
+Data files placed in the "Common Application Data" folder will be copied to "\ProgramData\Manufacturer\ProductName" (on Vista) or "\Documents and Settings\All Users\Application Data\Manufacturer\ProductName" (on XP) when the installer is run.
+Now it turns out that under Vista, non-Administrators don't get modify/write access to the files in here. So all users get to read the files, but they get that in "\Program Files" as well. So what, I wonder, is the point of the Common Application Data folder?
+
+I'm not sure if this will help in your case or not.
+But if you add a private section to your app's config file
+
+
+You can specify extra folders to check in your app.
+If what you are saying is that you want to be able to install
+into other folders on the machine, then that is a problem.
+Essentially the whole reason that MS has restricted this stuff
+is to keep malicious code off machines where the user is unaware 
+of what they are installing.
+So, this won't work if you need another directory.
+What this fix does is allow you to specify where
+within your app to search for files......
+
+This worked for me using VS2005 but I had to change the DefaultLocation, I added a '\' to seperate the CommonAppDataFolder.
+[CommonAppDataFolder][Manufacturer][ProductName]
+Don't know if this was a typo but Lyman did refer to the odd use of a single backslash but this does not seem correct.
+
+I solved it this way.  I kept the database file (.sdf)  in the same folder as where the application is installed (Application Folder). On the security tab in the properties window for the main project, i checked the "Enable ClickOnce Security Settings" and selected "This is a full trust application", rebuilt and ran the setup. After that no security problem
+I am using Visual Studio 2008 and Windows Vista
+
+I had the same issue. The setup project gives the user the option to install the app "for the current user only" or "for all users:. Consequently, the database file would end up in either the current user's or the All Users application data folder. The setup would have to write this information somewhere so that the application can later retrieve it, when it comes to accessing the database. How else would it know which application data folder to look in?
+To avoid this issue, I just want to install the database in the All Users/Application Data folder, regardless if the application was installed for one user or for all users. I realize, of course, that two users could not install the application on the same computer without overwriting each other's data. This is such a remote possibility, though, that I don't want to consider it.
+The first piece of the puzzle I got here: 
+Form_Load(object sender, EventArgs e)
+{
+  // Set the db directory to the common app data folder
+  AppDomain.CurrentDomain.SetData("DataDirectory", 
+            System.Environment.GetFolderPath
+           (System.Environment.SpecialFolder.CommonApplicationData));
+}
+
+Now we need to make sure that the data source contains the DataDirectory placeholder. This piece came from here. In the DataSet designer, find the DataSet's properties, open the Connection node and edit the ConnectionString property to look as follows:
+Data Source=|DataDirectory|\YourDatabase.sdf
+
+Then I followed Lyman Enders Knowles' instructions from above for how to add the Common Application Data Folder to the setup project and placed the database file in that folder.
+I then followed Ove's suggestion from above, i.e. I checked the "Enable ClickOnce Security Settings" and selected "This is a full trust application.
+After that, the application deployed fine on Vista and the database file was accessible for both reads and writes.
+
+Instead of checking "Enable ClickOnce Security Settings" and selecting "This is a full trust application", it is possible to change the permissions of your app's CommonAppDataDirectory with a Custom Action under the "install" section of a setup project.  Here's what I did:
+
+Added a custom action to call the app being installed (alternately you could create a separate program/dll and call that instead)
+Set the Arguments property to "Install"
+Modified Main in Program.cs to check for that arg:
+
+static void Main(string[] args)
+{
+   if (args != null && args.Length > 0 && args[0] == "Install")
+   {
+      ApplicationData.SetPermissions();
+   }
+   else
+   {
+      // Execute app "normally"
+    }
+}
+
+Wrote the SetPermissions function to programmatically change permissions
+
+public static void SetPermissions()
+{
+    String path = GetPath();
+    try
+    {
+        // Create security idenifier for all users (WorldSid)
+        SecurityIdentifier sid = new SecurityIdentifier(WellKnownSidType.WorldSid, null);
+        DirectoryInfo di = new DirectoryInfo(path);
+        DirectorySecurity ds = di.GetAccessControl();
+        // add a new file access rule w/ write/modify for all users to the directory security object
+        ds.AddAccessRule(new FileSystemAccessRule(sid, 
+                                              FileSystemRights.Write | FileSystemRights.Modify,
+                                              InheritanceFlags.ObjectInherit | InheritanceFlags.ContainerInherit,   // all sub-dirs to inherit
+                                              PropagationFlags.None,
+                                              AccessControlType.Allow));                                            // Turn write and modify on
+        // Apply the directory security to the directory
+        di.SetAccessControl(ds);
+    }
+    catch (Exception ex)
+    {
+        MessageBox.Show(ex.Message);
+    }
+}
+
+
+Since the installer runs with admin rights, the program will be able to change the permissions.  I read somewhere that the "Enable ClickOnce Security" can cause the user to see an undesired prompt at app startup.  Doing it as described above will prevent this from happening.  I hope this helps someone.  I know I could have benefited from seeing something like this a few days ago!
+
+i like below concept, some stuff taken from above
+
+Right-click your setup project in the Solution Explorer and pick "View -> File System".
+Right-click "File system on target machine" and pick "Add Special Folder -> Custom Folder".
+Rename the custom folder to "Common Application Data Folder." (This isn't the name that will be used for the resulting folder, it's just to help you keep it straight.)
+Change the folder's DefaultLocation property to "[CommonAppDataFolder][Manufacturer][ProductName]". Note the similarity with the DefaultLocation property of the Application Folder, including the odd use of a single backslash.
+Marvel for a moment at the ridiculous (yet undeniable) fact that there is a folder property named "Property." Babies full of rabies, who comes up with this shit?
+Change the folder's Property property to "COMMONAPPDATAFOLDER".
+
+string userAppData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+string commonAppData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData); 
+

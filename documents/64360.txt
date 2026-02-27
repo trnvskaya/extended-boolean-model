@@ -1,0 +1,123 @@
+How to copy text from Emacs to another application on Linux
+emacs copy-paste
+When I yank text in Emacs 22.1.1 (in its own window on X, in KDE, on Kubuntu), I can't paste it anywhere else.
+
+
+Hmm, what platform and what version of emacs are you using?  With GNU Emacs 22.1.1 on Windows Vista, it works fine for me.
+If, by any chance, you are doing this from windows to linux through a RealVNC viewer, make sure you are running "vncconfig -iconic" on the linux box first.....
+
+What I do is to use a good terminal tool (PuTTY on Windows, Konsole or Terminal on Linux) that has copy facilities built-in.
+In PuTTY, you highlight the text you want with the mouse and then paste it elsewhere. Right-clicking in a PuTTY window pastes the contents of the Windows copy/paste buffer.
+In Konsole or Terminal on Linux, you highlight what you want then press Shift+Ctrl+C for copy and Shift+Ctrl+V for paste.
+In the win32 compile of emacs, yanking text does put it on the copy/paste buffer .. most of the time.
+On Mac OS X, the Apple-key chortcuts work fine, because Terminal traps them.
+There is no direct way of doing it on the commandline because the shell does not maintain a copy/paste buffer for each application. bash does maintain a copy/paste buffer for itself, and, by default, emacs ^k/^y shortcuts work.
+
+I always use quick paste -- drag selection in emacs, hit the middle mouse button in target window.
+(From the reference to kate, I take it you're on linux or similar and probably using emacs in X one way or another.)
+
+You might want to specify what platform you are using. Is it on linux, unix, macosx, windows, ms-dos?
+I believe that for windows it should work. For MacOSX it will get added to the x-windows clipboard, which isn't the same thing as the macosx clipboard. For Linux, it depends on your flavour of window manager, but I believe that x-windows handles it in a nice way on most of them.
+So, please specify.
+
+There is an EmacsWiki article that explains some issues with copy & pasting under X and how to configure it to work.
+
+I assume by emacs you are meaning Emacs under X (ie not inside a terminal window).
+There are two ways:
+
+(Applies to unix OS's only)
+Highlight the desired text with your
+mouse (this copies it to the X
+clipboard) and then middle click to
+paste.
+Highlight the desired text and then "M-x clipboard-kill-ring-save"
+(note you can bind this to an easier
+key).  Then just "Edit->Paste" in
+your favorite app.
+
+Clipboard operations available:
+
+clipboard-kill-ring-save -- copy
+selection from Emacs to clipboard
+clipboard-kill-region -- cut
+selection from Emacs to clipboard
+clipboard-yank -- paste from
+clipboard to Emacs
+
+
+Insert the following into your .emacs file:
+(setq x-select-enable-clipboard t)
+
+
+Let's be careful with our definitions here
+
+An Emacs copy is the command kill-ring-save (usually bound to M-w).
+A system copy is what you typically get from pressing C-c (or choosing "Edit->Copy" in a application window).
+An X copy is "physically" highlighting text with the mouse cursor.
+An Emacs paste is the command yank (usually bound to C-y).
+A system paste is what you typically get from pressing C-v (or choosing "Edit-Paste" in an application window).
+An X paste is pressing the "center mouse button" (simulated by pressing the left and right mouse buttons together).
+
+In my case (on GNOME):
+
+Both Emacs and system copy usually work with X paste.
+X copy usually works with Emacs paste.
+To make system copy work with Emacs paste and Emacs copy work with system paste, you need to add (setq x-select-enable-clipboard t) to your .emacs. Or try 
+META-X set-variable RET x-select-enable-clipboard RET t
+
+
+I think this is pretty standard modern Unix behavior.
+It's also important to note (though you say you're using Emacs in a separate window) that when Emacs is running in a console, it is completely divorced from the system and X clipboards: cut and paste in that case is mediated by the terminal. For example, "Edit->Paste" in your terminal window should act exactly as if you typed the text from the clipboard into the Emacs buffer. 
+
+I stick this in my .emacs:
+(setq x-select-enable-clipboard t)
+(setq interprogram-paste-function 'x-cut-buffer-or-selection-value)
+
+I subsequently have basically no problems cutting and pasting back and forth from anything in Emacs to any other X11 or Gnome application.
+Bonus: to get these things to happen in Emacs without having to reload your whole .emacs, do C-x e with the cursor just after the close paren of each of those expressions in the .emacs buffer.
+Good luck!
+
+The difficulty with copy and paste in Emacs is that you want it to work independently from the internal kill/yank, and you want it to work both in terminal and the gui. There are existing robust solutions for either terminal or gui, but not both. After installing xsel (e.g. sudo apt-get install xsel), here is what I do for copy and paste to combine them:
+(defun copy-to-clipboard ()
+  (interactive)
+  (if (display-graphic-p)
+      (progn
+        (message "Yanked region to x-clipboard!")
+        (call-interactively 'clipboard-kill-ring-save)
+        )
+    (if (region-active-p)
+        (progn
+          (shell-command-on-region (region-beginning) (region-end) "xsel -i -b")
+          (message "Yanked region to clipboard!")
+          (deactivate-mark))
+      (message "No region active; can't yank to clipboard!")))
+  )
+
+(defun paste-from-clipboard ()
+  (interactive)
+  (if (display-graphic-p)
+      (progn
+        (clipboard-yank)
+        (message "graphics active")
+        )
+    (insert (shell-command-to-string "xsel -o -b"))
+    )
+  )
+
+(global-set-key [f8] 'copy-to-clipboard)
+(global-set-key [f9] 'paste-from-clipboard)
+
+
+This works with M-w on Mac OSX. Just add to your .emacs file.
+(defun copy-from-osx ()
+   (shell-command-to-string "pbpaste"))
+(defun paste-to-osx (text &optional push)
+   (let ((process-connection-type nil))
+      (let ((proc (start-process "pbcopy" "*Messages*" "pbcopy")))
+         (process-send-string proc text)
+         (process-send-eof proc))))
+
+(setq interprogram-cut-function 'paste-to-osx)
+(setq interprogram-paste-function 'copy-from-osx)
+
+Source https://gist.github.com/the-kenny/267162

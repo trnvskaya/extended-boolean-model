@@ -1,0 +1,43 @@
+Sensitive data in Viewstate?
+c# asp.net viewstate
+I need to store sensitive data across few pages (run over https) per session.
+I can't use session object, for the primary reason being that the session store is designed as just as backup store (primarily make service calls and load the session). If the session has been restarted or in other words that the key in the session does not exist, make the service and re-populate the session.
+So, in the case of user keyed in sensitive data, i need to carry this data forward across pages, we do not have a persistent store for now, therefore option left is storing these sensitive data in Viewstate. 
+1) Should I encrypt the data and store then in Viewstate (not recommended though - sec & perf. implications)
+OR
+2) Should i store the data in a serializable class and store that in Viewstate? (not recommended again due to perf. implications)
+Any opinion please?
+
+
+Storing modest amounts of data in the viewstate, whether or not you use a serializable class, shouldn't be a performance concern.
+You will need to use encryption to protect the data values within the viewstate. Again, performance should not be a concern for modest amounts of data. See this page for details on how to enable viewstate encryption.
+
+Sensitive data shouldn't be stored in ViewState since it easily can be deserialized. 
+But you also said that the page is run over https, so the question you need to answer is; Who is the data sensitive to? The user who is accessing the page? Then you need to encrypt it. 
+If it isn't then you should be alright because you use https.
+
+
+I need to store sensitive data across
+  few pages (run over https) per
+  session.
+
+ViewState is set and maintained on the page level.  It cannot be carried across different page requests, only postbacks of the current page.  Assuming you really mean you have to carry the data "across a few pages" rather than postbacks.
+You could potentially store your sensitive data in a cookie, but that comes with some security risks.
+You could also store your sensitive data in a server side data store (xml file, database, etc.) and store a key to the data in the client side cookie.  Slightly more secure.
+
+Well, the general answer is don't do it! Although viewstate is (can be) encrypted it was not designed to store sensitive data. The reason is that the viewstate data can be picked up by a third party and decrpyted later. 
+But, that doesn't mean you shouldn't do it... :-) First, your connection is over https so everything you transmit is already encrypted. This means that picking up the sensitive data will be very hard. Should a third party steal your sensitive data he would first have to decrypt the connection and THEN decrypt the viewstate. So it will probably be much easier for an attacker to use other approaches to get your data (like fooling the users, phishing, and so on). 
+So for the safety of your data, I would stay that storing them in an encrypted viewstate and using https should be enough. 
+Choosing between 1) and 2) should have no or little effect on performance. When you store an object in viewstate the object is serialized and then stored, so no matter which approach you choose the data is serialized for you. Designing a class to store your data sounds like a clean approach so I would suggest that. You might even want to make a class that stores your sensitive data in encrypted fields to make it even harder to get the sensitive information, but that would cost even more performance. 
+
+Considering that you are talking about a decent amount effort to write code to get this to work safely and reliably with viewstate, you should consider putting that time and effort into just creating the server-side data store instead. 
+You already have a clearly defined need for one, and the effort to implement it is probably the same or less than the custom viewstate mechanism that is your alternative. The difference is that the persistent store might have value elsewhere in the app, or later on during development of other features... while the viewstate mechanism doesn't add value outside the immediate scope of the one requirement. 
+It would be rather trivial to drop a simple MS Access data file on the server, or you can even just drop in an XML or text files and write your data to those. It isn't much more effort beyond that to go to the light-weight relational stores like SQL Express, VistaDB, or even MySQL
+
+With all of the security leaks out there due to things developers didn't think could happen, I don't think I'd ever store sensitive information in viewstate.
+Encrypted or not.
+You can't control the users environment so therefore you can't control what is REALLY going to have access to this "Sensitive" information.
+
+If you are using 2.0, you can encrypt the viewstate.  See this Channel9 article.  AES is good enough encryption for the US military and federal government.   While DES could be cracked in hours, AES requires 150 trillion (with year 2001 hardware) years to crack AES.  Even with faster and more distributed hardware, your viewstate is not worth the resources required for a malicious user to crack it.  Unless you think the machine keys are somehow insecure, I'm not sure what security risk encryption poses.  
+As for performance, viewstate with sensitive data is a tradeoff between storing data in valuable memory server side or using valuable CPU cycles to encrypt data (especially in 2.0 where you can configure "server side viewstate").  You may want to gather some empirical evidence with your work load and specific hardware to find out what the true trade offs are.  If it isn't too late to design your application to store state in session instead of viewstate, you may also want to consider SqlSessionStore,which is secure (server side) and doesn't use much server side memory.
+If you are using 1.1, then all the discouraging advice about putting sensitive data into viewstate is 100% correct because decoding viewstate from 1.1 (or unencrypted viewstate from 2.0 for that matter), is a trivial task.

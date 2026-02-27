@@ -1,0 +1,179 @@
+How can I automate running commands remotely over SSH?
+bash ssh command sysadmin
+I've searched around a bit for similar questions, but other than running one command or perhaps a few command with items such as:
+ssh user@host -t sudo su -
+
+However, what if I essentially need to run a script on (let's say) 15 servers at once. Is this doable in bash? In a perfect world I need to avoid installing applications if at all possible to pull this off. For argument's sake, let's just say that I need to do the following across 10 hosts:
+
+Deploy a new Tomcat container
+Deploy an application in the container, and configure it
+Configure an Apache vhost
+Reload Apache
+
+I have a script that does all of that, but it relies on me logging into all the servers, pulling a script down from a repo, and then running it. If this isn't doable in bash, what alternatives do you suggest? Do I need a bigger hammer, such as Perl (Python might be preferred since I can guarantee Python is on all boxes in a RHEL environment thanks to yum/up2date)? If anyone can point to me to any useful information it'd be greatly appreciated, especially if it's doable in bash. I'll settle for Perl or Python, but I just don't know those as well (working on that). Thanks!
+
+
+To give you the structure, without actual code.
+
+Use scp to copy your install/setup script to the target box.
+Use ssh to invoke your script on the remote box.
+
+
+Although it's a complex topic, I can highly recommend Capistrano.
+
+Here's a script to do an SSH command on multiple machines, it may help:
+#!/bin/bash
+MACHINES="machine1 machine2 machine3 machine4 machine5 machine6"
+for m in $MACHINES
+do
+        cmd="ssh $m '$*'"
+        eval $cmd
+done
+
+You could even put this so it's in your path, call it something like sshAll, then just type sshAll command.
+
+You can do it the same way you did before, just script it instead of doing it manually. The following code remotes to machine named 'loca' and runs two commands there. What you need to do is simply insert commands you want to run there.
+che@ovecka ~ $ ssh loca 'uname -a; echo something_else'
+Linux loca 2.6.25.9 #1 (blahblahblah)
+something_else
+Then, to iterate through all the machines, do something like:
+for box in box1_name box2_name box3_name
+do
+   ssh $box 'commmands_to_run_everywhere'
+done
+In order to make this ssh thing work without entering passwords all the time, you'll need to set up key authentication. You can read about it at IBM developerworks.
+
+You can run the same command on several servers at once with a tool like cluster ssh.  The link is to a discussion of cluster ssh on the Debian package of the day blog.
+
+Take a look at Expect (man expect)
+I've accomplished similar tasks in the past using Expect.
+
+You can pipe the local script to the remote server and execute it with one command:
+ssh -t user@host 'sh' < path_to_script
+
+This can be further automated by using public key authentication and wrapping with scripts to perform parallel execution.
+
+You can run a local script as shown by che and Yang, and/or you can use a Here document:
+ssh root@server /bin/sh <<\EOF  
+wget http://server/warfile    # Could use NFS here  
+cp app.war /location  
+command 1  
+command 2  
+/etc/init.d/httpd restart  
+EOF
+
+
+Often, I'll just use the original Tcl version of Expect. You only need to have that on the local machine. If I'm inside a program using Perl, I do this with Net::SSH::Expect. Other languages have similar "expect" tools.
+
+Well, for step 1 and 2 isn't there a tomcat manager web interface; you could script that with curl or zsh with the libwww plug in.
+For SSH you're looking to:
+1) not get prompted for a password (use keys)
+2) pass the command(s) on SSH's commandline, this is similar to rsh in a trusted network.
+Other posts have shown you what to do, and I'd probably use sh too but I'd be tempted to use perl like ssh tomcatuser@server perl -e 'do-everything-on-one-line;' or you could do this:
+either scp the_package.tbz tomcatuser@server:the_place/.
+ssh tomcatuser@server /bin/sh <<\EOF
+define stuff like TOMCAT_WEBAPPS=/usr/local/share/tomcat/webapps
+tar xj the_package.tbz or rsync rsync://repository/the_package_place
+mv $TOMCAT_WEBAPPS/old_war $TOMCAT_WEBAPPS/old_war.old
+mv $THE_PLACE/new_war $TOMCAT_WEBAPPS/new_war
+touch $TOMCAT_WEBAPPS/new_war [you don't normally have to restart tomcat]
+mv $THE_PLACE/vhost_file $APACHE_VHOST_DIR/vhost_file
+$APACHECTL restart [might need to login as apache user to move that file and restart]
+EOF
+
+The issue of how to run commands on many servers at once came up on a Perl mailing list the other day and I'll give the same recommendation I gave there, which is to use gsh: http://outflux.net/unix/software/gsh
+gsh is similar to the "for box in box1_name box2_name box3_name" solution already given but I find gsh to be more convenient.  You set up a /etc/ghosts file containing your servers in groups such as web, db, RHEL4, x86_64, or whatever (man ghosts) then you use that group when you call gsh.
+[pdurbin@beamish ~]$ gsh web "cat /etc/redhat-release; uname -r"
+www-2.foo.com: Red Hat Enterprise Linux AS release 4 (Nahant Update 7)
+www-2.foo.com: 2.6.9-78.0.1.ELsmp
+www-3.foo.com: Red Hat Enterprise Linux AS release 4 (Nahant Update 7)
+www-3.foo.com: 2.6.9-78.0.1.ELsmp
+www-4.foo.com: Red Hat Enterprise Linux Server release 5.2 (Tikanga)
+www-4.foo.com: 2.6.18-92.1.13.el5
+www-5.foo.com: Red Hat Enterprise Linux Server release 5.2 (Tikanga)
+www-5.foo.com: 2.6.18-92.1.13.el5
+[pdurbin@beamish ~]$
+
+You can also combine or split ghost groups, using web+db or web-RHEL4, for example.
+I'll also mention that while I have never used shmux, its website contains a list of software (including gsh) that lets you run commands on many servers at once.  Capistrano has already been mentioned and (from what I understand) could be on that list as well.
+
+You want DSH or distributed shell, which is used in clusters a lot.  Here is the link: dsh
+You basically have node groups (a file with lists of nodes in them) and you specify which node group you wish to run commands on then you would use dsh, like you would ssh to run commands on them.
+dsh -a /path/to/some/command/or/script
+
+It will run the command on all the machines at the same time and return the output prefixed with the hostname. The command or script has to be present on the system, so a shared NFS directory can be useful for these sorts of things.
+
+I'm not sure if this method will work for everything that you want, but you can try something like this:
+$ cat your_script.sh | ssh your_host bash
+
+Which will run the script (which resides locally) on the remote server.
+
+pssh may be interesting since, unlike most solutions mentioned here, the commands are run in parallel.
+(For my own use, I wrote a simpler small script very similar to GavinCattell's one, it is documented here - in french).
+
+Have you looked at things like Puppet or Cfengine.  They can do what you want and probably much more.
+
+You can try paramiko. It's a pure-python ssh client. You can program your ssh sessions. Nothing to install on remote machines. 
+See this great article on how to use it.
+
+Multixterm is cool for doing this, and allows you to easily put the 1 out of n machine back in sequence. 
+
+For those that stumble across this question, I'll include an answer that uses Fabric, which solves exactly the problem described above: Running arbitrary commands on multiple hosts over ssh.
+Once fabric is installed, you'd create a fabfile.py, and implement tasks that can be run on your remote hosts.  For example, a task to Reload Apache might look like this:
+from fabric.api import env, run
+
+env.hosts = ['host1@example.com', 'host2@example.com']
+
+def reload():
+    """ Reload Apache """
+    run("sudo /etc/init.d/apache2 reload")
+
+Then, on your local machine, run fab reload and the sudo /etc/init.d/apache2 reload command would get run on all the hosts specified in env.hosts.
+
+Creates hostname ssh command  of all machines accessed.
+by Quierati
+http://pastebin.com/pddEQWq2
+
+#Use in .bashrc
+#Use "HashKnownHosts no" in ~/.ssh/config or /etc/ssh/ssh_config 
+# If known_hosts is encrypted and delete known_hosts
+
+[ ! -d ~/bin ] && mkdir ~/bin
+for host in `cut -d, -f1 ~/.ssh/known_hosts|cut -f1 -d " "`;
+  do
+    [ ! -s ~/bin/$host ] && echo ssh $host '$*' > ~/bin/$host
+done
+[ -d ~/bin ] && chmod -R 700 ~/bin
+export PATH=$PATH:~/bin 
+
+Ex Execute:
+$for i in hostname{1..10}; do $i who;done
+
+
+There is a  tool called FLATT (FLexible Automation and Troubleshooting Tool) that allows you to execute scripts on multiple Unix/Linux hosts with a click of a button. It is a desktop GUI app that runs on Mac and Windows  but there is also a command line java client.
+You can create batch jobs and reuse on multiple hosts.
+Requires Java 1.6 or higher.
+
+Just read a new blog using setsid without any further installation/configuration besides the mainstream kernel. Tested/Verified under Ubuntu14.04. 
+While the author has a very clear explanation and sample code as well, here's the magic part for a quick glance:
+#----------------------------------------------------------------------
+# Create a temp script to echo the SSH password, used by SSH_ASKPASS
+#----------------------------------------------------------------------
+SSH_ASKPASS_SCRIPT=/tmp/ssh-askpass-script
+cat > ${SSH_ASKPASS_SCRIPT} <<EOL
+#!/bin/bash
+echo "${PASS}"
+EOL
+chmod u+x ${SSH_ASKPASS_SCRIPT}
+
+# Tell SSH to read in the output of the provided script as the password.
+# We still have to use setsid to eliminate access to a terminal and thus avoid
+# it ignoring this and asking for a password.
+export SSH_ASKPASS=${SSH_ASKPASS_SCRIPT}
+......
+......
+# Log in to the remote server and run the above command.
+# The use of setsid is a part of the machinations to stop ssh 
+# prompting for a password.
+setsid ssh ${SSH_OPTIONS} ${USER}@${SERVER} "ls -rlt"
+

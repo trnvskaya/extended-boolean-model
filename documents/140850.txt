@@ -1,0 +1,261 @@
+How to avoid SSIS FTP task from failing when there are no files to download?
+sql-server ssis ftp
+I'm using SQL Server 2005, and creating ftp tasks within SSIS.  
+Sometimes there will be files to ftp over, sometimes not.  If there are no files, I don't want the task nor the package to fail.  I've changed the arrow going from the ftp task to the next to "completion", so the package runs through.  I've changed the allowed number of errors to 4 (because there are 4 ftp tasks, and any of the 4 directories may or may not have files).  
+But, when I run the package from a job in agent, it marks the job as failing.  Since this will be running every 15 minutes, I don't want a bunch of red x's in my job history, which will cause us to not see a problem when it really does occur.  
+How do I set the properties in the ftp task so that not finding files to ftp is not a failure?  The operation I am using is "Send files".
+Here is some more information: the files are on a server that I don't have any access through except ftp.  And, I don't know the filenames ahead of time.  The user can call them whatever they want.  So I can't check for specific files, nor, I think, can I check at all.  Except through using the ftp connection and tasks based upon that connection.  The files are on a remote server, and I want to copy them over to my server, to get them from that remote server.
+I can shell a command level ftp in a script task.  Perhaps that is what I need to use instead of a ftp task.  (I have changed to use the ftp command line, with a parameter file, called from a script task.  It gives no errors when there are no files to get.  I think this solution is going to work for me.  I'm creating the parameter file dynamically, which means I don't need to have connection information in the plain text file, but rather can be stored in my configuration file, which is in a more secure location.)
+
+
+I don't have a packaged answer for you, but since no one else has posted anything yet...
+You should be able to set a variable in an ActiveX script task and then use that to decide whether or not the FTP task should run. There is an example here that works with local paths. Hopefully you can adapt the concept (or if possible, map the FTP drive and do it that way).
+
+Put it in a ForEach container, which iterates over the files to upload. No files, no FTP, no failure.
+
+You can redirect on failure, to another task that does nothing, ie a script that just returns true.  
+To do this, add the new script task, highlight your FTP task, a second green connector will appear, drag this to the script task, and then double click it.  Select Failure on the Value drop down.  Obviously, you'll then need to handle real failures in this script task to still display right in the Job history.
+
+Aha, OK - Thanks for clarification. As the FTP task cannot return a folder listing it will not be possible to use the ForEach as I initially said - That only works if you're uploading X amount of files to a remote source.
+To download X amount of files, you can go two ways, either you can do it entirely in .Net in a script task, or you can populate an ArrayList with the file names from within a .Net script task, then ForEach over the ArrayList, passing the file name to a variable and downloading that variable name in a standard FTP task.
+Code example to suit: http://forums.microsoft.com/msdn/ShowPost.aspx?PostID=2472491&SiteID=1
+So, in the above, you'd get the FileNames() and populate the ArrayList from that, then assign the ArrayList to an Object type variable in Dts.Variables, then ForEach over that Object (ArrayList) variable using code something like: http://www.sqlservercentral.com/articles/SSIS/64014/
+
+(I can't accept my own answer, but this was the solution that worked for me.)
+It may not be the best solution, but this works.
+I use a script task, and have a bunch of variables for the ftp connection information, and source and destination directories.  (Because, we'll be changing the server this is run on, and it will be easier to change in a config package.)
+I create a text file on the fly, and write the ftp commands to it:
+    Dim ftpStream As StreamWriter = ftpFile.CreateText()
+    ftpStream.WriteLine(ftpUser)
+    ftpStream.WriteLine(ftpPassword)
+    ftpStream.WriteLine("prompt off")
+    ftpStream.WriteLine("binary")
+    ftpStream.WriteLine("cd " & ftpDestDir)
+    ftpStream.WriteLine("mput " & ftpSourceDir)
+    ftpStream.WriteLine("quit 130")
+    ftpStream.Close()
+
+Then, after giving it enough time to really close, I start a process to do the ftp command:
+    ftpParameters = "-s:" & ftpParameterLoc & ftpParameterFile & " " & ftpServer
+    proc = System.Diagnostics.Process.Start("ftp", ftpParameters)
+
+Then, after giving it some more time for the ftp process to run, I delete the temporary ftp file (that has connection information in it!).
+If files don't exist in the source directory (the variable has the \\drive\dir\*.* mapping), then there is no error.  If some other error happens, the task still fails, as it should.
+I'm new to SSIS, and this may be a kludge.  But it works for now.  I guess I asked for the best way, and I'll certainly not claim that this is it.
+As I pointed out, I have no way of knowing what the files are named, or even if there are any files there at all.  If they are there, I want to get them.
+
+Check this link that describes about gracefully handling task error in SSIS Package.
+I had almost the same problem but, with retrieving files. I wanted the package NOT to fail when no files were found on FTP server. The above link stops the error bubbling up and causing the package to fail; something you would have thought FailPackageOnError=false should have done? :-S
+Hope this solves it for you too!
+
+You can use the free SSIS FTP Task++ from eaSkills. It doesn't throw an error if the file or files don't exist, it support wild cards and gives you the option to download and delete if you need to do so.
+Here's the link to the feature page:
+http://www.easkills.com/ssis/ftptask
+
+I understand that you have found an answer to your question. This is for other users who might stumble upon this question. Here is one possible way of achieving this. Script Task can be used to find the list of files present in an FTP folder path for a given pattern (say *.txt). Below example shows how this can be done.
+Step-by-step process:
+
+On the SSIS package, create an FTP Connection named FTP and also create 5 variables as shown in screenshot #1. Variable RemotePath contains the FTP folder path; LocalPath contains the folder where the files will be downloaed to; FilePattern contains the file pattern to find the list of files to download from FTP server; FileName will be populated by the Foreach loop container but to avoid FTP task design time error, it can be populated with / or the DelayValidation property on the FTP Task can be set to True.
+On the SSIS package, place a Script Task, Foreach Loop container and FTP Task within the Foreach Loop container as shown in screenshots #2.
+Replace the Main() method within the Script Task with the code under the Script Task Code section. Script Task will populate the variable ListOfFiles with the collection of files matching a given pattern. This example will first use the pattern *.txt, which yields no results and then later the pattern *.xls that will match few files on the FTP server.
+Configure the Foreach Loop container as shown in screenshots #3 and #4. This task will loop through the variable *ListOfFiles. If there are no files, the FTP task inside the loop container will not execute. If there are files, the FTP task inside the loop container will execute for the task for the number of files found on the FTP server.
+Configure the FTP Task as shown in screenshots #5 and #6.
+Screenshot #7 shows sample package execution when no matching files are found for the pattern *.txt.
+Screenshot #8 shows the contents of the folder C:\temp\ before execution of the package.
+Screenshot #9 shows sample package execution when matching files are found for the pattern *.xls.
+Screenshot #10 shows the contents of the FTP remote path /Practice/Directory_New.
+Screenshot #11 shows the contents of the folder C:\temp\ after execution of the package.
+Screenshot #12 shows the package failure when provided with incorrect Remote path.
+Screenshot #13 shows the error message related to the package failure.
+
+Hope that helps.
+Script Task Code:
+C# code that can be used in SSIS 2008 and above. 
+Include the using statement using System.Text.RegularExpressions;
+public void Main()
+{
+    Variables varCollection = null;
+    ConnectionManager ftpManager = null;
+    FtpClientConnection ftpConnection = null;
+    string[] fileNames = null;
+    string[] folderNames = null;
+    System.Collections.ArrayList listOfFiles = null;
+    string remotePath = string.Empty;
+    string filePattern = string.Empty;
+    Regex regexp;
+    int counter;
+
+    Dts.VariableDispenser.LockForWrite("User::RemotePath");
+    Dts.VariableDispenser.LockForWrite("User::FilePattern");
+    Dts.VariableDispenser.LockForWrite("User::ListOfFiles");
+    Dts.VariableDispenser.GetVariables(ref varCollection);
+
+    try
+    {
+        remotePath = varCollection["User::RemotePath"].Value.ToString();
+        filePattern = varCollection["User::FilePattern"].Value.ToString();
+
+        ftpManager = Dts.Connections["FTP"];
+        ftpConnection = new FtpClientConnection(ftpManager.AcquireConnection(null));
+        ftpConnection.Connect();
+        ftpConnection.SetWorkingDirectory(remotePath);
+        ftpConnection.GetListing(out folderNames, out fileNames);
+        ftpConnection.Close();
+
+        listOfFiles = new System.Collections.ArrayList();
+        if (fileNames != null)
+        {
+            regexp = new Regex("^" + filePattern + "$");
+            for (counter = 0; counter <= fileNames.GetUpperBound(0); counter++)
+            {
+                if (regexp.IsMatch(fileNames[counter]))
+                {
+                    listOfFiles.Add(remotePath + fileNames[counter]);
+                }
+            }
+        }
+
+        varCollection["User::ListOfFiles"].Value = listOfFiles;
+    }
+    catch (Exception ex)
+    {
+        Dts.Events.FireError(-1, string.Empty, ex.ToString(), string.Empty, 0);
+        Dts.TaskResult = (int) ScriptResults.Failure;
+    }
+    finally
+    {
+        varCollection.Unlock();
+        ftpConnection = null;
+        ftpManager = null;
+    }
+
+    Dts.TaskResult = (int)ScriptResults.Success;
+}
+
+VB code that can be used in SSIS 2005 and above. 
+Include the Imports statement Imports System.Text.RegularExpressions
+Public Sub Main()
+    Dim varCollection As Variables = Nothing
+    Dim ftpManager As ConnectionManager = Nothing
+    Dim ftpConnection As FtpClientConnection = Nothing
+    Dim fileNames() As String = Nothing
+    Dim folderNames() As String = Nothing
+    Dim listOfFiles As Collections.ArrayList
+    Dim remotePath As String = String.Empty
+    Dim filePattern As String = String.Empty
+    Dim regexp As Regex
+    Dim counter As Integer
+
+    Dts.VariableDispenser.LockForRead("User::RemotePath")
+    Dts.VariableDispenser.LockForRead("User::FilePattern")
+    Dts.VariableDispenser.LockForWrite("User::ListOfFiles")
+    Dts.VariableDispenser.GetVariables(varCollection)
+
+    Try
+
+        remotePath = varCollection("User::RemotePath").Value.ToString()
+        filePattern = varCollection("User::FilePattern").Value.ToString()
+
+        ftpManager = Dts.Connections("FTP")
+        ftpConnection = New FtpClientConnection(ftpManager.AcquireConnection(Nothing))
+
+        ftpConnection.Connect()
+        ftpConnection.SetWorkingDirectory(remotePath)
+        ftpConnection.GetListing(folderNames, fileNames)
+        ftpConnection.Close()
+
+        listOfFiles = New Collections.ArrayList()
+        If fileNames IsNot Nothing Then
+            regexp = New Regex("^" & filePattern & "$")
+            For counter = 0 To fileNames.GetUpperBound(0)
+                If regexp.IsMatch(fileNames(counter)) Then
+                    listOfFiles.Add(remotePath & fileNames(counter))
+                End If
+            Next counter
+        End If
+
+        varCollection("User::ListOfFiles").Value = listOfFiles
+
+        Dts.TaskResult = ScriptResults.Success
+
+    Catch ex As Exception
+        Dts.Events.FireError(-1, String.Empty, ex.ToString(), String.Empty, 0)
+        Dts.TaskResult = ScriptResults.Failure
+    Finally
+        varCollection.Unlock()
+        ftpConnection = Nothing
+        ftpManager = Nothing
+    End Try
+
+    Dts.TaskResult = ScriptResults.Success
+End Sub
+
+Screenshot #1:
+
+Screenshot #2:
+
+Screenshot #3:
+
+Screenshot #4:
+
+Screenshot #5:
+
+Screenshot #6:
+
+Screenshot #7:
+
+Screenshot #8:
+
+Screenshot #9:
+
+Screenshot #10:
+
+Screenshot #11:
+
+Screenshot #12:
+
+Screenshot #13:
+
+
+This is another solution that is working for me, using built-in stuff and so without manually re-writing the FTP logic:
+1) Create a variable in your package called FTP_Error
+2) Click your FTP Task, then click "Event Handlers" tab
+3) Click within the page to create an event handler for "FTP Task/OnError" - this will fire whenever there is trouble with the FTP
+4) From the toolbox, drag in a Script Task item, and double-click to open that up
+5) In the first pop-up, ReadOnlyVariables - add System::ErrorCode, System::ErrorDescription
+6) In the first pop-up, ReadWriteVariables - add your User::FTP_Error variable
+7) Edit Script
+8) In the script set your FTP_Error variable to hold the ReadOnlyVariables we had above:
+Dts.Variables["FTP_Error"].Value = "ErrorCode:" + Dts.Variables["ErrorCode"].Value.ToString() + ", ErrorDescription=" + Dts.Variables["ErrorDescription"].Value.ToString();
+
+9) Save and close script
+10) Hit "OK" to script task
+11) Go back to "Control Flow" tab
+12) From the FTP task, OnError go to a new Script task, and edit that
+13) ReadOnlyVariables: User::FTP_Error from before
+14) Now, when there are no files found on the FTP, the error code is -1073573501
+(you can find the error code reference list here: http://msdn.microsoft.com/en-us/library/ms345164.aspx)
+15) In your script, put in the logic to do what you want - if you find a "no files found" code, then maybe you say task successful.  If not, then task failed.  And your normal flow can handle this as you wish:
+if (Dts.Variables["FTP_Error"].Value.ToString().Contains("-1073573501"))
+{
+  // file not found - not a problem
+  Dts.TaskResult = (int)ScriptResults.Success;
+}
+else
+{
+  // some other error - raise alarm!
+  Dts.TaskResult = (int)ScriptResults.Failure;
+}
+
+And from there your Succeeded/Failed flow will do what you want to do with it.
+
+An alternative is to use this FTP File Enumerator
+
+
+I just had this issue, after reading some of the replies here, nothing really sorted out my problem and the solutions in here seem insane in terms of complexity.
+My FTP task was failing since I did not allow overwriting files, lets say the job was kicked off twice in a row, the first pass will be fine, because some files are transferred over but will fail if a local file already exists. 
+My solution was simple:
+
+Right click task - Properties
+Set ForceExecutionResult = "Success"
+

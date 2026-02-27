@@ -1,0 +1,78 @@
+How do you create a Distinct query in HQL
+hibernate hql distinct
+Is there a way to create a Distinct query in HQL.  Either by using the "distinct" keyword or some other method.  I am not sure if distinct is a valid keywork for HQL, but I am looking for the HQL equivalent of the SQL keyword "distinct".
+
+
+Here's a snippet of hql that we use. (Names have been changed to protect identities)
+String queryString = "select distinct f from Foo f inner join foo.bars as b" +
+                " where f.creationDate >= ? and f.creationDate < ? and b.bar = ?";
+        return getHibernateTemplate().find(queryString, new Object[] {startDate, endDate, bar});
+
+
+It's worth noting that the distinct keyword in HQL does not map directly to the distinct keyword in SQL. 
+If you use the distinct keyword in HQL, then sometimes Hibernate will use the distinct SQL keyword, but in some situations it will use a result transformer to produce distinct results. For example when you are using an outer join like this:
+select distinct o from Order o left join fetch o.lineItems
+
+It is not possible to filter out duplicates at the SQL level in this case, so Hibernate uses a ResultTransformer to filter duplicates after the SQL query has been performed.
+
+I had some problems with result transformers combined with HQL queries. When I tried 
+final ResultTransformer trans = new DistinctRootEntityResultTransformer();
+qry.setResultTransformer(trans);
+
+it didn't work. I had to transform manually like this:
+final List found = trans.transformList(qry.list());
+
+With Criteria API transformers worked just fine.
+
+do something like this next time 
+ Criteria crit = (Criteria) session.
+                  createCriteria(SomeClass.class).
+                  setResultTransformer(Criteria.DISTINCT_ROOT_ENTITY);
+
+ List claz = crit.list();
+
+
+I have got a answer for Hibernate Query Language to use Distinct fields.
+You can use *SELECT DISTINCT(TO_CITY) FROM FLIGHT_ROUTE*.
+If you use SQL query, it return String List. You can't use it return value by Entity Class.
+So the Answer to solve that type of Problem is use HQL with SQL.
+FROM FLIGHT_ROUTE F WHERE F.ROUTE_ID IN (SELECT SF.ROUTE_ID FROM FLIGHT_ROUTE SF GROUP BY SF.TO_CITY);
+
+From SQL query statement it got DISTINCT ROUTE_ID and input as a List.
+And IN query filter the distinct TO_CITY from IN (List).
+Return type is Entity Bean type.
+So you can it in AJAX such as AutoComplement.
+May all be OK
+
+You can also use Criteria.DISTINCT_ROOT_ENTITY with Hibernate HQL query as well.
+Example:
+Query query = getSession().createQuery("from java_pojo_name");
+query.setResultTransformer(Criteria.DISTINCT_ROOT_ENTITY);
+return query.list();
+
+
+My main query looked like this in the model:
+@NamedQuery(name = "getAllCentralFinancialAgencyAccountCd", 
+    query = "select distinct i from CentralFinancialAgencyAccountCd i")
+
+And I was still not getting what I considered "distinct" results.  They were just distinct based on a primary key combination on the table.
+So in the DaoImpl I added an one line change and ended up getting the "distinct" return I wanted.  An example would be instead of seeing 00 four times I now just see it once.  Here is the code I added to the DaoImpl:
+@SuppressWarnings("unchecked")
+public List<CacheModelBase> getAllCodes() {
+
+    Session session = (Session) entityManager.getDelegate();
+    org.hibernate.Query q = session.getNamedQuery("getAllCentralFinancialAgencyAccountCd");
+    q.setResultTransformer(Criteria.DISTINCT_ROOT_ENTITY); // This is the one line I had to add to make it do a more distinct query.
+    List<CacheModelBase> codes;
+    codes = q.list();
+    return codes;       
+}
+
+I hope this helped!  Once again, this might only work if you are following coding practices that implement the service, dao, and model type of project.
+
+Suppose you have a Customer Entity mapped to CUSTOMER_INFORMATION table and you want to get list of distinct firstName of customer. You can use below snippet to get the same.
+Query distinctFirstName = session.createQuery("select ci.firstName from Customer ci group by ci.firstName");
+Object [] firstNamesRows = distinctFirstName.list();
+
+I hope it helps. So here we are using group by instead of using distinct keyword. 
+Also previously I found it difficult to use distinct keyword when I want to apply it to multiple columns. For example I want of get list of distinct firstName, lastName then group by would simply work. I had difficulty in using distinct in this case.

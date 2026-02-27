@@ -1,0 +1,50 @@
+Detect another host with the same MAC address
+networking ethernet
+How can I detect if another host is using the same MAC address as the current host, e.g. because the other host is spoofing?
+I'm working in an embedded environment, so looking for answers on a protocol level, rather than âuse such and such a toolâ.
+Edit: RARP does not solve this problem. For RARP to get any reply at all, there has to be at least one host on the segment which supports RARP. Since RARP is obsolete, modern operating systems don't support it. Furthermore, all RARP can do is tell you your own IP address - the response won't be any different if thereâs another host on the segment with the same MAC, unless that host has itself used a different IP address.
+
+
+Two hosts using same MAC address on a single network segment would probably make switches go nuts and you could probably detect it by having an extremely unreliable network connection (as the switches would send some portion of packets that belong to your host to the second one, depending on which one of you sent the last packet in their direction).
+
+This question is too interesting to put down!  After several false starts I started thinking about the essential components of the problem and scoured the RFCs for advice.  I haven't found a definitive answer, but here's my thought process, in the hope that it helps:
+
+The original question asks how to detect another device with your MAC address.  Assuming you're on an IP network, what's required to accomplish this?
+The passive method would be simply to listen to traffic and look for any packets that you didn't transmit but have your MAC address.  This may or may not occur, so although it can tell you definitively if a duplicate exists, it cannot tell you definitively that it doesn't.
+Any active method requires you to transmit a packet that forces an impostor to respond.  This immediately eliminates any methods that depend on optional protocols.
+If another device is spoofing you, it must (by definition) respond to packets with your MAC address as the destination.  Otherwise it's snooping but not spoofing.
+The solution should be independent of IP address and involve only the MAC address. 
+So the answer, it seems, would be to transmit either a broadcast (ethernet) packet or a packet with your MAC address as its destination, that requires a response.  The monkeywrench is that an IP address is usually involved, and you don't know it.
+
+What sort of protocol fits this description?
+Easy Answer:
+
+If your network supports BOOTP or DHCP, you're done, because this authoritatively binds a MAC address to an IP address.  Send a BOOTP request, get an IP address, and try to talk to it.  You may need to be creative to force the packet onto the wire and prevent yourself from responding (I'm thinking judicious use of iptables and NAT).
+
+Not-so-easy Answers:
+
+A protocol that's independent of IP: either one that doesn't use the IP layer, or one that allows broadcasts.  None comes to mind.
+Send any packet that would normally generate a response from you, prevent yourself from responding, and look for a response from another device.  It would seem sensible to use your IP address as the destination, but I'm not convinced of that.  Unfortunately, the details (and, therefore the answer) are left as an exercise for the OP ... but I hope the discussion was helpful.
+
+I suspect the final solution will involve a combination of techniques, as no single approach seems to guarantee a dependable determination.
+Some information is available at http://en.wikipedia.org/wiki/ARP_spoofing#Defenses
+If all else fails, you may enjoy this: http://www.rfc-editor.org/rfc/rfc2321.txt
+Please post a follow-up with your solution, as I'm sure it will be helpful to others.  Good luck!
+
+You could send an ARP request for each possible ip in the subnet.
+Of course the source address of the ARP request must be ff:ff:ff:ff:ff:ff, otherwise you might not see the response.
+I forged a packet like this with bittwiste and replayed it with PReplay and all the hosts on the network got the response. (I don't know if these forged ARP packets are legal or not... some OSes might ignore them)
+Here is what the forged package looked like:
+
+Here is what the reply looked like:
+
+If you watch the responses and see your MAC address in one of the packets (in the red rectangle) , than someone has the same MAC address as you do...
+Unfortuantely I couldn't test the theory fully because none of my (Windows) machines care about me trying to set the nic's MAC address...
+
+This is very late, and a non-answer, but I wanted to follow up with exactly what I did in case anyone else is interested.
+I was working with some very weird embedded hardware that doesnât have a MAC address assigned at manufacture. That means we needed to assign one in software.
+The obvious solution is to have the user pick a MAC address that they know is available on their network, preferably from the locally-administered range, and thatâs what I did. However, I wanted to pick a reasonably safe default, and also attempt to warn the user if a conflict occurred.
+In the end I resorted to picking a random-ish default in the locally-administered range, chosen by making some hardware readings that have moderate entropy. I deliberately excluded the beginning and end of the range on the assumption that those are moderately more likely to be chosen manually. The chances are that there will only be one of these devices on any given network, and certainly less than 20, so the chances of a conflict are very low, albeit not as low as they could be due to the somewhat predictable random numbers.
+Given the low chances of there being a problem, and despite the excellent answers above, I decided to dispense with the conflict detection and make do with a warning to the user to look out for MAC conflict problems.
+If I did decide to implement conflict detection, then given that I control the whole network stack, I would probably look out for excessive unknown or missing packets, and then trigger a change of MAC address or warn the user when that happens.
+Hopefully that will help someone else somewhere â but probably not!

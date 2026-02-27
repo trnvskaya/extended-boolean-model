@@ -1,0 +1,105 @@
+How to shrink a SQL Server Log file with Mirroring enabled?
+sql-server
+I have several databases for my applications that use SQL Server 2005 mirroring to keep a nice copy of the data somewhere else.  Works like a charm,  however, the log file just seems to be growing and growing, one is at 15GB for a 3GB database.  
+Normally, I can just shrink it - however an error pops up that this specifically cannot be done.  But, it seems eventually if unchecked would just expand to use all the space on the drive.
+I see that I can set a maximum file size for the log file, is that the answer here? Will the log just roll when it hits the max, or will the DB just stop functioning?
+Thanks
+
+
+Some good ideas can be found here: http://yukonspace ... transaction-log-growth. 
+From my experience with full-recovery mode databases (should behave in somewhat similar way) you need to make regular full backups at least, otherwise logs only grow.
+
+I would look at why your logfile is growing, then you can define a strategy for solving your issue. 
+It might be worth checking your mirroring state
+When a principal database is exposed, it is active with user connections and processing transactions. However, no log records are being sent to the mirror database, and if the principal should fail, the mirror will not have any of the transactions from the principal from the point the principal entered the exposed state. Also, the principal's transaction log cannot be truncated, so the log file will be growing indefinitely.
+ref http://www.microsoft.com/technet/prodtechnol/sql/2005/dbmirror.mspx
+
+Are you sure the Mirror did not fall behind? The principal server instance can't truncate the log until they have been successfully applied to the mirror. After a certain point I believe you may have to backup the transaction log and apply it to the mirror and restart mirroring. 
+
+We ran into the same issue after switching from log shipping to mirroring.  You have to create a job that regularly backs up the transaction log (every 15 or 30 minutes or so) to keep the log size from getting out of hand.
+If it is already out of hand, run BACKUP LOG  TO DISK = 'Nul', then run a DBCC SHRINKFILE command.  Then you can get your job set up.
+Note that The 'Nul' is not a misspelling, it is an old DOS trick that behaves as if you are writing a file, but really just dumps the information off into the ether so it doesn't take up space on the machine.
+Also, your log will grow until you run out of space, then the whole thing stops working.  Your app will receive an error that the transaction log is full.
+EDIT: David correctly pointed out that this action will break the log chain and reduce the ability to recover from failure.  Be sure to use the backup log to 'nul' command as a last resort.  If you have space on the drive, you should take a proper log backup and setup your log backup plan.  Make sure you also include regular full backups and a cleanup task to remove old files.
+
+http://support.microsoft.com/kb/937531
+
+The shrink operation is not duplicated on the mirror database when you use database mirroring in SQL Server 2005
+CAUSE
+  Database mirroring will change the physical file sizes only after a checkpoint.
+WORKAROUND
+Method 1
+  To work around this problem, run the following statements to create a new stored procedure in the master database. Then, use this stored procedure to shrink the principal database instead of running the DBCC SHRINKDATABASE statement or the DBCC SHRINKFILE statement.
+[stored procedure too long to post here]
+Method 2
+  Issue a manual checkpoint after shrinking the files on the principal.
+
+
+To shrink transaction file, backup must be performed as there are actives Virtual Log File :
+http://www.xoowiki.com/Article/SQL-Server/tronquer-journal-de-log-sur-base-en-miroir-499.aspx
+
+
+You have to backup the log regularly
+otherwise your log file will grow
+indefinitely. If you can't write to
+the log (i.e. out of disk space or
+hit max size) the DB will fail
+SQL Server 2005 has an issue where
+    the shrink isn't reflected on the
+    mirror side. The solution is here
+    http://support.microsoft.com/kb/937531
+
+This article has some good info on How Log Files work, you should also read Factors that can delay log truncation
+
+I had the same problem on mirrored databases 
+the log file grew 40GB where main Db file was around 700 Mb
+I found this solution In microsoft it works but only shrinked my Database about 4 percent
+1- just execute this to create a stored procedure
+   use master
+   go
+   if object_id ('sp_shrink_mirrored_database', 'P') is not null 
+     drop proc sp_shrink_mirrored_database 
+   go
+   create procedure sp_shrink_mirrored_database @dbname sysname, @target_percent int = null
+   as
+   begin
+     declare @filename sysname
+     declare @filesize int
+     declare @sql nvarchar(4000)
+
+     if @target_percent is null
+       dbcc shrinkdatabase (@dbname)
+     else 
+       dbcc shrinkdatabase (@dbname, @target_percent)
+     declare c cursor for 
+     select [name], [size] from sys.master_files where type=0 and database_id = db_id (@dbname)
+     open c
+     fetch next from c into @filename, @filesize
+     while @@fetch_status=0
+     begin
+       set @filesize=(@filesize+1)*8
+       set @sql='alter database [' + @dbname + '] modify file ( name=' 
+         + @filename + ', size=' + cast(@filesize as nvarchar) + 'kb )'
+       execute sp_executesql @sql
+       fetch next from c into @filename, @filesize
+     end
+     close c
+     deallocate c
+   end
+   go
+
+2- execute the stored procedure like this in a new query window
+For example, if you want to shrink the mydb database, run the following statement.
+  EXEC sp_shrink_mirrored_database 'mydb'
+
+
+Simply you can shrink the log file by using the following command 
+USE DBNAME
+GO
+DBCC SHRINKFILE(DBNAME_log, 1)
+BACKUP LOG DBNAME WITH TRUNCATE_ONLY
+DBCC SHRINKFILE(DBNAME_log, 1)
+GO
+
+
+Please make sure to perform a full backup after performing log backup with TRUNCATE_ONLY. This breaks the log backup chain.

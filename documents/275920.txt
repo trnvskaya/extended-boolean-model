@@ -1,0 +1,97 @@
+ASP.NET MVC on IIS 6 - wildcard mapping - the incoming request does not match any route
+asp.net-mvc .net-3.5 iis-6
+I have been trying to set up my Beta 1 MVC app on IIS 6 and cannot get it to run correctly. I have added a Wildcard mapping to the .net isapi DLL as suggested in other blog posts but get the following error when I access the root of the website:
+The incoming request does not match any route.
+..
+[HttpException (0x80004005): The incoming request does not match any route.]
+   System.Web.Routing.UrlRoutingHandler.ProcessRequest(HttpContextBase httpContext) +147
+   System.Web.Routing.UrlRoutingHandler.ProcessRequest(HttpContext httpContext) +36
+   System.Web.Routing.UrlRoutingHandler.System.Web.IHttpHandler.ProcessRequest(HttpContext context) +4
+   HCD.Intranet.Web.Default.Page_Load(Object sender, EventArgs e) +81
+   System.Web.Util.CalliHelper.EventArgFunctionCaller(IntPtr fp, Object o, Object t, EventArgs e) +15
+   System.Web.Util.CalliEventHandlerDelegateProxy.Callback(Object sender, EventArgs e) +33
+   System.Web.UI.Control.OnLoad(EventArgs e) +99
+   System.Web.UI.Control.LoadRecursive() +47
+   System.Web.UI.Page.ProcessRequestMain(Boolean includeStagesBeforeAsyncPoint, Boolean includeStagesAfterAsyncPoint) +1436
+
+I am using the Default.aspx page supplied in the MVC template application that rewrites access to the root of the website properly.
+public partial class Default : Page
+{
+    public void Page_Load(object sender, System.EventArgs e)
+    {
+    	HttpContext.Current.RewritePath(Request.ApplicationPath);
+    	IHttpHandler httpHandler = new MvcHttpHandler();
+    	httpHandler.ProcessRequest(HttpContext.Current);
+    }
+}
+
+If I try and access a route within the application, such as /Project, I get the standard IIS 404 error page, not the .net error page.
+I tried adding the following line to my Web.config httpHandlers section:
+<add verb="*" path="*" validate="false" type="System.Web.Mvc.MvcHttpHandler, System.Web.Mvc, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31BF3856AD364E35"/>
+
+This gave me a different error - the .net 404 error page.
+I added the following to my Global.asax, which did nothing:
+protected void Application_BeginRequest(object sender, EventArgs e)
+{
+    if (Context.Request.FilePath.Equals("/"))
+    	Context.RewritePath("Default.aspx");
+}
+
+I am using the following route configuration (uses the restful routing supplied by the MvcContrib project):
+routes.IgnoreRoute("{resource}.axd/{*pathInfo}");
+SimplyRestfulRouteHandler.BuildRoutes(routes);
+routes.MapRoute(
+"Default", 
+"{controller}/{action}/{id}",
+new { controller = "Home", action = "Index", id = "" }
+);
+
+Any suggestions would be grealy received as I've exhausted all options for the time I have right now.
+Many thanks.
+
+
+Unfortunatly IIS 6 needs a file extension to map the request to the right handler which means you will have to use the .mvc suffix on your controller names, such as  /{controller}.mvc/{action}
+routes.IgnoreRoute("{resource}.axd/{*pathInfo}");
+
+SimplyRestfulRouteHandler.BuildRoutes(routes);
+
+routes.MapRoute(
+      "Default",
+      "{controller}.mvc/{action}/{id}",
+      new { controller = "Home", action = "Index", id = "" }
+);
+
+However, the are ways around this depending on your level of control on the IIS 6 server. Please refer to the following pages for more information
+
+http://biasecurities.com/blog/2008/how-to-enable-pretty-urls-with-asp-net-mvc-and-iis6/
+http://www.flux88.com/UsingASPNETMVCOnIIS6WithoutTheMVCExtension.aspx
+
+
+Here's what I did to get extensionless URLs working with IIS 6 and ASP.NET MVC Beta 1.
+
+Create a default ASP.NET MVC Beta
+project and compile it.
+Create a new IIS website pointing to
+the application directory.
+In the IIS properties for the
+website, click the HomeDirectory
+tab.
+Click the "Configuration..." button.
+In the "Mappings" tab, click
+"Insert..."
+Next to the "Wildcard application
+maps" label In the textbox, type in
+"c:\windows\microsoft.net\framework\v2.0.50727\aspnet_isapi.dll"
+Uncheck the box labelled "Verify
+that file exists" Click OK
+Navigate to /home It worked!
+
+You shouldn't need to change web.config at all. You just need to map all requests to IIS to the ASP.NET Isapi dll otherwise ASP.NET will never get those requests.
+
+OK, got it working.
+The problem was that I was using msbuild automation to package up the files that I needed to deploy, and I was missing global.asax.
+So it looks like if global.asax is not deployed to the site then none of the routes get hooked up. This means that hitting the website root correctly results in the error 'The incoming request does not match any route.', and any other requests no longer get routed through to your controller classes, so result in a 404.
+HTH.
+
+there is an alternative solution
+http://www.codeproject.com/KB/aspnet/iis-aspnet-url-rewriting.aspx

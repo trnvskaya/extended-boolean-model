@@ -1,0 +1,128 @@
+Opening a folder in explorer and selecting a file
+c# explorer
+I'm trying to open a folder in explorer with a file selected.
+The following code produces a file not found exception: 
+System.Diagnostics.Process.Start(
+    "explorer.exe /select," 
+    + listView1.SelectedItems[0].SubItems[1].Text + "\\" 
+    + listView1.SelectedItems[0].Text);
+
+How can I get this command to execute in C#?
+
+
+You need to put the arguments to pass ("/select etc") in the second parameter of the Start method.
+
+Use this method:
+Process.Start(String, String)
+
+First argument is an application (explorer.exe), second method argument are arguments of the application you run.
+For example:
+in CMD:
+explorer.exe -p
+
+in C#:
+Process.Start("explorer.exe", "-p")
+
+
+Use "/select,c:\file.txt"
+Notice there should be a comma after /select instead of space.. 
+
+        // suppose that we have a test.txt at E:\
+        string filePath = @"E:\test.txt";
+        if (!File.Exists(filePath))
+        {
+            return;
+        }
+
+        // combine the arguments together
+        // it doesn't matter if there is a space after ','
+        string argument = "/select, \"" + filePath +"\"";
+
+        System.Diagnostics.Process.Start("explorer.exe", argument);
+
+
+Just my 2 cents worth, if your filename contains spaces, ie "c:\My File Contains Spaces.txt", you'll need to surround the filename with quotes otherwise explorer will assume that the othe words are different arguments...
+string argument = "/select, \"" + filePath +"\"";
+
+
+Samuel Yang answer tripped me up, here is my 3 cents worth.
+Adrian Hum is right, make sure you put quotes around your filename. Not because it can't handle spaces as zourtney pointed out, but because it will recognize the commas (and possibly other characters) in filenames as separate arguments.
+So it should look as Adrian Hum suggested.
+string argument = "/select, \"" + filePath +"\"";
+
+
+string windir = Environment.GetEnvironmentVariable("windir");
+if (string.IsNullOrEmpty(windir.Trim())) {
+    windir = "C:\\Windows\\";
+}
+if (!windir.EndsWith("\\")) {
+    windir += "\\";
+}    
+
+FileInfo fileToLocate = null;
+fileToLocate = new FileInfo("C:\\Temp\\myfile.txt");
+
+ProcessStartInfo pi = new ProcessStartInfo(windir + "explorer.exe");
+pi.Arguments = "/select, \"" + fileToLocate.FullName + "\"";
+pi.WindowStyle = ProcessWindowStyle.Normal;
+pi.WorkingDirectory = windir;
+
+//Start Process
+Process.Start(pi)
+
+
+If your path contains comma's, putting quotes around the path will work when using Process.Start(ProcessStartInfo).
+It will NOT work when using Process.Start(string, string) however. It seems like Process.Start(string, string) actually removes the quotes inside of your args. 
+Here is a simple example that works for me.
+string p = @"C:\tmp\this path contains spaces, and,commas\target.txt";
+string args = string.Format("/e, /select, \"{0}\"", p);
+
+ProcessStartInfo info = new ProcessStartInfo();
+info.FileName = "explorer";
+info.Arguments = args;
+Process.Start(info);
+
+
+Using Process.Start on explorer.exe with the /select argument oddly only works for paths less than 120 characters long.
+I had to use a native windows method to get it to work in all cases:
+[DllImport("shell32.dll", SetLastError = true)]
+public static extern int SHOpenFolderAndSelectItems(IntPtr pidlFolder, uint cidl, [In, MarshalAs(UnmanagedType.LPArray)] IntPtr[] apidl, uint dwFlags);
+
+[DllImport("shell32.dll", SetLastError = true)]
+public static extern void SHParseDisplayName([MarshalAs(UnmanagedType.LPWStr)] string name, IntPtr bindingContext, [Out] out IntPtr pidl, uint sfgaoIn, [Out] out uint psfgaoOut);
+
+public static void OpenFolderAndSelectItem(string folderPath, string file)
+{
+    IntPtr nativeFolder;
+    uint psfgaoOut;
+    SHParseDisplayName(folderPath, IntPtr.Zero, out nativeFolder, 0, out psfgaoOut);
+
+    if (nativeFolder == IntPtr.Zero)
+    {
+        // Log error, can't find folder
+        return;
+    }
+
+    IntPtr nativeFile;
+    SHParseDisplayName(Path.Combine(folderPath, file), IntPtr.Zero, out nativeFile, 0, out psfgaoOut);
+
+    IntPtr[] fileArray;
+    if (nativeFile == IntPtr.Zero)
+    {
+        // Open the folder without the file selected if we can't find the file
+        fileArray = new IntPtr[0];
+    }
+    else
+    {
+        fileArray = new IntPtr[] { nativeFile };
+    }
+
+    SHOpenFolderAndSelectItems(nativeFolder, (uint)fileArray.Length, fileArray, 0);
+
+    Marshal.FreeCoTaskMem(nativeFolder);
+    if (nativeFile != IntPtr.Zero)
+    {
+        Marshal.FreeCoTaskMem(nativeFile);
+    }
+}
+

@@ -1,0 +1,109 @@
+Sql Server string to date conversion
+sql sql-server sql-server-2005 tsql string-to-datetime
+I want to convert a string like this:
+'10/15/2008 10:06:32 PM'
+
+into the equivalent DATETIME value in Sql Server.
+In Oracle, I would say this:
+TO_DATE('10/15/2008 10:06:32 PM','MM/DD/YYYY HH:MI:SS AM')
+
+This question implies that I must parse the string into one of the standard formats, and then convert using one of those codes.  That seems ludicrous for such a mundane operation.  Is there an easier way?
+
+
+For this problem the best solution I use is to have a CLR function in Sql Server 2005 that uses one of DateTime.Parse or ParseExact function to return the DateTime value with a specified format.
+
+Run this through your query processor.  It formats dates and/or times like so and one of these should give you what you're looking for.  It wont be hard to adapt:  
+Declare @d datetime
+select @d = getdate()
+
+select @d as OriginalDate,
+convert(varchar,@d,100) as ConvertedDate,
+100 as FormatValue,
+'mon dd yyyy hh:miAM (or PM)' as OutputFormat
+union all
+select @d,convert(varchar,@d,101),101,'mm/dd/yy'
+union all
+select @d,convert(varchar,@d,102),102,'yy.mm.dd'
+union all
+select @d,convert(varchar,@d,103),103,'dd/mm/yy'
+union all
+select @d,convert(varchar,@d,104),104,'dd.mm.yy'
+union all
+select @d,convert(varchar,@d,105),105,'dd-mm-yy'
+union all
+select @d,convert(varchar,@d,106),106,'dd mon yy'
+union all
+select @d,convert(varchar,@d,107),107,'Mon dd, yy'
+union all
+select @d,convert(varchar,@d,108),108,'hh:mm:ss'
+union all
+select @d,convert(varchar,@d,109),109,'mon dd yyyy hh:mi:ss:mmmAM (or PM)'
+union all
+select @d,convert(varchar,@d,110),110,'mm-dd-yy'
+union all
+select @d,convert(varchar,@d,111),111,'yy/mm/dd'
+union all
+select @d,convert(varchar,@d,12),12,'yymmdd'
+union all
+select @d,convert(varchar,@d,112),112,'yyyymmdd'
+union all
+select @d,convert(varchar,@d,113),113,'dd mon yyyy hh:mm:ss:mmm(24h)'
+union all
+select @d,convert(varchar,@d,114),114,'hh:mi:ss:mmm(24h)'
+union all
+select @d,convert(varchar,@d,120),120,'yyyy-mm-dd hh:mi:ss(24h)'
+union all
+select @d,convert(varchar,@d,121),121,'yyyy-mm-dd hh:mi:ss.mmm(24h)'
+union all
+select @d,convert(varchar,@d,126),126,'yyyy-mm-dd Thh:mm:ss:mmm(no spaces)'
+
+
+If you want SQL Server to try and figure it out, just use CAST
+CAST('whatever' AS datetime)
+However that is a bad idea in general.  There are issues with international dates that would come up.  So as you've found, to avoid those issues, you want to use the ODBC canonical format of the date.  That is format number 120, 20 is the format for just two digit years.
+I don't think SQL Server has a built-in function that allows you to provide a user given format.  You can write your own and might even find one if you search online.
+
+This page has some references for all of the specified datetime conversions available to the CONVERT function.  If your values don't fall into one of the acceptable patterns, then I think the best thing is to go the ParseExact route.
+
+SQL Server (2005, 2000, 7.0) does not have any flexible, or even non-flexible, way of taking an arbitrarily structured datetime in string format and converting it to the datetime data type.
+By "arbitrarily", I mean "a form that the person who wrote it, though perhaps not you or I or someone on the other side of the planet, would consider to be intuitive and completely obvious."  Frankly, I'm not sure there is any such algorithm.
+
+why not try 
+select convert(date,'10/15/2011 00:00:00',104) as [MM/dd/YYYY]
+
+date formats can be found at SQL Server Helper > SQL Server Date Formats
+
+Try this
+Cast('7/7/2011' as datetime)
+
+and
+Convert(varchar(30),'7/7/2011',102)
+
+See CAST and CONVERT (Transact-SQL) for more details.
+
+In SQL Server Denali, you will be able to do something that approaches what you're looking for. But you still can't just pass any arbitrarily defined wacky date string and expect SQL Server to accommodate. Here is one example using something you posted in your own answer. The FORMAT() function and can also accept locales as an optional argument - it is based on .Net's format, so most if not all of the token formats you'd expect to see will be there.
+DECLARE @d DATETIME = '2008-10-13 18:45:19';
+
+-- returns Oct-13/2008 18:45:19:
+SELECT FORMAT(@d, N'MMM-dd/yyyy HH:mm:ss');
+
+-- returns NULL if the conversion fails:
+SELECT TRY_PARSE(FORMAT(@d, N'MMM-dd/yyyy HH:mm:ss') AS DATETIME);
+
+-- returns an error if the conversion fails:
+SELECT PARSE(FORMAT(@d, N'MMM-dd/yyyy HH:mm:ss') AS DATETIME);
+
+I strongly encourage you to take more control and sanitize your date inputs. The days of letting people type dates using whatever format they want into a freetext form field should be way behind us by now. If someone enters 8/9/2011 is that August 9th or September 8th? If you make them pick a date on a calendar control, then the app can control the format. No matter how much you try to predict your users' behavior, they'll always figure out a dumber way to enter a date that you didn't plan for.
+Until Denali, though, I think that @Ovidiu has the best advice so far... this can be made fairly trivial by implementing your own CLR function. Then you can write a case/switch for as many wacky non-standard formats as you want.
+
+UPDATE for @dhergert:
+SELECT TRY_PARSE('10/15/2008 10:06:32 PM' AS DATETIME USING 'en-us');
+SELECT TRY_PARSE('15/10/2008 10:06:32 PM' AS DATETIME USING 'en-gb');
+
+Results:
+2008-10-15 22:06:32.000
+2008-10-15 22:06:32.000
+
+You still need to have that other crucial piece of information first. You can't use native T-SQL to determine whether 6/9/2012 is June 9th or September 6th.
+
+Personally if your dealing with arbitrary or totally off the wall formats, provided you know what they are ahead of time or are going to be then simply use regexp to pull the sections of the date you want and form a valid date/datetime component.

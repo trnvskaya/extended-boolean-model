@@ -1,0 +1,96 @@
+How do I check if a tag exists in XSLT?
+xslt tags
+I have the following template
+<h2>one</h2>
+<xsl:apply-templates select="one"/>
+<h2>two</h2>
+<xsl:apply-templates select="two"/>
+<h2>three</h2>
+<xsl:apply-templates select="three"/>
+
+I would like to only display the headers (one,two,three) if there is at least one member of the corresponding template. How do I check for this?
+
+
+<xsl:if test="one">
+  <h2>one</h2>
+  <xsl:apply-templates select="one"/>
+</xsl:if>
+<!-- etc -->
+
+Alternatively, you could create a named template,
+<xsl:template name="WriteWithHeader">
+   <xsl:param name="header"/>
+   <xsl:param name="data"/>
+   <xsl:if test="$data">
+      <h2><xsl:value-of select="$header"/></h2>
+      <xsl:apply-templates select="$data"/>
+   </xsl:if>
+</xsl:template>
+
+and then call as:
+  <xsl:call-template name="WriteWithHeader">
+    <xsl:with-param name="header" select="'one'"/>
+    <xsl:with-param name="data" select="one"/>
+  </xsl:call-template>
+
+But to be honest, that looks like more work to me... only useful if drawing a header is complex... for a simple <h2>...</h2> I'd be tempted to leave it inline.
+If the header title is always the node name, you could simplifiy the template by removing the "$header" arg, and use instead:
+<xsl:value-of select="name($header[1])"/>
+
+
+I like to exercise the functional aspects of XSL which lead me to the following implementation:
+<?xml version="1.0" encoding="UTF-8"?>
+
+
+
+<!-- test data inlined -->
+<test>
+    <one>Content 1</one>
+    <two>Content 2</two>
+    <three>Content 3</three>
+    <four/>
+    <special>I'm special!</special>
+</test>
+
+<!-- any root since take test content from stylesheet -->
+<xsl:template match="/">
+    <html>
+        <head>
+            <title>Header/Content Widget</title>
+        </head>
+        <body>
+            <xsl:apply-templates select="document('')//test/*" mode="header-content-widget"/>
+        </body>
+    </html>
+</xsl:template>
+
+<!-- default action for header-content -widget is apply header then content views -->
+<xsl:template match="*" mode="header-content-widget">
+    <xsl:apply-templates select="." mode="header-view"/>
+    <xsl:apply-templates select="." mode="content-view"/>
+</xsl:template>
+
+<!-- default header-view places element name in <h2> tag -->
+<xsl:template match="*" mode="header-view">
+    <h2><xsl:value-of select="name()"/></h2>
+</xsl:template>
+
+<!-- default header-view when no text content is no-op -->
+<xsl:template match="*[not(text())]" mode="header-view"/>
+
+<!-- default content-view is to apply-templates -->
+<xsl:template match="*" mode="content-view">
+    <xsl:apply-templates/>
+</xsl:template>
+
+<!-- special content handling -->
+<xsl:template match="special" mode="content-view">
+    <strong><xsl:apply-templates/></strong>
+</xsl:template>
+
+
+Once in the body all elements contained in the test element have header-content-widget applied (in document order).
+The default header-content-widget template (matching "*") first applies a header-view then applies a content-view to the current element.
+The default header-view template places the current element's name in the h2 tag. The default content-view applies generic processing rules.
+When there is no content as judged by the [not(text())] predicate no output for the element occurs.
+One off special cases are easily handled.

@@ -1,0 +1,147 @@
+ASP.NET aspx page code runs impersonated though impersonation is disabled
+asp.net authentication impersonation
+I have a blank test app created in VS 2005 as ASP.NET application. MSDN says that 
+
+By default, ASP.NET does not use impersonation, and your code runs using the ASP.NET application's process identity.
+
+And I have the following web.config
+<configuration>
+
+    <appSettings/>
+    <connectionStrings/>
+
+    <system.web>
+        <!-- 
+            Set compilation debug="true" to insert debugging 
+            symbols into the compiled page. Because this 
+            affects performance, set this value to true only 
+            during development.
+        -->
+        <compilation debug="true" defaultLanguage="c#" />
+        <!--
+            The <authentication> section enables configuration 
+            of the security authentication mode used by 
+            ASP.NET to identify an incoming user. 
+        -->
+        <authentication mode="Windows"/>
+        <identity impersonate="false"/>
+        <!--
+            The <customErrors> section enables configuration 
+            of what to do if/when an unhandled error occurs 
+            during the execution of a request. Specifically, 
+            it enables developers to configure html error pages 
+            to be displayed in place of a error stack trace.
+
+        <customErrors mode="RemoteOnly" defaultRedirect="GenericErrorPage.htm">
+            <error statusCode="403" redirect="NoAccess.htm" />
+            <error statusCode="404" redirect="FileNotFound.htm" />
+        </customErrors>
+        -->
+    </system.web>
+</configuration>
+
+So it seem impersonation is disabled just like the article is suggesting.
+My aspx is blank default and the codebehind is
+namespace TestWebapp
+{
+    public partial class _Default : System.Web.UI.Page
+    {
+        protected void Page_Load(object sender, EventArgs e)
+        {
+            System.Diagnostics.Debug.WriteLine(String.Format("Before1: Current Princupal = {0}", Thread.CurrentPrincipal.Identity.Name));
+            WindowsImpersonationContext ctx = WindowsIdentity.Impersonate(IntPtr.Zero);
+            try
+            {
+                int a = 0;
+                System.Diagnostics.Debug.WriteLine(String.Format("After: Current Princupal = {0}", Thread.CurrentPrincipal.Identity.Name));
+            } finally
+            {
+                ctx.Undo();
+            }
+
+        }
+    }
+}
+
+When I reload the page I get the following debug output:
+
+[5288] Before1: Current Princupal =
+  DOMAIN\User
+  [5288] After: Current Princupal =
+  DOMAIN\User
+
+Output is the same with
+<identity impersonate="false"/>
+
+The web site uses Default Application Pool and the pool is set up to use NETWORK SERVICE account for its worker processes.
+I'm sure the application uses the web.config it should use and the w3p.exe worker process is running under NETWORK SERVICE.
+What can be wrong in this case?
+Thanks!
+@Edit: Rob, thanks for the tip! 
+The $user shortcut shows me that everything is happening as I expect: with impersonation on I have the process running user NT AUTHORITY\NETWORK SERVICE    and the thread has DOMAIN\User before WindowsIdentity.Impersonate(IntPtr.Zero) and "No Token. Thread not impersonating." after.
+But Thread.CurrentPrincipal.Identity.Name and HttpContext.Current.User.Identity.Name still give me DOMAIN\User in both places.
+@Edit: I've found out that to get Thread.CurrentPrincipal and HttpContext.Current.User changed I have to manually do it:
+Thread.CurrentPrincipal = new WindowsPrincipal(WindowsIdentity.GetCurrent());
+HttpContext.Current.User = Thread.CurrentPrincipal;
+
+I'm not sure what's the point here, but anyway. I now have a problem with sharepoint shared services manage user profile permission but that's another question.
+
+
+Seems odd, A few things to try:
+
+While in on a breakpoint in Debug type $user in a watch window, that will show you the process and thread identities.
+Your use of impersonate is incorrect, try this code:
+// Declare the logon types as constants
+const long LOGON32_LOGON_INTERACTIVE = 2;
+const long LOGON32_LOGON_NETWORK = 3;
+
+
+// Declare the logon providers as constants
+const long LOGON32_PROVIDER_DEFAULT = 0;
+const long LOGON32_PROVIDER_WINNT50 = 3;
+const long LOGON32_PROVIDER_WINNT40 = 2;
+const long LOGON32_PROVIDER_WINNT35 = 1;
+
+
+[DllImport("advapi32.dll", EntryPoint = "LogonUser")]
+private static extern bool LogonUser(
+    string lpszUsername,
+    string lpszDomain,
+    string lpszPassword,
+    int dwLogonType,
+    int dwLogonProvider,
+    ref IntPtr phToken);
+
+
+public static WindowsImpersonationContext ImpersonateCurrentUserBegin(System.Net.NetworkCredential credential)
+{
+    WindowsImpersonationContext impersonationContext = null;
+    if (credential == null || credential.UserName.Length == 0 || credential.Password.Length == 0 || credential.Domain.Length == 0)
+    {
+        throw new Exception("Incomplete user credentials specified");
+    }
+    impersonationContext = Security.Impersonate(credential);
+    if (impersonationContext == null)
+    {
+        return null;
+    }
+    else
+    {
+        return impersonationContext;
+    }
+}
+
+
+public static void ImpersonateCurrentUserEnd(WindowsImpersonationContext impersonationContext)
+{
+    if (impersonationContext != null)
+    {
+        impersonationContext.Undo();
+    }
+}
+
+
+
+What does  HttpContext.User.Identity.Name give you?
+Assume you've checked the security tab within IIS that it allows anonymous access? 
+Are you within an active directory that has some strange local policy?

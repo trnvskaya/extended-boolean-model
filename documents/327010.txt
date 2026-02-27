@@ -1,0 +1,156 @@
+using a vector of column names, to generate a sql statement
+c++ sql idioms
+A problem that we need to solve regularly at my workplace is how to build sql statements based on user supplied table/column names.  The issue I am trying to address is the commas between column names.  
+One technique looks something like this.
+selectSql  = "SELECT ";
+
+for (z = 0; z < columns.size(); z++)
+{
+    selectSql += columns[z]._name;
+    selectSql += ", "; 
+}
+
+selectSql = selectSql(0, selectSql.len() - 2);
+
+selectSql += "FROM some-table";
+
+Another technique looks something like this
+selectSql  = "SELECT ";
+
+for (z = 0; z < columns.size(); z++)
+{
+    selectSql += columns[z]._name;
+    if (z < columns.size() - 1) 
+        selectSql += ", "; 
+}
+
+selectSql += "FROM some-table";
+
+I am not particularly enthralled by either of these implementations.
+I am interesting in hearing ideas for other ways to address this issue, with an eye toward making the code easier to read/understand/maintain.
+What alternate techniques are available?
+
+
+The way I build up statements is usually:
+pad = ""
+stmt = "SELECT "
+
+for (i = 0; i < number; i++)
+{
+    stmt += pad + item[i]
+    pad = ", "
+}
+
+This is relatively clean - it reassigns to pad each iteration, but that's trivial.  I've used any number of trivial variations on this, but it is the cleanest mechanism I know of.
+Of course, there'll be someone else's answer to learn from too...
+
+I would suggest building a generic join function to do this.  You can use the e.g. accumulate algorithm to join columns.
+EDIT: See litb's implementation; it's much less naÃ¯ve.
+// Untested
+#include <numeric>
+
+template<std::string separator>
+struct JoinColumns {
+    std::string operator()(Column a, Column b) {
+        return a._name + separator + b._name;
+    }
+
+    // Too lazy to come up with a better name
+    std::string inArray(T array) {
+        stl::accumulate(array.begin(), array.end(), std::string(), *this);
+    }
+};
+
+selectSql += stl::accumulate(columns.begin(), columns.end(), std::string(), JoinColumns<", ">());
+// or
+selectSql += JoinColumns<", ">().inArray(columns);
+
+You can get a cleaner syntax by using better wrappers, of course.
+
+for (z = 0; z < columns.size(); z++)
+{
+    if( z != 0 )
+        selectSql += ", "; 
+    selectSql += columns[z]._name;
+}
+
+
+In your case it is probably safe to assume that there is at least one column since otherwise there is no point in doing the select.  In that case you could do:
+selectSql  = "SELECT ";
+selectSql += columns[0]._name;
+
+for (z = 1; z < columns.size(); z++) {
+   selectSql += ", ";
+   selectSql += columns[z]._name;
+}
+
+selectSql += " FROM some-table";
+
+
+We don't bother to remove the trailing comma.
+This is because you can select a constant and the SQL is still valid.
+SELECT A FROM T
+
+-- Is the same as 
+
+SELECT A,1 FROM T
+
+-- Apart from there is an extra column named 1 where each value is 1
+
+So using the STL to make it compact:
+#include <sstream>
+#include <iterator>
+#include <algorithm>
+
+    std::stringstream           select;
+
+    // Build select statement.
+    select << "SELECT ";
+    std::copy(col.begin(),col.end(),std::ostream_iterator<std::string>(select," , "));
+    select << " 1 FROM TABLE PLOP";
+
+
+Rather than applying a work around each time again, you can fix the problem once and for all by writing a function object, and using that like strager proposed (though his implementation is rather not C++):
+struct join {
+    std::string sep;
+    join(std::string const& sep): sep(sep) { }
+
+    template<typename Column>
+    std::string operator()(Column const& a, Column const& b) const {
+        return a._name + sep + b._name;
+    }
+};
+
+As i don't know your column type, i've left it templated. Now, whenever you want to build a query, just do 
+std::string query = std::accumulate(cols.begin(), cols.end(), 
+    std::string("SELECT "), join(", ")) + " FROM some-table;";
+
+
+It doesn't have to be so complicated.
+string sql = "SELECT " + join(cols.begin(), cols.end(), ", ") + " FROM some_table";
+
+where
+template <typename I>
+string join(I begin, I end, const string& sep){
+   ostringstream out;
+   for(; begin != end; ++begin){
+      out << *begin;
+      if(begin+1 != end) out << sep;
+   }
+   return out.str();
+}
+
+
+Not to belabor the point but take a look at boost::algorithm::join(). Here's an example in case you think that their documentation is too dense for words:
+std::string
+build_sql(std::vector<std::string> const& colNames,
+          std::string const& tableName)
+{
+    std::ostringstream sql;
+    sql << "SELECT "
+        << boost::algorithm::join(colNames, std::string(","))
+        << " FROM " << tableName;
+    return sql.str();
+}
+
+When in doubt, look at Boost.org. They usually have a solution to most problems like this one already there.

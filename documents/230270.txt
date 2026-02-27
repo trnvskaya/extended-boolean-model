@@ -1,0 +1,161 @@
+PHP syntax highlighting
+php syntax-highlighting
+I'm searching for a PHP syntax highlighting engine that can be customized (i.e. I can provide my own tokenizers for new languages) and that can handle several languages simultaneously (i.e. on the same output page). This engine has to work well together with CSS classes, i.e. it should format the output by inserting <span> elements that are adorned with class attributes. Bonus points for an extensible schema.
+I do not search for a client-side syntax highlighting script (JavaScript).
+So far, I'm stuck with GeSHi. Unfortunately, GeSHi fails abysmally for several reasons. The main reason is that the different language files define completely different, inconsistent styles. I've worked hours trying to refactor the different language definitions down to a common denominator but since most definition files are in themselves quite bad, I'd finally like to switch.
+Ideally, I'd like to have an API similar to CodeRay, Pygments or the JavaScript dp.SyntaxHighlighter.
+Clarification:
+I'm looking for a code highlighting software written in PHP, not for PHP (since I need to use it from inside PHP).
+
+
+[I marked this answer as Community Wiki because you're specifically not looking for Javascript]
+http://softwaremaniacs.org/soft/highlight/ is a PHP (plus the following list of other languages supported) syntax highlighting library:
+
+Python, Ruby, Perl, PHP, XML, HTML, CSS, Django, Javascript, VBScript, Delphi, Java, C++, C#, Lisp, RenderMan (RSL and RIB), Maya Embedded Language, SQL, SmallTalk, Axapta, 1C, Ini, Diff, DOS .bat, Bash
+
+It uses <span class="keyword"> style markup.
+It has also been integrated in the dojo toolkit (as a dojox project: dojox.lang.highlight)
+Though not the most popular way to run a webserver, strictly speaking, Javascript is not only implemented on the client-side, but there are also Server-Side Javascript engine/platform combinations too.
+
+Another option is to use the GPL Highlight GUI program by Andre Simon which is available for most platforms. It converts PHP (and other languages) to HTML, RTF, XML, etc. which you can then cut and paste into the page you want. This way, the processing is only done once.
+The HTML is also CSS based, so you can change the style as you please.
+Personally, I use dp.SyntaxHighlighter, but that uses client side Javascript, so it doesn't meet your needs. It does have a nice Windows Live plugin though which I find useful.
+
+It might be worth looking at Pear_TextHighlighter (documentation)
+I think it won't by default output html exactly how you want it, but it does provide extensive capabilities for customisation (i.e. you can create different renderers/parsers)
+
+Krijn Hoetmer's PHP Highlighter provides a completely customizable PHP class to highlight PHP syntax. The HTML it generates, validates under a strict doctype, and is completely stylable with CSS.
+
+Since no existing tool satisfied my needs, I wrote my own. Lo and behold:
+Hyperlight
+Usage is extremely easy: just use
+ <?php hyperlight($code, 'php'); ?>
+
+to highlight code. Writing new language definitions is relatively easy, too â using regular expressions and a powerful but simple state machine. By the way, I still need a lot of definitions so feel free to contribute.
+
+A little late to chime in here, but I've been working on my own PHP syntax highlighting library.  It is still in its early stages, but I am using it for all code samples on my blog.
+Just checked out Hyperlight.  It looks pretty cool, but it is doing some pretty crazy stuff.  Nested loops, processing line by line, etc.  The core class is over 1000 lines of code.  
+If you are interested in something simple and lightweight check out Nijikodo:
+http://www.craigiam.com/nijikodo
+
+Why not use PHP's build-in syntax highlighter?
+http://php.net/manual/en/function.highlight-string.php
+
+I had exactly the the same problem but as I was very short on time and needed really good code coverage I decided to write a PHP wrapper around Pygments library.
+It's called PHPygmentizator. It's really simple to use. I wrote a very basic manual. As PHP is Web Development language primarily, I subordinated the structure to that fact and made it very easy to implement in almost any kind of website.
+It supports configuration files and if that isn't enough and somebody needs to modify stuff in the process it also fires events.
+Demo of how it works can be found on basically any post of my blog which contains source code, this one for example.
+With default config you can just provide it a string in this format:
+Any text here.
+
+[pygments=javascript]
+var a = function(ar1, ar2) {
+    return null;
+}
+[/pygments]
+
+Any text.
+
+So it highlights code between tags (tags can be customized in configuration file) and leaves the rest untouched.
+Additionally I already made a Syntax recognition library (it uses algorithm which would probably be classified as Bayesian probability) which automatically recognizes which language code block is written in and can easily be hooked to one of PHPygmentizator events to provide automatic language recognition. I will probably make it public some time this week since I need to beautify the structure a bit and write some basic documentation. If you supply it with enough "learning" data it recognizes languages amazingly well, I tested even minified javascripts and languages which have similar keywords and structures and it has never made a mistake.
+
+I found this simple generic syntax highlighter written in PHP here and modified it a bit:
+<?php
+
+/**
+ * Original => http://phoboslab.org/log/2007/08/generic-syntax-highlighting-with-regular-expressions
+ * Usage => `echo SyntaxHighlight::process('source code here');`
+ */
+
+class SyntaxHighlight {
+    public static function process($s) {
+        $s = htmlspecialchars($s);
+
+        // Workaround for escaped backslashes
+        $s = str_replace('\\\\','\\\\<e>', $s); 
+
+        $regexp = array(
+
+            // Comments/Strings
+            '/(
+                \/\*.*?\*\/|
+                \/\/.*?\n|
+                \#.[^a-fA-F0-9]+?\n|
+                \&lt;\!\-\-[\s\S]+\-\-\&gt;|
+                (?<!\\\)&quot;.*?(?<!\\\)&quot;|
+                (?<!\\\)\'(.*?)(?<!\\\)\'
+            )/isex' 
+            => 'self::replaceId($tokens,\'$1\')',
+
+            // Punctuations
+            '/([\-\!\%\^\*\(\)\+\|\~\=\`\{\}\[\]\:\"\'<>\?\,\.\/]+)/'
+            => '<span class="P">$1</span>',
+
+            // Numbers (also look for Hex)
+            '/(?<!\w)(
+                (0x|\#)[\da-f]+|
+                \d+|
+                \d+(px|em|cm|mm|rem|s|\%)
+            )(?!\w)/ix'
+            => '<span class="N">$1</span>',
+
+            // Make the bold assumption that an
+            // all uppercase word has a special meaning
+            '/(?<!\w|>|\#)(
+                [A-Z_0-9]{2,}
+            )(?!\w)/x'
+            => '<span class="D">$1</span>',
+
+            // Keywords
+            '/(?<!\w|\$|\%|\@|>)(
+                and|or|xor|for|do|while|foreach|as|return|die|exit|if|then|else|
+                elseif|new|delete|try|throw|catch|finally|class|function|string|
+                array|object|resource|var|bool|boolean|int|integer|float|double|
+                real|string|array|global|const|static|public|private|protected|
+                published|extends|switch|true|false|null|void|this|self|struct|
+                char|signed|unsigned|short|long
+            )(?!\w|=")/ix'
+            => '<span class="K">$1</span>',
+
+            // PHP/Perl-Style Vars: $var, %var, @var
+            '/(?<!\w)(
+                (\$|\%|\@)(\-&gt;|\w)+
+            )(?!\w)/ix'
+            => '<span class="V">$1</span>'
+
+        );
+
+        $tokens = array(); // This array will be filled from the regexp-callback
+
+        $s = preg_replace(array_keys($regexp), array_values($regexp), $s);
+
+        // Paste the comments and strings back in again
+        $s = str_replace(array_keys($tokens), array_values($tokens), $s);
+
+        // Delete the "Escaped Backslash Workaround Token" (TM)
+        // and replace tabs with four spaces.
+        $s = str_replace(array('<e>', "\t"), array('', '    '), $s);
+
+        return '<pre><code>' . $s . '</code></pre>';
+    }
+
+    // Regexp-Callback to replace every comment or string with a uniqid and save
+    // the matched text in an array
+    // This way, strings and comments will be stripped out and wont be processed
+    // by the other expressions searching for keywords etc.
+    private static function replaceId(&$a, $match) {
+        $id = "##r" . uniqid() . "##";
+
+        // String or Comment?
+        if(substr($match, 0, 2) == '//' || substr($match, 0, 2) == '/*' || substr($match, 0, 2) == '##' || substr($match, 0, 7) == '&lt;!--') {
+            $a[$id] = '<span class="C">' . $match . '</span>';
+        } else {
+            $a[$id] = '<span class="S">' . $match . '</span>';
+        }
+        return $id;
+    }
+}
+
+?>
+
+Demo: http://phpfiddle.org/lite/code/1sf-htn

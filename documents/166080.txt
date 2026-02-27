@@ -1,0 +1,141 @@
+How can I get data from a stored procedure into a temp table?
+sybase-ase
+Am working on sybase ASE 15. Looking for something like this
+Select * into #tmp exec my_stp;
+
+my_stp returns 10 data rows with two columns in each row.
+
+
+Not sure about Sybase, but in SQL Server the following should work:
+INSERT INTO #tmp (col1,col2,col3...) exec my_stp
+
+You don't state whether you're stored procedure returns more than one value. 
+If it only returns one value then you can do the following:
+--create store procedure
+create procedure sp_returnOne
+as 
+ BEGIN
+ return 1
+END
+
+--create temp table
+create table #tt (
+    col1 int null
+)
+
+--populate temp table #tt with stored procedure
+
+declare @result int
+exec @result =  sp_returnOne
+insert into #tt values (@result)
+
+select * from #tt
+
+drop table #tt
+
+
+If your sp returns more than value then you'll have to define the output variables in the sp. 
+From the sybase manual
+http://manuals.sybase.com/onlinebooks/group-as/asg1250e/sqlug/@Generic__BookTextView/44105;pt=44072
+"A stored procedure can return several values; each must be defined as an output variable in the stored procedure and in the calling statements. The output keyword can be abbreviated to out.
+exec myproc @a = @myvara out, @b = @myvarb out"
+You don't say what version of sybase you are working on. All of the above is valid for ASE 12.5.
+
+In Sybase SQL Anywhere,
+INSERT INTO #tmp (col1,col2,col3...) select * from my_stp()
+
+
+In ASE 15 I believe you can use functions, but they're not going to help with multirow datasets.
+If your stored proc is returning data with a "select col1,col2 from somewhere" then there's no way of grabbing that data, it just flows back to the client.
+What you can do is insert the data directly into the temp table. This can be a little tricky as if you create the temp table within the sproc it is deleted once the sproc finishes running and you don't get to see the contents. The trick for this is to create the temp table outside of the sproc, but to reference it from the sproc. The hard bit here is that every time you recreate the sproc you must create the temp table, or you'll get "table not found" errors.
+
+    --You must use this whole script to recreate the sproc    
+    create table #mine
+    (col1 varchar(3),
+    col2 varchar(3))
+    go
+    create procedure my_stp
+    as
+    insert into #mine values("aaa","aaa")
+    insert into #mine values("bbb","bbb")
+    insert into #mine values("ccc","ccc")
+    insert into #mine values("ccc","ccc")
+    go
+    drop table #mine
+    go
+
+The to run the code:
+
+create table #mine
+(col1 varchar(3),
+col2 varchar(3))
+go
+
+exec my_stp
+go
+
+select * from #mine
+drop table #mine
+go
+
+
+I've just faced this problem, and better late than never...
+It's doable, but a monstrous pain in the butt, involving a Sybase "proxy table" which is a standin for another local or remote object (table, procedure, view). The following works in 12.5, newer versions hopefully have a better way of doing it.
+Let's say you have a stored proc defined as:
+create procedure mydb.mylogin.sp_extractSomething (
+@timestamp datetime) as
+select column_a, column_b
+    from sometable
+    where timestamp = @timestamp
+
+First switch to the tempdb: 
+use tempdb
+
+Then create a proxy table where the columns match the result set:
+create existing table myproxy_extractSomething (
+column_a int not null, -- make sure that the types match up exactly!
+column_b varchar(20) not null,
+_timestamp datetime null,
+primary key (column_a)) external procedure at "loopback.mydb.mylogin.sp_extractSomething"
+
+Points of note:
+
+"loopback" is the Sybase equivalent
+of localhost, but you can substitute
+it for any server registered in the
+server's sysservers table. 
+The _timestamp parameter gets translated to @timestamp when Sybase executes the stored proc, and all parameter columns declared like this must be defined as null.
+
+You can then select from the table like this from your own db:
+declare @myTimestamp datetime
+set @myTimestamp = getdate()
+
+select * 
+from tempdb..myproxy_extractSomething
+where _timestamp = @myTimestamp
+
+Which is straightforward enough. To then insert into a temporary table, create it first:
+create table #myTempExtract (
+    column_a int not null, -- again, make sure that the types match up exactly
+    column_b varchar(20) not null,
+    primary key (column_a)
+)
+
+and combine:
+insert into #myTempExtract (column_a, column_b)
+select column_a, column_b
+    from tempdb..myproxy_extractSomething
+    where _timestamp = @myTimestamp
+
+
+If my_stp is populating data by computing  values from different tables, you can create an equivalent view which does exactly the same as my_stp. 
+CREATE VIEW My_view
+ AS
+/*
+  My_stp body
+*/
+
+
+Then select data from view 
+SELECT *  INTO #x FROM my_view
+

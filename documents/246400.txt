@@ -1,0 +1,197 @@
+Symfony app - how to add calculated fields to Propel objects?
+php orm symfony1 propel
+What is the best way of working with calculated fields of Propel objects?
+Say I have an object "Customer" that has a corresponding table "customers" and each column corresponds to an attribute of my object. What I would like to do is: add a calculated attribute "Number of completed orders" to my object when using it on View A but not on Views B and C.
+The calculated attribute is a COUNT() of "Order" objects linked to my "Customer" object via ID.
+What I can do now is to first select all Customer objects, then iteratively count Orders for all of them, but I'd think doing it in a single query would improve performance. But I cannot properly "hydrate" my Propel object since it does not contain the definition of the calculated field(s).
+How would you approach it?
+
+
+Add an attribute "orders_count" to a Customer, and then write something like this:
+class Order {
+...
+  public function save($conn = null) {
+    $customer = $this->getCustomer();
+    $customer->setOrdersCount($customer->getOrdersCount() + 1);
+    $custoner->save();
+    parent::save();
+  }
+...
+}
+You can use not only the "save" method, but the idea stays the same. Unfortunately, Propel doesn't support any "magic" for such fields.
+
+There are several choices.  First, is to create a view in your DB that will do the counts for you, similar to my answer here.  I do this for a current Symfony project I work on where the read-only attributes for a given table are actually much, much wider than the table itself.  This is my recommendation since grouping columns (max(), count(), etc) are read-only anyway.
+The other options are to actually build this functionality into your model.  You absolutely CAN do this hydration yourself, but it's a bit complicated.  Here's the rough steps
+
+Add the columns to your Table class as protected data members.
+Write the appropriate getters and setters for these columns
+Override the hydrate method and within, populate your new columns with the data from other queries. Make sure to call parent::hydrate() as the first line
+
+However, this isn't much better than what you're talking about already.  You'll still need N + 1 queries to retrieve a single record set. However, you can get creative in step #3 so that N is the number of calculated columns, not the number of rows returned.
+Another option is to create a custom selection method on your TablePeer class.
+
+Do steps 1 and 2 from above.
+Write custom SQL that you will query manually via the Propel::getConnection() process.
+Create the dataset manually by iterating over the result set, and handle custom hydration at this point as to not break hydration when use by the doSelect processes.
+
+Here's an example of this approach
+<?php
+
+class TablePeer extends BaseTablePeer
+{
+    public static function selectWithCalculatedColumns()
+    {
+    	//	Do our custom selection, still using propel's column data constants
+    	$sql = "
+    		SELECT " . implode( ', ', self::getFieldNames( BasePeer::TYPE_COLNAME ) ) . "
+    		     , count(" . JoinedTablePeer::ID . ") AS calc_col
+    		  FROM " . self::TABLE_NAME . "
+    		  LEFT JOIN " . JoinedTablePeer::TABLE_NAME . "
+    		    ON " . JoinedTablePeer::ID . " = " . self::FKEY_COLUMN
+    	;
+
+    	//	Get the result set
+    	$conn	= Propel::getConnection();
+    	$stmt	= $conn->prepareStatement( $sql );
+    	$rs	= $stmt->executeQuery( array(), ResultSet::FETCHMODE_NUM );
+
+    	//	Create an empty rowset
+    	$rowset = array();
+
+    	//	Iterate over the result set
+    	while ( $rs->next() )
+    	{
+    		//	Create each row individually
+    		$row = new Table();
+    		$startcol = $row->hydrate( $rs );
+
+    		//	Use our custom setter to populate the new column
+    		$row->setCalcCol( $row->get( $startcol ) );
+    		$rowset[] = $row;
+    	}
+    	return $rowset;
+    }
+}
+
+There may be other solutions to your problem, but they are beyond my knowledge.  Best of luck!
+
+Propel actually builds an automatic function based on the name of the linked field. Let's say you have a schema like this:
+customer:
+  id:
+  name:
+  ...
+
+order:
+  id:
+  customer_id: # links to customer table automagically
+  completed: { type: boolean, default false }
+  ...
+
+When you build your model, your Customer object will have a method getOrders() that will retrieve all orders associated with that customer. You can then simply use count($customer->getOrders()) to get the number of orders for that customer.
+The downside is this will also fetch and hydrate those Order objects. On most RDBMS, the only performance difference between pulling the records or using COUNT() is the bandwidth used to return the results set. If that bandwidth would be significant for your application, you might want to create a method in the Customer object that builds the COUNT() query manually using Creole:
+  // in lib/model/Customer.php
+  class Customer extends BaseCustomer
+  {
+    public function CountOrders()
+    {
+      $connection = Propel::getConnection();
+      $query = "SELECT COUNT(*) AS count FROM %s WHERE customer_id='%s'";
+      $statement = $connection->prepareStatement(sprintf($query, CustomerPeer::TABLE_NAME, $this->getId());
+      $resultset = $statement->executeQuery();
+      $resultset->next();
+      return $resultset->getInt('count');
+    }
+    ...
+  }
+
+
+I am doing this in a project now by overriding hydrate() and Peer::addSelectColumns() for accessing postgis fields:
+// in peer
+public static function locationAsEWKTColumnIndex()
+{
+    return GeographyPeer::NUM_COLUMNS - GeographyPeer::NUM_LAZY_LOAD_COLUMNS;
+}
+
+public static function polygonAsEWKTColumnIndex()
+{
+    return GeographyPeer::NUM_COLUMNS - GeographyPeer::NUM_LAZY_LOAD_COLUMNS + 1;
+}
+
+public static function addSelectColumns(Criteria $criteria)
+{
+    parent::addSelectColumns($criteria);
+    $criteria->addAsColumn("locationAsEWKT", "AsEWKT(" . GeographyPeer::LOCATION . ")");
+    $criteria->addAsColumn("polygonAsEWKT", "AsEWKT(" . GeographyPeer::POLYGON . ")");
+}
+// in object
+public function hydrate($row, $startcol = 0, $rehydrate = false)
+{
+    $r = parent::hydrate($row, $startcol, $rehydrate);
+    if ($row[GeographyPeer::locationAsEWKTColumnIndex()])   // load GIS info from DB IFF the location field is populated. NOTE: These fields are either both NULL or both NOT NULL, so this IF is OK
+    {
+        $this->location_ = GeoPoint::PointFromEWKT($row[GeographyPeer::locationAsEWKTColumnIndex()]); // load gis data from extra select columns See GeographyPeer::addSelectColumns().
+        $this->polygon_ = GeoMultiPolygon::MultiPolygonFromEWKT($row[GeographyPeer::polygonAsEWKTColumnIndex()]); // load gis data from extra select columns See GeographyPeer::addSelectColumns().
+    }   
+    return $r;
+}
+
+There's something goofy with AddAsColumn() but I can't remember at the moment, but this does work. You can read more about the AddAsColumn() issues.
+
+Here's what I did to solve this without any additional queries:
+Problem
+Needed to add a custom COUNT field to a typical result set used with the Symfony Pager.  However, as we know, Propel doesn't support this out the box. So the easy solution is to just do something like this in the template: 
+foreach ($pager->getResults() as $project):
+
+ echo $project->getName() . ' and ' . $project->getNumMembers()
+
+endforeach;
+
+Where getNumMembers() runs a separate COUNT query for each $project object.  Of course, we know this is grossly inefficient because you can do the COUNT on the fly by adding it as a column to the original SELECT query, saving a query for each result displayed.
+I had several different pages displaying this result set, all using different Criteria.  So writing my own SQL query string with PDO directly would be way too much hassle as I'd have to get into the Criteria object and mess around trying to form a query string based on whatever was in it!
+So, what I did in the end avoids all that, letting Propel's native code work with the Criteria and create the SQL as usual.
+1 - First create the [get/set]NumMembers() equivalent accessor/mutator methods in the model object that gets returning by the doSelect(). Remember, the accessor doesn't do the COUNT query anymore, it just holds its value.
+2 - Go into the peer class and override the parent doSelect() method and copy all code from it exactly as it is
+3 - Remove this bit because getMixerPreSelectHook is a private method of the base peer (or copy it into your peer if you need it):
+// symfony_behaviors behavior
+foreach (sfMixer::getCallables(self::getMixerPreSelectHook(__FUNCTION__)) as $sf_hook)
+{
+  call_user_func($sf_hook, 'BaseTsProjectPeer', $criteria, $con);
+}
+
+4 - Now add your custom COUNT field to the doSelect method in your peer class:
+// copied into ProjectPeer - overrides BaseProjectPeer::doSelectJoinUser()
+public static function doSelectJoinUser(Criteria $criteria, ...)
+{
+   // copied from parent method, along with everything else
+   ProjectPeer::addSelectColumns($criteria);
+   $startcol = (ProjectPeer::NUM_COLUMNS - ProjectPeer::NUM_LAZY_LOAD_COLUMNS);
+   UserPeer::addSelectColumns($criteria);
+
+   // now add our custom COUNT column after all other columns have been added
+   // so as to not screw up Propel's position matching system when hydrating
+   // the Project and User objects.
+   $criteria->addSelectColumn('COUNT(' . ProjectMemberPeer::ID . ')');
+
+   // now add the GROUP BY clause to count members by project
+   $criteria->addGroupByColumn(self::ID);
+
+   // more parent code
+
+   ...
+
+   // until we get to this bit inside the hydrating loop:
+
+   $obj1 = new $cls();
+   $obj1->hydrate($row);
+
+   // AND...hydrate our custom COUNT property (the last column)
+   $obj1->setNumMembers($row[count($row) - 1]);
+
+   // more code copied from parent
+
+   ...
+
+   return $results;         
+}
+
+That's it.  Now you have the additional COUNT field added to your object without doing a separate query to get it as you spit out the results.  The only drawback to this solution is that you've had to copy all the parent code because you need to add bits right in the middle of it.  But in my situation, this seemed like a small compromise to save all those queries and not write my own SQL query string.

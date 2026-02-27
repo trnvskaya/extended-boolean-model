@@ -1,0 +1,385 @@
+Why should we typedef a struct so often in C?
+c struct typedef
+I have seen many programs consisting of structures like the one below
+typedef struct 
+{
+    int i;
+    char k;
+} elem;
+
+elem user;
+
+Why is it needed so often? Any specific reason or applicable area?
+
+
+Using a typedef avoids having to write struct every time you declare a variable of that type:
+struct elem
+{
+ int i;
+ char k;
+};
+elem user; // compile error!
+struct elem user; // this is correct
+
+
+As Greg Hewgill said, the typedef means you no longer have to write struct all over the place. That not only saves keystrokes, it also can make the code cleaner since it provides a smidgen more abstraction.
+Stuff like
+typedef struct {
+  int x, y;
+} Point;
+
+Point point_new(int x, int y)
+{
+  Point a;
+  a.x = x;
+  a.y = y;
+  return a;
+}
+
+becomes cleaner when you don't need to see the "struct" keyword all over the place, it looks more as if there really is a type called "Point" in your language. Which, after the typedef, is the case I guess.
+Also note that while your example (and mine) omitted naming the struct  itself, actually naming it is also useful for when you want to provide an opaque type. Then you'd have code like this in the header, for instance:
+typedef struct Point Point;
+
+Point * point_new(int x, int y);
+
+and then provide the struct declaration in the implementation file:
+struct Point
+{
+  int x, y;
+};
+
+Point * point_new(int x, int y)
+{
+  Point *p;
+  if((p = malloc(sizeof *p)) != NULL)
+  {
+    p->x = x;
+    p->y = y;
+  }
+  return p;
+}
+
+In this latter case, you cannot return the Point by value, since its declaration is hidden from users of the header file. This is a technique used widely in GTK+, for instance.
+UPDATE Note that there are also highly-regarded C projects where this use of typedef to hide struct is considered a bad idea, the Linux kernel is probably the most well-known such project. See Chapter 5 of The Linux Kernel CodingStyle document for Linus' angry words. :) My point is that the "should" in the question is perhaps not set in stone, after all.
+
+the name you (optionally) give the struct is called the tag name and, as has been noted, is not a type in itself. To get to the type requires the struct prefix.
+GTK+ aside, I'm not sure the tagname is used anything like as commonly as a typedef to the struct type, so in C++ that is recognised and you can omit the struct keyword and use the tagname as the type name too:
+
+
+    struct MyStruct
+    {
+      int i;
+    };
+
+    // The following is legal in C++:
+    MyStruct obj;
+    obj.i = 7;
+
+
+
+From an old article by Dan Saks (http://www.ddj.com/cpp/184403396?pgno=3):
+
+
+The C language rules for naming
+  structs are a little eccentric, but
+  they're pretty harmless. However, when
+  extended to classes in C++, those same
+  rules open little cracks for bugs to
+  crawl through.
+In C, the name s appearing in
+struct s
+    {
+    ...
+    };
+
+is a tag. A tag name is not a type
+  name. Given the definition above,
+  declarations such as
+s x;    /* error in C */
+s *p;   /* error in C */
+
+are errors in C. You must write them
+  as
+struct s x;     /* OK */
+struct s *p;    /* OK */
+
+The names of unions and enumerations
+  are also tags rather than types.
+In C, tags are distinct from all other
+  names (for functions, types,
+  variables, and enumeration constants).
+  C compilers maintain tags in a symbol
+  table that's conceptually if not
+  physically separate from the table
+  that holds all other names. Thus, it
+  is possible for a C program to have
+  both a tag and an another name with
+  the same spelling in the same scope.
+  For example,
+struct s s;
+
+is a valid declaration which declares
+  variable s of type struct s. It may
+  not be good practice, but C compilers
+  must accept it. I have never seen a
+  rationale for why C was designed this
+  way. I have always thought it was a
+  mistake, but there it is.
+Many programmers (including yours
+  truly) prefer to think of struct names
+  as type names, so they define an alias
+  for the tag using a typedef. For
+  example, defining
+struct s
+    {
+    ...
+    };
+typedef struct s S;
+
+lets you use S in place of struct s,
+  as in
+S x;
+S *p;
+
+A program cannot use S as the name of
+  both a type and a variable (or
+  function or enumeration constant):
+S S;    // error
+
+This is good.
+The tag name in a struct, union, or
+  enum definition is optional. Many
+  programmers fold the struct definition
+  into the typedef and dispense with the
+  tag altogether, as in:
+typedef struct
+    {
+    ...
+    } S;
+
+
+
+The linked article also has a discussion about how the C++ behavior of not requireing a typedef can cause subtle name hiding problems.  To prevent these problems, it's a good idea to typedef your classes and structs in C++, too, even though at first glance it appears to be unnecessary.  In C++, with the typedef the name hiding become an error that the compiler tells you about rather than a hidden source of potential problems.
+
+One other good reason to always typedef enums and structs results from this problem:
+enum EnumDef
+{
+  FIRST_ITEM,
+  SECOND_ITEM
+};
+
+struct StructDef
+{
+  enum EnuumDef MyEnum;
+  unsigned int MyVar;
+} MyStruct;
+
+Notice the typo in EnumDef in the struct (EnuumDef)? This compiles without error (or warning) and is (depending on the literal interpretation of the C Standard) correct. The problem is that I just created an new (empty) enumeration definition within my struct. I am not (as intended) using the previous definition EnumDef.
+With a typdef similar kind of typos would have resulted in a compiler errors for using an unknown type:
+typedef 
+{
+  FIRST_ITEM,
+  SECOND_ITEM
+} EnumDef;
+
+typedef struct
+{
+  EnuumDef MyEnum; /* compiler error (unknown type) */
+  unsigned int MyVar;
+} StructDef;
+StrructDef MyStruct; /* compiler error (unknown type) */
+
+I would advocate ALWAYS typedef'ing structs and enumerations. 
+Not only to save some typing (no pun intended ;)), but because it is safer.
+
+At all, in C language, struct/union/enum are macro instruction processed by the C language preprocessor (do not mistake with the preprocessor that treat "#include" and other)
+so :
+struct a
+{
+   int i;
+};
+
+struct b
+{
+   struct a;
+   int i;
+   int j;
+};
+
+struct b is expended as something like this :
+struct b
+{
+    struct a
+    {
+        int i;
+    };
+    int i;
+    int j;
+}
+
+and so, at compile time it evolve on stack as something like:
+b:
+int ai
+int i
+int j
+that also why it's dificult to have selfreferent structs, C preprocessor round in a dÃ©claration loop that can't terminate.
+typedef are type specifier, that means only C compiler process it and it can do like he want for optimise assembler code implementation. It also dont expend member of type par stupidly like prÃ©processor do with structs but use more complex reference construction algorithm, so construction like :
+typedef struct a A; //anticipated declaration for member declaration
+
+typedef struct a //Implemented declaration
+{
+    A* b; // member declaration
+}A;
+
+is permited and fully functional. This implementation give also access to compilator type conversion and remove some bugging effects when execution thread leave the application field of initialisation functions. 
+This mean that in C typedefs are more near as C++ class than lonely structs.
+
+I don't think forward declarations are even possible with typedef. Use of struct, enum and union allows for forward declarations when dependencies (knows about) is bidirectional.
+Style:
+Use of typedef in C++ makes quite a bit of sense. It can almost be necessary when dealing with templates that require multiple and/or variable parameters. The typedef helps keep the naming straight.
+Not so in the C programming language. The use of typedef most often serves no purpose but to obfuscate the data structure usage. Since only { struct (6), enum (4), union (5) } number of keystrokes are used to declare a data type there is almost no use for the aliasing of the struct. Is that data type a union or a struct? Using the straight forward non-typdefed declaration lets you know right away what type it is. 
+Notice how Linux is written with strict avoidance of this aliasing nonsense typedef brings. The result is a minimalist and clean style.
+
+It's amazing how many people get this wrong. PLEASE don't typedef structs in C, it needlessly pollutes the global namespace which is typically very polluted already in large C programs.
+Also, typedef'd structs without a tag name are a major cause of needless imposition of ordering relationships among header files.
+Consider:
+#ifndef FOO_H
+#define FOO_H 1
+
+#define FOO_DEF (0xDEADBABE)
+
+struct bar; /* forward declaration, defined in bar.h*/
+
+struct foo {
+  struct bar *bar;
+};
+
+#endif
+
+With such a definition, not using typedefs, it is possible for a compiland unit to include foo.h to get at the FOO_DEF definition.  If it doesn't attempt to dereference  the 'bar' member of the foo struct then there will be no need to include the "bar.h" file.
+Also, since the namespaces are different between the tag names and the member names, it is possible to write very readable code such as:
+struct foo *foo;
+
+printf("foo->bar = %p", foo->bar);
+
+Since the namespaces are separate, there is no conflict in naming variables coincident with their struct tag name.
+If I have to maintain your code, I will remove your typedef'd structs.
+
+Linux kernel coding style Chapter 5 gives great pros and cons (mostly cons) of using typedef.
+
+Please don't use things like "vps_t".
+It's a mistake to use typedef for structures and pointers. When you see a
+vps_t a;
+
+in the source, what does it mean?
+In contrast, if it says
+struct virtual_container *a;
+
+you can actually tell what "a" is.
+Lots of people think that typedefs "help readability". Not so. They are useful only for:
+(a) totally opaque objects (where the typedef is actively used to hide what the object is).
+Example: "pte_t" etc. opaque objects that you can only access using the proper accessor functions.
+NOTE! Opaqueness and "accessor functions" are not good in themselves. The reason we have them for things like pte_t etc. is that there really is absolutely zero portably accessible information there.
+(b) Clear integer types, where the abstraction helps avoid confusion whether it is "int" or "long".
+u8/u16/u32 are perfectly fine typedefs, although they fit into category (d) better than here.
+NOTE! Again - there needs to be a reason for this. If something is "unsigned long", then there's no reason to do
+typedef unsigned long myflags_t;
+
+but if there is a clear reason for why it under certain circumstances might be an "unsigned int" and under other configurations might be "unsigned long", then by all means go ahead and use a typedef.
+(c) when you use sparse to literally create a new type for type-checking.
+(d) New types which are identical to standard C99 types, in certain exceptional circumstances.
+Although it would only take a short amount of time for the eyes and brain to become accustomed to the standard types like 'uint32_t', some people object to their use anyway.
+Therefore, the Linux-specific 'u8/u16/u32/u64' types and their signed equivalents which are identical to standard types are permitted -- although they are not mandatory in new code of your own.
+When editing existing code which already uses one or the other set of types, you should conform to the existing choices in that code.
+(e) Types safe for use in userspace.
+In certain structures which are visible to userspace, we cannot require C99 types and cannot use the 'u32' form above. Thus, we use __u32 and similar types in all structures which are shared with userspace.
+Maybe there are other cases too, but the rule should basically be to NEVER EVER use a typedef unless you can clearly match one of those rules.
+In general, a pointer, or a struct that has elements that can reasonably be directly accessed should never be a typedef.
+
+
+It turns out that there are prons and cons.  A useful source of information is the seminal book "Expert C Programming" (Chapter 3). Briefly, in C you have multiple namespaces: tags, types, member names and identifiers. typedef introduces an alias for a type and locates it in the tag namespace. Namely,
+typedef struct Tag{
+...members...
+}Type;
+
+defines two things. One Tag in the tag namespace and one Type in the type namespace. So you can do both Type myType and struct Tag myTagType. Declarations like struct Type myType or Tag myTagType are illegal. In addition, in a declaration like this:
+typedef Type *Type_ptr;
+
+we define a pointer to our Type. So if we declare:
+Type_ptr var1, var2;
+struct Tag *myTagType1, myTagType2;
+
+then var1,var2 and myTagType1 are pointers to Type but myTagType2 not.
+In the above mentioned book it mentions that typedefing structs is not very useful as it only saves the programmer from writing the word struct. However, I have an objection, like many other C programmers. Although it sometimes turns to obfuscate some names (that's why it is not advisable in large code bases like the kernel) when you want to implement polymorphism in C it helps a lot look here for details. Example:
+typedef struct MyWriter_t{
+    MyPipe super;
+    MyQueue relative;
+    uint32_t flags;
+...
+}MyWriter;
+
+you can do:
+void my_writer_func(MyPipe *s)
+{
+    MyWriter *self = (MyWriter *) s;
+    uint32_t myFlags = self->flags;
+...
+}
+
+So you can access an outer member (flags) by the inner struct (MyPipe) through casting. For me it is less confusing to cast the whole type than doing (struct MyWriter_ *) s; every time you want to perform such functionality. In these cases brief referencing is a big deal especially if you heavily employ the technique in your code.
+Finally, a last aspect with typedefed types is the inability to extend them, in contrast to macros. If for example you have: 
+#define X char[10] or
+typedef char Y[10]
+
+you can then declare
+unsigned X x; but not
+unsigned Y y;
+
+We do not really care for this for structs because it does not apply for storage specifiers (volatile and const).
+
+typedef will not provide a co-dependent set of data structures. This you cannot do with typdef:
+struct bar;
+struct foo;
+
+struct foo {
+    struct bar *b;
+};
+
+struct bar {
+    struct foo *f;
+};
+
+Of course you can always add:
+typedef struct foo foo_t;
+typedef struct bar bar_t;
+
+What exactly is the point of that?
+
+In 'C' programming language the  keyword 'typedef' is used to declare a new name for some object(struct,array,function..enum type).For example I will use a 'struct-s'.
+In 'C' we often declare a 'struct' outside of the 'main' function.For example:
+struct complex{ int real_part, img_part }COMPLEX;
+
+main(){
+
+ struct KOMPLEKS number; // number type is now a struct type
+ number.real_part = 3;
+ number.img_part = -1;
+ printf("Number: %d.%d i \n",number.real_part, number.img_part);
+
+}
+
+Each time I decide to use a struct type I will need this keyword 'struct 'something' 'name'.'typedef' will simply rename that type and i can use that new name in my program every time I want.So our code will be:
+typedef struct complex{int real_part, img_part; }COMPLEX;
+//now COMPLEX is the new name for this structure and if I want to use it without
+// a keyword like in the first example 'struct complex number'.
+
+main(){
+
+COMPLEX number; // number is now the same type as in the first example
+number.real_part = 1;
+number.img)part = 5;
+printf("%d %d \n", number.real_part, number.img_part);
+
+}
+
+If you have some local object(struct,array,valuable) that will be used in your entire program you can simply give it a name using a 'typedef'. 

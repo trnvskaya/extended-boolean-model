@@ -1,0 +1,78 @@
+Scheduled run of stored procedure on SQL server
+sql-server tsql
+Is it possible to set up somehow Microsoft SQL Server to run a stored procedure on regular basis?
+
+
+Yes, in MS SQL Server, you can create scheduled jobs. In SQL Management Studio, navigate to the server, then expand the SQL Server Agent item, and finally the Jobs folder to view, edit, add scheduled jobs.
+
+Using Management Studio - you may create a Job (unter SQL Server Agent)
+One Job may include several Steps
+from  T-SQL scripts up to SSIS Packages
+Jeb was faster ;)
+
+You should look at a job scheduled using the SQL Server Agent.
+
+Yes, if you use the SQL Server Agent.
+Open your Enterprise Manager, and go to the Management folder under the SQL Server instance you are interested in. There you will see the SQL Server Agent, and underneath that you will see a Jobs section. 
+Here you can create a new job and you will see a list of steps you will need to create. When you create a new step, you can specify the step to actually run a stored procedure (type TSQL Script). Choose the database, and then for the command section put in something like: 
+exec MyStoredProcedure
+That's the overview, post back here if you need any further advice. 
+[I actually thought I might get in first on this one, boy was I wrong :)]
+
+I'll add one thing:  where I'm at we used to have a bunch of batch jobs that ran every night.  However, we're moving away from that to using a client application scheduled in windows scheduled tasks that kicks off each job.  There are (at least) three reasons for this:
+
+We have some console programs that need to run every night as well.  This way all scheduled tasks can be in one place.  Of course, this creates a single point of failure, but if the console jobs don't run we're gonna lose a day's work the next day anyway.
+The program that kicks off the jobs captures print messages and errors from the server and writes them to a common application log for all our batch processes.  It makes logging from withing the sql jobs much simpler.
+If we ever need to upgrade the server (and we are hoping to do this soon) we don't need to worry about moving the jobs over.  Just re-point the application once.
+
+It's a real short VB.Net app: I can post code if any one is interested.
+
+If MS SQL Server Express Edition is being used then SQL Server Agent is not available.  I found the following worked for all editions:
+USE Master
+GO
+
+IF  EXISTS( SELECT *
+            FROM sys.objects
+            WHERE object_id = OBJECT_ID(N'[dbo].[MyBackgroundTask]')
+            AND type in (N'P', N'PC'))
+    DROP PROCEDURE [dbo].[MyBackgroundTask]
+GO
+
+CREATE PROCEDURE MyBackgroundTask
+AS
+BEGIN
+    -- SET NOCOUNT ON added to prevent extra result sets from
+    -- interfering with SELECT statements.
+    SET NOCOUNT ON;
+
+    -- The interval between cleanup attempts
+    declare @timeToRun nvarchar(50)
+    set @timeToRun = '03:33:33'
+
+    while 1 = 1
+    begin
+        waitfor time @timeToRun
+        begin
+            execute [MyDatabaseName].[dbo].[MyDatabaseStoredProcedure];
+        end
+    end
+END
+GO
+
+-- Run the procedure when the master database starts.
+sp_procoption    @ProcName = 'MyBackgroundTask',
+                @OptionName = 'startup',
+                @OptionValue = 'on'
+GO
+
+Some notes:
+
+It is worth writing an audit entry somewhere so that you can see that the query actually ran.
+The server needs rebooting once to ensure that the script runs the first time.
+A related question is: How to run a stored procedure every day in SQL Server Express Edition?
+
+
+Probably not the answer you are looking for, but I find it more useful to simply use Windows Server Task Scheduler
+You can use directly the command sqlcmd.exe -S "." -d YourDataBase -Q "exec SP_YourJob"
+Or even create a .bat file. So you can even 2x click on the task on demand.
+This has also been approached in this HERE

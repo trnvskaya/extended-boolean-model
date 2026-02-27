@@ -1,0 +1,52 @@
+Call Stack at Runtime
+debugging visual-c++ callstack
+I want to access the call stack at runtime in a Native C++ application. I am not using the IDE. How do I display the call stack?
+Update: I have a function which is called from many points all over the application. It crashes on rare occasions. I was looking for a way to get name of the caller and log it.
+
+
+Have a look at StackWalk64.
+If you're used to doing this on .NET, then you're in for a nasty surprise.
+
+If you're not actively debugging, you can "crash" the app to produce a minidump (this can be done non-invasively and lets the app continue running). IIRC DrWatson will let you do this, if not userdump from MS support will.
+You can then load the dump into windbg and see the callstack + variables etc there. You will need your app's symbols to make sense of the trace.
+If you're looking for a simpler run-time code style traces, I recommend a simple class that you instantiate on every method, the constructor writes the method name using OutputDebugString. Use WinDebug to view the trace as the program runs. (put some form of control in your class, even if its just a global variable or registry value, or global Atom so you can turn the tracing on or off at will).
+
+I believe that this page has the answer you are looking for.  You said Visual C so I assume you mean windows.
+
+You should consider setting your unhandled exception filter and writing a minidump file from within it. It is not all that complicated and is well documented.
+Just stick to the minimum of things you do once in your unhandled exception filter (read what can all go wrong if you get creative).
+
+But to be on the safe side (your unhandled exception filter might get inadvertently overwritten), you could put your code inside __try/__except block and write the minidump from within the filter function (note, you cannot have objects that require automatic unwinding in a function with __try/__except block, if you do have them, consider putting them into a separate function):
+
+
+long __stdcall myfilter(EXCEPTION_POINTERS *pexcept_info)
+{
+    mycreateminidump(pexcept_info);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+
+void myfunc()
+{
+__try{
+    //your logic here
+} __except(myfilter(GetExceptionInformation())) {
+    // exception handled
+}
+}
+
+You can then inspect the dump file with a debugger of your choice. Both Visual Studio and debuggers from Windows Debugging Tools package can handle minidumps.
+
+
+It crashes on rare occasions. I was looking for a way to get name of the caller and log it.
+
+What do you mean by it crashes? Access Violation? Divide by zero? what exactly? Does it interact with kernel mode components?
+Turn on appverifier. that should eliminate a lot of things.
+create this:
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\FileName.exe
+under that key, create a new string
+name : debugger
+value: c:\pathtowindbg\windbg.exe -gG -xe av
+If you're running 32bit code with WOW, you need to do this under the wow3264node.
+
+If you want to get a callstack of the crash, what you really want to do is post mortem debugging. If you want to check a callstack of application while it is running, this is one of many functions SysInternals Process Explorer can offer.

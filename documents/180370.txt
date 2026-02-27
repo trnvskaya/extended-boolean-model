@@ -1,0 +1,102 @@
+How to display DateTime with an abbreviated Time Zone?
+.net datetime formatting timezone tostring
+I am aware of the System.TimeZone class as well as the many uses of the DateTime.ToString() method.  What I haven't been able to find is a way to convert a DateTime to a string that, in addition to the time and date info, contains the three-letter Time Zone abbreviation (in fact, much the same way StackOverflow's tooltips for relative time display works).
+To make an example easy for everyone to follow as well as consume, let's continue with the StackOverflow example.  If you look at the tooltip that displays on relative times, it displays with the full date, the time including seconds in twelve-hour format, an AM/PM designation, and then the three-letter Time Zone abbreviation (in their case, Coordinated Universal Time).  I realize I could easily get GMT or UTC by using the built-in methods, but what I really want is the time as it is locally — in this case, on a web server.
+If our web server is running Windows Server 2k3 and has it's time zone set to CST (or, until daylight saving switches back, CDT is it?), I'd like our ASP.NET web app to display DateTimes relative to that time zone as well as formatted to display a "CST" on the end.  I realize I could easily hard-code this, but in the interest of robustness, I'd really prefer a solution based on the server running the code's OS environment settings.
+Right now, I have everything but the time zone abbreviation using the following code:
+myDateTime.ToString("MM/dd/yyyy hh:mm:ss tt")
+
+Which displays:
+10/07/2008 03:40:31 PM
+All I want (and it's not much, promise!) is for it to say:
+10/07/2008 03:40:31 PM CDT
+I can use System.TimeZone.CurrentTimeZone and use it to correctly display "Central Daylight Time" but... that's a bit too long for brevity's sake.  Am I then stuck writing a string manipulation routine to strip out white-space and any non-uppercase letters?  While that might work, that seems incredibly hack to me...
+Googling and looking around on here did not produce anything applicable to my specific question.
+
+
+It depends on the level of robustness that you need.
+You'll probably need some kind of hack either way. An easy way would be to split the string by spaces and then concatenate the first letter of each word. i.e.
+string[] words = tzname.Split(" ".ToCharArray());
+string tzabbr = "";
+foreach (string word in words)
+   tzabbr += word[0];
+
+That won't work for every time zone on the planet, but it will work for most of them. If you need it more robust then you'll probably need to create a map that maps time zone names to their abbreviations.
+
+I would create a lookup table that converts time zone name to its abbreviation. If the match is not found you could return full zone name.
+See time zone abbreviations.
+
+There is a freely available library, TZ4NET, which has these abbreviations available.  Prior to .NET 3.5, this was one of the only alternatives for converting between timezones as well.
+If you don't want a seperate library, you could certainly generate a map of reasonable abbreviations using the TimeZoneInfo classes, and then just supply those to your user.
+
+Here's my quick hack method I just made to work around this.
+public static String TimeZoneName(DateTime dt)
+{
+    String sName = TimeZone.CurrentTimeZone.IsDaylightSavingTime(dt) 
+        ? TimeZone.CurrentTimeZone.DaylightName 
+        : TimeZone.CurrentTimeZone.StandardName;
+
+    String sNewName = "";
+    String[] sSplit = sName.Split(new char[]{' '});
+    foreach (String s in sSplit)
+        if (s.Length >= 1)
+            sNewName += s.Substring(0, 1);
+
+    return sNewName;
+}
+
+
+If pulling the abbreviation from the DaylightName/StandardName, you're going to be better off building the string using a StringBuilder, for strings are immutable.
+    public static string ToCurrentTimeZoneString(this DateTime date)
+    {
+        string name = TimeZone.CurrentTimeZone.IsDaylightSavingTime(date) ?
+            TimeZone.CurrentTimeZone.DaylightName :
+            TimeZone.CurrentTimeZone.StandardName;
+        return name;
+    }
+
+    public static string ToCurrentTimeZoneShortString(this DateTime date)
+    {
+        StringBuilder result = new StringBuilder();
+
+        foreach (string value in date.ToCurrentTimeZoneString().Split(' '))
+        {
+            if (value.IsNotNullOrEmptyWithTrim())
+            {
+                result.Append(char.ToUpper(value[0]));
+            }
+        }
+
+        return result.ToString();
+    }
+
+Of course, an array containing KeyValuePair's is probably best for a multinational company. If you want to shave a few minutes off of a tight deadline, and you are at a US company, this works. 
+
+Ok, It's been 4 years (and almost a week), it's time we brought LINQ into the discussion...
+Putting together Criag's and Bob's ideas...
+public static String TimeZoneName2(DateTime dt)
+{
+    var return ToCurrentTimeZoneShortString(dt)
+                 .Split(new char[]{' '}, StringSplitOptions.RemoveEmptyEntries);
+    return sSplit.Aggregate("", (st,w)=> st +=w[0]);
+}
+
+Unless you can trust TimeZone to never return a string with two consecutive spaces:
+public static String TimeZoneName3(DateTime dt)
+{
+    return ToCurrentTimeZoneShortString(dt).Split(' ')
+                 .Aggregate("", (st,w)=> st +=w[0]);
+}
+
+
+If you are using <= .Net 3.0 then download TZ4Net and use OlsonTimeZone.CurrentTimeZone.StandardAbbreviation for > .Net 3.0 use NodaTime or other. The timezones names do not conform to any convention where you can rely on simple string manipulation to construct the abbreviation from an acronym. Wrong 5% of the time is still wrong.  
+
+Use nodatime.
+The following function takes a DateTime in UTC time and formats it with abbreviated local system timezone. Use x in format string for abbreviated timezone. Look for custom formatting here.
+    public static string ConvertToFormattedLocalTimeWithTimezone(DateTime dateTimeUtc)
+    {
+        var tz = DateTimeZoneProviders.Tzdb.GetSystemDefault(); // Get the system's time zone
+        var zdt = new ZonedDateTime(Instant.FromDateTimeUtc(dateTimeUtc), tz);
+        return zdt.ToString("MM'/'dd'/'yyyy' 'hh':'mm':'ss' 'tt' 'x", CultureInfo.InvariantCulture);
+    }
+

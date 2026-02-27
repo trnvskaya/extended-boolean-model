@@ -1,0 +1,173 @@
+Find out which remote branch a local branch is tracking
+git
+
+See also:
+how do I get git to show me which branches are tracking what? 
+
+How can I find out which remote branch a local branch is tracking?
+Do I need to parse git config output, or is there a command that would do this for me?
+
+
+I use EasyGit (a.k.a. "eg") as a super lightweight wrapper on top of (or along side of) Git.  EasyGit has an "info" subcommand that gives you all kinds of super useful information, including the current branches remote tracking branch.  Here's an example (where the current branch name is "foo"):
+
+pknotz@s883422: (foo) ~/workspace/bd
+$ eg info
+Total commits:      175
+Local repository: .git
+Named remote repositories: (name -> location)
+  origin -> git://sahp7577/home/pknotz/bd.git
+Current branch: foo
+  Cryptographic checksum (sha1sum): bd248d1de7d759eb48e8b5ff3bfb3bb0eca4c5bf
+  Default pull/push repository: origin
+  Default pull/push options:
+    branch.foo.remote = origin
+    branch.foo.merge = refs/heads/aal_devel_1
+  Number of contributors:        3
+  Number of files:       28
+  Number of directories:       20
+  Biggest file size, in bytes: 32473 (pygooglechart-0.2.0/COPYING)
+  Commits:       62
+
+
+I don't know if this counts as parsing the output of git config, but this will determine the URL of the remote that master is tracking:
+
+$ git config remote.$(git config branch.master.remote).url
+
+
+I've run across this problem as well. I often use multiple remotes in a single repository, and it's easy to forget which one your current branch is tracking against. And sometimes it's handy to know that, such as when you want to look at your local commits via git log remotename/branchname..HEAD.
+All this stuff is stored in git config variables, but you don't have to parse the git config output. If you invoke git config followed by the name of a variable, it will just print the value of that variable, no parsing required. With that in mind, here are some commands to get info about your current branch's tracking setup:
+LOCAL_BRANCH=`git name-rev --name-only HEAD`
+TRACKING_BRANCH=`git config branch.$LOCAL_BRANCH.merge`
+TRACKING_REMOTE=`git config branch.$LOCAL_BRANCH.remote`
+REMOTE_URL=`git config remote.$TRACKING_REMOTE.url`
+
+In my case, since I'm only interested in finding out the name of my current remote, I do this:
+git config branch.`git name-rev --name-only HEAD`.remote
+
+
+I think git branch -av only tells you what branches you have and which commit they're at, leaving you to infer which remote branches the local branches are tracking.
+git remote show origin explicitly tells you which branches are tracking which remote branches.  Here's example output from a repository with a single commit and a remote branch called abranch:
+$ git branch -av
+* abranch                d875bf4 initial commit
+  master                 d875bf4 initial commit
+  remotes/origin/HEAD    -> origin/master
+  remotes/origin/abranch d875bf4 initial commit
+  remotes/origin/master  d875bf4 initial commit
+
+versus
+$ git remote show origin
+* remote origin
+  Fetch URL: /home/ageorge/tmp/d/../exrepo/
+  Push  URL: /home/ageorge/tmp/d/../exrepo/
+  HEAD branch (remote HEAD is ambiguous, may be one of the following):
+    abranch
+    master
+  Remote branches:
+    abranch tracked
+    master  tracked
+  Local branches configured for 'git pull':
+    abranch merges with remote abranch
+    master  merges with remote master
+  Local refs configured for 'git push':
+    abranch pushes to abranch (up to date)
+    master  pushes to master  (up to date)
+
+
+Two choices:
+% git rev-parse --abbrev-ref --symbolic-full-name @{u}
+origin/mainline
+
+or
+% git for-each-ref --format='%(upstream:short)' $(git symbolic-ref -q HEAD)
+origin/mainline
+
+
+I use this alias
+git config --global alias.track '!sh -c "
+if [ \$# -eq 2 ]
+ then
+   echo \"Setting tracking for branch \" \$1 \" -> \" \$2;
+   git branch --set-upstream \$1 \$2;
+ else
+   git for-each-ref --format=\"local: %(refname:short) <--sync--> remote: %(upstream:short)\" refs/heads && echo --URLs && git remote -v;
+fi  
+" -'
+
+then
+git track
+
+note that the script can also be used to setup tracking.
+More great aliases at https://github.com/orefalo/bash-profiles
+
+Here is a command that gives you the tracking branch:
+$ git branch -vv
+  main   aaf02f0 [main/master: ahead 25] Some other commit
+* master add0a03 [jdsumsion/master] Some commit
+
+You have to wade through the SHA and any long-wrapping commit messages, but it's quick to type and I get the tracking branches aligned vertically in the 3rd column.
+
+You can use git checkout, i.e. "check out the current branch". This is a no-op with a side-effects to show the tracking information, if exists, for the current branch.
+$ git checkout 
+Your branch is up-to-date with 'origin/master'.
+
+
+Another simple way is to use
+cat .git/config in a git repo
+This will list details for local branches
+
+Following command will remote origin current fork is referring to  
+
+git remote -v  
+
+For adding a remote path,  
+
+git remote add origin path_name  
+
+
+Another method (thanks osse), if you just want to know whether or not it exists:
+if git rev-parse @{u} > /dev/null 2>&1
+then
+  printf "has an upstream\n"
+else
+  printf "has no upstream\n"
+fi
+
+
+Yet another way
+git status -b --porcelain
+
+This will give you
+## BRANCH(...REMOTE)
+modified and untracked files
+
+
+git branch -r -vv
+
+will list all branches including remote.
+
+The local branches and their remotes.
+git branch -vv 
+
+All branches and tracking remotes.
+git branch -a -vv
+
+See where the local branches are explicitly configured for push and pull.
+git remote show {remote_name}
+
+
+If you are using gradle,
+```
+def gitHash = new ByteArrayOutputStream()    
+project.exec {
+                commandLine 'git', 'rev-parse', '--short', 'HEAD'
+                standardOutput = gitHash
+            }
+
+    def gitBranch = new ByteArrayOutputStream()   
+    project.exec {
+                    def gitCmd = "git symbolic-ref --short -q HEAD || git branch -rq --contains "+getGitHash()+" | sed -e '2,\$d'  -e 's/\\(.*\\)\\/\\(.*\\)\$/\\2/' || echo 'master'"
+                    commandLine "bash", "-c", "${gitCmd}"
+                    standardOutput = gitBranch
+                }
+
+```

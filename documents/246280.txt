@@ -1,0 +1,49 @@
+Is void** an acceptable type in ANSI-C?
+c void
+I have seen a function whose prototype is:
+int myfunc(void** ppt)
+
+This function is called in a C file as 
+    a = myfunc(mystruct **var1);
+where mystruct is typedef for one of structure we have. 
+This works without any compilation errors in MSVC6.0, But when I compile it with some other C compiler, it gives an error at the place where this function is called with error message:
+Argument of type mystruct ** is incompatible with parameter of type void **
+The argument of myfunc() is kept as void** because it seems to be a generic malloc kind of function to be called with various structure variable types for memory allocation  
+
+Is there any type such as void ** allowed in C standard/any C compilers?
+How do I fix this? [I tried casting the function call argument to mystruct**, but it didn't work]
+
+-AD
+
+
+void** is valid but, based on your error message, you probably have to explicitly cast the argument as follows:
+mystruct **var1;
+x = myfunc ((void**) var1);
+
+That's because the myfunc function is expecting the void** type. While void* can be implicitly cast to any other pointer, that is not so for the double pointer - you need to explicitly cast it.
+
+This question is slightly confusing. But yes, void ** is certainly legal and valid C, and means "pointer to pointer to void" as expected.
+I'm not sure about your example of a call, the arguments ("mystruct **var1") don't make sense. If var1 is of type mystruct **, the call should just read a = func(var1);, this might be a typo.
+Casting should work, but you need to cast to void **, since that is what the function expects.
+
+As dirty as it may look like: sometimes you can't solve a problem without using void **.
+
+There is a reason the compiler cannot automatically cast from mystruct** to void**.
+Consider the following code:
+void stupid(struct mystruct **a, struct myotherstruct **b)
+{
+    void **x = (void **)a;
+    *x = *b;
+}
+
+The compiler will not complain about the implicit cast from myotherstruct* to void* in the *x = *b line, even though that line is trying to put a pointer to a myotherstruct in a place where only pointers to mystruct should be put.
+The mistake is in fact in the previous line, which is converting "a pointer to a place where pointers to mystruct can be put" to "a pointer to a place where pointers to anything can be put". This is the reason there is no implicit cast. Of course, when you use a explicit cast, the compiler assumes you know what you are doing.
+
+Yes, void ** is perfectly acceptable and quite useful in certain circumstances. Also consider that given the declaration void **foo and void *bar, the compiler will know the size of the object pointed to by foo (it points to a pointer, and all pointers are the same size except on a few ancient platforms you needn't worry about), but it will not know the size of the object pointed to by bar (it could point to an object of any size). You can therefore safely perform pointer arithmetic on void ** pointers but not on void * pointers. You must cast them to something else first, like a char *. GCC will allow you to pretend that void * and char * are equivalent, each pointing to an object a single byte in size, but this is nonstandard and nonportable.
+
+The comp.lang.c FAQ addresses this issue in detail in Question 4.9. In short, they say it's not strictly portable to cast an arbitrary pointer-to-pointer to a void **; they go on to explain that "code like this may work and is sometimes recommended, but it relies on all pointer types having the same internal representation (which is common, but not universal)." They go on to explain that "any void ** value you play with must be the address of an actual void * value somewhere; casts like (void **)&dp, though they may shut the compiler up, are nonportable (and may not even do what you want)."
+So, you can safely/portably achieve the desired behavior with code like:
+some_type *var1 = foo();
+void *tmp_void_ptr = (void *)var1;
+myfunc(&tmp_void_ptr);
+

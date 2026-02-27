@@ -1,0 +1,93 @@
+Showing too much 'skin' detection in software
+asp.net image-processing
+I am building an ASP.NET web site where the users may upload photos of themselves. There could be thousands of photos uploaded every day. One thing my boss has asked a few time is if there is any way we could detect if any of the photos are showing too much 'skin' and automatically move flag these as 'Adults Only' before the editors make the final decision. 
+
+
+I doubt that there exists any off-the-shelf software that can determine if the user uploads a naughty picture. Your best bet is to let users flag images as 'Adults Only' with a button next to the picture. (Clarification: I mean users other than the one who uploaded the picture--similar to how posts can be marked offensive here on StackOverflow.)
+Also, consider this review of an attempt to do the same thing in a dedicated product: http://www.dansdata.com/pornsweeper.htm.
+Link stolen from today's StackOverflow podcast, of course :).
+
+We can't even write filters that detect dirty words accurately in blog posts, and your boss is asking for a porno detector? CLBUTTIC!
+
+I'm afraid I can't help point you in the right direction, but I do remember reading about this being done before.  It was in the context of people complaining about baby pictures being caught and flagged mistakenly.  If nothing else, I can give you the hope that you don't have to invent the wheel all by yourself...  Someone else has been down this road!
+
+Your best bet is to deal with the image in the HSV colour space (see here for rgb - hsv conversion). The colour of skin is pretty much the same between all races, its just the saturation that changes. By dealing with the image in HSV you can simply search for the colour of skin.
+You might do this by simply counting the number of pixel within a colour range, or you could perform region growing around pixel to calculate the size of the areas the colour.
+Edit: for dealing with grainy images, you might want to perform a median filter on the image first, and then reduce the number of colours to segment the image first, you will have to play around with the settings on a large set of pre-classifed (adult or not) images and see how the values behave to get a satisfactory level of detection.
+EDIT: Heres some code that should do a simple count (not tested it, its a quick mashup of some code from here and rgb to hsl here)
+Bitmap b = new Bitmap(_image);
+BitmapData bData = b.LockBits(new Rectangle(0, 0, _image.Width, _image.Height), ImageLockMode.ReadWrite, b.PixelFormat);
+byte bitsPerPixel = GetBitsPerPixel(bData.PixelFormat);
+byte* scan0 = (byte*)bData.Scan0.ToPointer();
+
+int count;
+
+for (int i = 0; i < bData.Height; ++i)
+{
+    for (int j = 0; j < bData.Width; ++j)
+    {
+        byte* data = scan0 + i * bData.Stride + j * bitsPerPixel / 8;
+
+        byte r = data[2];
+        byte g = data[1];
+        byte b = data[0];
+
+        byte max = (byte)Math.Max(r, Math.Max(g, b));
+        byte min = (byte)Math.Min(r, Math.Min(g, b));
+
+        int h;
+
+        if(max == min)
+            h = 0;
+        else if(r > g && r > b)
+            h = (60 * ((g - b) / (max - min))) % 360;
+        else if (g > r && g > b)
+            h = 60 * ((b - r)/max - min) + 120;
+        else if (b > r && b > g)
+            h = 60 * ((r - g) / max - min) + 240;
+
+
+        if(h > _lowerThresh && h < _upperThresh)
+            count++;
+    }
+}
+b.UnlockBits(bData);
+
+
+Perhaps the Porn Breath Test would be helpful - as reported on Slashdot.
+
+I would say your answer lies in crowdsourcing the task. This almost always works and tends to scale very well. 
+It doesn't have to involve making some users into "admins" and coming up with different permissions - it can be as simple as to enable an "inappropriate" link near each image and keeping a count.
+
+Interesting question from a theoretical / algorithmic standppoint. One approach to the problem would be to flag images that contain large skin-colored regions (as explained by Trull). 
+However, the amount of skin shown is not a determinant of an offesive image, it's rather the location of the skin shown. Perhaps you can use face detection (search for algorithms) to refine the results -- determine how large the skin regions are relative to the face, and if they belong to the face (perhaps how far below it they are).
+
+I know either Flickr or Picasa has implemented this. I believe the routine was called FleshFinder.
+A tip on the architecture of doing this:
+Run this as a windows service separate from the ASP.NET Pipeline, instead of analyzing images in real time, create a queue of new images that are uploaded for the service to work through. 
+You can use the normal System.Drawing stuff if you want, but if you really need to process a lot of images, it would be better to use native code and a high performance graphics library and P/invoke the routine from your service.
+As resources are available, process images in the background and flag ones that are suspicious for editors review, this should prune down the number of images to review significantly, while not annoying people who upload pictures of skin colored houses.
+
+I would approach the problem from a statistical standpoint.  Get a bunch of pictures that you consider safe, and a bunch that you don't (that will make for a fun day of research), and see what they have in common.  Analyze them all for color range and saturation to see if you can pick out characteristics that all of the naughty photos, and few of the safe ones have.
+
+Of course, this will fail for the first user who posts a close-up of someone's face (or hand, or foot, or whatnot). Ultimately, all these forms of automated censorship will fail until there's a real paradigm-shift in the way computers do object recognition.
+I'm not saying that you shouldn't attempt it nontheless; but I want to point to these problems. Do not expect a perfect (or even good) solution. It doesn't exist.
+
+Rigan Ap-apid presented a paper at WorldComp '08 on just this problem space.  The paper is allegedly here, but the server was timing out for me.  I attended the presentation of the paper and he covered comparable systems and their effectiveness as well as his own approach.  You might contact him directly.
+
+CrowdSifter by Dolores Labs might do the trick for you. I read their blog all the time as they seem to love statistics and crowdsourcing and like to talk about it. They use amazon's mechanical turk for a lot of their processing and know how to process the results to get the right answers out of things. Check out their blog at the very least to see some cool statistical experiments.
+
+See the seminal paper "Finding Naked People" by Fleck/Forsyth published in ECCV. (Advanced).
+http://www.cs.hmc.edu/~fleck/naked.html
+
+As mentioned above by Bill (and Craig's google quote) statistical methods can be highly effective.
+Two approaches you might want to look into are:
+
+Neural Networks
+Multi Variate Analysis (MVA)
+
+The MVA approach would be to get a "representative sample" of acceptable pictures and of unacceptable pictures. The X data would be an array of bytes from each picture, the Y would be assigned by you as a 1 for unacceptable and a 0 for acceptable. Create a PLS model using this data. Run new data against the model and see how well it predicts the Y.
+Rather than this binary approach you could have multiple Y's (e.g. 0=acceptable, 1=swimsuit/underwear, 2=pornographic)
+To build the model you can look at open source software or there are a number of commercial packages available (although they are typically not cheap)
+Because even the best statistical approaches are not perfect the idea of also including user feedback would probably be a good idea.
+Good luck (and worst case you get to spend time collecting naughty pictures as an approved and paid activity!)

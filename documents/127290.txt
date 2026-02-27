@@ -1,0 +1,120 @@
+Is it possible to subclass a C struct in C++ and use pointers to the struct in C code?
+c++ c gcc extern-c
+Is there a side effect in doing this:
+C code:
+struct foo {
+      int k;
+};
+
+int ret_foo(const struct foo* f){ 
+    return f.k; 
+}
+
+C++ code:
+class bar : public foo {
+
+   int my_bar() { 
+       return ret_foo( (foo)this ); 
+   }
+
+};
+
+There's an extern "C" around the C++ code and each code is inside its own compilation unit.
+Is this portable across compilers?
+
+
+Wow, that's evil.
+
+Is this portable across compilers?
+
+Most definitely not. Consider the following:
+foo* x = new bar();
+delete x;
+
+In order for this to work, foo's destructor must be virtual which it clearly isn't. As long as you don't use new and as long as the derived objectd don't have custom destructors, though, you could be lucky.
+/EDIT: On the other hand, if the code is only used as in the question, inheritance has no advantage over composition. Just follow the advice given by m_pGladiator.
+
+I certainly not recommend using such weird subclassing. It would be better to change your design to use composition instead of inheritance.
+Just make one member 
+
+foo* m_pfoo;
+
+in the bar class and it will do the same job.
+Other thing you can do is to make one more class FooWrapper, containing the structure in itself with the corresponding getter method. Then you can subclass the wrapper. This way the problem with the virtual destructor is gone.
+
+I don't think it is necessarily a problem. The behaviour is well defined, and as long as you are careful with life-time issues (don't mix and match allocations between the C++ and C code) will do what you want.  It should be perfectly portable across compilers.
+The problem with destructors is real, but applies any time the base class destructor isn't virtual not just for C structs.  It is something you need to be aware of but doesn't preclude using this pattern.
+
+It will work, and portably BUT you cannot use any virtual functions (which includes destructors). 
+I would recommend that instead of doing this you have Bar contain a Foo.
+class Bar
+{
+private:
+   Foo  mFoo;
+};
+
+
+I don't get why you don't simply make ret_foo a member method. Your current way makes your code awfully hard to understand. What is so difficult about using a real class in the first place with a member variable and get/set methods? 
+I know it's possible to subclass structs in C++, but the danger is that others won't be able to understand what you coded because it's so seldom that somebody actually does it. I'd go for a robust and common solution instead.
+
+It probably will work but I do not believe it is guaranteed to.  The following is a quote from ISO C++ 10/5:
+
+A base class subobject might have a layout (3.7) different from the layout of a most derived object of the same type.
+
+It's hard to see how in the "real world" this could actually be the case.
+EDIT: 
+The bottom line is that the standard has not limited the number of places where a base class subobject layout can be different from a concrete object with that same Base type.  The result is that any assumptions you may have, such as POD-ness etc. are not necessarily true for the base class subobject.  
+EDIT:
+An alternative approach, and one whose behaviour is well defined is to make 'foo' a member of 'bar' and to provide a conversion operator where it's necessary.
+class bar {
+public:    
+   int my_bar() { 
+       return ret_foo( foo_ ); 
+   }
+
+   // 
+   // This allows a 'bar' to be used where a 'foo' is expected
+   inline operator foo& () {
+     return foo_;
+   }
+
+private:    
+  foo foo_;
+};
+
+
+
+âNever derive from concrete classes.â â Sutter
+âMake non-leaf classes abstract.â â Meyers
+
+Itâs simply wrong to subclass non-interface classes. You should refactor your libraries.
+Technically, you can do what you want, so long as you donât invoke undefined behavior by, e. g., deleting a pointer to the derived class by a pointer to its base class subobject. You donât even need extern "C" for the C++ code. Yes, itâs portable. But itâs poor design.
+
+This is perfectly legal, though it might be confusing for other programmers.
+You can use inheritance to extend C-structs with methods and constructors.
+Sample :
+struct POINT { int x, y; }
+class CPoint : POINT
+{
+public:
+    CPoint( int x_, int y_ ) { x = x_; y = y_; }
+
+    const CPoint& operator+=( const POINT& op2 )
+    { x += op2.x; y += op2.y; return *this; }
+
+    // etc.
+};
+
+Extending structs might be "more" evil, but is not something you are forbidden to do.
+
+This is perfectly legal, and you can see it in practice with the MFC CRect and CPoint classes.  CPoint derives from POINT (defined in windef.h), and CRect derives from RECT.  You are simply decorating an object with member functions.  As long as you don't extend the object with more data, you're fine.  In fact, if you have a complex C struct that is a pain to default-initialize, extending it with a class that contains a default constructor is an easy way to deal with that issue.
+Even if you do this:
+foo *pFoo = new bar;
+delete pFoo;
+
+then you're fine, since your constructor and destructor are trivial, and you haven't allocated any extra memory.
+You also don't have to wrap your C++ object with 'extern "C"', since you're not actually passing a C++ type to the C functions.
+
+This is entirely legal.  In C++, classes and structs are identical concepts, with the exception that all struct members are public by default.  That's the only difference.  So asking whether you can extend a struct is no different than asking if you can extend a class.
+There is one caveat here.  There is no guarantee of layout consistency from compiler to compiler.  So if you compile your C code with a different compiler than your C++ code, you may run into problems related to member layout (padding especially).  This can even occur when using C and C++ compilers from the same vendor.
+I have had this happen with gcc and g++.  I worked on a project which used several large structs.  Unfortunately, g++ packed the structs significantly looser than gcc, which caused significant problems sharing objects between C and C++ code.  We eventually had to manually set packing and insert padding to make the C and C++ code treat the structs the same.  Note however, that this problem can occur regardless of subclassing.  In fact we weren't subclassing the C struct in this case.

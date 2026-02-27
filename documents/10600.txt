@@ -1,0 +1,31 @@
+What's the best database storage device?
+database hardware storage raid disk
+So, the answer should probably be presented in tiers for the size of the application, but I'm wondering about people's experience with choosing where the disk drives used by the database should reside.
+Here are some of the options:
+
+JBOD - (just a bunch of disks) Old fashioned internal disks - fast but not very expandable
+NAS - Slow but cheap and expandable, probably best for backups
+DAS - A decent compromise, but generally accessible from only one or two machines
+SAN - Expensive but very good
+
+How much should you worry about choosing a 15k drive over a 10k or 7200RPM?
+What's your favorite RAID level?
+
+
+Just to get this started, I am using a Dell MD3000 direct attached storage device, connected via redundant HBA cards.  It has 9x146Gb 15K drives, arranged in 4 RAID 1 arrays with 1 hot spare standing by.  Total data footprint is approaching 200Gb.  I'm not thrilled with the IO performance, but it's getting the job done.
+
+We have a database cluster attached to a NAS, also with redundant HBA.  The NAS units are RAID-10.  From our storage-meister, for databases the higher RPM the better.
+
+The biggest performance boost you can get is by partitioning tables/indexes onto different disks. The first step would be to put indexes on one disk and data on an other. After this you should consider which tables/indexes are used together, and put them on separate disks ("spindles") when possible.
+
+Although SAS-based DAS is likely to be quickest for a single DB server (ideally with 15krpm 2.5 inch SFF disks in a RAID 10 configuration) for most systems you lose a lot of the advantages that a SAN can bring. For that reason I'd always build databases with dual FC (4 or 8Gbps fibre links) adapters into dual SAN switches, connected to a dual-controller SAN array. Not only will this scenario be very quick indeed but it will open up the options to utilise the various snapshot techniques that these boxes have to offer. These can enable'live-live' DB replication between sites for DR, instant database restoration and excellent capacity expansion/reduction with no impact on the server/s themselves. Hope this helps, let me know if I can add any more.
+
+Eric, perhaps you could look at some form of SAN in the near future - even the cheapest systems offer some form of snapshot system. In the scenario you mentioned this would have allow you to have restored to a previous snapshot of your data in moments. The HP MSA2000fc box is quite cheap and offers some of these services, as do many other manufacturers of course.
+
+That would depend on the use you are putting the drives to.  Some sample applications might be:
+
+Robust storage of a modest amount of data with modest traffic (such as a home network with various por^H^H^Hmedia files on it): One mirrored pair (RAID 1) of disks that are separate from the system disk of the machine they are installed in.  This will allow you to rebuild the machine or perform major surgery without affecting the data volume.  RAID-1 means that the data will survive the failure of a single disk.
+A video editing sytem that needs fast streaming but not necessarily 100% reliability: a direct-attach RAID-0 (striped) on fibre channel disks with 'V' firmware (a seagate-ism but they make most such parts).  Fibre channel is a packet based protocol whereas with SCSI two devices book out the whole bus.  FC works better under load.
+Trnsactional application: Logs on a mirrored pair and data on one or more RAID-5/6, RAID-10 or RAID-50/60 volumes.  On a SAN or any controller configuration with battery-backed write back caching the controller can optimise the disk writes.  DB logs are mostly sequential access whereas the data volumes are mostly random access.  The random seek activity will disturb the logging activity so you will get a performance gain from keeping the logging disks relatively quiet and free from competing traffic.
+Large data warehouse fact table: A series of mirrored pairs (RAID 1) on JBODs with as many host channels into the server as you can afford.  Spread the fact table partitions across the mirrored pairs.  Striped disks with typical array firmware setup will often only get you one (say) 64k stripe per revolution of the disk, which comes to maybe 5 or 10MB/sec per disk on a 10K drive.  DW workloads have a more streaming data access pattern than a transactional application.  Using the mirrored pairs means that the disks can potentially stream data at something more like their maximum data transfer rate.  This can be an order of magnitude faster.  
+

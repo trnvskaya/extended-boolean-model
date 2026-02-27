@@ -1,0 +1,72 @@
+Identifying COM components in a .NET application
+.net windows
+I've inherited a .NET application that pulls together about 100 dlls built by two teams or purchased from vendors. I would like to quickly identify whether a given dll is a .NET assembly or a COM component. I realize that I could just invoke ildasm on each dll individually and make a note if the dll does not have a valid CLR header, but this approach seems clumsy and difficult to automate.
+
+
+You can always try to add the "Assembly Version" column to the Explorer Window, and note which ones are blank to find the non-.NET assemblies.
+
+System.Reflection.Assembly.ReflectionOnlyLoadFrom("mydll.dll")
+will return a valid assembly reference to a .NET dll but will throw an error for a COM dll. 
+
+If you want to approach from the COM side, testing for COM objects in a DLL boils down to looking for an export named "DllGetClassObject".  This is because an in-proc COM object is accessed by the COM runtime by calling DllGetClassObject() on that DLL.
+You could do this from a batch file using DUMPBIN.EXE which comes with Visual Studio as follows:
+dumpbin unknown.dll /exports | find "DllGetClassObject"
+
+The above command line will produce one line of text if it is an unmanaged DLL that contains COM objects, or zero bytes of output otherwise.  
+You could do this programmatically by loading each DLL and try to do a GetProcAddress() on that entry point.  Here is a tested and working C# command line program that uses this technique:
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Runtime.InteropServices;
+
+static class NativeStuff
+{
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr LoadLibrary(string dllToLoad);
+
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetProcAddress(IntPtr hModule, string procedureName);
+
+    [DllImport("kernel32.dll")]
+    public static extern bool FreeLibrary(IntPtr hModule);
+}
+
+namespace IsComDLL
+{
+    class Program
+    {
+    	static void Main(string[] args)
+    	{
+    		if ( (args.Length == 0 ) || String.IsNullOrEmpty( args[0] ) )
+    		{
+    			Console.WriteLine( "Give DLL name on command line" );
+    			Environment.Exit(255);
+    		}
+
+    		IntPtr pDll = NativeStuff.LoadLibrary(args[0]);
+    		if ( pDll == IntPtr.Zero )
+    		{
+    			Console.WriteLine( "DLL file {0} not found", args[0] );
+    			Environment.Exit(256);
+    		}
+
+    		IntPtr pFunction = NativeStuff.GetProcAddress(pDll, "DllGetClassObject");
+    		int exitValue = 0;
+    		if (pFunction == IntPtr.Zero)
+    		{
+    			Console.WriteLine("DLL file {0} does NOT contain COM objects", args[0]);
+    		}
+    		else
+    		{
+    			Console.WriteLine("DLL file {0} does contain COM objects", args[0]);
+    			exitValue = 1;
+    		}
+
+    		NativeStuff.FreeLibrary(pDll);
+
+    		Environment.Exit(exitValue);
+    	}
+    }
+}
+

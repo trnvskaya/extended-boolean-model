@@ -1,0 +1,105 @@
+What is the cost of using a pointer to member function vs. a switch?
+c++ function-pointers
+I have the following situation:
+
+class A
+{
+public:
+    A(int whichFoo);
+    int foo1();
+    int foo2();
+    int foo3();
+    int callFoo(); // cals one of the foo's depending on the value of whichFoo
+};
+
+In my current implementation I save the value of whichFoo in a data member in the constructor and use a switch in callFoo() to decide which of the foo's to call.  Alternatively, I can use a switch in the constructor to save a pointer to the right fooN() to be called in callFoo(). 
+My question is which way is more efficient if an object of class A is only constructed once, while callFoo() is called a very large number of times.  So in the first case we have multiple executions of a switch statement, while in the second there is only one switch, and multiple calls of a member function using the pointer to it.  I know that calling a member function using a pointer is slower than just calling it directly.  Does anybody know if this overhead is more or less than the cost of a switch?
+Clarification:  I realize that you never really know which approach gives better performance until you try it and time it.  However, in this case I already have approach 1 implemented, and I wanted to find out if approach 2 can be more efficient at least in principle.  It appears that it can be, and now it makes sense for me to bother to implement it and try it.  
+Oh, and I also like approach 2 better for aesthetic reasons.  I guess I am looking for a justification to implement it. :) 
+
+
+How sure are you that calling a member function via a pointer is slower than just calling it directly? Can you measure the difference?
+In general, you should not rely on your intuition when making performance evaluations. Sit down with your compiler and a timing function, and actually measure the different choices. You may be surprised!
+More info: There is an excellent article Member Function Pointers and the Fastest Possible C++ Delegates which goes into very deep detail about the implementation of member function pointers.
+
+Sounds like you should make callFoo a pure virtual function and create some subclasses of A.
+Unless you really need the speed, have done extensive profiling and instrumenting, and determined that the calls to callFoo are really the bottleneck. Have you?
+
+To answer the asked question: at the finest-grained level, the pointer to the member function will perform better.
+To address the unasked question: what does "better" mean here?  In most cases I would expect the difference to be negligible.  Depending on what the class it doing, however, the difference may be significant.  Performance testing before worrying about the difference is obviously the right first step.
+
+Function pointers are almost always better than chained-ifs.  They make cleaner code, and are nearly always faster (except perhaps in a case where its only a choice between two functions and is always correctly predicted).
+
+If you are going to keep using a switch, which is perfectly fine, then you probably should put the logic in a helper method and call if from the constructor.  Alternatively, this is a classic case of the Strategy Pattern.  You could create an interface (or abstract class) named IFoo which has one method with Foo's signature.  You would have the constructor take in an instance of IFoo (constructor Dependancy Injection that implemented the foo method that you want.  You would have a private IFoo that would be set with this constructor, and every time you wanted to call Foo you would call your IFoo's version.
+Note: I haven't worked with C++ since college, so my lingo might be off here, ut the general ideas hold for most OO languages.
+
+I should think that the pointer would be faster.
+Modern CPUs prefetch instructions; mis-predicted branches flush the cache, which means it stalls while it refills the cache. A pointer doens't do that.
+Of course, you should measure both.
+
+You can write this:
+class Foo {
+public:
+  Foo() {
+    calls[0] = &Foo::call0;
+    calls[1] = &Foo::call1;
+    calls[2] = &Foo::call2;
+    calls[3] = &Foo::call3;
+  }
+  void call(int number, int arg) {
+    assert(number < 4);
+    (this->*(calls[number]))(arg);
+  }
+  void call0(int arg) {
+    cout<<"call0("<<arg<<")\n";
+  }
+  void call1(int arg) {
+    cout<<"call1("<<arg<<")\n";
+  }
+  void call2(int arg) {
+    cout<<"call2("<<arg<<")\n";
+  }
+  void call3(int arg) {
+    cout<<"call3("<<arg<<")\n";
+  }
+private:
+  FooCall calls[4];
+};
+
+The computation of the actual function pointer is linear and fast:  
+  (this->*(calls[number]))(arg);
+004142E7  mov         esi,esp 
+004142E9  mov         eax,dword ptr [arg] 
+004142EC  push        eax  
+004142ED  mov         edx,dword ptr [number] 
+004142F0  mov         eax,dword ptr [this] 
+004142F3  mov         ecx,dword ptr [this] 
+004142F6  mov         edx,dword ptr [eax+edx*4] 
+004142F9  call        edx 
+
+Note that you don't even have to fix the actual function number in the constructor.  
+I've compared this code to the asm generated by a switch.  The switch version doesn't provide any performance increase.
+
+If your example is real code, then I think you should revisit your class design. Passing in a value to the constructor, and using that to change behaviour is really equivalent to creating a subclass. Consider refactoring to make it more explicit. The effect of doing so is that your code will end up using a function pointer (all virtual methods are, really, are function pointers in jump tables).
+If, however your code was just a simplified example to ask whether, in general, jump tables are faster than switch statements, then my intuition would say that jump tables are quicker, but you are dependent on the compiler's optimisation step. But if performance is really such a concern, never rely on intuition - knock up a test program and test it, or look at the generated assembler.
+One thing is certain, a switch statement will never be slower than a jump table. The reason being that the best a compiler's optimiser can do will be too turn a series of conditional tests (i.e. a switch) into a jump table. So if you really want to be certain, take the compiler out of the decision process and use a jump table.
+
+Optimize only when needed
+First: Most of the time you most likely do not care, the difference will be very small. Make sure optimizing this call really makes sense first. Only if your measurements show there is really significant time spent in the call overhead, proceed to optimizing it (shameless plug -  Cf. How to optimize an application to make it faster?) If the optimization is not significant, prefer the more readable code.
+Indirect call cost depends on target platform
+Once you have determined it is worth to apply low-level optimization, then it is a time to understand your target platform. The cost you can avoid here is the branch misprediction penalty. On modern x86/x64 CPU this misprediction is likely to be very small (they can predict indirect calls quite well most of the time), but when targeting PowerPC or other RISC platforms, the indirect calls/jumps are often not predicted at all and avoiding them can cause significant performance gain. See also Virtual call cost depends on platform.
+Compiler can implement switch using jump table as well
+One gotcha: Switch can sometimes be implemented as an indirect call (using a table) as well, especially when switching between many possible values. Such switch exhibits the same misprediction as a virtual function. To make this optimization reliable, one would probably prefer using if instead of switch for the most common case.
+
+Use timers to see which is quicker. Although unless this code is going to be over and over then it's unlikely that you'll notice any difference.
+Be sure that if you are running code from the constructor that if the contruction fails that you wont leak memory.
+This technique is used heavily with Symbian OS:
+http://www.titu.jyu.fi/modpa/Patterns/pattern-TwoPhaseConstruction.html
+
+If you are only calling callFoo() once, than most likely the function pointer will be slower by an insignificant amount. If you are calling it many times than most likely the function pointer will be faster by an insignificant amount (because it doesn't need to keep going through the switch).
+Either way look at the assembled code to find out for sure it is doing what you think it is doing.
+
+One often overlooked advantage to switch (even over sorting and indexing) is if you know that a particular value is used in the vast majority of cases.
+It's easy to order the switch so that the most common are checked first.
+ps. To reinforce greg's answer, if you care about speed - measure.
+Looking at assembler doesn't help when CPUs have prefetch / predictive branching and pipeline stalls etc
