@@ -179,14 +179,15 @@ class BooleanSearch:
                 if token == 'AND':
                     w2 = stack.pop() if stack else 0
                     w1 = stack.pop() if stack else 0
-                    # Standardní P-Norma pro AND
-                    base = ((1-w1)**p + (1-w2)**p) / 2
-                    score = 1 - (base**(1/p))
-                    stack.append(score)
+                    if w1 == 0 or w2 == 0:
+                        stack.append(0.0)
+                    else:
+                        base = ((1-w1)**p + (1-w2)**p) / 2
+                        score = 1 - (base**(1/p))
+                        stack.append(score)
                 elif token == 'OR':
                     w2 = stack.pop() if stack else 0
                     w1 = stack.pop() if stack else 0
-                    # Standardní P-Norma pro OR
                     base = (w1**p + w2**p) / 2
                     score = base**(1/p)
                     stack.append(score)
@@ -194,13 +195,11 @@ class BooleanSearch:
                     w1 = stack.pop() if stack else 0
                     stack.append(1 - w1)
                 else:
-                    # Načtení normalizované váhy z indexu
                     val = self.index.get(token, {}).get(doc_id, 0)
                     stack.append(val)
             
             if stack:
                 final_relevance = stack.pop()
-                # Ošetření přetečení (bezpečnostní pojistka)
                 final_relevance = min(1.0, max(0.0, final_relevance))
                 if final_relevance > 0.01: 
                     results[doc_id] = round(final_relevance, 4)
