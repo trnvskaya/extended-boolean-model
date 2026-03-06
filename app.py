@@ -240,7 +240,7 @@ def view_document(doc_id):
             words = re.findall(r'[a-zA-Z#+.-]+', query)
             for word in words:
                 if word.upper() not in ['AND', 'OR', 'NOT']:
-                    pattern = re.compile(re.escape(word), re.IGNORECASE)
+                    pattern = re.compile(r'\b' + re.escape(word) + r'\b', re.IGNORECASE)
                     content = pattern.sub(f'<mark>{word}</mark>', content)
 
         return render_template_string(DOCUMENT_VIEW_TEMPLATE, content=content, doc_id=doc_id)

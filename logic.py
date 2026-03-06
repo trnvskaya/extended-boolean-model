@@ -78,7 +78,8 @@ class InvertedIndexer:
         processed_terms = []
         for t in tokens:
             if t in self.stop_words or len(t) <= 1:
-                continue
+                if t not in ['c', 'r']:
+                    continue
 
             if t in self.tech_exceptions:
                 processed_terms.append(t)
@@ -94,7 +95,6 @@ class InvertedIndexer:
         N = len(self.doc_list)
         term_counts = defaultdict(lambda: defaultdict(int))
 
-        # 1. Průchod: Počítání frekvencí
         for doc_name in self.doc_list:
             path = os.path.join(self.doc_dir, doc_name)
             with open(path, 'r', encoding='utf-8') as f:
@@ -103,24 +103,22 @@ class InvertedIndexer:
                 for t in terms:
                     term_counts[t][doc_name] += 1
 
-        # 2. Průchod: Výpočet syrových TF-IDF vah a nalezení maxima
-        max_raw_weight = 0
-        for term, docs_with_terms in term_counts.items():
-            n_t = len(docs_with_terms)
+        raw_index = defaultdict(dict)
+        max_w = 0
+        for term, docs in term_counts.items():
+            n_t = len(docs)
             idf = math.log10(N / n_t) if n_t > 0 else 0
+            for doc_name, count in docs.items():
+                tf = 1 + math.log10(count)
+                weight = tf * idf
+                raw_index[term][doc_name] = weight
+                if weight > max_w:
+                    max_w = weight
 
-            for doc_name, count in docs_with_terms.items():
-                tf_weight = 1 + math.log10(count)
-                weight = tf_weight * idf
-                self.index[term][doc_name] = weight
-                if weight > max_raw_weight:
-                    max_raw_weight = weight
-
-        # 3. Krok: KRITICKÁ NORMALIZACE (Aby váhy byly 0 až 1)
-        if max_raw_weight > 0:
-            for term in self.index:
-                for doc_name in self.index[term]:
-                    self.index[term][doc_name] /= max_raw_weight
+        if max_w > 0:
+            for term in raw_index:
+                for doc_name in raw_index[term]:
+                    self.index[term][doc_name] = raw_index[term][doc_name] / max_w
 
     def save(self, filename='index.json'):
         with open(filename, 'w', encoding='utf-8') as f:
@@ -181,28 +179,30 @@ class BooleanSearch:
                 if token == 'AND':
                     w2 = stack.pop() if stack else 0
                     w1 = stack.pop() if stack else 0
-                    if w1 == 0 or w2 == 0:
-                        stack.append(0.0)
-                    else:
-                        base = max(0, ((1-w1)**p + (1-w2)**p) / 2)
-                        score = 1 - (base**(1/p))
-                        stack.append(score)
+                    # Standardní P-Norma pro AND
+                    base = ((1-w1)**p + (1-w2)**p) / 2
+                    score = 1 - (base**(1/p))
+                    stack.append(score)
                 elif token == 'OR':
                     w2 = stack.pop() if stack else 0
                     w1 = stack.pop() if stack else 0
-                    base = max(0, (w1**p + w2**p) / 2)
-                    score = (base**(1/p))
+                    # Standardní P-Norma pro OR
+                    base = (w1**p + w2**p) / 2
+                    score = base**(1/p)
                     stack.append(score)
                 elif token == 'NOT':
                     w1 = stack.pop() if stack else 0
                     stack.append(1 - w1)
                 else:
+                    # Načtení normalizované váhy z indexu
                     val = self.index.get(token, {}).get(doc_id, 0)
                     stack.append(val)
             
             if stack:
                 final_relevance = stack.pop()
-                if final_relevance > 0.05: 
+                # Ošetření přetečení (bezpečnostní pojistka)
+                final_relevance = min(1.0, max(0.0, final_relevance))
+                if final_relevance > 0.01: 
                     results[doc_id] = round(final_relevance, 4)
 
         return sorted(results.items(), key=lambda x: x[1], reverse=True)
