@@ -8,7 +8,7 @@ import time
 from functools import wraps
 import math
 import json
-
+# import pandas as pd  # ZAKOMENTOVÁNO: Kvůli ušetření paměti RAM na serveru Render.com
 
 
 def benchmark(func):
@@ -49,8 +49,6 @@ def export_threads(limit=5000):
 
         with open(f'{output_dir}/{q_id}.txt', 'w', encoding='utf-8') as f:
             f.write(full_content)
-
-
 
 
 class InvertedIndexer:
@@ -135,6 +133,19 @@ class BooleanSearch:
         with open(index_path, 'r', encoding = 'utf-8') as f:
             self.index = json.load(f)
         self.stemmer = PorterStemmer()
+
+        self.tech_exceptions = {
+            'aws', 'sql', 'php', 'java', 'ruby', 'git', 'css', 'html', 'xml', 'json', 
+            'dns', 'ssh', 'ssl', 'ajax', 'orm', 'wcf', 'wpf', 'tdd', 'ssis', 'vba', 
+            'bash', 'f#', 'c#', 'c++', '.net', 'ios', 'xcode', 'svn', 'iis', 'maven', 
+            'regex', 'asp.net', 'vb.net', 'nhibernate', 'linq', 'tsql', 'plsql', 
+            'sqlite', 'postgresql', 'mysql', 'linux', 'unix', 'osx', 'ubuntu', 
+            'windows', 'vista', 'azure', 'android', 'vmware', 'hyper-v', 'tcp', 
+            'udp', 'dhcp', 'nfs', 'vps', 'smb', 'smtp', 'perl', 'lisp', 'ocaml', 
+            'rake', 'msbuild', 'nunit', 'junit', 'rails', 'jquery', 'ec2', 's3', 
+            'mongodb', 'redis', 'react', 'node', 'angular', 'docker'
+        }
+
         self.all_docs = set()
         for doc_dict in self.index.values():
             self.all_docs.update(doc_dict.keys())  
@@ -143,7 +154,8 @@ class BooleanSearch:
         priority = {'NOT': 3, 'AND': 2, 'OR': 1, '(': 0}
         stack, output = [], []
         
-        tokens = re.findall(r'\(|\)|AND|OR|NOT|[a-zA-Z#+]+', query, re.IGNORECASE)
+        # Regex zachytí i speciální znaky v jazycích (#, +, ., -)
+        tokens = re.findall(r'\(|\)|AND|OR|NOT|[a-zA-Z0-9#+.-]+', query, re.IGNORECASE)
         
         for token in tokens:
             t_upper = token.upper()
@@ -154,13 +166,15 @@ class BooleanSearch:
                     output.append(stack.pop())
                 if stack: stack.pop()
             elif t_upper in priority:
-                # Priorita operátorů
                 while stack and priority.get(stack[-1].upper(), 0) >= priority[t_upper]:
                     output.append(stack.pop())
                 stack.append(t_upper)
             else:
                 token_lower = token.lower()
-                if token_lower in self.index:
+                # Ochrana proti odříznutí technických názvů stemmerem
+                if token_lower in self.tech_exceptions:
+                    output.append(token_lower)
+                elif token_lower in self.index:
                     output.append(token_lower)
                 else:
                     output.append(self.stemmer.stem(token_lower))    
@@ -168,6 +182,7 @@ class BooleanSearch:
         while stack: 
             output.append(stack.pop())
         return output
+
     @benchmark
     def search(self, query, p=2):
         postfix = self.get_postfix(query)
@@ -179,21 +194,21 @@ class BooleanSearch:
                 if token == 'AND':
                     w2 = stack.pop() if stack else 0
                     w1 = stack.pop() if stack else 0
-                    if w1 == 0 or w2 == 0:
-                        stack.append(0.0)
-                    else:
-                        base = ((1-w1)**p + (1-w2)**p) / 2
-                        score = 1 - (base**(1/p))
-                        stack.append(score)
+                    base = max(0.0, ((1 - w1)**p + (1 - w2)**p) / 2)
+                    score = 1 - (base**(1/p))
+                    stack.append(score)
+                    
                 elif token == 'OR':
                     w2 = stack.pop() if stack else 0
                     w1 = stack.pop() if stack else 0
-                    base = (w1**p + w2**p) / 2
+                    base = max(0.0, (w1**p + w2**p) / 2)
                     score = base**(1/p)
                     stack.append(score)
+                    
                 elif token == 'NOT':
                     w1 = stack.pop() if stack else 0
                     stack.append(1 - w1)
+                    
                 else:
                     val = self.index.get(token, {}).get(doc_id, 0)
                     stack.append(val)
@@ -201,7 +216,7 @@ class BooleanSearch:
             if stack:
                 final_relevance = stack.pop()
                 final_relevance = min(1.0, max(0.0, final_relevance))
-                if final_relevance > 0.01: 
+                if final_relevance > 0.05: 
                     results[doc_id] = round(final_relevance, 4)
 
         return sorted(results.items(), key=lambda x: x[1], reverse=True)
@@ -210,13 +225,29 @@ class BooleanSearch:
 @benchmark
 def sequential_search(doc_dir, term):
     results = []
+    term_lower = term.lower()
 
-    term_stemmed = PorterStemmer().stem(term.lower())
+    tech_exceptions = {
+        'aws', 'sql', 'php', 'java', 'ruby', 'git', 'css', 'html', 'xml', 'json', 
+        'dns', 'ssh', 'ssl', 'ajax', 'orm', 'wcf', 'wpf', 'tdd', 'ssis', 'vba', 
+        'bash', 'f#', 'c#', 'c++', '.net', 'ios', 'xcode', 'svn', 'iis', 'maven', 
+        'regex', 'asp.net', 'vb.net', 'nhibernate', 'linq', 'tsql', 'plsql', 
+        'sqlite', 'postgresql', 'mysql', 'linux', 'unix', 'osx', 'ubuntu', 
+        'windows', 'vista', 'azure', 'android', 'vmware', 'hyper-v', 'tcp', 
+        'udp', 'dhcp', 'nfs', 'vps', 'smb', 'smtp', 'perl', 'lisp', 'ocaml', 
+        'rake', 'msbuild', 'nunit', 'junit', 'rails', 'jquery', 'ec2', 's3', 
+        'mongodb', 'redis', 'react', 'node', 'angular', 'docker'
+    }
+
+    if term_lower in tech_exceptions:
+        search_term = term_lower
+    else:
+        search_term = PorterStemmer().stem(term_lower)
 
     for filename in os.listdir(doc_dir):
         if filename.endswith('.txt'):
             with open(os.path.join(doc_dir, filename), 'r', encoding='utf-8') as f:
-                if term_stemmed in f.read().lower():
+                if search_term in f.read().lower():
                     results.append(filename)
     return results                
 
@@ -227,3 +258,38 @@ if __name__ == "__main__":
     engine.save()
     
     searcher = BooleanSearch('index.json')
+
+
+
+# FOR EXPERIMENT
+# if __name__ == "__main__":
+#     print("Načítám index pro experimenty...")
+#     # engine = InvertedIndexer('documents')
+#     # engine.build()
+#     # engine.save()
+    
+#     searcher = BooleanSearch('index.json')
+    
+#     # Slova, na kterých budeme testovat rychlost
+#     test_words = ["python", "aws", "c++", "database", "algorithm"]
+    
+#     print("\n--- VÝSLEDKY EXPERIMENTU: RYCHLOST VYHLEDÁVÁNÍ ---")
+#     print(f"{'Dotaz':<15} | {'Invertovaný index (s)':<25} | {'Sekvenční (s)':<20} | {'Zrychlení'}")
+#     print("-" * 80)
+    
+#     import time
+#     for word in test_words:
+#         # 1. Měření tvého rychlého indexu
+#         start_idx = time.perf_counter()
+#         searcher.search(word)
+#         time_idx = time.perf_counter() - start_idx
+        
+#         # 2. Měření pomalého sekvenčního průchodu
+#         start_seq = time.perf_counter()
+#         sequential_search('documents', word)
+#         time_seq = time.perf_counter() - start_seq
+        
+#         # Výpočet kolikrát je index rychlejší
+#         speedup = time_seq / time_idx if time_idx > 0 else 0
+        
+#         print(f"{word:<15} | {time_idx:<25.5f} | {time_seq:<20.5f} | {speedup:.1f}x")    
